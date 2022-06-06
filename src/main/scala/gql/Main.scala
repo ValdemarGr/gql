@@ -7,6 +7,152 @@ import io.circe._
 import cats._
 import cats.arrow.FunctionK
 
+sealed trait GQLOutputType[A]
+sealed trait GQLInputType[A]
+
+final case class GQLOutputObjectType[F[_], A](
+    name: String,
+    fields: Eval[NonEmptyList[GQLField[F, A, _]]]
+) extends GQLOutputType[A] {
+  def contramap[B](g: B => A): GQLOutputObjectType[F, B] =
+    GQLOutputObjectType(name, fields.map(_.map(_.contramap(g))))
+}
+
+final case class GQLOutputListType[A](of: GQLOutputType[A]) extends GQLOutputType[List[A]]
+
+final case class GQLOutputUnionType[F[_], A](
+    name: String,
+    types: NonEmptyList[GQLOutputObjectType[F, A]]
+) extends GQLOutputType[A]
+
+final case class GQLOutputScalarType[A](name: String, encoder: Encoder[A]) extends GQLOutputType[A] {
+  def contramap[B](g: B => A): GQLOutputScalarType[B] =
+    GQLOutputScalarType(name, encoder.contramap(g))
+}
+
+final case class GQLInputScalarType[A](name: String, decoder: Decoder[A]) extends GQLInputType[A]
+
+sealed trait Resolution[F[_], A]
+final case class PureResolution[F[_], A](value: A) extends Resolution[F, A]
+final case class DeferredResolution[F[_], A](f: F[A]) extends Resolution[F, A]
+
+sealed trait GQLField[F[_], I, T] {
+  def name: String
+  def graphqlType: GQLOutputType[T]
+
+  def contramap[B](g: B => I): GQLField[F, B, T]
+}
+
+final case class GQLArgField[F[_], I, A, T](
+    name: String,
+    args: GQLInputType[A],
+    graphqlType: GQLOutputType[T],
+    resolve: (I, A) => Resolution[F, T]
+) extends GQLField[F, I, T] {
+  def contramap[B](g: B => I): GQLField[F, B, T] =
+    GQLArgField(name, args, graphqlType, (b, a) => resolve(g(b), a))
+}
+
+final case class GQLSimpleField[F[_], I, T](
+    name: String,
+    graphqlType: GQLOutputType[T],
+    resolve: I => Resolution[F, T]
+) extends GQLField[F, I, T] {
+  def contramap[B](g: B => I): GQLField[F, B, T] =
+    GQLSimpleField(name, graphqlType, g andThen resolve)
+}
+
+object Main extends App {
+  final case class Data[F[_]](
+      a: String,
+      b: F[Int],
+      c: F[List[Data[F]]]
+  )
+
+  def getFriends[F[_]](name: String)(implicit F: Sync[F]): F[List[Data[F]]] =
+    if (name == "John") F.delay(getData[F]("Jane")).map(List(_))
+    else if (name == "Jane") F.delay(getData[F]("John")).map(List(_))
+    else F.pure(Nil)
+
+  def getData[F[_]](name: String)(implicit F: Sync[F]): Data[F] =
+    Data[F](
+      name,
+      F.delay(if (name == "John") 22 else 20),
+      F.defer(getFriends[F](name))
+    )
+
+  lazy val intType = GQLOutputScalarType("Int", Encoder.encodeInt)
+
+  lazy val stringType = GQLOutputScalarType("String", Encoder.encodeString)
+
+  def dataType[F[_]]: GQLOutputObjectType[F, Data[F]] =
+    GQLOutputObjectType(
+      "Data",
+      Eval.later(
+        NonEmptyList.of(
+          GQLSimpleField(
+            "a",
+            stringType,
+            x => PureResolution(x.a)
+          ),
+          GQLSimpleField(
+            "b",
+            intType,
+            x => DeferredResolution(x.b)
+          ),
+          GQLSimpleField(
+            "c",
+            GQLOutputListType(dataType[F]),
+            x => DeferredResolution(x.c)
+          )
+        )
+      )
+    )
+
+  def root[F[_]: Sync] = getData[F]("John")
+
+  def renderType(tpe: GQLOutputType[_]): String = tpe match {
+    case GQLOutputObjectType(name, _) => name
+    case GQLOutputListType(of) => s"[${renderType(of)}]"
+    case GQLOutputUnionType(name, _) => name
+    case GQLOutputScalarType(name, _) => name
+  }
+
+  def render[A](root: GQLOutputType[A], accum: List[String], encountered: Set[String]): (List[String], Set[String]) = 
+    root match {
+      case GQLOutputObjectType(name, fields) => 
+        lazy val thisType = 
+          s"""
+          type $name {
+            ${fields.value.map{ field =>
+              s"${field.name}: ${renderType(field.graphqlType)}"
+            }.mkString_(",\n")}
+          }
+          """
+        if (encountered.contains(name)) (accum, encountered)
+        else {
+          val newEncountered = encountered + name
+          val newAccum = accum :+ thisType
+          val next = fields.value.filter(field => !encountered.contains(field.name))
+          next.foldLeft((newAccum, newEncountered)){ case ((accum, encountered), field) => render(field.graphqlType, accum, encountered) }
+        }
+      case GQLOutputListType(of) => render(of, accum, encountered)
+      case GQLOutputUnionType(name, types) => ???
+      case GQLOutputScalarType(name, _) =>
+        (s"""
+        scalar $name
+        """ :: accum, encountered)
+    }
+
+  //override def run(args: List[String]): IO[ExitCode] = ???
+  println(root[IO])
+  println(dataType[IO])
+  println(dataType[IO].fields.value)
+  val (res, _) = render(dataType[IO], Nil, Set.empty)
+  println(res.mkString("\n"))
+}
+
+/*
 sealed trait GQLType[F[_], A] {
   def contramap[B](f: B => A)(implicit F: Functor[F]): GQLType[F, B]
 
@@ -27,7 +173,7 @@ case class GQLList[F[_], A](inner: GQLType[F, A]) extends GQLType[F, List[A]] {
 
 case class GQLScalar[F[_], A](name: String, encoder: A => io.circe.Json) extends GQLType[F, A] {
   def contramap[B](f: B => A)(implicit F: Functor[F]): GQLScalar[F, B] = GQLScalar[F, B](name, x => encoder(f(x)))
-  
+
   def mapK[G[_]](fk: F ~> G): GQLType[G, A] = GQLScalar(name, encoder)
 }
 
@@ -69,7 +215,7 @@ object Main extends App {
     name: String,
     age: F[Int]
   )
-  
+
   def getFriends[F[_]](name: String)(implicit F: Sync[F]): F[List[Data[F]]] =
     if (name == "John") F.delay(getData[F]("Jane")).map(List(_))
     else if (name == "Jane") F.delay(getData[F]("John")).map(List(_))
@@ -87,7 +233,7 @@ object Main extends App {
   implicit def intScalar[F[_]] = GQLScalar[F, Int]("Int", _.asJson)
   implicit def listGQLType[F[_], A](implicit tpe: GQLType[F, A]): GQLType[F, List[A]] = GQLList(tpe)
 
-  implicit def dataObject[F[_]](implicit F: Sync[F]): GQLObject[F, Data[F]] = 
+  implicit def dataObject[F[_]](implicit F: Sync[F]): GQLObject[F, Data[F]] =
     gqlObject[F, Data[F]](
       "Data",
       NonEmptyList.of(
@@ -123,7 +269,7 @@ object Main extends App {
 
 
   implicit def encoder[F[_]: Sync]: GQLEncoder[Data[F]] = new GQLEncoder[Data[F]] {
-    def encode(data: Data[F]) = 
+    def encode(data: Data[F]) =
       GQLObject(
         NonEmptyList.of(
           GQLField("name", ResolvePure(data.name)),
@@ -138,3 +284,4 @@ object Main extends App {
 
   //println(dataGQLType[IO])
 }
+ */
