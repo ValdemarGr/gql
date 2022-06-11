@@ -8,14 +8,29 @@ import cats._
 import cats.arrow.FunctionK
 
 sealed trait GQLOutputType[A]
+
 sealed trait GQLInputType[A]
+
+object GQL {
+  def outputObject[F[_], A](
+      name: String,
+      hd: (String, GQLField[F, A, _]),
+      tl: (String, GQLField[F, A, _])*
+  ) = GQLOutputObjectType[F, A](name, NonEmptyList(hd, tl.toList))
+
+  def effect[F[_], I, T](resolver: I => F[T])(implicit tpe: => GQLOutputType[T]): GQLField[F, I, T] =
+    GQLSimpleField[F, I, T](resolver andThen (fa => DeferredResolution(fa)), Eval.later(tpe))
+
+  def pure[F[_], I, T](resolver: I => T)(implicit tpe: => GQLOutputType[T]): GQLField[F, I, T] =
+    GQLSimpleField[F, I, T](resolver andThen (fa => PureResolution(fa)), Eval.later(tpe))
+}
 
 final case class GQLOutputObjectType[F[_], A](
     name: String,
-    fields: Eval[NonEmptyList[GQLField[F, A, _]]]
+    fields: NonEmptyList[(String, GQLField[F, A, _])]
 ) extends GQLOutputType[A] {
   def contramap[B](g: B => A): GQLOutputObjectType[F, B] =
-    GQLOutputObjectType(name, fields.map(_.map(_.contramap(g))))
+    GQLOutputObjectType(name, fields.map { case (k, v) => k -> v.contramap(g) })
 }
 
 final case class GQLOutputListType[A](of: GQLOutputType[A]) extends GQLOutputType[List[A]]
@@ -37,29 +52,26 @@ final case class PureResolution[F[_], A](value: A) extends Resolution[F, A]
 final case class DeferredResolution[F[_], A](f: F[A]) extends Resolution[F, A]
 
 sealed trait GQLField[F[_], I, T] {
-  def name: String
-  def graphqlType: GQLOutputType[T]
+  def graphqlType: Eval[GQLOutputType[T]]
 
   def contramap[B](g: B => I): GQLField[F, B, T]
 }
 
 final case class GQLArgField[F[_], I, A, T](
-    name: String,
     args: GQLInputType[A],
-    graphqlType: GQLOutputType[T],
-    resolve: (I, A) => Resolution[F, T]
+    resolve: (I, A) => Resolution[F, T],
+    graphqlType: Eval[GQLOutputType[T]]
 ) extends GQLField[F, I, T] {
   def contramap[B](g: B => I): GQLField[F, B, T] =
-    GQLArgField(name, args, graphqlType, (b, a) => resolve(g(b), a))
+    GQLArgField(args, (b, a) => resolve(g(b), a), graphqlType)
 }
 
 final case class GQLSimpleField[F[_], I, T](
-    name: String,
-    graphqlType: GQLOutputType[T],
-    resolve: I => Resolution[F, T]
+    resolve: I => Resolution[F, T],
+    graphqlType: Eval[GQLOutputType[T]]
 ) extends GQLField[F, I, T] {
   def contramap[B](g: B => I): GQLField[F, B, T] =
-    GQLSimpleField(name, graphqlType, g andThen resolve)
+    GQLSimpleField(g andThen resolve, graphqlType)
 }
 
 object Main extends App {
@@ -81,73 +93,67 @@ object Main extends App {
       F.defer(getFriends[F](name))
     )
 
-  lazy val intType = GQLOutputScalarType("Int", Encoder.encodeInt)
+  implicit lazy val intType = GQLOutputScalarType("Int", Encoder.encodeInt)
 
-  lazy val stringType = GQLOutputScalarType("String", Encoder.encodeString)
+  implicit lazy val stringType = GQLOutputScalarType("String", Encoder.encodeString)
 
-  def dataType[F[_]]: GQLOutputObjectType[F, Data[F]] =
-    GQLOutputObjectType(
+  implicit def listTypeForSome[A](implicit of: GQLOutputType[A]) = GQLOutputListType(of)
+
+  import GQL._
+  implicit def dataType[F[_]]: GQLOutputObjectType[F, Data[F]] =
+    outputObject[F, Data[F]](
       "Data",
-      Eval.later(
-        NonEmptyList.of(
-          GQLSimpleField(
-            "a",
-            stringType,
-            x => PureResolution(x.a)
-          ),
-          GQLSimpleField(
-            "b",
-            intType,
-            x => DeferredResolution(x.b)
-          ),
-          GQLSimpleField(
-            "c",
-            GQLOutputListType(dataType[F]),
-            x => DeferredResolution(x.c)
-          )
-        )
-      )
+      "a" -> pure(_.a),
+      "b" -> effect(_.b),
+      "c" -> effect(_.c)
     )
 
   def root[F[_]: Sync] = getData[F]("John")
 
   def renderType(tpe: GQLOutputType[_]): String = tpe match {
     case GQLOutputObjectType(name, _) => name
-    case GQLOutputListType(of) => s"[${renderType(of)}]"
-    case GQLOutputUnionType(name, _) => name
+    case GQLOutputListType(of)        => s"[${renderType(of)}]"
+    case GQLOutputUnionType(name, _)  => name
     case GQLOutputScalarType(name, _) => name
   }
 
-  def render[A](root: GQLOutputType[A], accum: List[String], encountered: Set[String]): (List[String], Set[String]) = 
+  def render[A](root: GQLOutputType[A], accum: List[String], encountered: Set[String]): (List[String], Set[String]) =
     root match {
-      case GQLOutputObjectType(name, fields) => 
-        lazy val thisType = 
+      case GQLOutputObjectType(name, fields) =>
+        lazy val thisType =
           s"""
           type $name {
-            ${fields.value.map{ field =>
-              s"${field.name}: ${renderType(field.graphqlType)}"
-            }.mkString_(",\n")}
+            ${fields
+            .map { case (k, field) =>
+              s"$k: ${renderType(field.graphqlType.value)}"
+            }
+            .mkString_(",\n")}
           }
           """
         if (encountered.contains(name)) (accum, encountered)
         else {
           val newEncountered = encountered + name
           val newAccum = accum :+ thisType
-          val next = fields.value.filter(field => !encountered.contains(field.name))
-          next.foldLeft((newAccum, newEncountered)){ case ((accum, encountered), field) => render(field.graphqlType, accum, encountered) }
+          val next = fields.filter { case (_, field) => !encountered.contains(renderType(field.graphqlType.value)) }
+          next.foldLeft((newAccum, newEncountered)) { case ((accum, encountered), (_, field)) =>
+            render(field.graphqlType.value, accum, encountered)
+          }
         }
-      case GQLOutputListType(of) => render(of, accum, encountered)
+      case GQLOutputListType(of)           => render(of, accum, encountered)
       case GQLOutputUnionType(name, types) => ???
       case GQLOutputScalarType(name, _) =>
-        (s"""
+        (
+          s"""
         scalar $name
-        """ :: accum, encountered)
+        """ :: accum,
+          encountered
+        )
     }
 
   //override def run(args: List[String]): IO[ExitCode] = ???
   println(root[IO])
   println(dataType[IO])
-  println(dataType[IO].fields.value)
+  println(dataType[IO].fields)
   val (res, _) = render(dataType[IO], Nil, Set.empty)
   println(res.mkString("\n"))
 }
