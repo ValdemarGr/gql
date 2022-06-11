@@ -81,19 +81,52 @@ object GQLParser {
     (begin ~ P.string0(tl)).map { case (c, s) => c + s }
   }
 
+  final case class Document(nel: NonEmptyList[Definition])
   val document = definition.rep
 
-  lazy val definition =
-    executableDefinition |
-      typeSystemDefinition |
-      typeSystemExtension
+  sealed trait Definition
+  object Definition {
+    final case class ExecutableDef(x: ExecutableDefinition) extends Definition
+    final case class TypeSystemDefinition(t: Any) extends Definition
+    final case class TypeSystemExt(t: Any) extends Definition
+  }
+  lazy val definition = {
+    import Definition._
+    executableDefinition.map(ExecutableDef(_)) |
+      typeSystemDefinition.map(TypeSystemDefinition(_)) |
+      typeSystemExtension.map(TypeSystemExt(_))
+  }
 
-  lazy val executableDefinition =
-    operationDefinition |
-      fragmentDefinition
+  sealed trait ExecutableDefinition
+  object ExecutableDefinition {
+    final case class Operation(o: OperationDefinition) extends ExecutableDefinition
+    final case class Fragment(f: FragmentDefinition) extends ExecutableDefinition
+  }
+  lazy val executableDefinition = {
+    import ExecutableDefinition._
+    operationDefinition.map(Operation(_)) |
+      fragmentDefinition.map(Fragment(_))
+  }
 
-  lazy val operationDefinition =
-    (operationType ~ name.? ~ variableDefinitions.? ~ directives.? ~ selectionSet) | selectionSet
+  sealed trait OperationDefinition
+  object OperationDefinition {
+    final case class Detailed(
+        tpe: OperationType,
+        name: Option[String],
+        variableDefinitions: Option[VariableDefinitions],
+        directives: Option[Directives],
+        selectionSet: SelectionSet
+    ) extends OperationDefinition
+
+    final case class Simple(selectionSet: SelectionSet) extends OperationDefinition
+  }
+  lazy val operationDefinition = {
+    import OperationDefinition._
+    (operationType ~ name.? ~ variableDefinitions.? ~ directives.? ~ selectionSet).map { case ((((opt, name), vars), ds), ss) =>
+      Detailed(opt, name, vars, ds, ss)
+    } |
+      selectionSet.map(Simple(_))
+  }
 
   sealed trait OperationType
   object OperationType {
@@ -157,8 +190,16 @@ object GQLParser {
   lazy val inlineFragment =
     (P.string("...") *> typeCondition.? ~ directives.? ~ selectionSet).map { case ((t, d), s) => InlineFragment(t, d, s) }
 
+  final case class FragmentDefinition(
+      name: String,
+      typeCnd: Option[String],
+      directives: Option[Directives],
+      selectionSet: SelectionSet
+  )
   lazy val fragmentDefinition =
-    P.string("fragment") ~ fragmentName ~ typeCondition.? ~ directives.? ~ selectionSet
+    (P.string("fragment") *> fragmentName ~ typeCondition.? ~ directives.? ~ selectionSet).map { case (((n, t), d), s) =>
+      FragmentDefinition(n, t, d, s)
+    }
 
   lazy val fragmentName: P[String] =
     (!P.string("on")).with1 *> name
@@ -212,11 +253,13 @@ object GQLParser {
   lazy val objectField =
     name ~ (P.char(':') *> value)
 
+  final case class VariableDefinitions(nel: NonEmptyList[VariableDefinition])
   lazy val variableDefinitions =
-    variableDefinition.rep.between(P.char('('), P.char(')'))
+    variableDefinition.rep.between(P.char('('), P.char(')')).map(VariableDefinitions(_))
 
+  final case class VariableDefinition(name: String, tpe: Type, defaultValue: Option[Value])
   lazy val variableDefinition =
-    variable ~ (P.char(':') *> `type`) ~ defaultValue.?
+    (variable ~ (P.char(':') *> `type`) ~ defaultValue.?).map { case ((n, t), d) => VariableDefinition(n, t, d) }
 
   lazy val variable =
     P.char('$') *> name
