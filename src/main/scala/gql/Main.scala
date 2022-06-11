@@ -7,7 +7,9 @@ import io.circe._
 import cats._
 import cats.arrow.FunctionK
 
-sealed trait GQLOutputType[A]
+sealed trait GQLOutputType[F[_], A]
+
+sealed trait GQLToplevelOutputType[F[_]]
 
 sealed trait GQLInputType[A]
 
@@ -18,30 +20,32 @@ object syntax {
       tl: (String, GQLField[F, A, _])*
   ) = GQLOutputObjectType[F, A](name, NonEmptyList(hd, tl.toList))
 
-  def effect[F[_], I, T](resolver: I => F[T])(implicit tpe: => GQLOutputType[T]): GQLField[F, I, T] =
+  def effect[F[_], I, T](resolver: I => F[T])(implicit tpe: => GQLOutputType[F, T]): GQLField[F, I, T] =
     GQLSimpleField[F, I, T](resolver andThen (fa => DeferredResolution(fa)), Eval.later(tpe))
 
-  def pure[F[_], I, T](resolver: I => T)(implicit tpe: => GQLOutputType[T]): GQLField[F, I, T] =
+  def pure[F[_], I, T](resolver: I => T)(implicit tpe: => GQLOutputType[F, T]): GQLField[F, I, T] =
     GQLSimpleField[F, I, T](resolver andThen (fa => PureResolution(fa)), Eval.later(tpe))
 }
 
 final case class GQLOutputObjectType[F[_], A](
     name: String,
     fields: NonEmptyList[(String, GQLField[F, A, _])]
-) extends GQLOutputType[A] {
+) extends GQLOutputType[F, A]
+    with GQLToplevelOutputType[F] {
   def contramap[B](g: B => A): GQLOutputObjectType[F, B] =
     GQLOutputObjectType(name, fields.map { case (k, v) => k -> v.contramap(g) })
 }
 
-final case class GQLOutputListType[A](of: GQLOutputType[A]) extends GQLOutputType[List[A]]
+final case class GQLOutputListType[F[_], A](of: GQLOutputType[F, A]) extends GQLOutputType[F, List[A]]
 
 final case class GQLOutputUnionType[F[_], A](
     name: String,
     types: NonEmptyList[GQLOutputObjectType[F, A]]
-) extends GQLOutputType[A]
+) extends GQLOutputType[F, A]
+    with GQLToplevelOutputType[F]
 
-final case class GQLOutputScalarType[A](name: String, encoder: Encoder[A]) extends GQLOutputType[A] {
-  def contramap[B](g: B => A): GQLOutputScalarType[B] =
+final case class GQLOutputScalarType[F[_], A](name: String, encoder: Encoder[A]) extends GQLOutputType[F, A] with GQLToplevelOutputType[F] {
+  def contramap[B](g: B => A): GQLOutputScalarType[F, B] =
     GQLOutputScalarType(name, encoder.contramap(g))
 }
 
@@ -52,15 +56,19 @@ final case class PureResolution[F[_], A](value: A) extends Resolution[F, A]
 final case class DeferredResolution[F[_], A](f: F[A]) extends Resolution[F, A]
 
 sealed trait GQLField[F[_], I, T] {
-  def graphqlType: Eval[GQLOutputType[T]]
+  def graphqlType: Eval[GQLOutputType[F, T]]
 
   def contramap[B](g: B => I): GQLField[F, B, T]
 }
 
+final case class GQLArgsType[A](
+    entries: NonEmptyList[(String, GQLInputType[_])]
+)
+
 final case class GQLArgField[F[_], I, A, T](
-    args: GQLInputType[A],
+    args: GQLArgsType[A],
     resolve: (I, A) => Resolution[F, T],
-    graphqlType: Eval[GQLOutputType[T]]
+    graphqlType: Eval[GQLOutputType[F, T]]
 ) extends GQLField[F, I, T] {
   def contramap[B](g: B => I): GQLField[F, B, T] =
     GQLArgField(args, (b, a) => resolve(g(b), a), graphqlType)
@@ -68,7 +76,7 @@ final case class GQLArgField[F[_], I, A, T](
 
 final case class GQLSimpleField[F[_], I, T](
     resolve: I => Resolution[F, T],
-    graphqlType: Eval[GQLOutputType[T]]
+    graphqlType: Eval[GQLOutputType[F, T]]
 ) extends GQLField[F, I, T] {
   def contramap[B](g: B => I): GQLField[F, B, T] =
     GQLSimpleField(g andThen resolve, graphqlType)
@@ -93,11 +101,11 @@ object Main extends App {
       F.defer(getFriends[F](name))
     )
 
-  implicit lazy val intType = GQLOutputScalarType("Int", Encoder.encodeInt)
+  implicit def intType[F[_]] = GQLOutputScalarType[F, Int]("Int", Encoder.encodeInt)
 
-  implicit lazy val stringType = GQLOutputScalarType("String", Encoder.encodeString)
+  implicit def stringType[F[_]] = GQLOutputScalarType[F, String]("String", Encoder.encodeString)
 
-  implicit def listTypeForSome[A](implicit of: GQLOutputType[A]) = GQLOutputListType(of)
+  implicit def listTypeForSome[F[_], A](implicit of: GQLOutputType[F, A]) = GQLOutputListType(of)
 
   import syntax._
   implicit def dataType[F[_]]: GQLOutputObjectType[F, Data[F]] =
@@ -110,14 +118,14 @@ object Main extends App {
 
   def root[F[_]: Sync] = getData[F]("John")
 
-  def renderType(tpe: GQLOutputType[_]): String = tpe match {
+  def renderType[F[_]](tpe: GQLOutputType[F, _]): String = tpe match {
     case GQLOutputObjectType(name, _) => name
     case GQLOutputListType(of)        => s"[${renderType(of)}]"
     case GQLOutputUnionType(name, _)  => name
     case GQLOutputScalarType(name, _) => name
   }
 
-  def render[A](root: GQLOutputType[A], accum: List[String], encountered: Set[String]): (List[String], Set[String]) =
+  def render[F[_], A](root: GQLOutputType[F, A], accum: List[String], encountered: Set[String]): (List[String], Set[String]) =
     root match {
       case GQLOutputObjectType(name, fields) =>
         lazy val thisType =
@@ -246,7 +254,7 @@ mutation {
 }
 """
 
-val q6 = s"""
+  val q6 = s"""
 query {
   user(id: 4) {
     id
@@ -277,5 +285,4 @@ query {
   tryParse(p, q4)
   tryParse(p, q5)
   tryParse(p, q6)
-  // tryParse(GQLParser.listValue, """["hello"]""")
 }

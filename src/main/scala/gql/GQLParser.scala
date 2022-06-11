@@ -199,12 +199,12 @@ object GQLParser {
 
   final case class FragmentDefinition(
       name: String,
-      typeCnd: Option[String],
+      typeCnd: String,
       directives: Option[Directives],
       selectionSet: SelectionSet
   )
   lazy val fragmentDefinition =
-    (P.string("fragment") *> fragmentName ~ typeCondition.? ~ directives.? ~ selectionSet).map { case (((n, t), d), s) =>
+    (P.string("fragment") *> fragmentName ~ typeCondition ~ directives.? ~ selectionSet).map { case (((n, t), d), s) =>
       FragmentDefinition(n, t, d, s)
     }
 

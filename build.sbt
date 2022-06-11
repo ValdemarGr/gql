@@ -6,7 +6,7 @@ lazy val sharedSettings = Seq(
   libraryDependencies ++= Seq(
     "org.typelevel" %% "cats-effect" % "3.3.5",
     "org.typelevel" %% "cats-collections-core" % "0.9.3",
-    "org.typelevel" %% "cats-mtl" % "1.1.1",
+    "org.typelevel" %% "cats-mtl" % "1.2.0",
     "co.fs2" %% "fs2-core" % "3.2.5",
     "co.fs2" %% "fs2-io" % "3.2.5",
     "org.typelevel" %% "munit-cats-effect-3" % "1.0.0",
