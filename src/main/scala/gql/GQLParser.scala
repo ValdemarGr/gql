@@ -15,6 +15,7 @@ object GQLParser {
 
   def w[A](p: P[A]): P[A] = p.surroundedBy((whiteSpace | lineTerminator).rep0)
   def t(c: Char): P[Unit] = w(P.char(c))
+  def s(s: String): P[Unit] = w(P.string(s))
 
   // if this is slow, use charWhile
   val sourceCharacter: P[Char] =
@@ -160,8 +161,8 @@ object GQLParser {
   lazy val selection: P[Selection] = {
     import Selection._
     field.map(FieldSelection(_)) |
-      fragmentSpread.map(FragmentSpreadSelection(_)) |
-      inlineFragment.map(InlineFragmentSelection(_))
+      inlineFragment.map(InlineFragmentSelection(_)) |
+      fragmentSpread.map(FragmentSpreadSelection(_))
   }
 
   final case class Field(
@@ -189,11 +190,11 @@ object GQLParser {
 
   final case class FragmentSpread(fragmentName: String, directives: Option[Directives])
   lazy val fragmentSpread =
-    P.string("...") *> (fragmentName ~ directives.?).map { case (n, d) => FragmentSpread(n, d) }
+    s("...") *> (fragmentName ~ directives.?).map { case (n, d) => FragmentSpread(n, d) }
 
   final case class InlineFragment(typeCondition: Option[String], directives: Option[Directives], selectionSet: SelectionSet)
   lazy val inlineFragment =
-    (P.string("...") *> typeCondition.? ~ directives.? ~ selectionSet).map { case ((t, d), s) => InlineFragment(t, d, s) }
+    (s("...") *> typeCondition.? ~ directives.? ~ selectionSet).map { case ((t, d), s) => InlineFragment(t, d, s) }
 
   final case class FragmentDefinition(
       name: String,
@@ -209,8 +210,8 @@ object GQLParser {
   lazy val fragmentName: P[String] =
     (!P.string("on")).with1 *> name
 
-  lazy val typeCondition =
-    P.string("on") *> name
+  lazy val typeCondition: P[String] =
+    s("on") *> name
 
   sealed trait Value
   object Value {
@@ -281,7 +282,7 @@ object GQLParser {
   lazy val directives: P[Directives] = directive.rep.map(Directives(_))
 
   final case class Directive(name: String, arguments: Option[Arguments])
-  lazy val directive: P[Directive] = P.string("@") *> (name ~ arguments.?).map { case (n, a) => Directive(n, a) }
+  lazy val directive: P[Directive] = s("@") *> (name ~ arguments.?).map { case (n, a) => Directive(n, a) }
 
   lazy val typeSystemDefinition =
     schemaDefinition |
@@ -496,8 +497,8 @@ object GQLParser {
     val d = P.char('"').map(_ => println("string value"))
     val tripple = d.rep(3, 3)
 
-    stringCharacter.rep.surroundedBy(d) |
-      blockStringCharacter.map(_.toString()).rep.surroundedBy(tripple)
+    blockStringCharacter.map(_.toString()).rep.surroundedBy(tripple) |
+      stringCharacter.rep.surroundedBy(d)
   }.map(_.mkString_(""))
 
   lazy val stringCharacter: P[String] =
