@@ -108,8 +108,8 @@ object GQLParser {
   }
   lazy val executableDefinition = {
     import ExecutableDefinition._
-    operationDefinition.map(Operation(_)) |
-      fragmentDefinition.map(Fragment(_))
+    fragmentDefinition.map(Fragment(_)) |
+      operationDefinition.map(Operation(_))
   }
 
   sealed trait OperationDefinition
@@ -161,7 +161,8 @@ object GQLParser {
   lazy val selection: P[Selection] = {
     import Selection._
     field.map(FieldSelection(_)) |
-      inlineFragment.map(InlineFragmentSelection(_)) |
+      // expects on, backtrack on failure
+      P.backtrack(inlineFragment).map(InlineFragmentSelection(_)) |
       fragmentSpread.map(FragmentSpreadSelection(_))
   }
 
@@ -173,12 +174,12 @@ object GQLParser {
       selectionSet: Option[SelectionSet]
   )
   lazy val field: P[Field] = P.defer {
-    (alias.?.with1 ~ name ~ arguments.? ~ directives.? ~ selectionSet.?).map { case ((((a, n), args), d), s) =>
+    (P.backtrack(alias).?.with1 ~ name ~ arguments.? ~ directives.? ~ selectionSet.?).map { case ((((a, n), args), d), s) =>
       Field(a, n, args, d, s)
     }
   }
 
-  lazy val alias = t(':') *> name
+  lazy val alias = name <* t(':')
 
   final case class Arguments(nel: NonEmptyList[Argument])
   lazy val arguments =
@@ -497,7 +498,7 @@ object GQLParser {
     val d = P.char('"').map(_ => println("string value"))
     val tripple = d.rep(3, 3)
 
-    blockStringCharacter.map(_.toString()).rep.surroundedBy(tripple) |
+    blockStringCharacter.map(_.toString()).rep.surroundedBy(P.backtrack(tripple)) |
       stringCharacter.rep.surroundedBy(d)
   }.map(_.mkString_(""))
 

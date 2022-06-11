@@ -246,6 +246,17 @@ mutation {
 }
 """
 
+val q6 = s"""
+query {
+  user(id: 4) {
+    id
+    name
+    smallPic: profilePic(size: 64)
+    bigPic: profilePic(size: 1024)
+  }
+}
+"""
+
   val p = GQLParser.executableDefinition.rep
   def tryParse[A](p: cats.parse.Parser[A], q: String): Unit =
     p.parseAll(q) match {
@@ -260,6 +271,11 @@ mutation {
       case Right(x) => println(x)
     }
 
+  tryParse(p, q)
+  tryParse(p, q2)
+  tryParse(p, q3)
+  tryParse(p, q4)
   tryParse(p, q5)
+  tryParse(p, q6)
   // tryParse(GQLParser.listValue, """["hello"]""")
 }
