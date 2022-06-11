@@ -11,7 +11,7 @@ sealed trait GQLOutputType[A]
 
 sealed trait GQLInputType[A]
 
-object GQL {
+object syntax {
   def outputObject[F[_], A](
       name: String,
       hd: (String, GQLField[F, A, _]),
@@ -99,7 +99,7 @@ object Main extends App {
 
   implicit def listTypeForSome[A](implicit of: GQLOutputType[A]) = GQLOutputListType(of)
 
-  import GQL._
+  import syntax._
   implicit def dataType[F[_]]: GQLOutputObjectType[F, Data[F]] =
     outputObject[F, Data[F]](
       "Data",
@@ -150,7 +150,6 @@ object Main extends App {
         )
     }
 
-  //override def run(args: List[String]): IO[ExitCode] = ???
   println(root[IO])
   println(dataType[IO])
   println(dataType[IO].fields)

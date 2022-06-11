@@ -1,0 +1,485 @@
+package gql
+
+import cats.implicits._
+import cats.parse.{Parser => P}
+import cats.parse.Rfc5234
+import cats.parse.Numbers
+import cats.parse.Parser0
+import cats.data.NonEmptyList
+
+// https://spec.graphql.org/June2018/#sec-Source-Text
+object GQLParser {
+  val whiteSpace = Rfc5234.wsp
+
+  val lineTerminator = Rfc5234.lf | Rfc5234.crlf | Rfc5234.cr
+
+  // if this is slow, use charWhile
+  val sourceCharacter: P[Char] =
+    P.charIn(('\u0020' to '\uFFFF') :+ '\u0009' :+ '\u000A' :+ '\u000D')
+
+  val unicodeBOM = P.char('\uFEFF')
+
+  val commentChar = (!lineTerminator *> sourceCharacter).void
+
+  val comment = (P.char('#') | Rfc5234.sp | commentChar).void
+
+  val comma = P.char(',')
+
+  val token =
+    punctuator |
+      name |
+      intValue |
+      floatValue |
+      stringValue
+
+  val ignored =
+    unicodeBOM |
+      whiteSpace |
+      lineTerminator |
+      comment |
+      comma
+
+  sealed trait Punctuator
+  object Punctuator {
+    case object `!` extends Punctuator
+    case object `$` extends Punctuator
+    case object `(` extends Punctuator
+    case object `)` extends Punctuator
+    case object `...` extends Punctuator
+    case object `:` extends Punctuator
+    case object `=` extends Punctuator
+    case object `@` extends Punctuator
+    case object `[` extends Punctuator
+    case object `]` extends Punctuator
+    case object `{` extends Punctuator
+    case object `|` extends Punctuator
+    case object `}` extends Punctuator
+  }
+
+  lazy val punctuator: P[Punctuator] = {
+    import Punctuator._
+    P.char('!').as(`!`) |
+      P.char('$').as(`$`) |
+      P.char('(').as(`(`) |
+      P.char(')').as(`)`) |
+      P.char('.').as(`...`) |
+      P.char(':').as(`:`) |
+      P.char('=').as(`=`) |
+      P.char('@').as(`@`) |
+      P.char('[').as(`[`) |
+      P.char(']').as(`]`) |
+      P.char('{').as(`{`) |
+      P.char('|').as(`|`)
+  }
+
+  lazy val name: P[String] = {
+    val rng = ('a' to 'z') :++ ('A' to 'Z') :+ '_'
+    val begin = P.charIn(rng)
+
+    val tl = begin | Numbers.digit
+
+    (begin ~ P.string0(tl)).map { case (c, s) => c + s }
+  }
+
+  val document = definition.rep
+
+  lazy val definition =
+    executableDefinition |
+      typeSystemDefinition |
+      typeSystemExtension
+
+  lazy val executableDefinition =
+    operationDefinition |
+      fragmentDefinition
+
+  lazy val operationDefinition =
+    (operationType ~ name.? ~ variableDefinitions.? ~ directives.? ~ selectionSet) | selectionSet
+
+  sealed trait OperationType
+  object OperationType {
+    case object Query extends OperationType
+    case object Mutation extends OperationType
+    case object Subscription extends OperationType
+  }
+
+  lazy val operationType = {
+    import OperationType._
+
+    P.string("query").as(Query) |
+      P.string("mutation").as(Mutation) |
+      P.string("subscription").as(Subscription)
+  }
+
+  final case class SelectionSet(selections: NonEmptyList[Selection])
+  lazy val selectionSet: P[SelectionSet] =
+    selection.rep.between(P.char('{'), P.char('}')).map(SelectionSet(_))
+
+  sealed trait Selection
+  object Selection {
+    final case class FieldSelection(field: Field) extends Selection
+    final case class FragmentSpreadSelection(fragmentSpread: FragmentSpread) extends Selection
+    final case class InlineFragmentSelection(inlineFragment: InlineFragment) extends Selection
+  }
+  lazy val selection: P[Selection] = {
+    import Selection._
+    field.map(FieldSelection(_)) |
+      fragmentSpread.map(FragmentSpreadSelection(_)) |
+      inlineFragment.map(InlineFragmentSelection(_))
+  }
+
+  final case class Field(
+      alias: Option[String],
+      name: String,
+      arguments: Option[Arguments],
+      directives: Option[Directives],
+      selectionSet: Option[SelectionSet]
+  )
+  lazy val field: P[Field] =
+    (alias.?.with1 ~ name ~ arguments.? ~ directives.? ~ selectionSet.?).map { case ((((a, n), args), d), s) =>
+      Field(a, n, args, d, s)
+    }
+
+  lazy val alias = name
+
+  final case class Arguments(nel: NonEmptyList[Argument])
+  lazy val arguments =
+    argument.rep.between(P.char('('), P.char(')')).map(Arguments)
+
+  final case class Argument(name: String, value: Value)
+  lazy val argument =
+    (name ~ (P.char(':') *> value)).map { case (n, v) => Argument(n, v) }
+
+  final case class FragmentSpread(fragmentName: String, directives: Option[Directives])
+  lazy val fragmentSpread =
+    P.string("...") *> (fragmentName ~ directives.?).map { case (n, d) => FragmentSpread(n, d) }
+
+  final case class InlineFragment(typeCondition: Option[String], directives: Option[Directives], selectionSet: SelectionSet)
+  lazy val inlineFragment =
+    (P.string("...") *> typeCondition.? ~ directives.? ~ selectionSet).map { case ((t, d), s) => InlineFragment(t, d, s) }
+
+  lazy val fragmentDefinition =
+    P.string("fragment") ~ fragmentName ~ typeCondition.? ~ directives.? ~ selectionSet
+
+  lazy val fragmentName: P[String] =
+    (!P.string("on")).with1 *> name
+
+  lazy val typeCondition =
+    P.string("on") *> name
+
+  sealed trait Value
+  object Value {
+    final case class VariableValue(v: String) extends Value
+    final case class IntValue(v: BigInt) extends Value
+    final case class FloatValue(v: String) extends Value
+    final case class StringValue(v: String) extends Value
+    final case class BooleanValue(v: Boolean) extends Value
+    case object NullValue extends Value
+    final case class EnumValue(v: String) extends Value
+    final case class ListValue(v: List[Value]) extends Value
+    final case class ObjectValue(v: List[(String, Value)]) extends Value
+  }
+  lazy val value: P[Value] = {
+    import Value._
+    variable.map(VariableValue(_)) |
+      intValue.map(IntValue(_)) |
+      floatValue.map(FloatValue(_)) |
+      stringValue.map(StringValue(_)) |
+      booleanValue.map(BooleanValue(_)) |
+      nullValue.as(NullValue) |
+      enumValue.map(EnumValue(_)) |
+      listValue.map(ListValue(_)) |
+      objectValue.map(ObjectValue(_))
+  }
+
+  lazy val booleanValue =
+    P.string("true").as(true) |
+      P.string("false").as(false)
+
+  lazy val nullValue: P[Unit] =
+    P.string("null")
+
+  lazy val enumValue: P[String] =
+    (!(booleanValue | nullValue)).with1 *> name
+
+  lazy val listValue =
+    (P.char('[') *> P.char(']')).as(Nil) |
+      value.rep.between(P.char('['), P.char(']')).map(_.toList)
+
+  lazy val objectValue =
+    (P.char('{') *> P.char('}')).as(Nil) |
+      objectField.rep.between(P.char('{'), P.char('}')).map(_.toList)
+
+  lazy val objectField =
+    name ~ (P.char(':') *> value)
+
+  lazy val variableDefinitions =
+    variableDefinition.rep.between(P.char('('), P.char(')'))
+
+  lazy val variableDefinition =
+    variable ~ (P.char(':') *> `type`) ~ defaultValue.?
+
+  lazy val variable =
+    P.char('$') *> name
+
+  lazy val defaultValue = value
+
+  lazy val namedType = name.map(Type.Named(_))
+
+  lazy val nonNullType: P[Type] =
+    namedType <* P.char('!') |
+      listType <* P.char('!')
+
+  final case class Directives(nel: NonEmptyList[Directive])
+  lazy val directives: P[Directives] = directive.rep.map(Directives(_))
+
+  final case class Directive(name: String, arguments: Option[Arguments])
+  lazy val directive: P[Directive] = P.string("@") *> (name ~ arguments.?).map { case (n, a) => Directive(n, a) }
+
+  lazy val typeSystemDefinition =
+    schemaDefinition |
+      typeDefinition |
+      directiveDefinition
+
+  lazy val typeSystemExtension =
+    schemaExtension |
+      typeExtension
+
+  lazy val schemaDefinition =
+    P.string("schema") *> directives.? ~ operationTypeDefinition.rep.between(P.char('{'), P.char('}'))
+
+  lazy val schemaExtension =
+    P.string("extend") *> P.string("schema") *> directives.? ~ operationTypeDefinition.rep.between(P.char('{'), P.char('}')) |
+      P.string("extend") *> P.string("schema") *> directives.?
+
+  lazy val operationTypeDefinition =
+    operationType ~ (P.char(':') *> namedType)
+
+  lazy val description = stringValue
+
+  lazy val typeDefinition =
+    scalarTypeDefinition |
+      objectTypeDefinition |
+      interfaceTypeDefinition |
+      unionTypeDefinition |
+      enumTypeDefinition |
+      inputObjectTypeDefinition
+
+  lazy val typeExtension =
+    scalarTypeExtension |
+      objectTypeExtension |
+      interfaceTypeExtension |
+      unionTypeExtension |
+      enumTypeExtension |
+      inputObjectTypeExtension
+
+  lazy val directiveDefinition =
+    (defaultValue.?.with1 ~ (P.string("directive") *> P.char('@') *> name) ~ argumentsDefinition.? ~ (P.string("on") *> directiveLocations))
+
+  lazy val scalarTypeDefinition =
+    description.?.with1 ~ (P.string("scalar") *> name) ~ directives.?
+
+  lazy val scalarTypeExtension =
+    P.string("extend") *> P.string("scalar") *> (name ~ directives.?)
+
+  lazy val objectTypeDefinition =
+    description.?.with1 ~ (P.string("type") *> name) ~ implementsInterface.? ~ directives.? ~ fieldsDefinition.?
+
+  lazy val objectTypeExtension =
+    P.string("extend") *> P.string("type") *> name ~ implementsInterface.? ~ directives.? ~ fieldsDefinition |
+      P.string("extend") *> P.string("type") *> name ~ implementsInterface.? ~ directives |
+      P.string("extend") *> P.string("type") *> name ~ implementsInterface
+
+  lazy val implementsInterface =
+    P.string("implements") *> P.char('&').? *> namedType.rep.between(P.char('{'), P.char('}'))
+
+  lazy val fieldsDefinition =
+    fieldDefinition.rep.between(P.char('{'), P.char('}'))
+
+  final case class FieldDefinition(
+      description: Option[String],
+      name: String,
+      argumentsDefinition: Option[ArgumentsDefinition],
+      `type`: Type,
+      directives: Option[Directives]
+  )
+  lazy val fieldDefinition =
+    (description.?.with1 ~ name ~ argumentsDefinition.? ~ (P.char(':') *> `type`) ~ directives.?).map { case ((((d, n), a), t), ds) =>
+      FieldDefinition(d, n, a, t, ds)
+    }
+
+  final case class ArgumentsDefinition(nel: NonEmptyList[InputValueDefinition])
+  lazy val argumentsDefinition =
+    inputValueDefinition.rep.between(P.char('('), P.char(')')).map(ArgumentsDefinition(_))
+
+  final case class InputValueDefinition(
+      description: Option[String],
+      name: String,
+      `type`: Type,
+      defaultValue: Option[Value],
+      directives: Option[Directives]
+  )
+  lazy val inputValueDefinition =
+    (description.?.with1 ~ name ~ (P.char(':') *> `type`) ~ defaultValue.? ~ directives.?).map { case ((((d, n), t), v), dirs) =>
+      InputValueDefinition(d, n, t, v, dirs)
+    }
+
+  lazy val interfaceTypeDefinition =
+    description.?.with1 ~ (P.string("interface") *> name) ~ directives.? ~ fieldsDefinition.?
+
+  lazy val interfaceTypeExtension =
+    P.string("extend") *> P.string("interface") *> name ~ directives.? ~ fieldsDefinition |
+      P.string("extend") *> P.string("interface") *> name ~ directives.?
+
+  lazy val unionTypeDefinition =
+    description.?.with1 ~ (P.string("union") *> name) ~ directives.? ~ unionMemberTypes.?
+
+  lazy val unionMemberTypes: P[NonEmptyList[Type.Named]] =
+    P.char('=') *> P.char('|').? *> namedType.map(NonEmptyList.one(_)) |
+      (unionMemberTypes ~ (P.char('|') *> namedType)).map { case (xs, x) => xs :+ x }
+
+  lazy val unionTypeExtension =
+    P.string("extend") *> P.string("union") *> name ~ directives.? ~ unionMemberTypes |
+      P.string("extend") *> P.string("union") *> name ~ directives
+
+  lazy val enumTypeDefinition =
+    description.?.with1 ~ (P.string("enum") *> name) ~ directives.? ~ enumValuesDefinition.?
+
+  lazy val enumValuesDefinition =
+    enumValueDefinition.rep.between(P.char('{'), P.char('}'))
+
+  lazy val enumValueDefinition =
+    description.?.with1 ~ name ~ directives.?
+
+  lazy val enumTypeExtension =
+    P.string("extend") *> P.string("enum") *> name ~ directives.? ~ enumValuesDefinition |
+      P.string("extend") *> P.string("enum") *> name ~ directives
+
+  lazy val inputObjectTypeDefinition =
+    description.?.with1 ~ (P.string("input") *> name) ~ directives.? ~ inputFieldsDefinition.?
+
+  lazy val inputFieldsDefinition =
+    inputValueDefinition.rep.between(P.char('{'), P.char('}'))
+
+  lazy val inputObjectTypeExtension =
+    P.string("extend") *> P.string("input") *> name ~ directives.? ~ inputFieldsDefinition |
+      P.string("extend") *> P.string("input") *> name ~ directives
+
+  final case class DirectivesDefinition(
+      description: Option[String],
+      name: String,
+      // arguments: Option[ArgumentsDefinition],
+      directiveLocations: NonEmptyList[DirectiveLocation]
+  )
+  lazy val directivesDefinition =
+    description.?.with1 ~ (P.string("directive") *> P.char('@') *> name) ~ argumentsDefinition.? ~ (P.string("on") *> directiveLocations)
+
+  lazy val directiveLocations: P[NonEmptyList[DirectiveLocation]] =
+    P.char('|').?.with1 *> directiveLocation.map(NonEmptyList.one(_)) |
+      (directiveLocations ~ (P.char('|') *> directiveLocation)).map { case (xs, x) => xs :+ x }
+
+  sealed trait DirectiveLocation
+  object DirectiveLocation {
+    final case class Executable(x: ExecutableDirectiveLocation) extends DirectiveLocation
+    final case class Type(x: TypeSystemDirectiveLocation) extends DirectiveLocation
+  }
+  lazy val directiveLocation: P[DirectiveLocation] =
+    executableDirectiveLocation.map(DirectiveLocation.Executable(_)) |
+      typeSystemDirectiveLocation.map(DirectiveLocation.Type(_))
+
+  sealed trait ExecutableDirectiveLocation
+  object ExecutableDirectiveLocation {
+    case object QUERY extends ExecutableDirectiveLocation
+    case object MUTATION extends ExecutableDirectiveLocation
+    case object SUBSCRIPTION extends ExecutableDirectiveLocation
+    case object FIELD extends ExecutableDirectiveLocation
+    case object FRAGMENT_DEFINITION extends ExecutableDirectiveLocation
+    case object FRAGMENT_SPREAD extends ExecutableDirectiveLocation
+    case object INLINE_FRAGMENT extends ExecutableDirectiveLocation
+  }
+  lazy val executableDirectiveLocation = {
+    import ExecutableDirectiveLocation._
+    P.string("QUERY").as(QUERY) |
+      P.string("MUTATION").as(MUTATION) |
+      P.string("SUBSCRIPTION").as(SUBSCRIPTION) |
+      P.string("FIELD").as(FIELD) |
+      P.string("FRAGMENT_DEFINITION").as(FRAGMENT_DEFINITION) |
+      P.string("FRAGMENT_SPREAD").as(FRAGMENT_SPREAD) |
+      P.string("INLINE_FRAGMENT").as(INLINE_FRAGMENT)
+  }
+
+  sealed trait TypeSystemDirectiveLocation
+  object TypeSystemDirectiveLocation {
+    case object SCHEMA extends TypeSystemDirectiveLocation
+    case object SCALAR extends TypeSystemDirectiveLocation
+    case object OBJECT extends TypeSystemDirectiveLocation
+    case object FIELD_DEFINITION extends TypeSystemDirectiveLocation
+    case object ARGUMENT_DEFINITION extends TypeSystemDirectiveLocation
+    case object INTERFACE extends TypeSystemDirectiveLocation
+    case object UNION extends TypeSystemDirectiveLocation
+    case object ENUM extends TypeSystemDirectiveLocation
+    case object ENUM_VALUE extends TypeSystemDirectiveLocation
+    case object INPUT_OBJECT extends TypeSystemDirectiveLocation
+    case object INPUT_FIELD_DEFINITION extends TypeSystemDirectiveLocation
+  }
+  lazy val typeSystemDirectiveLocation = {
+    import TypeSystemDirectiveLocation._
+    P.string("SCHEMA").as(SCHEMA) |
+      P.string("SCALAR").as(SCALAR) |
+      P.string("OBJECT").as(OBJECT) |
+      P.string("FIELD_DEFINITION").as(FIELD_DEFINITION) |
+      P.string("ARGUMENT_DEFINITION").as(ARGUMENT_DEFINITION) |
+      P.string("INTERFACE").as(INTERFACE) |
+      P.string("UNION").as(UNION) |
+      P.string("ENUM").as(ENUM) |
+      P.string("ENUM_VALUE").as(ENUM_VALUE) |
+      P.string("INPUT_OBJECT").as(INPUT_OBJECT) |
+      P.string("INPUT_FIELD_DEFINITION").as(INPUT_FIELD_DEFINITION)
+  }
+
+  lazy val intValue: P[BigInt] = integerPart
+
+  lazy val integerPart = Numbers.bigInt
+
+  lazy val floatValue = Numbers.jsonNumber
+
+  lazy val stringValue: P[String] = {
+    val d = P.char('"')
+    val tripple = d.rep(3, 3)
+    stringCharacter.rep.surroundedBy(d) |
+      blockStringCharacter.map(_.toString()).rep.surroundedBy(tripple)
+  }.map(_.mkString_(""))
+
+  lazy val stringCharacter: P[String] =
+    ((!(P.charIn('"', '\\') | lineTerminator)).with1 *> sourceCharacter.map(_.toString())) |
+      (P.string("\\u").as("\\u") ~ escapedUnicode).map { case (x, y) =>
+        x + y
+      } |
+      (P.charIn('\\') ~ escapedCharacter).map { case (x, y) => x.toString() + y }
+
+  lazy val escapedUnicode: P[String] =
+    P.charIn(('0' to '9') :++ ('a' to 'f') :++ ('A' to 'F')).rep(4, 4).map(_.mkString_(""))
+
+  lazy val escapedCharacter: P[Char] =
+    P.charIn('"', '\\', '/', 'b', 'f', 'n', 'r', 't')
+
+  lazy val blockStringCharacter: P[Char] = {
+    val qs = P.string("\"\"\"")
+    (!(qs | (P.char('\\') *> qs))).with1 *> sourceCharacter
+  }
+
+  sealed trait Type
+  object Type {
+    final case class Named(name: String) extends Type
+    final case class List(of: Type) extends Type
+    final case class NonNull(of: Type) extends Type
+  }
+  lazy val `type`: P[Type] = {
+    import Type._
+    namedType |
+      listType.map(List(_)) |
+      nonNullType.map(NonNull(_))
+  }
+
+  lazy val listType: P[Type] =
+    `type`.between(P.char('['), P.char(']'))
+}

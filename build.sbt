@@ -10,7 +10,7 @@ lazy val sharedSettings = Seq(
     "co.fs2" %% "fs2-core" % "3.2.5",
     "co.fs2" %% "fs2-io" % "3.2.5",
     "org.typelevel" %% "munit-cats-effect-3" % "1.0.0",
-    "org.typelevel" %% "cats-parse" % "0.3.6",
+    "org.typelevel" %% "cats-parse" % "0.3.7",
     "io.circe" %% "circe-core" % "0.14.1",
     "io.circe" %% "circe-generic" % "0.14.1",
     "io.circe" %% "circe-parser" % "0.14.1",
