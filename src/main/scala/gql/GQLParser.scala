@@ -13,6 +13,9 @@ object GQLParser {
 
   val lineTerminator = Rfc5234.lf | Rfc5234.crlf | Rfc5234.cr
 
+  def w[A](p: P[A]): P[A] = p.surroundedBy((whiteSpace | lineTerminator).rep0)
+  def t(c: Char): P[Unit] = w(P.char(c))
+
   // if this is slow, use charWhile
   val sourceCharacter: P[Char] =
     P.charIn(('\u0020' to '\uFFFF') :+ '\u0009' :+ '\u000A' :+ '\u000D')
@@ -23,7 +26,7 @@ object GQLParser {
 
   val comment = (P.char('#') | Rfc5234.sp | commentChar).void
 
-  val comma = P.char(',')
+  val comma = t(',')
 
   val token =
     punctuator |
@@ -56,7 +59,7 @@ object GQLParser {
     case object `}` extends Punctuator
   }
 
-  lazy val punctuator: P[Punctuator] = {
+  lazy val punctuator: P[Punctuator] = w {
     import Punctuator._
     P.char('!').as(`!`) |
       P.char('$').as(`$`) |
@@ -72,13 +75,13 @@ object GQLParser {
       P.char('|').as(`|`)
   }
 
-  lazy val name: P[String] = {
+  lazy val name: P[String] = w {
     val rng = ('a' to 'z') :++ ('A' to 'Z') :+ '_'
     val begin = P.charIn(rng)
 
     val tl = begin | Numbers.digit
 
-    (begin ~ P.string0(tl)).map { case (c, s) => c + s }
+    (begin ~ tl.rep0).map { case (c, s) => c + s.mkString }
   }
 
   final case class Document(nel: NonEmptyList[Definition])
@@ -135,7 +138,7 @@ object GQLParser {
     case object Subscription extends OperationType
   }
 
-  lazy val operationType = {
+  lazy val operationType = w {
     import OperationType._
 
     P.string("query").as(Query) |
@@ -144,8 +147,9 @@ object GQLParser {
   }
 
   final case class SelectionSet(selections: NonEmptyList[Selection])
-  lazy val selectionSet: P[SelectionSet] =
-    selection.rep.between(P.char('{'), P.char('}')).map(SelectionSet(_))
+  lazy val selectionSet: P[SelectionSet] = P.defer {
+    selection.rep.between(t('{'), t('}')).map(SelectionSet(_))
+  }
 
   sealed trait Selection
   object Selection {
@@ -167,20 +171,21 @@ object GQLParser {
       directives: Option[Directives],
       selectionSet: Option[SelectionSet]
   )
-  lazy val field: P[Field] =
+  lazy val field: P[Field] = P.defer {
     (alias.?.with1 ~ name ~ arguments.? ~ directives.? ~ selectionSet.?).map { case ((((a, n), args), d), s) =>
       Field(a, n, args, d, s)
     }
+  }
 
-  lazy val alias = name
+  lazy val alias = t(':') *> name
 
   final case class Arguments(nel: NonEmptyList[Argument])
   lazy val arguments =
-    argument.rep.between(P.char('('), P.char(')')).map(Arguments)
+    argument.rep.between(t('('), t(')')).map(Arguments)
 
   final case class Argument(name: String, value: Value)
   lazy val argument =
-    (name ~ (P.char(':') *> value)).map { case (n, v) => Argument(n, v) }
+    (name ~ (t(':') *> value)).map { case (n, v) => Argument(n, v) }
 
   final case class FragmentSpread(fragmentName: String, directives: Option[Directives])
   lazy val fragmentSpread =
@@ -219,7 +224,7 @@ object GQLParser {
     final case class ListValue(v: List[Value]) extends Value
     final case class ObjectValue(v: List[(String, Value)]) extends Value
   }
-  lazy val value: P[Value] = {
+  lazy val value: P[Value] = P.defer {
     import Value._
     variable.map(VariableValue(_)) |
       intValue.map(IntValue(_)) |
@@ -243,34 +248,34 @@ object GQLParser {
     (!(booleanValue | nullValue)).with1 *> name
 
   lazy val listValue =
-    (P.char('[') *> P.char(']')).as(Nil) |
-      value.rep.between(P.char('['), P.char(']')).map(_.toList)
+    (value <* comma.?).rep.between(t('['), t(']')).map(_.toList) |
+      (t('[') *> t(']')).as(Nil)
 
   lazy val objectValue =
-    (P.char('{') *> P.char('}')).as(Nil) |
-      objectField.rep.between(P.char('{'), P.char('}')).map(_.toList)
+    (objectField <* comma.?).rep.between(t('{'), t('}')).map(_.toList) |
+      (t('{') *> t('}')).as(Nil)
 
   lazy val objectField =
-    name ~ (P.char(':') *> value)
+    name ~ (t(':') *> value)
 
   final case class VariableDefinitions(nel: NonEmptyList[VariableDefinition])
   lazy val variableDefinitions =
-    variableDefinition.rep.between(P.char('('), P.char(')')).map(VariableDefinitions(_))
+    variableDefinition.rep.between(t('('), t(')')).map(VariableDefinitions(_))
 
   final case class VariableDefinition(name: String, tpe: Type, defaultValue: Option[Value])
   lazy val variableDefinition =
-    (variable ~ (P.char(':') *> `type`) ~ defaultValue.?).map { case ((n, t), d) => VariableDefinition(n, t, d) }
+    (variable ~ (t(':') *> `type`) ~ defaultValue.?).map { case ((n, t), d) => VariableDefinition(n, t, d) }
 
   lazy val variable =
-    P.char('$') *> name
+    t('$') *> name
 
   lazy val defaultValue = value
 
   lazy val namedType = name.map(Type.Named(_))
 
   lazy val nonNullType: P[Type] =
-    namedType <* P.char('!') |
-      listType <* P.char('!')
+    namedType <* t('!') |
+      listType <* t('!')
 
   final case class Directives(nel: NonEmptyList[Directive])
   lazy val directives: P[Directives] = directive.rep.map(Directives(_))
@@ -288,14 +293,14 @@ object GQLParser {
       typeExtension
 
   lazy val schemaDefinition =
-    P.string("schema") *> directives.? ~ operationTypeDefinition.rep.between(P.char('{'), P.char('}'))
+    P.string("schema") *> directives.? ~ operationTypeDefinition.rep.between(t('{'), t('}'))
 
   lazy val schemaExtension =
-    P.string("extend") *> P.string("schema") *> directives.? ~ operationTypeDefinition.rep.between(P.char('{'), P.char('}')) |
+    P.string("extend") *> P.string("schema") *> directives.? ~ operationTypeDefinition.rep.between(t('{'), t('}')) |
       P.string("extend") *> P.string("schema") *> directives.?
 
   lazy val operationTypeDefinition =
-    operationType ~ (P.char(':') *> namedType)
+    operationType ~ (t(':') *> namedType)
 
   lazy val description = stringValue
 
@@ -316,7 +321,7 @@ object GQLParser {
       inputObjectTypeExtension
 
   lazy val directiveDefinition =
-    (defaultValue.?.with1 ~ (P.string("directive") *> P.char('@') *> name) ~ argumentsDefinition.? ~ (P.string("on") *> directiveLocations))
+    (defaultValue.?.with1 ~ (P.string("directive") *> t('@') *> name) ~ argumentsDefinition.? ~ (P.string("on") *> directiveLocations))
 
   lazy val scalarTypeDefinition =
     description.?.with1 ~ (P.string("scalar") *> name) ~ directives.?
@@ -333,10 +338,10 @@ object GQLParser {
       P.string("extend") *> P.string("type") *> name ~ implementsInterface
 
   lazy val implementsInterface =
-    P.string("implements") *> P.char('&').? *> namedType.rep.between(P.char('{'), P.char('}'))
+    P.string("implements") *> t('&').? *> namedType.rep.between(t('{'), t('}'))
 
   lazy val fieldsDefinition =
-    fieldDefinition.rep.between(P.char('{'), P.char('}'))
+    fieldDefinition.rep.between(t('{'), t('}'))
 
   final case class FieldDefinition(
       description: Option[String],
@@ -346,13 +351,13 @@ object GQLParser {
       directives: Option[Directives]
   )
   lazy val fieldDefinition =
-    (description.?.with1 ~ name ~ argumentsDefinition.? ~ (P.char(':') *> `type`) ~ directives.?).map { case ((((d, n), a), t), ds) =>
+    (description.?.with1 ~ name ~ argumentsDefinition.? ~ (t(':') *> `type`) ~ directives.?).map { case ((((d, n), a), t), ds) =>
       FieldDefinition(d, n, a, t, ds)
     }
 
   final case class ArgumentsDefinition(nel: NonEmptyList[InputValueDefinition])
   lazy val argumentsDefinition =
-    inputValueDefinition.rep.between(P.char('('), P.char(')')).map(ArgumentsDefinition(_))
+    inputValueDefinition.rep.between(t('('), t(')')).map(ArgumentsDefinition(_))
 
   final case class InputValueDefinition(
       description: Option[String],
@@ -362,7 +367,7 @@ object GQLParser {
       directives: Option[Directives]
   )
   lazy val inputValueDefinition =
-    (description.?.with1 ~ name ~ (P.char(':') *> `type`) ~ defaultValue.? ~ directives.?).map { case ((((d, n), t), v), dirs) =>
+    (description.?.with1 ~ name ~ (t(':') *> `type`) ~ defaultValue.? ~ directives.?).map { case ((((d, n), t), v), dirs) =>
       InputValueDefinition(d, n, t, v, dirs)
     }
 
@@ -376,9 +381,10 @@ object GQLParser {
   lazy val unionTypeDefinition =
     description.?.with1 ~ (P.string("union") *> name) ~ directives.? ~ unionMemberTypes.?
 
-  lazy val unionMemberTypes: P[NonEmptyList[Type.Named]] =
-    P.char('=') *> P.char('|').? *> namedType.map(NonEmptyList.one(_)) |
-      (unionMemberTypes ~ (P.char('|') *> namedType)).map { case (xs, x) => xs :+ x }
+  lazy val unionMemberTypes: P[NonEmptyList[Type.Named]] = P.defer {
+    t('=') *> t('|').? *> namedType.map(NonEmptyList.one(_)) |
+      (unionMemberTypes ~ (t('|') *> namedType)).map { case (xs, x) => xs :+ x }
+  }
 
   lazy val unionTypeExtension =
     P.string("extend") *> P.string("union") *> name ~ directives.? ~ unionMemberTypes |
@@ -388,7 +394,7 @@ object GQLParser {
     description.?.with1 ~ (P.string("enum") *> name) ~ directives.? ~ enumValuesDefinition.?
 
   lazy val enumValuesDefinition =
-    enumValueDefinition.rep.between(P.char('{'), P.char('}'))
+    enumValueDefinition.rep.between(t('{'), t('}'))
 
   lazy val enumValueDefinition =
     description.?.with1 ~ name ~ directives.?
@@ -401,7 +407,7 @@ object GQLParser {
     description.?.with1 ~ (P.string("input") *> name) ~ directives.? ~ inputFieldsDefinition.?
 
   lazy val inputFieldsDefinition =
-    inputValueDefinition.rep.between(P.char('{'), P.char('}'))
+    inputValueDefinition.rep.between(t('{'), t('}'))
 
   lazy val inputObjectTypeExtension =
     P.string("extend") *> P.string("input") *> name ~ directives.? ~ inputFieldsDefinition |
@@ -414,11 +420,12 @@ object GQLParser {
       directiveLocations: NonEmptyList[DirectiveLocation]
   )
   lazy val directivesDefinition =
-    description.?.with1 ~ (P.string("directive") *> P.char('@') *> name) ~ argumentsDefinition.? ~ (P.string("on") *> directiveLocations)
+    description.?.with1 ~ (P.string("directive") *> t('@') *> name) ~ argumentsDefinition.? ~ (P.string("on") *> directiveLocations)
 
-  lazy val directiveLocations: P[NonEmptyList[DirectiveLocation]] =
-    P.char('|').?.with1 *> directiveLocation.map(NonEmptyList.one(_)) |
-      (directiveLocations ~ (P.char('|') *> directiveLocation)).map { case (xs, x) => xs :+ x }
+  lazy val directiveLocations: P[NonEmptyList[DirectiveLocation]] = P.defer {
+    t('|').?.with1 *> directiveLocation.map(NonEmptyList.one(_)) |
+      (directiveLocations ~ (t('|') *> directiveLocation)).map { case (xs, x) => xs :+ x }
+  }
 
   sealed trait DirectiveLocation
   object DirectiveLocation {
@@ -479,15 +486,16 @@ object GQLParser {
       P.string("INPUT_FIELD_DEFINITION").as(INPUT_FIELD_DEFINITION)
   }
 
-  lazy val intValue: P[BigInt] = integerPart
+  lazy val intValue: P[BigInt] = w(integerPart)
 
   lazy val integerPart = Numbers.bigInt
 
-  lazy val floatValue = Numbers.jsonNumber
+  lazy val floatValue = w(Numbers.jsonNumber)
 
-  lazy val stringValue: P[String] = {
-    val d = P.char('"')
+  lazy val stringValue: P[String] = w {
+    val d = P.char('"').map(_ => println("string value"))
     val tripple = d.rep(3, 3)
+
     stringCharacter.rep.surroundedBy(d) |
       blockStringCharacter.map(_.toString()).rep.surroundedBy(tripple)
   }.map(_.mkString_(""))
@@ -519,10 +527,10 @@ object GQLParser {
   lazy val `type`: P[Type] = {
     import Type._
     namedType |
-      listType.map(List(_)) |
-      nonNullType.map(NonNull(_))
+      P.defer(listType).map(List(_)) |
+      P.defer(nonNullType).map(NonNull(_))
   }
 
   lazy val listType: P[Type] =
-    `type`.between(P.char('['), P.char(']'))
+    `type`.between(t('['), t(']'))
 }

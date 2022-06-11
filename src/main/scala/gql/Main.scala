@@ -155,6 +155,45 @@ object Main extends App {
   println(dataType[IO].fields)
   val (res, _) = render(dataType[IO], Nil, Set.empty)
   println(res.mkString("\n"))
+
+  val q = """
+query FragmentTyping {
+  profiles(handles: ["zuck", "cocacola"]) {
+    handle
+    ...userFragment
+    ...pageFragment
+  }
+}
+
+fragment userFragment on User {
+  friends {
+    count
+  }
+}
+
+fragment pageFragment on Page {
+  likers {
+    count
+  }
+}
+  """
+
+  val p = GQLParser.executableDefinition.rep
+  def tryParse[A](p: cats.parse.Parser[A], q: String): Unit =
+    p.parseAll(q) match {
+      case Left(e) =>
+        val (left, right) = q.splitAt(e.failedAtOffset)
+        val conflict = s"<<${q(e.failedAtOffset)}>>"
+        val chunk = s"${left.takeRight(40)}$conflict${right.drop(1).take(40)}"
+        // val chunk = q.drop(math.min(e.failedAtOffset - 10, 0)).take(20)
+        val c = q(e.failedAtOffset)
+        println(s"failed with char $c at offset ${e.failedAtOffset} with code ${c.toInt}: ${e.expected}")
+        println(chunk)
+      case Right(x) => println(x)
+    }
+
+  tryParse(p, q)
+  // tryParse(GQLParser.listValue, """["hello"]""")
 }
 
 /*
