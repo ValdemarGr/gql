@@ -1,8 +1,24 @@
 # gql-test
 
 # Schema
-```
-import ...syntax._
+```scala
+// ....scala
+object syntax {
+  implicit def intScalar[F[_]]: ScalarType[F, Int] = ???
+  implicit def stringScalar[F[_]]: ScalarType[F, Int] = ???
+  implicit def listType[F[_], A](implicit t: OutputType[A]): ListOutputType[F, Int] = ???
+  
+  def pure[F[_], I, A](resolve: I => A)(implicit tpe: => OutputType[F, A]): Field[F, I, A] = ???
+  def effect[F[_], I, A](resolve: I => F[A])(implicit tpe: => OutputType[F, A]): Field[F, I, A] = ???
+  def outputObject[F[_], I](
+    name: String,
+    hd: (String, Field[F, I, _]),
+    tl: (String, Field[F, I, _])*
+  ): ObjectOutputType[F, I, A] = ???
+}
+
+// App.scala
+import ....syntax._
 
 final case class Data[F[_]](
   a: Int,
@@ -21,5 +37,4 @@ object Data {
 }
 
 def makeData[F[_]]: Data[F] = ???
-
 ```
