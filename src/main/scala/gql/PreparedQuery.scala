@@ -65,6 +65,12 @@ object PreparedQuery {
       selection: Prepared[F, T]
   ) extends PreparedField[F, I]
 
+  final case class PreparedLeaf[F[_], I, A](
+      name: String,
+      resolve: I => Resolution[F, A],
+      encode: A => Json
+  ) extends PreparedField[F, I]
+
   final case class FragmentDefinition[F[_], A](
       name: String,
       fields: NonEmptyList[PreparedField[F, A]]
@@ -141,48 +147,76 @@ object PreparedQuery {
     go(value).value
   }
 
-  def prepareSelections[F[_]](s: GQLParser.SelectionSet, schema: NonEmptyList[(String, GQLField[F, _, _])])(implicit
+  def prepareSelections[F[_]](s: GQLParser.SelectionSet, schema: NonEmptyList[(String, GQLField[F, _, _])], variableMap: Map[String, Json])(
+      implicit
       S: Stateful[F, AnalysisState[F]],
       F: MonadError[F, String]
-  ) = {
+  ): F[NonEmptyList[PreparedField[F, _]]] = {
     val schemaMap = schema.toNem
-    s.selections.traverse[F, Unit] {
+    s.selections.traverse[F, PreparedField[F, _]] {
       case GQLParser.Selection.FieldSelection(field) =>
         schemaMap.lookup(field.name) match {
-          case None => F.raiseError(s"unknown field name ${field.name}")
+          case None    => F.raiseError(s"unknown field name ${field.name}")
           case Some(f) =>
-            val checkArgsF =
+            // unify parameterized and non-prameterized fields by closing in parameters
+            val closedProgram: F[(Any => Resolution[F, Any], GQLOutputType[F, Any])] =
               (f, field.arguments) match {
                 case (GQLSimpleField(_, _), Some(_)) =>
                   F.raiseError(s"field ${field.name} has arguments, but none were expected")
-                case (GQLSimpleField(_, graphqlType), None) => F.unit
+                case (GQLSimpleField(resolve, graphqlType), None) =>
+                  F.pure((resolve.asInstanceOf[Any => Resolution[F, Any]], graphqlType.value))
                 case (GQLArgField(args, _, _), None) =>
                   F.raiseError(s"no arguments provided for ${field.name}, expected ${args.entries.size}")
-                case (GQLArgField(args, _, _), Some(provided)) =>
-                  /*
-                   * We need to verify a couple of things about arguments, and in the proper order:
-                   * 1. There are no provided arguments that are not expected.
-                   * 2. All expected arguments are either provided or have a default value.
-                   * 3. All provided arguments have the correct type.
-                   */
-                  val expectedMap = args.entries.toNem
-                  provided.nel.traverse[F, Unit] { p =>
-                    expectedMap.lookup(p.name) match {
-                      case None =>
-                        F.raiseError(
-                          s"unexpected argument ${p.name} in field ${field.name}, expected arguments are ${expectedMap.keys.mkString_(", ")}"
-                        )
-                      case Some(expectedType) =>
-                        F.unit
+                case (GQLArgField(args, resolve, graphqlType), Some(provided)) =>
+                  val providedMap = provided.nel.toList.map(x => x.name -> x.value).toMap
+                  val argResolution =
+                    args.entries
+                      .traverse { arg =>
+                        val res =
+                          providedMap
+                            .get(arg.name) match {
+                            case None    => arg.default.toRight(s"missing argument ${arg.name}")
+                            case Some(x) => transformValueToJsonRepr(x, variableMap).flatMap(j => arg.tpe.decode(j))
+                          }
+
+                        res.map(arg.name -> _)
+                      }
+                      .map(_.toList.toMap)
+
+                  F.fromEither(argResolution)
+                    .map(args.decode)
+                    .map { resolvedArg =>
+                      ((x: Any) => resolve.asInstanceOf[Any => Resolution[F, Any]](x, resolvedArg), graphqlType.value)
                     }
-                  }
-                  ???
               }
 
-            F.unit
+            // before we can finish this field, we need to prepare sub-selections
+            closedProgram.flatMap { case (resolve, tpe) =>
+              (tpe, field.selectionSet) match {
+                case (GQLOutputObjectType(name, fields), Some(ss)) =>
+                  prepareSelections(ss, fields, variableMap)
+                  ???
+                case (GQLOutputObjectType(name, _), None) =>
+                  F.raiseError(s"object type $name had no selections")
+                case (GQLOutputListType(GQLOutputObjectType(name, fields)), Some(ss)) =>
+                  prepareSelections(ss, fields, variableMap)
+                  ???
+                case (GQLOutputListType(GQLOutputObjectType(name, fields)), None) =>
+                  F.raiseError(s"object type $name in list had no selections")
+                case (GQLEnumType(name, encode, fromString), None) =>
+                  F.pure(PreparedLeaf(name, resolve, (x: Any) => Json.fromString(encode(x))))
+                case (GQLEnumType(name, _, _), Some(_)) =>
+                  F.raiseError(s"enum type $name cannot have selections")
+                case (GQLOutputScalarType(name, encoder), None) =>
+                  F.pure(PreparedLeaf(name, resolve, (x: Any) => encoder(x)))
+                case (GQLOutputScalarType(name, _), Some(_)) =>
+                  F.raiseError(s"scalar type $name cannot have selections")
+                case _ => ???
+              }
+            }
         }
-      case GQLParser.Selection.FragmentSpreadSelection(field) => F.unit
-      case GQLParser.Selection.InlineFragmentSelection(field) => F.unit
+      case GQLParser.Selection.FragmentSpreadSelection(field) => ???
+      case GQLParser.Selection.InlineFragmentSelection(field) => ???
     }
   }
 
@@ -202,7 +236,7 @@ object PreparedQuery {
               case GQLOutputUnionType(name, xs) =>
                 F.raiseError(s"fragment ${f.name} references union type $name, but unions are not allowed in fragments")
               case GQLOutputObjectType(name, fields) =>
-                prepareSelections(f.selectionSet, fields).attempt.flatMap {
+                prepareSelections(f.selectionSet, fields, null).attempt.flatMap {
                   case Left(err) => F.raiseError(s"in fragment ${f.name}: $err")
                   case Right(x)  => F.pure(x)
                 }

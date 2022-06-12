@@ -16,12 +16,12 @@ import gql.GQLParser.Value.IntValue
 import gql.GQLParser.Value.ListValue
 import gql.GQLParser.Value.StringValue
 
-sealed trait GQLOutputType[F[_], A]
+sealed trait GQLOutputType[F[_], +A]
 
 sealed trait GQLToplevelOutputType[F[_]]
 
 sealed trait GQLInputType[A] {
-  def decoder: Decoder[A]
+  def decode(value: Json): Either[String, A]
 }
 
 object syntax {
@@ -60,36 +60,65 @@ final case class GQLOutputScalarType[F[_], A](name: String, encoder: Encoder[A])
     GQLOutputScalarType(name, encoder.contramap(g))
 }
 
-final case class GQLInputScalarType[A](name: String, dec: Decoder[A]) {
-  lazy val decoder: Decoder[A] = dec.withErrorMessage(s"expected scalar $name")
+final case class GQLInputScalarType[A](name: String, dec: Decoder[A]) extends GQLInputType[A] {
+  def decode(value: Json): Either[String, A] = ???
 }
 
 final case class GQLInputOptionType[A](of: GQLInputType[A]) extends GQLInputType[Option[A]] {
-  lazy val decoder = Decoder.decodeOption(of.decoder).handleErrorWith { df =>
-    Decoder.failed(df.copy(message = s"expected null or ${df.message}"))
-  }
+  def decode(value: Json) =
+    if (value.isNull) Right(None)
+    else of.decode(value).map(Some(_))
 }
+
+final case class GQLInputField[A](
+    name: String,
+    tpe: GQLInputType[A],
+    default: Option[A] = None
+)
 
 final case class GQLInputObjectType[A](
     name: String,
-    dec: Decoder[A]
+    fields: NonEmptyList[GQLInputField[_]],
+    decoder: Map[String, _] => A
 ) extends GQLInputType[A] {
-  lazy val decoder = dec.withErrorMessage(s"expected object $name")
+  def addField[B](newField: GQLInputField[B]): GQLInputObjectType[(A, B)] =
+    GQLInputObjectType(name, newField :: fields, m => (decoder(m), m(newField.name).asInstanceOf[B]))
+
+  override def decode(value: Json): Either[String, A] =
+    value.asObject
+      .toRight(s"expected object for $name, got ${value.name}")
+      .map(_.toMap)
+      .flatMap { m =>
+        fields
+          .traverse { field =>
+            val res =
+              m
+                .get(field.name)
+                .map(field.tpe.decode) match {
+                case Some(outcome) => outcome
+                case None          => field.default.toRight(s"missing field ${field.name} in input object $name")
+              }
+
+            res.map(field.name -> _)
+          }
+      }
+      .map(_.toList.toMap)
+      .map(decoder)
 }
 
 final case class GQLEnumType[F[_], A](name: String, encode: A => String, fromString: PartialFunction[String, A])
     extends GQLOutputType[F, A]
     with GQLInputType[A] {
-  def decoder: Decoder[A] = Decoder.decodeString.emap { s =>
-    fromString.lift(s) match {
-      case None    => Left(s"could not decode $s for enum $name")
-      case Some(a) => Right(a)
+  def decode(value: Json): Either[String, A] =
+    value.asString match {
+      case None                    => Left(s"expected type string in enum $name")
+      case Some(fromString(value)) => Right(value)
+      case Some(other)             => Left(s"$other is not a member of enum $name")
     }
-  }
 }
 
-sealed trait Resolution[F[_], A]
-final case class PureResolution[F[_], A](value: A) extends Resolution[F, A]
+sealed trait Resolution[F[_], +A]
+final case class PureResolution[F[_], +A](value: A) extends Resolution[F, A]
 final case class DeferredResolution[F[_], A](f: F[A]) extends Resolution[F, A]
 
 sealed trait GQLField[F[_], I, T] {
@@ -98,9 +127,19 @@ sealed trait GQLField[F[_], I, T] {
   def contramap[B](g: B => I): GQLField[F, B, T]
 }
 
-final case class GQLArgsType[A](
-    entries: NonEmptyList[(String, GQLInputType[_])]
+final case class GQLArg[A](
+    name: String,
+    tpe: GQLInputType[A],
+    default: Option[A] = None
 )
+
+final case class GQLArgsType[A](
+    entries: NonEmptyList[GQLArg[_]],
+    decode: Map[String, _] => A
+) {
+  def addField[B](newArg: GQLArg[B]): GQLArgsType[(A, B)] =
+    GQLArgsType(newArg :: entries, m => (decode(m), m(newArg.name).asInstanceOf[B]))
+}
 
 final case class GQLArgField[F[_], I, A, T](
     args: GQLArgsType[A],
@@ -160,6 +199,7 @@ object Main extends App {
     case GQLOutputListType(of)        => s"[${renderType(of)}]"
     case GQLOutputUnionType(name, _)  => name
     case GQLOutputScalarType(name, _) => name
+    case GQLEnumType(name, _, _)      => name
   }
 
   def render[F[_], A](root: GQLOutputType[F, A], accum: List[String], encountered: Set[String]): (List[String], Set[String]) =
