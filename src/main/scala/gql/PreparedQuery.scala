@@ -8,44 +8,53 @@ import cats.mtl._
 import cats.mtl.implicits._
 import cats._
 import io.circe._
+import gql.GQLParser.Value.BooleanValue
+import gql.GQLParser.Value.VariableValue
+import gql.GQLParser.Value.FloatValue
+import gql.GQLParser.Value.IntValue
+import gql.GQLParser.Value.EnumValue
+import gql.GQLParser.Value.StringValue
+import gql.GQLParser.Value.ObjectValue
+import gql.GQLParser.Value.NullValue
+import gql.GQLParser.Value.ListValue
 
 object PreparedQuery {
   /*
-  * the query subset of the schema, with values closed in
-  * lets us easily reason with query complexity, planning, re-execution and not bother with bad argument states
-  *
-  * `
-  *   # "SubSelection" with type Fragment with fields that originate from D
-  *   fragment SubSelection on D {
-  *     dd # "dd" with type DataField with inner type Scalar
-  *   }
-  *
-  *   fragment DataSelection on Data { # "DataSelection" with type Fragment with fields that originate from Data
-  *     c { # "c" with type DataField and inner type Selection
-  *       ... on C1 { "C1" with type InlineSpread which points to C1
-  *         __typename # "__typename" with type DataField with inner type Scalar   
-  *       }
-  *       ... on C2 { "C2" with type InlineSpread which points to C2
-  *         __typename # "__typename" with type DataField with inner type Scalar   
-  *       }
-  *     }
-  *     d { # "d" with type DataField with inner type Selection
-  *       ... SubSelection # "SubSelection" with type FragmentSpread which points to SubSelection
-  *     }
-  *   }
-  *
-  *   query {
-  *     data { # "data" with type DataField and inner type Selection
-  *       a # "a" with type DataField with inner type Scalar
-  *       b { # "b" with type DataField with inner type Selection
-  *         ba # "ba" with type DataField with inner type Scalar
-  *       }
-  *       ... DataSelection # "DataSelection" with type FragmentSpread which points to DataSelection
-  *     }
-  *   }
-  * `
-  *
-  */
+   * the query subset of the schema, with values closed in
+   * lets us easily reason with query complexity, planning, re-execution and not bother with bad argument states
+   *
+   * `
+   *   # "SubSelection" with type Fragment with fields that originate from D
+   *   fragment SubSelection on D {
+   *     dd # "dd" with type DataField with inner type Scalar
+   *   }
+   *
+   *   fragment DataSelection on Data { # "DataSelection" with type Fragment with fields that originate from Data
+   *     c { # "c" with type DataField and inner type Selection
+   *       ... on C1 { "C1" with type InlineSpread which points to C1
+   *         __typename # "__typename" with type DataField with inner type Scalar
+   *       }
+   *       ... on C2 { "C2" with type InlineSpread which points to C2
+   *         __typename # "__typename" with type DataField with inner type Scalar
+   *       }
+   *     }
+   *     d { # "d" with type DataField with inner type Selection
+   *       ... SubSelection # "SubSelection" with type FragmentSpread which points to SubSelection
+   *     }
+   *   }
+   *
+   *   query {
+   *     data { # "data" with type DataField and inner type Selection
+   *       a # "a" with type DataField with inner type Scalar
+   *       b { # "b" with type DataField with inner type Selection
+   *         ba # "ba" with type DataField with inner type Scalar
+   *       }
+   *       ... DataSelection # "DataSelection" with type FragmentSpread which points to DataSelection
+   *     }
+   *   }
+   * `
+   *
+   */
   sealed trait Prepared[F[_], A]
 
   sealed trait PreparedField[F[_], A]
@@ -84,8 +93,8 @@ object PreparedQuery {
    */
   def prepare[F[_]](query: NonEmptyList[GQLParser.ExecutableDefinition]): F[Unit] = ???
 
-  final case class AnalysisState(
-      fragments: Set[String]
+  final case class AnalysisState[F[_]](
+      fragments: Map[String, FragmentDefinition[F, _]]
   )
 
   final case class Schema[F[_]](
@@ -95,8 +104,45 @@ object PreparedQuery {
       types: Map[String, GQLToplevelOutputType[F]]
   )
 
+  def valueName(value: GQLParser.Value): String = value match {
+    case ObjectValue(_)   => "object"
+    case EnumValue(_)     => "enum"
+    case StringValue(_)   => "string"
+    case IntValue(_)      => "int"
+    case BooleanValue(_)  => "boolean"
+    case VariableValue(_) => "variable"
+    case ListValue(_)     => "list"
+    case FloatValue(_)    => "float"
+    case NullValue        => "null"
+  }
+
+  def transformValueToJsonRepr(value: GQLParser.Value, variableMap: Map[String, Json]): Either[String, Json] = {
+    def go(value: GQLParser.Value): Eval[Either[String, Json]] =
+      value match {
+        case VariableValue(v) =>
+          Eval.now(Either.fromOption(variableMap.get(v), s"unable to find variable $v"))
+        case FloatValue(v) => Eval.now(Right(Json.fromJsonNumber(v)))
+        case ObjectValue(v) =>
+          Eval
+            .defer {
+              v.toList.traverse { case (k, v) =>
+                go(value).map(_.map(k -> _))
+              }
+            }
+            .map(xs => xs.sequence[Either[String, *], (String, Json)].map(ys => Json.fromJsonObject(JsonObject.fromIterable(ys))))
+        case ListValue(v)    => Eval.defer(v.traverse(go).map(_.sequence.map(Json.fromValues)))
+        case EnumValue(v)    => Eval.now(Right(Json.fromString(v)))
+        case StringValue(v)  => Eval.now(Right(Json.fromString(v)))
+        case BooleanValue(v) => Eval.now(Right(Json.fromBoolean(v)))
+        case IntValue(v)     => Eval.now(Right(Json.fromBigInt(v)))
+        case NullValue       => Eval.now(Right(Json.Null))
+      }
+
+    go(value).value
+  }
+
   def prepareSelections[F[_]](s: GQLParser.SelectionSet, schema: NonEmptyList[(String, GQLField[F, _, _])])(implicit
-      S: Stateful[F, AnalysisState],
+      S: Stateful[F, AnalysisState[F]],
       F: MonadError[F, String]
   ) = {
     val schemaMap = schema.toNem
@@ -113,6 +159,23 @@ object PreparedQuery {
                 case (GQLArgField(args, _, _), None) =>
                   F.raiseError(s"no arguments provided for ${field.name}, expected ${args.entries.size}")
                 case (GQLArgField(args, _, _), Some(provided)) =>
+                  /*
+                   * We need to verify a couple of things about arguments, and in the proper order:
+                   * 1. There are no provided arguments that are not expected.
+                   * 2. All expected arguments are either provided or have a default value.
+                   * 3. All provided arguments have the correct type.
+                   */
+                  val expectedMap = args.entries.toNem
+                  provided.nel.traverse[F, Unit] { p =>
+                    expectedMap.lookup(p.name) match {
+                      case None =>
+                        F.raiseError(
+                          s"unexpected argument ${p.name} in field ${field.name}, expected arguments are ${expectedMap.keys.mkString_(", ")}"
+                        )
+                      case Some(expectedType) =>
+                        F.unit
+                    }
+                  }
                   ???
               }
 
@@ -124,7 +187,7 @@ object PreparedQuery {
   }
 
   def prepareFragment[F[_]](f: GQLParser.FragmentDefinition, schema: Schema[F])(implicit
-      S: Stateful[F, AnalysisState],
+      S: Stateful[F, AnalysisState[F]],
       F: MonadError[F, String]
   ): F[Unit] =
     S.get.flatMap {

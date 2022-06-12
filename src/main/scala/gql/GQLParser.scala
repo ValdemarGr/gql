@@ -6,6 +6,8 @@ import cats.parse.Rfc5234
 import cats.parse.Numbers
 import cats.parse.Parser0
 import cats.data.NonEmptyList
+import io.circe.JsonNumber
+import io.circe.Json
 
 // https://spec.graphql.org/June2018/#sec-Source-Text
 object GQLParser {
@@ -218,7 +220,7 @@ object GQLParser {
   object Value {
     final case class VariableValue(v: String) extends Value
     final case class IntValue(v: BigInt) extends Value
-    final case class FloatValue(v: String) extends Value
+    final case class FloatValue(v: JsonNumber) extends Value
     final case class StringValue(v: String) extends Value
     final case class BooleanValue(v: Boolean) extends Value
     case object NullValue extends Value
@@ -492,7 +494,7 @@ object GQLParser {
 
   lazy val integerPart = Numbers.bigInt
 
-  lazy val floatValue = w(Numbers.jsonNumber)
+  lazy val floatValue: P[JsonNumber] = w(Numbers.jsonNumber).map(JsonNumber.fromString).collect { case Some(x) => x }
 
   lazy val stringValue: P[String] = w {
     val d = P.char('"').map(_ => println("string value"))

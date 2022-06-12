@@ -6,12 +6,23 @@ import cats.effect._
 import io.circe._
 import cats._
 import cats.arrow.FunctionK
+import gql.GQLParser.Value.VariableValue
+import gql.GQLParser.Value.FloatValue
+import gql.GQLParser.Value.NullValue
+import gql.GQLParser.Value.ObjectValue
+import gql.GQLParser.Value.EnumValue
+import gql.GQLParser.Value.BooleanValue
+import gql.GQLParser.Value.IntValue
+import gql.GQLParser.Value.ListValue
+import gql.GQLParser.Value.StringValue
 
 sealed trait GQLOutputType[F[_], A]
 
 sealed trait GQLToplevelOutputType[F[_]]
 
-sealed trait GQLInputType[A]
+sealed trait GQLInputType[A] {
+  def decoder: Decoder[A]
+}
 
 object syntax {
   def outputObject[F[_], A](
@@ -49,7 +60,33 @@ final case class GQLOutputScalarType[F[_], A](name: String, encoder: Encoder[A])
     GQLOutputScalarType(name, encoder.contramap(g))
 }
 
-final case class GQLInputScalarType[A](name: String, decoder: Decoder[A]) extends GQLInputType[A]
+final case class GQLInputScalarType[A](name: String, dec: Decoder[A]) {
+  lazy val decoder: Decoder[A] = dec.withErrorMessage(s"expected scalar $name")
+}
+
+final case class GQLInputOptionType[A](of: GQLInputType[A]) extends GQLInputType[Option[A]] {
+  lazy val decoder = Decoder.decodeOption(of.decoder).handleErrorWith { df =>
+    Decoder.failed(df.copy(message = s"expected null or ${df.message}"))
+  }
+}
+
+final case class GQLInputObjectType[A](
+    name: String,
+    dec: Decoder[A]
+) extends GQLInputType[A] {
+  lazy val decoder = dec.withErrorMessage(s"expected object $name")
+}
+
+final case class GQLEnumType[F[_], A](name: String, encode: A => String, fromString: PartialFunction[String, A])
+    extends GQLOutputType[F, A]
+    with GQLInputType[A] {
+  def decoder: Decoder[A] = Decoder.decodeString.emap { s =>
+    fromString.lift(s) match {
+      case None    => Left(s"could not decode $s for enum $name")
+      case Some(a) => Right(a)
+    }
+  }
+}
 
 sealed trait Resolution[F[_], A]
 final case class PureResolution[F[_], A](value: A) extends Resolution[F, A]
