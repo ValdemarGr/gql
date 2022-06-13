@@ -138,25 +138,25 @@ object PreparedQuery {
     go(value).value
   }
 
-  def prepareSelections[F[_]](s: GQLParser.SelectionSet, schema: NonEmptyList[(String, GQLField[F, _, _])], variableMap: Map[String, Json])(
-      implicit
-      S: Stateful[F, AnalysisState[F]],
-      F: MonadError[F, String]
-  ): F[Prepared[F, Any]] = {
+  def prepareSelections[F[_], G[_]](
+      s: GQLParser.SelectionSet,
+      schema: NonEmptyList[(String, GQLField[G, _, _])],
+      variableMap: Map[String, Json]
+  )(implicit F: MonadError[F, String], D: Defer[F]): F[Prepared[G, Any]] = D.defer {
     val schemaMap = schema.toNem
     s.selections
-      .traverse[F, PreparedField[F, Any]] {
+      .traverse[F, PreparedField[G, Any]] {
         case GQLParser.Selection.FieldSelection(field) =>
           schemaMap.lookup(field.name) match {
             case None    => F.raiseError(s"unknown field name ${field.name}")
             case Some(f) =>
               // unify parameterized and non-prameterized fields by closing in parameters
-              val closedProgram: F[(Any => Resolution[F, Any], GQLOutputType[F, Any])] =
+              val closedProgram: F[(Any => Resolution[G, Any], GQLOutputType[G, Any])] =
                 (f, field.arguments) match {
                   case (GQLSimpleField(_, _), Some(_)) =>
                     F.raiseError(s"field ${field.name} has arguments, but none were expected")
                   case (GQLSimpleField(resolve, graphqlType), None) =>
-                    F.pure((resolve.asInstanceOf[Any => Resolution[F, Any]], graphqlType.value))
+                    F.pure((resolve.asInstanceOf[Any => Resolution[G, Any]], graphqlType.value))
                   case (GQLArgField(args, _, _), None) =>
                     F.raiseError(s"no arguments provided for ${field.name}, expected ${args.entries.size}")
                   case (GQLArgField(args, resolve, graphqlType), Some(provided)) =>
@@ -178,20 +178,20 @@ object PreparedQuery {
                     F.fromEither(argResolution)
                       .map(args.decode)
                       .map { resolvedArg =>
-                        ((x: Any) => resolve.asInstanceOf[Any => Resolution[F, Any]](x, resolvedArg), graphqlType.value)
+                        ((x: Any) => resolve.asInstanceOf[Any => Resolution[G, Any]](x, resolvedArg), graphqlType.value)
                       }
                 }
 
               // before we can finish this field, we need to prepare sub-selections
               closedProgram.flatMap { case (resolve, tpe) =>
-                val prepF: F[Prepared[F, Any]] =
+                val prepF: F[Prepared[G, Any]] =
                   (tpe, field.selectionSet) match {
                     case (GQLOutputObjectType(_, fields), Some(ss)) =>
-                      prepareSelections(ss, fields, variableMap)
+                      prepareSelections[F, G](ss, fields, variableMap)
                     case (GQLOutputObjectType(name, _), None) =>
                       F.raiseError(s"object type $name had no selections")
                     case (GQLOutputListType(GQLOutputObjectType(name, fields)), Some(ss)) =>
-                      prepareSelections(ss, fields, variableMap)
+                      prepareSelections[F, G](ss, fields, variableMap)
                     case (GQLOutputListType(GQLOutputObjectType(name, fields)), None) =>
                       F.raiseError(s"object type $name in list had no selections")
                     case (GQLEnumType(name, encode, _), None) =>
@@ -220,27 +220,30 @@ object PreparedQuery {
       .map(Selection(_))
   }
 
-  def prepareFragment[F[_]](f: GQLParser.FragmentDefinition, schema: Schema[F])(implicit
+  def prepareFragment[F[_], G[_]](f: GQLParser.FragmentDefinition, schema: Schema[G])(implicit
       S: Stateful[F, AnalysisState[F]],
-      F: MonadError[F, String]
+      F: MonadError[F, String],
+      D: Defer[F]
   ): F[Unit] =
-    S.get.flatMap {
-      case state if state.fragments.contains(f.name) => F.raiseError(s"fragment by name ${f.name} defined more than once")
-      case state =>
-        schema.types.get(f.typeCnd) match {
-          case None => F.raiseError(s"fragment ${f.name} references unknown type ${f.typeCnd}")
-          case Some(x) =>
-            x match {
-              case GQLOutputScalarType(name, _) =>
-                F.raiseError(s"fragment ${f.name} references scalar type $name, but scalars are not allowed in fragments")
-              case GQLOutputUnionType(name, xs) =>
-                F.raiseError(s"fragment ${f.name} references union type $name, but unions are not allowed in fragments")
-              case GQLOutputObjectType(name, fields) =>
-                prepareSelections(f.selectionSet, fields, null).attempt.flatMap {
-                  case Left(err) => F.raiseError(s"in fragment ${f.name}: $err")
-                  case Right(x)  => F.pure(x)
-                }
-            }
-        }
+    D.defer {
+      S.get.flatMap {
+        case state if state.fragments.contains(f.name) => F.raiseError(s"fragment by name ${f.name} defined more than once")
+        case state =>
+          schema.types.get(f.typeCnd) match {
+            case None => F.raiseError(s"fragment ${f.name} references unknown type ${f.typeCnd}")
+            case Some(x) =>
+              x match {
+                case GQLOutputScalarType(name, _) =>
+                  F.raiseError(s"fragment ${f.name} references scalar type $name, but scalars are not allowed in fragments")
+                case GQLOutputUnionType(name, xs) =>
+                  F.raiseError(s"fragment ${f.name} references union type $name, but unions are not allowed in fragments")
+                case GQLOutputObjectType(name, fields) =>
+                  prepareSelections[F, G](f.selectionSet, fields, null).attempt.flatMap {
+                    case Left(err) => F.raiseError(s"in fragment ${f.name}: $err")
+                    case Right(x)  => F.pure(x)
+                  }
+              }
+          }
+      }
     }
 }
