@@ -65,12 +65,6 @@ object PreparedQuery {
       selection: Prepared[F, T]
   ) extends PreparedField[F, I]
 
-  final case class PreparedLeaf[F[_], I, A](
-      name: String,
-      resolve: I => Resolution[F, A],
-      encode: A => Json
-  ) extends PreparedField[F, I]
-
   final case class FragmentDefinition[F[_], A](
       name: String,
       fields: NonEmptyList[PreparedField[F, A]]
@@ -80,14 +74,11 @@ object PreparedQuery {
       reference: FragmentDefinition[F, A]
   ) extends PreparedField[F, A]
 
-  final case class Selection[F[_], A](
-      name: String,
-      fields: NonEmptyList[PreparedField[F, A]]
-  ) extends Prepared[F, A]
+  final case class Selection[F[_], A](fields: NonEmptyList[PreparedField[F, A]]) extends Prepared[F, A]
 
   final case class PreparedList[F[_], A](of: Prepared[F, A]) extends Prepared[F, List[A]]
 
-  final case class PreparedScalarType[F[_], A](x: GQLOutputScalarType[F, A]) extends AnyVal
+  final case class PreparedLeaf[F[_], A](name: String, encode: Encoder[A]) extends Prepared[F, A]
 
   /*
    * To prepare the query we must:
@@ -151,73 +142,82 @@ object PreparedQuery {
       implicit
       S: Stateful[F, AnalysisState[F]],
       F: MonadError[F, String]
-  ): F[NonEmptyList[PreparedField[F, _]]] = {
+  ): F[Prepared[F, Any]] = {
     val schemaMap = schema.toNem
-    s.selections.traverse[F, PreparedField[F, _]] {
-      case GQLParser.Selection.FieldSelection(field) =>
-        schemaMap.lookup(field.name) match {
-          case None    => F.raiseError(s"unknown field name ${field.name}")
-          case Some(f) =>
-            // unify parameterized and non-prameterized fields by closing in parameters
-            val closedProgram: F[(Any => Resolution[F, Any], GQLOutputType[F, Any])] =
-              (f, field.arguments) match {
-                case (GQLSimpleField(_, _), Some(_)) =>
-                  F.raiseError(s"field ${field.name} has arguments, but none were expected")
-                case (GQLSimpleField(resolve, graphqlType), None) =>
-                  F.pure((resolve.asInstanceOf[Any => Resolution[F, Any]], graphqlType.value))
-                case (GQLArgField(args, _, _), None) =>
-                  F.raiseError(s"no arguments provided for ${field.name}, expected ${args.entries.size}")
-                case (GQLArgField(args, resolve, graphqlType), Some(provided)) =>
-                  val providedMap = provided.nel.toList.map(x => x.name -> x.value).toMap
-                  val argResolution =
-                    args.entries
-                      .traverse { arg =>
-                        val res =
-                          providedMap
-                            .get(arg.name) match {
-                            case None    => arg.default.toRight(s"missing argument ${arg.name}")
-                            case Some(x) => transformValueToJsonRepr(x, variableMap).flatMap(j => arg.tpe.decode(j))
-                          }
+    s.selections
+      .traverse[F, PreparedField[F, Any]] {
+        case GQLParser.Selection.FieldSelection(field) =>
+          schemaMap.lookup(field.name) match {
+            case None    => F.raiseError(s"unknown field name ${field.name}")
+            case Some(f) =>
+              // unify parameterized and non-prameterized fields by closing in parameters
+              val closedProgram: F[(Any => Resolution[F, Any], GQLOutputType[F, Any])] =
+                (f, field.arguments) match {
+                  case (GQLSimpleField(_, _), Some(_)) =>
+                    F.raiseError(s"field ${field.name} has arguments, but none were expected")
+                  case (GQLSimpleField(resolve, graphqlType), None) =>
+                    F.pure((resolve.asInstanceOf[Any => Resolution[F, Any]], graphqlType.value))
+                  case (GQLArgField(args, _, _), None) =>
+                    F.raiseError(s"no arguments provided for ${field.name}, expected ${args.entries.size}")
+                  case (GQLArgField(args, resolve, graphqlType), Some(provided)) =>
+                    val providedMap = provided.nel.toList.map(x => x.name -> x.value).toMap
+                    val argResolution =
+                      args.entries
+                        .traverse { arg =>
+                          val res =
+                            providedMap
+                              .get(arg.name) match {
+                              case None    => arg.default.toRight(s"missing argument ${arg.name}")
+                              case Some(x) => transformValueToJsonRepr(x, variableMap).flatMap(j => arg.tpe.decode(j))
+                            }
 
-                        res.map(arg.name -> _)
+                          res.map(arg.name -> _)
+                        }
+                        .map(_.toList.toMap)
+
+                    F.fromEither(argResolution)
+                      .map(args.decode)
+                      .map { resolvedArg =>
+                        ((x: Any) => resolve.asInstanceOf[Any => Resolution[F, Any]](x, resolvedArg), graphqlType.value)
                       }
-                      .map(_.toList.toMap)
+                }
 
-                  F.fromEither(argResolution)
-                    .map(args.decode)
-                    .map { resolvedArg =>
-                      ((x: Any) => resolve.asInstanceOf[Any => Resolution[F, Any]](x, resolvedArg), graphqlType.value)
-                    }
-              }
+              // before we can finish this field, we need to prepare sub-selections
+              closedProgram.flatMap { case (resolve, tpe) =>
+                val prepF: F[Prepared[F, Any]] =
+                  (tpe, field.selectionSet) match {
+                    case (GQLOutputObjectType(_, fields), Some(ss)) =>
+                      prepareSelections(ss, fields, variableMap)
+                    case (GQLOutputObjectType(name, _), None) =>
+                      F.raiseError(s"object type $name had no selections")
+                    case (GQLOutputListType(GQLOutputObjectType(name, fields)), Some(ss)) =>
+                      prepareSelections(ss, fields, variableMap)
+                    case (GQLOutputListType(GQLOutputObjectType(name, fields)), None) =>
+                      F.raiseError(s"object type $name in list had no selections")
+                    case (GQLEnumType(name, encode, _), None) =>
+                      F.pure(PreparedLeaf(name, (x: Any) => Json.fromString(encode(x))))
+                    case (GQLEnumType(name, _, _), Some(_)) =>
+                      F.raiseError(s"enum type $name cannot have selections")
+                    case (GQLOutputScalarType(name, encoder), None) =>
+                      F.pure(PreparedLeaf(name, (x: Any) => encoder(x)))
+                    case (GQLOutputScalarType(name, _), Some(_)) =>
+                      F.raiseError(s"scalar type $name cannot have selections")
+                    case _ => ???
+                  }
 
-            // before we can finish this field, we need to prepare sub-selections
-            closedProgram.flatMap { case (resolve, tpe) =>
-              (tpe, field.selectionSet) match {
-                case (GQLOutputObjectType(name, fields), Some(ss)) =>
-                  prepareSelections(ss, fields, variableMap)
-                  ???
-                case (GQLOutputObjectType(name, _), None) =>
-                  F.raiseError(s"object type $name had no selections")
-                case (GQLOutputListType(GQLOutputObjectType(name, fields)), Some(ss)) =>
-                  prepareSelections(ss, fields, variableMap)
-                  ???
-                case (GQLOutputListType(GQLOutputObjectType(name, fields)), None) =>
-                  F.raiseError(s"object type $name in list had no selections")
-                case (GQLEnumType(name, encode, fromString), None) =>
-                  F.pure(PreparedLeaf(name, resolve, (x: Any) => Json.fromString(encode(x))))
-                case (GQLEnumType(name, _, _), Some(_)) =>
-                  F.raiseError(s"enum type $name cannot have selections")
-                case (GQLOutputScalarType(name, encoder), None) =>
-                  F.pure(PreparedLeaf(name, resolve, (x: Any) => encoder(x)))
-                case (GQLOutputScalarType(name, _), Some(_)) =>
-                  F.raiseError(s"scalar type $name cannot have selections")
-                case _ => ???
+                prepF.map { p =>
+                  PreparedDataField(
+                    field.name,
+                    resolve,
+                    p
+                  )
+                }
               }
-            }
-        }
-      case GQLParser.Selection.FragmentSpreadSelection(field) => ???
-      case GQLParser.Selection.InlineFragmentSelection(field) => ???
-    }
+          }
+        case GQLParser.Selection.FragmentSpreadSelection(field) => ???
+        case GQLParser.Selection.InlineFragmentSelection(field) => ???
+      }
+      .map(Selection(_))
   }
 
   def prepareFragment[F[_]](f: GQLParser.FragmentDefinition, schema: Schema[F])(implicit
