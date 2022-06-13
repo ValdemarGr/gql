@@ -17,6 +17,8 @@ import gql.GQLParser.Value.StringValue
 import gql.GQLParser.Value.ObjectValue
 import gql.GQLParser.Value.NullValue
 import gql.GQLParser.Value.ListValue
+import gql.GQLParser.OperationDefinition.Detailed
+import gql.GQLParser.OperationDefinition.Simple
 
 object PreparedQuery {
   /*
@@ -80,24 +82,15 @@ object PreparedQuery {
 
   final case class PreparedLeaf[F[_], A](name: String, encode: Encoder[A]) extends Prepared[F, A]
 
-  /*
-   * To prepare the query we must:
-   * 1. Parse the query
-   * 2. Typecheck the query
-   * 3. Close input parameters into resolve functions
-   *
-   * this function will perform 2. and 3. and expect 1. as input.
-   */
-  def prepare[F[_]](query: NonEmptyList[GQLParser.ExecutableDefinition]): F[Unit] = ???
-
   final case class AnalysisState[F[_]](
-      fragments: Map[String, FragmentDefinition[F, _]]
+      cachedFragments: Map[String, FragmentDefinition[F, _]],
+      cycleSet: Set[String]
   )
 
-  final case class Schema[F[_]](
-      queries: GQLOutputObjectType[F, Unit],
-      mutations: GQLOutputObjectType[F, Unit],
-      subscriptions: GQLOutputObjectType[F, Unit],
+  final case class Schema[F[_], Q, M, S](
+      queries: GQLOutputObjectType[F, Q],
+      mutations: GQLOutputObjectType[F, M],
+      subscriptions: GQLOutputObjectType[F, S],
       types: Map[String, GQLToplevelOutputType[F]]
   )
 
@@ -220,14 +213,15 @@ object PreparedQuery {
       .map(Selection(_))
   }
 
-  def prepareFragment[F[_], G[_]](f: GQLParser.FragmentDefinition, schema: Schema[G])(implicit
-      S: Stateful[F, AnalysisState[F]],
+  def prepareFragment[F[_], G[_]](f: GQLParser.FragmentDefinition, schema: Schema[G, _, _, _], variableMap: Map[String, Json])(implicit
+      S: Stateful[F, AnalysisState[G]],
       F: MonadError[F, String],
       D: Defer[F]
-  ): F[Unit] =
+  ): F[Prepared[G, Any]] =
     D.defer {
       S.get.flatMap {
-        case state if state.fragments.contains(f.name) => F.raiseError(s"fragment by name ${f.name} defined more than once")
+        case state if state.cycleSet.contains(f.name) =>
+          F.raiseError(s"fragment by name ${f.name} is cyclic, discovered through path ${state.cycleSet.mkString(" -> ")}")
         case state =>
           schema.types.get(f.typeCnd) match {
             case None => F.raiseError(s"fragment ${f.name} references unknown type ${f.typeCnd}")
@@ -238,7 +232,7 @@ object PreparedQuery {
                 case GQLOutputUnionType(name, xs) =>
                   F.raiseError(s"fragment ${f.name} references union type $name, but unions are not allowed in fragments")
                 case GQLOutputObjectType(name, fields) =>
-                  prepareSelections[F, G](f.selectionSet, fields, null).attempt.flatMap {
+                  prepareSelections[F, G](f.selectionSet, fields, variableMap).attempt.flatMap {
                     case Left(err) => F.raiseError(s"in fragment ${f.name}: $err")
                     case Right(x)  => F.pure(x)
                   }
@@ -246,4 +240,43 @@ object PreparedQuery {
           }
       }
     }
+
+  final case class PreparedSchema[F[_], Q, M, S](
+      query: Prepared[F, Q],
+      mutation: Option[Prepared[F, M]],
+      subscription: Option[Prepared[F, S]]
+  )
+
+  // mapping from variable name to value and type
+  final case class VariableMap(value: Map[String, (String, GQLParser.Type)]) extends AnyVal
+
+  def prepare[F[_], Q, M, S](
+      executabels: NonEmptyList[GQLParser.ExecutableDefinition],
+      schema: Schema[F, Q, M, S],
+      variableMap: Map[String, Json]
+  ): Either[String, PreparedSchema[F, Q, M, S]] = {
+    val (ops, frags) =
+      executabels.toList.partitionEither {
+        case GQLParser.ExecutableDefinition.Operation(op)  => Left(op)
+        case GQLParser.ExecutableDefinition.Fragment(frag) => Right(frag)
+      }
+
+    // blabla check args first
+    ops.map {
+      case Simple(_)                                            => ???
+      case Detailed(tpe, name, None, _, _)                      => ???
+      case Detailed(tpe, name, Some(variableDefinitions), _, _) => ???
+    }
+
+    type G[A] = StateT[EitherT[Eval, String, *], AnalysisState[F], A]
+
+    val o = prepareFragment[G, F](null, schema, variableMap)
+
+    o
+      .runA(AnalysisState(Map.empty, Set.empty))
+      .value
+      .value
+
+    ???
+  }
 }
