@@ -19,6 +19,7 @@ import gql.GQLParser.Value.NullValue
 import gql.GQLParser.Value.ListValue
 import gql.GQLParser.OperationDefinition.Detailed
 import gql.GQLParser.OperationDefinition.Simple
+import gql.Types._
 
 object PreparedQuery {
   /*
@@ -55,7 +56,6 @@ object PreparedQuery {
    *     }
    *   }
    * `
-   *
    */
   sealed trait Prepared[F[_], A]
 
