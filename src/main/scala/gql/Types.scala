@@ -4,6 +4,7 @@ import cats.implicits._
 import cats.data._
 import io.circe._
 import Value._
+import cats.Eval
 
 object Types {
   sealed trait Input[A] {
@@ -16,6 +17,7 @@ object Types {
         if (value.asJson.isNull) Right(None)
         else of.decode(value).map(Some(_))
     }
+    // optimization, use a stack instead of a map since we know the order of decoders
     final case class Object[A](
         name: String,
         fields: NonEmptyList[Object.Field[_]],
@@ -72,9 +74,51 @@ object Types {
     }
   }
 
-  sealed trait Output[A]
+  sealed trait Output[F[_], A]
 
-  object Output {}
+  object Output {
+    final case class Arr[F[_], A](of: Output[F, A]) extends Output[F, List[A]]
+
+    final case class Object[F[_], A](
+        name: String,
+        fields: NonEmptyList[(String, Object.Field[F, A, _])]
+    ) extends Output[F, A]
+    object Object {
+      sealed trait Resolution[F[_], +A]
+      final case class PureResolution[F[_], +A](value: A) extends Resolution[F, A]
+      final case class DeferredResolution[F[_], A](f: F[A]) extends Resolution[F, A]
+
+      sealed trait Field[F[_], I, T] {
+        def output: Eval[Output[F, T]]
+      }
+
+      final case class SimpleField[F[_], I, T](
+          resolve: I => Resolution[F, T],
+          output: Eval[Output[F, T]]
+      )
+
+      final case class Arg[A](
+          name: String,
+          input: Input[A],
+          default: Option[A] = None
+      )
+
+      // optimization, use a stack instead of a map since we know the order of decoders
+      final case class Args[A](
+          entries: NonEmptyList[Arg[_]],
+          decode: Map[String, _] => A
+      ) {
+        def addField[B](newArg: Arg[B]): Args[(A, B)] =
+          Args(newArg :: entries, m => (decode(m), m(newArg.name).asInstanceOf[B]))
+      }
+
+      final case class ArgField[F[_], I, T, A](
+          args: Args[A],
+          resolve: I => Resolution[F, T],
+          output: Eval[Output[F, T]]
+      )
+    }
+  }
 
   final case class Scalar[A](name: String, decoder: Decoder[A]) extends Input[A] {
     def decode(value: Value): Either[String, A] = decoder.decodeJson(value.asJson).leftMap(_.show)
