@@ -9,7 +9,10 @@ sealed trait Value {
 }
 
 /*
- * GraphQL values are a strict superset of JSON, so in addition to json, extra information is embedded.
+ * GraphQL values are a strict superset of JSON.
+ * Types that nest other types such as list and object must preserve the information that GraphQL values contain.
+ * Enums and Strings in GraphQL are for instance represented as strings, but a string which is provided as a GraphQL value
+ * shouldn't be allowed as an enum value.
  */
 object Value {
   final case class JsonValue(value: Json) extends Value {
