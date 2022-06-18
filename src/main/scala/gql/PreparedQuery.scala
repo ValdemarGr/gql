@@ -273,7 +273,7 @@ object PreparedQuery {
       executabels: NonEmptyList[GQLParser.ExecutableDefinition],
       schema: Types.Schema[F, Q],
       variableMap: Map[String, Json]
-  ): Either[String, PreparedSchema[F, Q]] = {
+  ): Either[String, FragmentDefinition[F, Any]] = {
     val (ops, frags) =
       executabels.toList.partitionEither {
         case GQLParser.ExecutableDefinition.Operation(op)  => Left(op)
@@ -281,21 +281,26 @@ object PreparedQuery {
       }
 
     // blabla check args first
-    ops.map {
-      case Simple(_)                                            => ???
-      case Detailed(tpe, name, None, _, _)                      => ???
-      case Detailed(tpe, name, Some(variableDefinitions), _, _) => ???
-    }
+    // ops.map {
+    //   case Simple(_)                                            => ???
+    //   case Detailed(tpe, name, None, _, _)                      => ???
+    //   case Detailed(tpe, name, Some(variableDefinitions), _, _) => ???
+    // }
 
     type G[A] = StateT[EitherT[Eval, String, *], AnalysisState[F], A]
 
-    val o = prepareFragment[G, F](null, schema, variableMap)
+    val o = prepareFragment[G, F](frags.head, schema, variableMap)
 
     o
-      .runA(AnalysisState(Map.empty, Set.empty))
+      .runA(
+        AnalysisState(
+          frags.map { fd =>
+            fd.name -> FragmentAnalysis.Unevaluated[F](fd)
+          }.toMap,
+          Set.empty
+        )
+      )
       .value
       .value
-
-    ???
   }
 }
