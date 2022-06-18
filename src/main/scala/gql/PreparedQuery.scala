@@ -82,8 +82,14 @@ object PreparedQuery {
 
   final case class PreparedLeaf[F[_], A](name: String, encode: A => Either[String, Json]) extends Prepared[F, A]
 
+  sealed trait FragmentAnalysis[F[_]]
+  object FragmentAnalysis {
+    final case class Cached[F[_]](fd: FragmentDefinition[F, Any]) extends FragmentAnalysis[F]
+    final case class Unevaluated[F[_]](fd: GQLParser.FragmentDefinition) extends FragmentAnalysis[F]
+  }
+
   final case class AnalysisState[F[_]](
-      cachedFragments: Map[String, FragmentDefinition[F, _]],
+      fragments: Map[String, FragmentAnalysis[F]],
       cycleSet: Set[String]
   )
 
@@ -128,10 +134,11 @@ object PreparedQuery {
 
   def prepareSelections[F[_], G[_]](
       s: GQLParser.SelectionSet,
-      schema: NonEmptyList[(String, Types.Output.Object.Field[G, _, _])],
+      types: NonEmptyList[(String, Types.Output.Object.Field[G, _, _])],
+      schema: Types.Schema[G, _],
       variableMap: Map[String, Json]
-  )(implicit F: MonadError[F, String], D: Defer[F]): F[Prepared[G, Any]] = D.defer {
-    val schemaMap = schema.toNem
+  )(implicit S: Stateful[F, AnalysisState[G]], F: MonadError[F, String], D: Defer[F]): F[NonEmptyList[PreparedField[G, Any]]] = D.defer {
+    val schemaMap = types.toNem
     s.selections
       .traverse[F, PreparedField[G, Any]] {
         case GQLParser.Selection.FieldSelection(field) =>
@@ -172,11 +179,11 @@ object PreparedQuery {
                 val prepF: F[Prepared[G, Any]] =
                   (tpe, field.selectionSet) match {
                     case (Types.Output.Object(_, fields), Some(ss)) =>
-                      prepareSelections[F, G](ss, fields, variableMap)
+                      prepareSelections[F, G](ss, fields, schema, variableMap).map(Selection(_))
                     case (Types.Output.Object(name, _), None) =>
                       F.raiseError(s"object type $name had no selections")
                     case (Types.Output.Arr(Types.Output.Object(name, fields)), Some(ss)) =>
-                      prepareSelections[F, G](ss, fields, variableMap)
+                      prepareSelections[F, G](ss, fields, schema, variableMap).map(Selection(_))
                     case (Types.Output.Arr(Types.Output.Object(name, fields)), None) =>
                       F.raiseError(s"object type $name in list had no selections")
                     case (c @ Types.Output.Enum(_), None) =>
@@ -199,66 +206,47 @@ object PreparedQuery {
                 }
               }
           }
-        case GQLParser.Selection.FragmentSpreadSelection(field) => ???
+        case GQLParser.Selection.FragmentSpreadSelection(field) =>
+          S.get.flatMap { state =>
+            if (state.cycleSet.contains(field.fragmentName)) {
+              F.raiseError(s"fragment by name ${field.fragmentName} is cyclic, discovered through path ${state.cycleSet.mkString(" -> ")}")
+            } else {
+              val fa: F[FragmentDefinition[G, Any]] =
+                S.modify(s => s.copy(cycleSet = s.cycleSet + field.fragmentName)) >>
+                  D.defer {
+                    state.fragments.get(field.fragmentName) match {
+                      case None => F.raiseError[FragmentDefinition[G, Any]](s"fragment by name ${field.fragmentName} not found")
+                      case Some(FragmentAnalysis.Unevaluated(fd)) => prepareFragment(fd, schema, variableMap)
+                      case Some(FragmentAnalysis.Cached(p))       => F.pure(p)
+                    }
+                  } <* S.modify(s => s.copy(cycleSet = s.cycleSet - field.fragmentName))
+
+              fa.map(PreparedFragmentReference(_))
+            }
+          }
         case GQLParser.Selection.InlineFragmentSelection(field) => ???
       }
-      .map(Selection(_))
   }
-
-  // def prepareFragment[F[_], G[_]](f: GQLParser.FragmentDefinition, schema: Schema[G, _], variableMap: Map[String, Json])(implicit
-  //     S: Stateful[F, AnalysisState[G]],
-  //     F: MonadError[F, String],
-  //     D: Defer[F]
-  // ): F[Prepared[G, Any]] =
-  //   D.defer {
-  //     S.get.flatMap {
-  //       case state if state.cycleSet.contains(f.name) =>
-  //         F.raiseError(s"fragment by name ${f.name} is cyclic, discovered through path ${state.cycleSet.mkString(" -> ")}")
-  //       case state =>
-  //         schema.types.get(f.typeCnd) match {
-  //           case None => F.raiseError(s"fragment ${f.name} references unknown type ${f.typeCnd}")
-  //           case Some(x) =>
-  //             x match {
-  //               case GQLOutputScalarType(name, _) =>
-  //                 F.raiseError(s"fragment ${f.name} references scalar type $name, but scalars are not allowed in fragments")
-  //               case GQLOutputUnionType(name, xs) =>
-  //                 F.raiseError(s"fragment ${f.name} references union type $name, but unions are not allowed in fragments")
-  //               case GQLOutputObjectType(name, fields) =>
-  //                 prepareSelections[F, G](f.selectionSet, fields, variableMap).attempt.flatMap {
-  //                   case Left(err) => F.raiseError(s"in fragment ${f.name}: $err")
-  //                   case Right(x)  => F.pure(x)
-  //                 }
-  //             }
-  //         }
-  //     }
-  //   }
 
   def prepareFragment[F[_], G[_]](f: GQLParser.FragmentDefinition, schema: Types.Schema[G, _], variableMap: Map[String, Json])(implicit
       S: Stateful[F, AnalysisState[G]],
       F: MonadError[F, String],
       D: Defer[F]
-  ): F[Prepared[G, Any]] =
+  ): F[FragmentDefinition[G, Any]] =
     D.defer {
-      S.get.flatMap {
-        case state if state.cycleSet.contains(f.name) =>
-          F.raiseError(s"fragment by name ${f.name} is cyclic, discovered through path ${state.cycleSet.mkString(" -> ")}")
-        case state =>
-          schema.types.get(f.typeCnd) match {
-            case None => F.raiseError(s"fragment ${f.name} references unknown type ${f.typeCnd}")
-            case Some(Types.Output.Object(name, fields)) =>
-              prepareSelections[F, G](f.selectionSet, fields, variableMap).attempt.flatMap {
-                case Left(err) => F.raiseError(s"in fragment ${f.name}: $err")
-                case Right(x)  => F.pure(x)
-              }
-            case Some(ot) =>
-              F.raiseError(s"fragment ${f.name} references scalar type ${ot.name}, but scalars are not allowed in fragments")
+      schema.types.get(f.typeCnd) match {
+        case None => F.raiseError(s"fragment ${f.name} references unknown type ${f.typeCnd}")
+        case Some(Types.Output.Object(name, fields)) =>
+          prepareSelections[F, G](f.selectionSet, fields, schema, variableMap).attempt.flatMap {
+            case Left(err) => F.raiseError(s"in fragment ${f.name}: $err")
+            case Right(x)  => F.pure(FragmentDefinition(f.name, x))
           }
+        case Some(ot) =>
+          F.raiseError(s"fragment ${f.name} references scalar type ${ot.name}, but scalars are not allowed in fragments")
       }
     }
 
-  final case class PreparedSchema[F[_], Q](
-      query: Prepared[F, Q]
-  )
+  final case class PreparedSchema[F[_], Q](query: Prepared[F, Q])
 
   // mapping from variable name to value and type
   final case class VariableMap(value: Map[String, (String, GQLParser.Type)]) extends AnyVal
