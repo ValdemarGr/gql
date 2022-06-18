@@ -7,6 +7,11 @@ import Value._
 import cats._
 
 object Types {
+  final case class Schema[F[_], Q](
+      query: Output.Object[F, Q],
+      types: Map[String, Output[F, _]]
+  )
+
   sealed trait Input[A] {
     def decode(value: Value): Either[String, A]
   }
@@ -131,17 +136,23 @@ object Types {
     }
   }
 
-  sealed trait Output[F[_], A] {
+  sealed trait Output[F[_], +A] {
     def mapK[G[_]](fk: F ~> G): Output[G, A]
+
+    def name: String
   }
 
   object Output {
     final case class Arr[F[_], A](of: Output[F, A]) extends Output[F, Vector[A]] {
       def mapK[G[_]](fk: F ~> G): Output[G, Vector[A]] = Arr(of.mapK(fk))
+
+      def name: String = s"[${of.name}]"
     }
 
     final case class Opt[F[_], A](of: Output[F, A]) extends Output[F, Option[A]] {
       def mapK[G[_]](fk: F ~> G): Output[G, Option[A]] = Opt(of.mapK(fk))
+
+      def name: String = s"(${of.name} | null)"
     }
 
     final case class Object[F[_], A](
@@ -237,11 +248,24 @@ object Types {
     final case class Scalar[F[_], A](codec: ScalarCodec[A]) extends Output[F, A] {
       override def mapK[G[_]](fk: F ~> G): Scalar[G, A] =
         Scalar(codec)
+
+      override def name: String = codec.name
     }
 
     final case class Enum[F[_], A](codec: EnumCodec[A]) extends Output[F, A] {
       override def mapK[G[_]](fk: F ~> G): Output[G, A] =
         Enum(codec)
+
+      lazy val reverseMapping =
+        codec.fields.toNel.toList.map { case (k, v) => v -> k }.toMap
+
+      def encode(a: A): Either[String, String] =
+        reverseMapping.get(a) match {
+          case None        => Left(s"unknown enum value $a for enum type ${codec.name}")
+          case Some(value) => Right(value)
+        }
+
+      override def name: String = codec.name
     }
   }
 
