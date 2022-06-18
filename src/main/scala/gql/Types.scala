@@ -79,13 +79,28 @@ object Types {
     object Object {
       final case class Fields[A](
           fields: NonEmptyVector[Object.Field[_]],
-          decoder: List[_] => A
+          decoder: List[_] => (List[_], A)
       )
+      object Fields {
+        def apply[A](field: Field[A]): Fields[A] =
+          Fields(
+            NonEmptyVector.one(field),
+            { s => (s.tail, s.head.asInstanceOf[A]) }
+          )
+      }
       implicit lazy val applyForFields = new Apply[Fields] {
         override def map[A, B](fa: Fields[A])(f: A => B): Fields[B] =
-          Fields(fa.fields, fa.decoder andThen f)
+          Fields(fa.fields, fa.decoder andThen { case (s, a) => (s, f(a)) })
 
-        override def ap[A, B](ff: Fields[A => B])(fa: Fields[A]): Fields[B] = ???
+        override def ap[A, B](ff: Fields[A => B])(fa: Fields[A]): Fields[B] =
+          Fields(
+            ff.fields ++: fa.fields,
+            { s1 =>
+              val (s2, f) = ff.decoder(s1)
+              val (s3, a) = fa.decoder(s2)
+              (s3, f(a))
+            }
+          )
       }
 
       final case class Field[A](
@@ -153,6 +168,10 @@ object Types {
           entries: NonEmptyVector[Arg[_]],
           decode: List[_] => (List[_], A)
       )
+      object Args {
+        def apply[A](entry: Arg[A]): Args[A] =
+          Args(NonEmptyVector.one(entry), { s => (s.tail, s.head.asInstanceOf[A]) })
+      }
 
       // pure/point does not make sense for args
       implicit lazy val applyForArgs = new Apply[Args] {
@@ -194,20 +213,19 @@ object Types {
           types.map(_.mapK(fk))
         )
     }
-
-    final case class Scalar[F[_], A](name: String, encoder: Encoder[A]) extends Output[F, A] {
-      def mapK[G[_]](fk: F ~> G): Scalar[G, A] = Scalar(name, encoder)
-    }
   }
 
-  // final case class Scalar[A](name: String, decoder: Decoder[A], encoder: Encoder[A]) extends Input[A] with Output[Id, A] {
-  //   def decode(value: Value): Either[String, A] = decoder.decodeJson(value.asJson).leftMap(_.show)
+  final case class ScalarCodec[F[_], A](name: String, encoder: Encoder[A], decoder: Decoder[A]) extends Input[A] with Output[F, A] {
+    override def mapK[G[_]](fk: F ~> G): ScalarCodec[G, A] =
+      ScalarCodec(name, encoder, decoder)
 
-  //   def mapK[G[_]](fk: Id ~> G): Output[G, A] = ???
-  // }
+    override def decode(value: Value): Either[String, A] =
+      decoder.decodeJson(value.asJson).leftMap(_.show)
+  }
 
-  final case class Enum[A](name: String, fields: NonEmptyMap[String, A]) extends Input[A] with Output[Id, A] {
-    def mapK[G[_]](fk: Id ~> G): Output[G, A] = ???
+  final case class Enum[F[_], A](name: String, fields: NonEmptyMap[String, A]) extends Input[A] with Output[F, A] {
+    def mapK[G[_]](fk: F ~> G): Output[G, A] =
+      Enum(name, fields)
 
     def decodeString(s: String): Either[String, A] =
       fields.lookup(s) match {
