@@ -134,11 +134,13 @@ object PreparedQuery {
 
   def prepareSelections[F[_], G[_]](
       s: GQLParser.SelectionSet,
+      typename: String,
       types: NonEmptyList[(String, Types.Output.Object.Field[G, _, _])],
       schema: Types.Schema[G, _],
       variableMap: Map[String, Json]
   )(implicit S: Stateful[F, AnalysisState[G]], F: MonadError[F, String], D: Defer[F]): F[NonEmptyList[PreparedField[G, Any]]] = D.defer {
     val schemaMap = types.toNem
+
     s.selections
       .traverse[F, PreparedField[G, Any]] {
         case GQLParser.Selection.FieldSelection(field) =>
@@ -178,12 +180,12 @@ object PreparedQuery {
               closedProgram.flatMap { case (resolve, tpe) =>
                 val prepF: F[Prepared[G, Any]] =
                   (tpe, field.selectionSet) match {
-                    case (Types.Output.Object(_, fields), Some(ss)) =>
-                      prepareSelections[F, G](ss, fields, schema, variableMap).map(Selection(_))
+                    case (Types.Output.Object(name, fields), Some(ss)) =>
+                      prepareSelections[F, G](ss, name, fields, schema, variableMap).map(Selection(_))
                     case (Types.Output.Object(name, _), None) =>
                       F.raiseError(s"object type $name had no selections")
                     case (Types.Output.Arr(Types.Output.Object(name, fields)), Some(ss)) =>
-                      prepareSelections[F, G](ss, fields, schema, variableMap).map(Selection(_))
+                      prepareSelections[F, G](ss, name, fields, schema, variableMap).map(Selection(_))
                     case (Types.Output.Arr(Types.Output.Object(name, fields)), None) =>
                       F.raiseError(s"object type $name in list had no selections")
                     case (c @ Types.Output.Enum(_), None) =>
@@ -218,10 +220,28 @@ object PreparedQuery {
                     }
                   } <* S.modify(s => s.copy(cycleSet = s.cycleSet - field.fragmentName))
 
+              // todo check that parent type is indeed a subtype (or the same type) of the fragment type
               fa.map(PreparedFragmentReference(_))
             }
           }
-        case GQLParser.Selection.InlineFragmentSelection(field) => 
+        case GQLParser.Selection.InlineFragmentSelection(field) =>
+          // todo readup on spec for how matching should work
+          field.typeCondition match {
+            case None => F.raiseError(s"inline fragment has no type condition")
+            case Some(x) =>
+              schema.types.get(x) match {
+                case None    => F.raiseError(s"unknown type ${x}")
+                case Some(o) =>
+                  // todo check that the parent type is indeed a supertype (or the same type) of the fragment type
+                  o match {
+                    case Types.Output.Object(_, fields) =>
+                      prepareSelections[F, G](field.selectionSet, x, fields, schema, variableMap)
+                    case _ => F.raiseError(s"type ${o.name} is unsupported")
+                    // prepareSelections[F, G](field.selectionSet, name, fields, schema, variableMap).map(Selection(_))
+                  }
+              }
+          }
+
           ???
       }
   }
@@ -235,7 +255,7 @@ object PreparedQuery {
       schema.types.get(f.typeCnd) match {
         case None => F.raiseError(s"fragment ${f.name} references unknown type ${f.typeCnd}")
         case Some(Types.Output.Object(name, fields)) =>
-          prepareSelections[F, G](f.selectionSet, fields, schema, variableMap).attempt.flatMap {
+          prepareSelections[F, G](f.selectionSet, name, fields, schema, variableMap).attempt.flatMap {
             case Left(err) => F.raiseError(s"in fragment ${f.name}: $err")
             case Right(x)  => F.pure(FragmentDefinition(f.name, x))
           }
