@@ -43,7 +43,7 @@ object Value {
     override lazy val asJson: Json = Json.fromString(v)
     override def name: String = "Enum"
   }
-  final case class ListValue(v: List[Value]) extends Value {
+  final case class ArrayValue(v: Vector[Value]) extends Value {
     override lazy val asJson: Json = Json.fromValues(v.map(_.asJson))
     override def name: String = "List"
   }
