@@ -113,125 +113,200 @@ object Main extends App {
   // val (res, _) = render(dataType[IO], Nil, Set.empty)
   // println(res.mkString("\n"))
 
-  // val q = """
-// query FragmentTyping {
-  // profiles(handles: ["zuck", "cocacola"]) {
-  //   handle
-  //   ...userFragment
-  //   ...pageFragment
-  // }
-// }
+  val q = """
+query FragmentTyping {
+  profiles(handles: ["zuck", "cocacola"]) {
+    handle
+    ...userFragment
+    ...pageFragment
+  }
+}
 
-// fragment userFragment on User {
-  // friends {
-  //   count
-  // }
-// }
+fragment userFragment on User {
+  friends {
+    count
+  }
+}
 
-// fragment pageFragment on Page {
-  // likers {
-  //   count
-  // }
-// }
-  // """
+fragment pageFragment on Page {
+  likers {
+    count
+  }
+}
+  """
 
-  // val q2 = """
-// query withNestedFragments {
-  // user(id: 4) {
-  //   friends(first: 10) {
-  //     ...friendFields
-  //   }
-  //   mutualFriends(first: 10) {
-  //     ...friendFields
-  //   }
-  // }
-// }
+  val q2 = """
+query withNestedFragments {
+  user(id: 4) {
+    friends(first: 10) {
+      ...friendFields
+    }
+    mutualFriends(first: 10) {
+      ...friendFields
+    }
+  }
+}
 
-// fragment friendFields on User {
-  // id
-  // name
-  // ...standardProfilePic
-// }
+fragment friendFields on User {
+  id
+  name
+  ...standardProfilePic
+}
 
-// fragment standardProfilePic on User {
-  // profilePic(size: 50)
-// }
-  // """
+fragment standardProfilePic on User {
+  profilePic(size: 50)
+}
+  """
 
-  // val q3 = """
-// query inlineFragmentTyping {
-  // profiles(handles: ["zuck", "cocacola"]) {
-  //   handle
-  //   ... on User {
-  //     friends {
-  //       count
-  //     }
-  //   }
-  //   ... on Page {
-  //     likers {
-  //       count
-  //     }
-  //   }
-  // }
-// }
-  // """
+  val q3 = """
+query inlineFragmentTyping {
+  profiles(handles: ["zuck", "cocacola"]) {
+    handle
+    ... on User {
+      friends {
+        count
+      }
+    }
+    ... on Page {
+      likers {
+        count
+      }
+    }
+  }
+}
+  """
 
-  // val q4 = """
-// query inlineFragmentNoType($expandedInfo: Boolean) {
-  // user(handle: "zuck") {
-  //   id
-  //   name
-  //   ... @include(if: $expandedInfo) {
-  //     firstName
-  //     lastName
-  //     birthday
-  //   }
-  // }
-// }
-  // """
+  val q4 = """
+query inlineFragmentNoType($expandedInfo: Boolean) {
+  user(handle: "zuck") {
+    id
+    name
+    ... @include(if: $expandedInfo) {
+      firstName
+      lastName
+      birthday
+    }
+  }
+}
+  """
 
-  // val tq = "\"\"\""
-  // val q5 = s"""
-// mutation {
-  // sendEmail(message: $tq
-  //   Hello,
-  //     World!
+  val tq = "\"\"\""
+  val q5 = s"""
+mutation {
+  sendEmail(message: $tq
+    Hello,
+      World!
 
-  //   Yours,
-  //     GraphQL.
-  // $tq)
-// }
-// """
+    Yours,
+      GraphQL.
+  $tq)
+}
+"""
 
-  // val q6 = s"""
-// query {
-  // user(id: 4) {
-  //   id
-  //   name
-  //   smallPic: profilePic(size: 64)
-  //   bigPic: profilePic(size: 1024)
-  // }
-// }
-// """
+  val q6 = s"""
+query {
+  user(id: 4) {
+    id
+    name
+    smallPic: profilePic(size: 64)
+    bigPic: profilePic(size: 1024)
+  }
+}
+"""
 
-  // val p = GQLParser.executableDefinition.rep
-  // def tryParse[A](p: cats.parse.Parser[A], q: String): Unit =
-  //   p.parseAll(q) match {
-  //     case Left(e) =>
-  //       val (left, right) = q.splitAt(e.failedAtOffset)
-  //       val conflict = s"<<${q(e.failedAtOffset)}>>"
-  //       val chunk = s"${left.takeRight(40)}$conflict${right.drop(1).take(40)}"
-  //       // val chunk = q.drop(math.min(e.failedAtOffset - 10, 0)).take(20)
-  //       val c = q(e.failedAtOffset)
-  //       println(s"failed with char $c at offset ${e.failedAtOffset} with code ${c.toInt}: ${e.expected}")
-  //       println(chunk)
-  //     case Right(x) => println(x)
-  //   }
+  val p = GQLParser.executableDefinition.rep
+  def tryParse[A](p: cats.parse.Parser[A], q: String): Unit =
+    p.parseAll(q) match {
+      case Left(e) =>
+        val (left, right) = q.splitAt(e.failedAtOffset)
+        val conflict = s"<<${q(e.failedAtOffset)}>>"
+        val chunk = s"${left.takeRight(40)}$conflict${right.drop(1).take(40)}"
+        // val chunk = q.drop(math.min(e.failedAtOffset - 10, 0)).take(20)
+        val c = q(e.failedAtOffset)
+        println(s"failed with char $c at offset ${e.failedAtOffset} with code ${c.toInt}: ${e.expected}")
+        println(chunk)
+      case Right(x) => println(x)
+    }
 
+  // p.parseAll(q2).map { ed => }
   // tryParse(p, q)
   // tryParse(p, q2)
   // tryParse(p, q3)
   // tryParse(p, q4)
   // tryParse(p, q5)
   // tryParse(p, q6)
+
+  final case class Data[F[_]](
+      a: String,
+      b: F[Int],
+      c: F[Seq[Data[F]]]
+  )
+
+  def getFriends[F[_]](name: String)(implicit F: Sync[F]): F[Seq[Data[F]]] =
+    if (name == "John") F.delay(getData[F]("Jane")).map(List(_))
+    else if (name == "Jane") F.delay(getData[F]("John")).map(List(_))
+    else F.pure(Nil)
+
+  def getData[F[_]](name: String)(implicit F: Sync[F]): Data[F] =
+    Data[F](
+      name,
+      F.delay(if (name == "John") 22 else 20),
+      F.defer(getFriends[F](name))
+    )
+
+  import gql.syntax._
+  implicit lazy val intType: Types.ScalarCodec[Int] = Types.ScalarCodec("Int", Encoder.encodeInt, Decoder.decodeInt)
+  implicit def outputIntScalar[F[_]] = gql.syntax.outputScalar[F, Int](intType)
+
+  implicit lazy val stringType: Types.ScalarCodec[String] = Types.ScalarCodec("String", Encoder.encodeString, Decoder.decodeString)
+  implicit def outputStringScalar[F[_]] = gql.syntax.outputScalar[F, String](stringType)
+
+  implicit def listTypeForSome[F[_], A](implicit of: Types.Output[F, A]): Types.Output[F, Seq[A]] = Types.Output.Arr(of)
+
+  implicit def dataType[F[_]]: Types.Output[F, Data[F]] =
+    outputObject[F, Data[F]](
+      "Data",
+      "a" -> pure(_.a),
+      "b" -> effect(_.b),
+      "c" -> effect(_.c)
+    )
+
+  def root[F[_]: Sync] = getData[F]("John")
+
+  val qn = """
+query withNestedFragments {
+  user(id: 4) {
+    friends(first: 10) {
+      ...friendFields
+    }
+    mutualFriends(first: 10) {
+      ...friendFields
+    }
+  }
+}
+
+    fragment DataFragment on Data {
+      a
+      b
+      c {
+        ... NestedData
+      }
+    }
+
+    fragment NestedData on Data {
+      a
+      b
+    }
+  """
+
+  val schema = Types.Schema[IO, Unit](
+    null,
+    Map("Data" -> dataType[IO])
+  )
+
+  println(
+    p.parseAll(qn).map { xs =>
+      PreparedQuery.prepare(xs, schema, Map.empty)
+    }
+  )
 }
