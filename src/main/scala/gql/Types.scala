@@ -109,6 +109,26 @@ object Types {
           default: Option[A] = None
       )
     }
+
+    final case class Scalar[A](codec: ScalarCodec[A]) extends Input[A] {
+      override def decode(value: Value): Either[String, A] =
+        codec.decoder.decodeJson(value.asJson).leftMap(_.show)
+    }
+
+    final case class Enum[A](codec: EnumCodec[A]) extends Input[A] {
+      def decodeString(s: String): Either[String, A] =
+        codec.fields.lookup(s) match {
+          case Some(a) => Right(a)
+          case None    => Left(s"unknown value $s for enum ${codec.name}")
+        }
+
+      override def decode(value: Value): Either[String, A] =
+        value match {
+          case JsonValue(v) if v.isString => decodeString(v.asString.get)
+          case EnumValue(s)               => decodeString(s)
+          case _                          => Left(s"expected enum ${codec.name}, got ${value.name}")
+        }
+    }
   }
 
   sealed trait Output[F[_], A] {
@@ -213,31 +233,19 @@ object Types {
           types.map(_.mapK(fk))
         )
     }
+
+    final case class Scalar[F[_], A](codec: ScalarCodec[A]) extends Output[F, A] {
+      override def mapK[G[_]](fk: F ~> G): Scalar[G, A] =
+        Scalar(codec)
+    }
+
+    final case class Enum[F[_], A](codec: EnumCodec[A]) extends Output[F, A] {
+      override def mapK[G[_]](fk: F ~> G): Output[G, A] =
+        Enum(codec)
+    }
   }
 
-  final case class ScalarCodec[F[_], A](name: String, encoder: Encoder[A], decoder: Decoder[A]) extends Input[A] with Output[F, A] {
-    override def mapK[G[_]](fk: F ~> G): ScalarCodec[G, A] =
-      ScalarCodec(name, encoder, decoder)
+  final case class ScalarCodec[A](name: String, encoder: Encoder[A], decoder: Decoder[A])
 
-    override def decode(value: Value): Either[String, A] =
-      decoder.decodeJson(value.asJson).leftMap(_.show)
-  }
-
-  final case class Enum[F[_], A](name: String, fields: NonEmptyMap[String, A]) extends Input[A] with Output[F, A] {
-    def mapK[G[_]](fk: F ~> G): Output[G, A] =
-      Enum(name, fields)
-
-    def decodeString(s: String): Either[String, A] =
-      fields.lookup(s) match {
-        case Some(a) => Right(a)
-        case None    => Left(s"unknown value $s for enum $name")
-      }
-
-    def decode(value: Value): Either[String, A] =
-      value match {
-        case JsonValue(v) if v.isString => decodeString(v.asString.get)
-        case EnumValue(s)               => decodeString(s)
-        case _                          => Left(s"expected enum $name, got ${value.name}")
-      }
-  }
+  final case class EnumCodec[A](name: String, fields: NonEmptyMap[String, A])
 }
