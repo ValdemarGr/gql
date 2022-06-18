@@ -157,6 +157,15 @@ object Types {
       def name: String = s"(${of.name} | null)"
     }
 
+    final case class Interface[F[_], A](
+        name: String,
+        fields: NonEmptyList[Interface.Case[F, A]]
+    )
+    object Interface {
+      final case class Case[F[_], A](
+      )
+    }
+
     final case class Object[F[_], A](
         name: String,
         fields: NonEmptyList[(String, Object.Field[F, A, _])]
