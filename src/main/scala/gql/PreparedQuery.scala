@@ -69,11 +69,16 @@ object PreparedQuery {
 
   final case class FragmentDefinition[F[_], A](
       name: String,
+      typeCondition: String,
       fields: NonEmptyList[PreparedField[F, A]]
   ) extends Prepared[F, A]
 
   final case class PreparedFragmentReference[F[_], A](
       reference: FragmentDefinition[F, A]
+  ) extends PreparedField[F, A]
+
+  final case class PreparedInlineFragment[F[_], A](
+      selection: Selection[F, A]
   ) extends PreparedField[F, A]
 
   final case class Selection[F[_], A](fields: NonEmptyList[PreparedField[F, A]]) extends Prepared[F, A]
@@ -131,6 +136,20 @@ object PreparedQuery {
 
     go[EitherT[Eval, String, *]](value).value.value
   }
+
+  // https://spec.graphql.org/June2018/#sec-Fragment-spread-is-possible
+  def getPossibleTypes[F[_], G[_]](typename: String, schema: Types.Schema[G, _])(implicit
+      F: MonadError[F, String],
+      D: Defer[F]
+  ): F[Set[String]] =
+    D.defer[Set[String]] {
+      schema.types.get(typename) match {
+        case None                                   => F.raiseError(s"type $typename not found")
+        case Some(Types.Output.Object(name, _))     => F.pure(Set(name))
+        case Some(Types.Output.Union(name, fields)) => F.pure(fields.map(_.name).toList.toSet)
+        case Some(t)                                => F.raiseError(s"type $typename is not an object or union, but instead ${t.name}")
+      }
+    }
 
   def prepareSelections[F[_], G[_]](
       s: GQLParser.SelectionSet,
@@ -220,29 +239,42 @@ object PreparedQuery {
                     }
                   } <* S.modify(s => s.copy(cycleSet = s.cycleSet - field.fragmentName))
 
-              // todo check that parent type is indeed a subtype (or the same type) of the fragment type
-              fa.map(PreparedFragmentReference(_))
+              fa.flatMap { fd =>
+                (getPossibleTypes[F, G](typename, schema), getPossibleTypes[F, G](fd.typeCondition, schema)).tupled
+                  .flatMap { case (parent, frag) =>
+                    if ((frag & parent).isEmpty)
+                      F.raiseError(s"fragment ${field.fragmentName} is not valid for type ${typename}, since the intersection of ${frag
+                        .mkString(",")} and ${parent.mkString(",")} is empty")
+                    else F.pure(PreparedFragmentReference(fd))
+                  }
+              }
             }
           }
         case GQLParser.Selection.InlineFragmentSelection(field) =>
-          // todo readup on spec for how matching should work
           field.typeCondition match {
             case None => F.raiseError(s"inline fragment has no type condition")
             case Some(x) =>
-              schema.types.get(x) match {
-                case None    => F.raiseError(s"unknown type ${x}")
-                case Some(o) =>
-                  // todo check that the parent type is indeed a supertype (or the same type) of the fragment type
-                  o match {
-                    case Types.Output.Object(_, fields) =>
-                      prepareSelections[F, G](field.selectionSet, x, fields, schema, variableMap)
-                    case _ => F.raiseError(s"type ${o.name} is unsupported")
-                    // prepareSelections[F, G](field.selectionSet, name, fields, schema, variableMap).map(Selection(_))
-                  }
-              }
+              (getPossibleTypes[F, G](typename, schema), getPossibleTypes[F, G](x, schema)).tupled
+                .flatMap[PreparedField[G, Any]] { case (parent, frag) =>
+                  if ((frag & parent).isEmpty)
+                    F.raiseError(
+                      s"inline fragment spread on condition $x is not valid for type ${typename}, since the intersection of ${frag
+                        .mkString(",")} and ${parent.mkString(",")} is empty"
+                    )
+                  else
+                    schema.types(x) match {
+                      case Types.Output.Object(_, fields) =>
+                        prepareSelections[F, G](
+                          field.selectionSet,
+                          x,
+                          fields,
+                          schema,
+                          variableMap
+                        ).map(Selection(_)).map(PreparedInlineFragment(_))
+                      case _ => F.raiseError(s"unsupported operation")
+                    }
+                }
           }
-
-          ???
       }
   }
 
@@ -257,7 +289,7 @@ object PreparedQuery {
         case Some(Types.Output.Object(name, fields)) =>
           prepareSelections[F, G](f.selectionSet, name, fields, schema, variableMap).attempt.flatMap {
             case Left(err) => F.raiseError(s"in fragment ${f.name}: $err")
-            case Right(x)  => F.pure(FragmentDefinition(f.name, x))
+            case Right(x)  => F.pure(FragmentDefinition(f.name, f.typeCnd, x))
           }
         case Some(ot) =>
           F.raiseError(s"fragment ${f.name} references scalar type ${ot.name}, but scalars are not allowed in fragments")

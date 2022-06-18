@@ -263,7 +263,7 @@ query {
 
   implicit def listTypeForSome[F[_], A](implicit of: Types.Output[F, A]): Types.Output[F, Seq[A]] = Types.Output.Arr(of)
 
-  implicit def dataType[F[_]]: Types.Output[F, Data[F]] =
+  implicit def dataType[F[_]]: Types.Output.Object[F, Data[F]] =
     outputObject[F, Data[F]](
       "Data",
       "a" -> pure(_.a),

@@ -9,7 +9,7 @@ import cats._
 object Types {
   final case class Schema[F[_], Q](
       query: Output.Object[F, Q],
-      types: Map[String, Output[F, _]]
+      types: Map[String, ToplevelOutput[F, _]]
   )
 
   sealed trait Input[A] {
@@ -142,6 +142,8 @@ object Types {
     def name: String
   }
 
+  sealed trait ToplevelOutput[F[_], +A] extends Output[F, A]
+
   object Output {
     final case class Arr[F[_], A](of: Output[F, A]) extends Output[F, Vector[A]] {
       def mapK[G[_]](fk: F ~> G): Output[G, Vector[A]] = Arr(of.mapK(fk))
@@ -158,7 +160,8 @@ object Types {
     final case class Object[F[_], A](
         name: String,
         fields: NonEmptyList[(String, Object.Field[F, A, _])]
-    ) extends Output[F, A] {
+    ) extends Output[F, A]
+        with ToplevelOutput[F, A] {
       def mapK[G[_]](fk: F ~> G): Object[G, A] =
         Object(name, fields.map { case (k, v) => k -> v.mapK(fk) })
     }
@@ -237,7 +240,8 @@ object Types {
     final case class Union[F[_], A](
         name: String,
         types: NonEmptyList[Object[F, A]]
-    ) extends Output[F, A] {
+    ) extends Output[F, A]
+        with ToplevelOutput[F, A] {
       def mapK[G[_]](fk: F ~> G): Union[G, A] =
         Union(
           name,
@@ -245,14 +249,14 @@ object Types {
         )
     }
 
-    final case class Scalar[F[_], A](codec: ScalarCodec[A]) extends Output[F, A] {
+    final case class Scalar[F[_], A](codec: ScalarCodec[A]) extends Output[F, A] with ToplevelOutput[F, A] {
       override def mapK[G[_]](fk: F ~> G): Scalar[G, A] =
         Scalar(codec)
 
       override def name: String = codec.name
     }
 
-    final case class Enum[F[_], A](codec: EnumCodec[A]) extends Output[F, A] {
+    final case class Enum[F[_], A](codec: EnumCodec[A]) extends Output[F, A] with ToplevelOutput[F, A] {
       override def mapK[G[_]](fk: F ~> G): Output[G, A] =
         Enum(codec)
 
