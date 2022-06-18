@@ -197,13 +197,7 @@ object PreparedQuery {
                     case _ => ???
                   }
 
-                prepF.map { p =>
-                  PreparedDataField(
-                    field.name,
-                    resolve,
-                    p
-                  )
-                }
+                prepF.map(p => PreparedDataField(field.name, resolve, p))
               }
           }
         case GQLParser.Selection.FragmentSpreadSelection(field) =>
@@ -216,15 +210,19 @@ object PreparedQuery {
                   D.defer {
                     state.fragments.get(field.fragmentName) match {
                       case None => F.raiseError[FragmentDefinition[G, Any]](s"fragment by name ${field.fragmentName} not found")
-                      case Some(FragmentAnalysis.Unevaluated(fd)) => prepareFragment(fd, schema, variableMap)
-                      case Some(FragmentAnalysis.Cached(p))       => F.pure(p)
+                      case Some(FragmentAnalysis.Unevaluated(fd)) =>
+                        prepareFragment(fd, schema, variableMap).flatTap { frag =>
+                          S.modify(s => s.copy(fragments = s.fragments + (field.fragmentName -> FragmentAnalysis.Cached(frag))))
+                        }
+                      case Some(FragmentAnalysis.Cached(p)) => F.pure(p)
                     }
                   } <* S.modify(s => s.copy(cycleSet = s.cycleSet - field.fragmentName))
 
               fa.map(PreparedFragmentReference(_))
             }
           }
-        case GQLParser.Selection.InlineFragmentSelection(field) => ???
+        case GQLParser.Selection.InlineFragmentSelection(field) => 
+          ???
       }
   }
 
