@@ -157,8 +157,8 @@ object PreparedQuery {
     D.defer[Set[String]] {
       schema.types.get(typename) match {
         case None                                   => F.raiseError(s"type $typename not found")
-        case Some(o: Types.ObjectLike[G, _])              => getTypePossibleTypes(o)
-        case Some(Types.Output.Union(name, fields)) => F.pure(fields.map(_.name).toList.toSet)
+        case Some(o: Types.ObjectLike[G, _])              => getTypePossibleTypes(o).map(xs => xs + o.name)
+        case Some(Types.Output.Union(_, fields)) => F.pure(fields.map(_.name).toList.toSet)
         case Some(t)                                => F.raiseError(s"type $typename is not an object or union, but instead ${t.name}")
       }
     }
