@@ -5,6 +5,7 @@ import cats.data._
 import io.circe._
 import Value._
 import cats._
+import scala.reflect.ClassTag
 
 object Types {
   final case class Schema[F[_], Q](
@@ -144,6 +145,14 @@ object Types {
 
   sealed trait ToplevelOutput[F[_], +A] extends Output[F, A]
 
+  sealed trait ObjectLike[F[_], A] extends Output[F, A] {
+    def name: String
+    
+    def fields: NonEmptyList[(String, Output.Fields.Field[F, A, _])]
+
+    override def mapK[G[_]](fk: F ~> G): ObjectLike[G, A]
+  }
+
   object Output {
     final case class Arr[F[_], A](of: Output[F, A]) extends Output[F, Vector[A]] {
       def mapK[G[_]](fk: F ~> G): Output[G, Vector[A]] = Arr(of.mapK(fk))
@@ -159,22 +168,37 @@ object Types {
 
     final case class Interface[F[_], A](
         name: String,
-        fields: NonEmptyList[Interface.Case[F, A]]
-    )
+        instances: List[Interface.Instance[F, A, _]],
+        fields: NonEmptyList[(String, Fields.Field[F, A, _])]
+    ) extends Output[F, A]
+        with ToplevelOutput[F, A]
+        with ObjectLike[F, A] {
+      override def mapK[G[_]](fk: F ~> G): Interface[G, A] =
+        copy[G, A](
+          instances = instances.map(_.mapK(fk)),
+          fields = fields.map { case (k, v) => k -> v.mapK(fk) }
+        )
+    }
     object Interface {
-      final case class Case[F[_], A](
-      )
+      final case class Instance[F[_], A, B <: A](
+          ot: ObjectLike[F, B]
+      )(implicit val ct: ClassTag[B]) {
+        def mapK[G[_]](fk: F ~> G): Instance[G, A, B] =
+          Instance(ot.mapK(fk))
+      }
     }
 
     final case class Object[F[_], A](
         name: String,
-        fields: NonEmptyList[(String, Object.Field[F, A, _])]
+        fields: NonEmptyList[(String, Fields.Field[F, A, _])]
     ) extends Output[F, A]
-        with ToplevelOutput[F, A] {
+        with ToplevelOutput[F, A]
+        with ObjectLike[F, A] {
       def mapK[G[_]](fk: F ~> G): Object[G, A] =
         Object(name, fields.map { case (k, v) => k -> v.mapK(fk) })
     }
-    object Object {
+
+    object Fields {
       sealed trait Resolution[F[_], +A] {
         def mapK[G[_]](fk: F ~> G): Resolution[G, A]
       }
@@ -216,7 +240,6 @@ object Types {
           Args(NonEmptyVector.one(entry), { s => (s.tail, s.head.asInstanceOf[A]) })
       }
 
-      // pure/point does not make sense for args
       implicit lazy val applyForArgs = new Apply[Args] {
         override def map[A, B](fa: Args[A])(f: A => B): Args[B] =
           fa.copy(decode = fa.decode andThen { case (s, a) => (s, f(a)) })
@@ -248,7 +271,7 @@ object Types {
 
     final case class Union[F[_], A](
         name: String,
-        types: NonEmptyList[Object[F, A]]
+        types: NonEmptyList[ObjectLike[F, A]]
     ) extends Output[F, A]
         with ToplevelOutput[F, A] {
       def mapK[G[_]](fk: F ~> G): Union[G, A] =

@@ -6,19 +6,19 @@ import cats._
 object syntax {
   def outputObject[F[_], A](
       name: String,
-      hd: (String, Types.Output.Object.Field[F, A, _]),
-      tl: (String, Types.Output.Object.Field[F, A, _])*
+      hd: (String, Types.Output.Fields.Field[F, A, _]),
+      tl: (String, Types.Output.Fields.Field[F, A, _])*
   ) = Types.Output.Object[F, A](name, NonEmptyList(hd, tl.toList))
 
-  def effect[F[_], I, T](resolver: I => F[T])(implicit tpe: => Types.Output[F, T]): Types.Output.Object.Field[F, I, T] =
-    Types.Output.Object.SimpleField[F, I, T](
-      resolver andThen (fa => Types.Output.Object.DeferredResolution(fa)),
+  def effect[F[_], I, T](resolver: I => F[T])(implicit tpe: => Types.Output[F, T]): Types.Output.Fields.Field[F, I, T] =
+    Types.Output.Fields.SimpleField[F, I, T](
+      resolver andThen (fa => Types.Output.Fields.DeferredResolution(fa)),
       Eval.later(tpe)
     )
 
-  def pure[F[_], I, T](resolver: I => T)(implicit tpe: => Types.Output[F, T]): Types.Output.Object.Field[F, I, T] =
-    Types.Output.Object.SimpleField[F, I, T](
-      resolver andThen (fa => Types.Output.Object.PureResolution(fa)),
+  def pure[F[_], I, T](resolver: I => T)(implicit tpe: => Types.Output[F, T]): Types.Output.Fields.Field[F, I, T] =
+    Types.Output.Fields.SimpleField[F, I, T](
+      resolver andThen (fa => Types.Output.Fields.PureResolution(fa)),
       Eval.later(tpe)
     )
 

@@ -63,7 +63,7 @@ object PreparedQuery {
 
   final case class PreparedDataField[F[_], I, T](
       name: String,
-      resolve: I => Types.Output.Object.Resolution[F, T],
+      resolve: I => Types.Output.Fields.Resolution[F, T],
       selection: Prepared[F, T]
   ) extends PreparedField[F, I]
 
@@ -138,6 +138,18 @@ object PreparedQuery {
   }
 
   // https://spec.graphql.org/June2018/#sec-Fragment-spread-is-possible
+  def getTypePossibleTypes[F[_], G[_]](t: Types.ObjectLike[G, _])(implicit
+      F: MonadError[F, String],
+      D: Defer[F]
+  ): F[Set[String]] =
+    D.defer {
+      t match {
+        case Output.Object(name, _) => F.pure(Set(name))
+        case Output.Interface(_, instances, _) =>
+          instances.traverse[F, Set[String]](x => getTypePossibleTypes[F, G](x.ot)).map(_.toSet.flatten)
+      }
+    }
+
   def getPossibleTypes[F[_], G[_]](typename: String, schema: Types.Schema[G, _])(implicit
       F: MonadError[F, String],
       D: Defer[F]
@@ -145,7 +157,7 @@ object PreparedQuery {
     D.defer[Set[String]] {
       schema.types.get(typename) match {
         case None                                   => F.raiseError(s"type $typename not found")
-        case Some(Types.Output.Object(name, _))     => F.pure(Set(name))
+        case Some(o: Types.ObjectLike[G, _])              => getTypePossibleTypes(o)
         case Some(Types.Output.Union(name, fields)) => F.pure(fields.map(_.name).toList.toSet)
         case Some(t)                                => F.raiseError(s"type $typename is not an object or union, but instead ${t.name}")
       }
@@ -154,7 +166,7 @@ object PreparedQuery {
   def prepareSelections[F[_], G[_]](
       s: GQLParser.SelectionSet,
       typename: String,
-      types: NonEmptyList[(String, Types.Output.Object.Field[G, _, _])],
+      types: NonEmptyList[(String, Types.Output.Fields.Field[G, _, _])],
       schema: Types.Schema[G, _],
       variableMap: Map[String, Json]
   )(implicit S: Stateful[F, AnalysisState[G]], F: MonadError[F, String], D: Defer[F]): F[NonEmptyList[PreparedField[G, Any]]] = D.defer {
@@ -167,15 +179,15 @@ object PreparedQuery {
             case None    => F.raiseError(s"unknown field name ${field.name}")
             case Some(f) =>
               // unify parameterized and non-prameterized fields by closing in parameters
-              val closedProgram: F[(Any => Types.Output.Object.Resolution[G, Any], Types.Output[G, Any])] =
+              val closedProgram: F[(Any => Types.Output.Fields.Resolution[G, Any], Types.Output[G, Any])] =
                 (f, field.arguments) match {
-                  case (Types.Output.Object.SimpleField(_, _), Some(_)) =>
+                  case (Types.Output.Fields.SimpleField(_, _), Some(_)) =>
                     F.raiseError(s"field ${field.name} has arguments, but none were expected")
-                  case (Types.Output.Object.SimpleField(resolve, graphqlType), None) =>
-                    F.pure((resolve.asInstanceOf[Any => Types.Output.Object.Resolution[G, Any]], graphqlType.value))
-                  case (Types.Output.Object.ArgField(args, _, _), None) =>
+                  case (Types.Output.Fields.SimpleField(resolve, graphqlType), None) =>
+                    F.pure((resolve.asInstanceOf[Any => Types.Output.Fields.Resolution[G, Any]], graphqlType.value))
+                  case (Types.Output.Fields.ArgField(args, _, _), None) =>
                     F.raiseError(s"no arguments provided for ${field.name}, expected ${args.entries.size}")
-                  case (Types.Output.Object.ArgField(args, resolve, graphqlType), Some(provided)) =>
+                  case (Types.Output.Fields.ArgField(args, resolve, graphqlType), Some(provided)) =>
                     val providedMap = provided.nel.toList.map(x => x.name -> x.value).toMap
                     val argResolution =
                       args.entries
@@ -191,7 +203,7 @@ object PreparedQuery {
                     F.fromEither(argResolution)
                       .map(args.decode)
                       .map { resolvedArg =>
-                        ((x: Any) => resolve.asInstanceOf[Any => Types.Output.Object.Resolution[G, Any]](x, resolvedArg), graphqlType.value)
+                        ((x: Any) => resolve.asInstanceOf[Any => Types.Output.Fields.Resolution[G, Any]](x, resolvedArg), graphqlType.value)
                       }
                 }
 
@@ -199,14 +211,18 @@ object PreparedQuery {
               closedProgram.flatMap { case (resolve, tpe) =>
                 val prepF: F[Prepared[G, Any]] =
                   (tpe, field.selectionSet) match {
-                    case (Types.Output.Object(name, fields), Some(ss)) =>
-                      prepareSelections[F, G](ss, name, fields, schema, variableMap).map(Selection(_))
-                    case (Types.Output.Object(name, _), None) =>
-                      F.raiseError(s"object type $name had no selections")
-                    case (Types.Output.Arr(Types.Output.Object(name, fields)), Some(ss)) =>
-                      prepareSelections[F, G](ss, name, fields, schema, variableMap).map(Selection(_))
-                    case (Types.Output.Arr(Types.Output.Object(name, fields)), None) =>
-                      F.raiseError(s"object type $name in list had no selections")
+                    case (ol: Types.ObjectLike[G, _], Some(ss)) =>
+                      prepareSelections[F, G](ss, ol.name, ol.fields, schema, variableMap).map(Selection(_))
+                    case (ol: Types.ObjectLike[G, _], None) =>
+                      F.raiseError(s"object type ${ol.name} had no selections")
+                    case (Types.Output.Arr(ol: Types.ObjectLike[G, _]), Some(ss)) =>
+                      prepareSelections[F, G](ss, ol.name, ol.fields, schema, variableMap).map(Selection(_))
+                    case (Types.Output.Arr(ol: Types.ObjectLike[G, _]), None) =>
+                      F.raiseError(s"object type ${ol.name} in list had no selections")
+                    case (Types.Output.Opt(ol: Types.ObjectLike[G, _]), Some(ss)) =>
+                      prepareSelections[F, G](ss, ol.name, ol.fields, schema, variableMap).map(Selection(_))
+                    case (Types.Output.Opt(ol: Types.ObjectLike[G, _]), None) =>
+                      F.raiseError(s"optional object type ${ol.name} had no selections")
                     case (c @ Types.Output.Enum(_), None) =>
                       F.pure(PreparedLeaf(c.codec.name, (x: Any) => c.encode(x).map(Json.fromString(_))))
                     case (Types.Output.Enum(c), Some(_)) =>
@@ -263,11 +279,11 @@ object PreparedQuery {
                     )
                   else
                     schema.types(x) match {
-                      case Types.Output.Object(_, fields) =>
+                      case ot: Types.ObjectLike[G, _] =>
                         prepareSelections[F, G](
                           field.selectionSet,
                           x,
-                          fields,
+                          ot.fields,
                           schema,
                           variableMap
                         ).map(Selection(_)).map(PreparedInlineFragment(_))
@@ -286,8 +302,8 @@ object PreparedQuery {
     D.defer {
       schema.types.get(f.typeCnd) match {
         case None => F.raiseError(s"fragment ${f.name} references unknown type ${f.typeCnd}")
-        case Some(Types.Output.Object(name, fields)) =>
-          prepareSelections[F, G](f.selectionSet, name, fields, schema, variableMap).attempt.flatMap {
+        case Some(ot: Types.ObjectLike[G, _]) =>
+          prepareSelections[F, G](f.selectionSet, ot.name, ot.fields, schema, variableMap).attempt.flatMap {
             case Left(err) => F.raiseError(s"in fragment ${f.name}: $err")
             case Right(x)  => F.pure(FragmentDefinition(f.name, f.typeCnd, x))
           }
