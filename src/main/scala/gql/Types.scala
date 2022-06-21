@@ -185,6 +185,8 @@ object Types {
       )(implicit val ct: ClassTag[B]) {
         def mapK[G[_]](fk: F ~> G): Instance[G, A, B] =
           Instance(ot.mapK(fk))
+
+        def specify(a: A): Option[B] = Some(a).collect{ case b: B => b }
       }
     }
 

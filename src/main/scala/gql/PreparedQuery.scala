@@ -70,14 +70,16 @@ object PreparedQuery {
   final case class FragmentDefinition[F[_], A](
       name: String,
       typeCondition: String,
+      runtimeCheck: Any => Boolean,
       fields: NonEmptyList[PreparedField[F, A]]
-  ) extends Prepared[F, A]
+  )
 
   final case class PreparedFragmentReference[F[_], A](
       reference: FragmentDefinition[F, A]
   ) extends PreparedField[F, A]
 
   final case class PreparedInlineFragment[F[_], A](
+      runtimeCheck: Any => Boolean,
       selection: Selection[F, A]
   ) extends PreparedField[F, A]
 
@@ -137,8 +139,7 @@ object PreparedQuery {
     go[EitherT[Eval, String, *]](value).value.value
   }
 
-  // https://spec.graphql.org/June2018/#sec-Fragment-spread-is-possible
-  def getTypePossibleTypes[F[_], G[_]](t: Types.ObjectLike[G, _])(implicit
+  /*def getTypePossibleTypes[F[_], G[_]](t: Types.ObjectLike[G, _])(implicit
       F: MonadError[F, String],
       D: Defer[F]
   ): F[Set[String]] =
@@ -148,18 +149,20 @@ object PreparedQuery {
         case Output.Interface(_, instances, _) =>
           instances.traverse[F, Set[String]](x => getTypePossibleTypes[F, G](x.ot)).map(_.toSet.flatten)
       }
-    }
+    }*/
 
+  // https://spec.graphql.org/June2018/#sec-Fragment-spread-is-possible
   def getPossibleTypes[F[_], G[_]](typename: String, schema: Types.Schema[G, _])(implicit
       F: MonadError[F, String],
       D: Defer[F]
   ): F[Set[String]] =
     D.defer[Set[String]] {
       schema.types.get(typename) match {
-        case None                                   => F.raiseError(s"type $typename not found")
-        case Some(o: Types.ObjectLike[G, _])              => getTypePossibleTypes(o).map(xs => xs + o.name)
-        case Some(Types.Output.Union(_, fields)) => F.pure(fields.map(_.name).toList.toSet)
-        case Some(t)                                => F.raiseError(s"type $typename is not an object or union, but instead ${t.name}")
+        case None                                    => F.raiseError(s"type $typename not found")
+        case Some(Output.Object(name, _))            => F.pure(Set(name))
+        case Some(Output.Interface(_, instances, _)) => F.pure(instances.map(_.ot.name).toSet)
+        case Some(Types.Output.Union(_, fields))     => F.pure(fields.map(_.name).toList.toSet)
+        case Some(t)                                 => F.raiseError(s"type $typename is not an object or union, but instead ${t.name}")
       }
     }
 
@@ -279,14 +282,19 @@ object PreparedQuery {
                     )
                   else
                     schema.types(x) match {
-                      case ot: Types.ObjectLike[G, _] =>
+                      case ot: Types.ObjectLike[G, Any] =>
+                        def inputCheck(x: Any): Boolean = ot match {
+                          case Types.Output.Interface(_, interfaces, _) => interfaces.exists(_.specify(x).isDefined)
+                          case Types.Output.Object(_, _) => true
+                        }
+
                         prepareSelections[F, G](
                           field.selectionSet,
                           x,
                           ot.fields,
                           schema,
                           variableMap
-                        ).map(Selection(_)).map(PreparedInlineFragment(_))
+                        ).map(Selection(_)).map(s => PreparedInlineFragment(inputCheck, s))
                       case _ => F.raiseError(s"unsupported operation")
                     }
                 }
@@ -302,10 +310,15 @@ object PreparedQuery {
     D.defer {
       schema.types.get(f.typeCnd) match {
         case None => F.raiseError(s"fragment ${f.name} references unknown type ${f.typeCnd}")
-        case Some(ot: Types.ObjectLike[G, _]) =>
+        case Some(ot: Types.ObjectLike[G, Any]) =>
+          def inputCheck(x: Any): Boolean = ot match {
+            case Types.Output.Interface(_, interfaces, _) => interfaces.exists(_.specify(x).isDefined)
+            case Types.Output.Object(_, _) => true
+          }
+
           prepareSelections[F, G](f.selectionSet, ot.name, ot.fields, schema, variableMap).attempt.flatMap {
             case Left(err) => F.raiseError(s"in fragment ${f.name}: $err")
-            case Right(x)  => F.pure(FragmentDefinition(f.name, f.typeCnd, x))
+            case Right(x)  => F.pure(FragmentDefinition(f.name, f.typeCnd, inputCheck, x))
           }
         case Some(ot) =>
           F.raiseError(s"fragment ${f.name} references scalar type ${ot.name}, but scalars are not allowed in fragments")
