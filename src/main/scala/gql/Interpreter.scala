@@ -5,6 +5,7 @@ import PreparedQuery._
 import cats.implicits._
 import gql.Types.Output.Fields
 import cats.effect._
+import cats.effect.implicits._
 import io.circe._
 import io.circe.syntax._
 

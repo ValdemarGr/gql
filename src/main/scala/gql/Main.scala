@@ -1,5 +1,6 @@
 package gql
 
+import scala.concurrent.duration._
 import cats.data._
 import cats.implicits._
 import cats.effect._
@@ -17,103 +18,7 @@ import gql.GQLParser.Value.IntValue
 import gql.GQLParser.Value.ListValue
 import gql.GQLParser.Value.StringValue
 
-// object syntax {
-//   def outputObject[F[_], A](
-//       name: String,
-//       hd: (String, GQLField[F, A, _]),
-//       tl: (String, GQLField[F, A, _])*
-//   ) = GQLOutputObjectType[F, A](name, NonEmptyList(hd, tl.toList))
-
-//   def effect[F[_], I, T](resolver: I => F[T])(implicit tpe: => GQLOutputType[F, T]): GQLField[F, I, T] =
-//     GQLSimpleField[F, I, T](resolver andThen (fa => DeferredResolution(fa)), Eval.later(tpe))
-
-//   def pure[F[_], I, T](resolver: I => T)(implicit tpe: => GQLOutputType[F, T]): GQLField[F, I, T] =
-//     GQLSimpleField[F, I, T](resolver andThen (fa => PureResolution(fa)), Eval.later(tpe))
-// }
-
 object Main extends App {
-  // final case class Data[F[_]](
-  //     a: String,
-  //     b: F[Int],
-  //     c: F[List[Data[F]]]
-  // )
-
-  // def getFriends[F[_]](name: String)(implicit F: Sync[F]): F[List[Data[F]]] =
-  //   if (name == "John") F.delay(getData[F]("Jane")).map(List(_))
-  //   else if (name == "Jane") F.delay(getData[F]("John")).map(List(_))
-  //   else F.pure(Nil)
-
-  // def getData[F[_]](name: String)(implicit F: Sync[F]): Data[F] =
-  //   Data[F](
-  //     name,
-  //     F.delay(if (name == "John") 22 else 20),
-  //     F.defer(getFriends[F](name))
-  //   )
-
-  // implicit def intType[F[_]] = GQLOutputScalarType[F, Int]("Int", Encoder.encodeInt)
-
-  // implicit def stringType[F[_]] = GQLOutputScalarType[F, String]("String", Encoder.encodeString)
-
-  // implicit def listTypeForSome[F[_], A](implicit of: GQLOutputType[F, A]) = GQLOutputListType(of)
-
-  // import syntax._
-  // implicit def dataType[F[_]]: GQLOutputObjectType[F, Data[F]] =
-  //   outputObject[F, Data[F]](
-  //     "Data",
-  //     "a" -> pure(_.a),
-  //     "b" -> effect(_.b),
-  //     "c" -> effect(_.c)
-  //   )
-
-  // def root[F[_]: Sync] = getData[F]("John")
-
-  // def renderType[F[_]](tpe: GQLOutputType[F, _]): String = tpe match {
-  //   case GQLOutputObjectType(name, _) => name
-  //   case GQLOutputListType(of)        => s"[${renderType(of)}]"
-  //   case GQLOutputUnionType(name, _)  => name
-  //   case GQLOutputScalarType(name, _) => name
-  //   case GQLEnumType(name, _, _)      => name
-  // }
-
-  // def render[F[_], A](root: GQLOutputType[F, A], accum: List[String], encountered: Set[String]): (List[String], Set[String]) =
-  //   root match {
-  //     case GQLOutputObjectType(name, fields) =>
-  //       lazy val thisType =
-  //         s"""
-  //         type $name {
-  //           ${fields
-  //           .map { case (k, field) =>
-  //             s"$k: ${renderType(field.graphqlType.value)}"
-  //           }
-  //           .mkString_(",\n")}
-  //         }
-  //         """
-  //       if (encountered.contains(name)) (accum, encountered)
-  //       else {
-  //         val newEncountered = encountered + name
-  //         val newAccum = accum :+ thisType
-  //         val next = fields.filter { case (_, field) => !encountered.contains(renderType(field.graphqlType.value)) }
-  //         next.foldLeft((newAccum, newEncountered)) { case ((accum, encountered), (_, field)) =>
-  //           render(field.graphqlType.value, accum, encountered)
-  //         }
-  //       }
-  //     case GQLOutputListType(of)           => render(of, accum, encountered)
-  //     case GQLOutputUnionType(name, types) => ???
-  //     case GQLOutputScalarType(name, _) =>
-  //       (
-  //         s"""
-  //       scalar $name
-  //       """ :: accum,
-  //         encountered
-  //       )
-  //   }
-
-  // println(root[IO])
-  // println(dataType[IO])
-  // println(dataType[IO].fields)
-  // val (res, _) = render(dataType[IO], Nil, Set.empty)
-  // println(res.mkString("\n"))
-
   val q = """
 query FragmentTyping {
   profiles(handles: ["zuck", "cocacola"]) {
@@ -264,7 +169,7 @@ query {
 
   implicit def listTypeForSome[F[_], A](implicit of: Types.Output[F, A]): Types.Output[F, Seq[A]] = Types.Output.Arr(of)
 
-  implicit def dataType[F[_]]: Types.Output.Object[F, Data[F]] =
+  implicit def dataType[F[_]: Async]: Types.Output.Object[F, Data[F]] =
     outputObject[F, Data[F]](
       "Data",
       "a" -> pure(_.a),
@@ -318,7 +223,7 @@ query withNestedFragments {
   val schema = Types.Schema[IO, Unit](
     outputObject[IO, Unit](
       "Query",
-      "getData" -> pure(_ => root[IO]),
+      "getData" -> pure(_ => root[IO])
     ),
     Map("Data" -> dataType[IO])
   )
