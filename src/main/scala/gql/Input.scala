@@ -110,12 +110,12 @@ object Input {
     )
   }
 
-  final case class Scalar[A](codec: SharedTypes.ScalarCodec[A]) extends Input[A] {
+  final case class Scalar[A](codec: ScalarCodec[A]) extends Input[A] {
     override def decode(value: Value): Either[String, A] =
       codec.decoder.decodeJson(value.asJson).leftMap(_.show)
   }
 
-  final case class Enum[A](codec: SharedTypes.EnumCodec[A]) extends Input[A] {
+  final case class Enum[A](codec: EnumCodec[A]) extends Input[A] {
     def decodeString(s: String): Either[String, A] =
       codec.fields.lookup(s) match {
         case Some(a) => Right(a)

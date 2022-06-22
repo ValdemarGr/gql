@@ -3,7 +3,6 @@ package gql
 import cats.data._
 import PreparedQuery._
 import cats.implicits._
-import gql.Types.Output.Fields
 import cats.effect._
 import cats.effect.implicits._
 import io.circe._
@@ -28,8 +27,8 @@ object Interpreter {
     pf match {
       case PreparedDataField(name, resolve, selection) =>
         val fa = resolve(input) match {
-          case Fields.PureResolution(value) => F.pure(value)
-          case Fields.DeferredResolution(f) => f
+          case Output.Fields.PureResolution(value) => F.pure(value)
+          case Output.Fields.DeferredResolution(f) => f
         }
 
         fa
