@@ -6,6 +6,7 @@ import cats.effect._
 import io.circe._
 import cats._
 import cats.arrow.FunctionK
+import cats.effect.unsafe.implicits.global
 import gql.GQLParser.Value.VariableValue
 import gql.GQLParser.Value.FloatValue
 import gql.GQLParser.Value.NullValue
@@ -271,10 +272,10 @@ query {
       "c" -> effect(_.c)
     )
 
-  def root[F[_]: Sync] = getData[F]("John")
+  def root[F[_]: Sync]: Data[F] = getData[F]("John")
 
-  val qn = """
-query withNestedFragments {
+  /*
+  query withNestedFragments {
   user(id: 4) {
     friends(first: 10) {
       ...friendFields
@@ -282,6 +283,13 @@ query withNestedFragments {
     mutualFriends(first: 10) {
       ...friendFields
     }
+  }
+}
+   */
+  val qn = """
+query withNestedFragments {
+  getData {
+    ... DataFragment
   }
 }
 
@@ -296,17 +304,33 @@ query withNestedFragments {
     fragment NestedData on Data {
       a
       b
+      c {
+        ... NestedData2
+      }
+    }
+
+    fragment NestedData2 on Data {
+      a
+      b
     }
   """
 
   val schema = Types.Schema[IO, Unit](
-    null,
+    outputObject[IO, Unit](
+      "Query",
+      "getData" -> pure(_ => root[IO]),
+    ),
     Map("Data" -> dataType[IO])
   )
 
-  println(
+  val result =
     p.parseAll(qn).map { xs =>
       PreparedQuery.prepare(xs, schema, Map.empty)
     }
-  )
+
+  println(result)
+
+  val x = result.toOption.get.toOption.get
+
+  println(Interpreter.interpret[IO]((), x).unsafeRunSync())
 }

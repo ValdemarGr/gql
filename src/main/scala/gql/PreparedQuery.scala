@@ -219,7 +219,9 @@ object PreparedQuery {
                     case (ol: Types.ObjectLike[G, _], None) =>
                       F.raiseError(s"object type ${ol.name} had no selections")
                     case (Types.Output.Arr(ol: Types.ObjectLike[G, _]), Some(ss)) =>
-                      prepareSelections[F, G](ss, ol.name, ol.fields, schema, variableMap).map(Selection(_))
+                      prepareSelections[F, G](ss, ol.name, ol.fields, schema, variableMap)
+                        .map(Selection(_))
+                        .map(x => PreparedList(x).asInstanceOf[Prepared[G, Any]])
                     case (Types.Output.Arr(ol: Types.ObjectLike[G, _]), None) =>
                       F.raiseError(s"object type ${ol.name} in list had no selections")
                     case (Types.Output.Opt(ol: Types.ObjectLike[G, _]), Some(ss)) =>
@@ -285,7 +287,7 @@ object PreparedQuery {
                       case ot: Types.ObjectLike[G, Any] =>
                         def inputCheck(x: Any): Boolean = ot match {
                           case Types.Output.Interface(_, interfaces, _) => interfaces.exists(_.specify(x).isDefined)
-                          case Types.Output.Object(_, _) => true
+                          case Types.Output.Object(_, _)                => true
                         }
 
                         prepareSelections[F, G](
@@ -313,7 +315,7 @@ object PreparedQuery {
         case Some(ot: Types.ObjectLike[G, Any]) =>
           def inputCheck(x: Any): Boolean = ot match {
             case Types.Output.Interface(_, interfaces, _) => interfaces.exists(_.specify(x).isDefined)
-            case Types.Output.Object(_, _) => true
+            case Types.Output.Object(_, _)                => true
           }
 
           prepareSelections[F, G](f.selectionSet, ot.name, ot.fields, schema, variableMap).attempt.flatMap {
@@ -330,11 +332,38 @@ object PreparedQuery {
   // mapping from variable name to value and type
   final case class VariableMap(value: Map[String, (String, GQLParser.Type)]) extends AnyVal
 
+  def prepareParts[F[_], G[_], Q](
+      ops: List[GQLParser.OperationDefinition],
+      frags: List[GQLParser.FragmentDefinition],
+      schema: Types.Schema[G, Q],
+      variableMap: Map[String, Json]
+  )(implicit
+      S: Stateful[F, AnalysisState[G]],
+      F: MonadError[F, String],
+      D: Defer[F]
+  ) = {
+    // prepare all fragments
+    val prepped: F[Unit] = frags.traverse(frag => prepareFragment[F, G](frag, schema, variableMap)).void
+
+    prepped >> (ops.head match {
+      //case Simple(_)                                            => ???
+      //case Detailed(tpe, name, Some(variableDefinitions), _, _) => ???
+      case Detailed(_, _, None, _, sel) =>
+        prepareSelections[F, G](
+          sel,
+          schema.query.name,
+          schema.query.fields,
+          schema,
+          variableMap
+        )
+    })
+  }
+
   def prepare[F[_], Q](
       executabels: NonEmptyList[GQLParser.ExecutableDefinition],
       schema: Types.Schema[F, Q],
       variableMap: Map[String, Json]
-  ): Either[String, FragmentDefinition[F, Any]] = {
+  ): Either[String, NonEmptyList[PreparedField[F, Any]]] = {
     val (ops, frags) =
       executabels.toList.partitionEither {
         case GQLParser.ExecutableDefinition.Operation(op)  => Left(op)
@@ -350,7 +379,7 @@ object PreparedQuery {
 
     type G[A] = StateT[EitherT[Eval, String, *], AnalysisState[F], A]
 
-    val o = prepareFragment[G, F](frags.head, schema, variableMap)
+    val o = prepareParts[G, F, Q](ops, frags, schema, variableMap)
 
     o
       .runA(
