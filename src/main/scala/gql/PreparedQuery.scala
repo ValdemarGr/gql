@@ -138,18 +138,6 @@ object PreparedQuery {
     go[EitherT[Eval, String, *]](value).value.value
   }
 
-  /*def getTypePossibleTypes[F[_], G[_]](t: Types.ObjectLike[G, _])(implicit
-      F: MonadError[F, String],
-      D: Defer[F]
-  ): F[Set[String]] =
-    D.defer {
-      t match {
-        case Output.Object(name, _) => F.pure(Set(name))
-        case Output.Interface(_, instances, _) =>
-          instances.traverse[F, Set[String]](x => getTypePossibleTypes[F, G](x.ot)).map(_.toSet.flatten)
-      }
-    }*/
-
   // https://spec.graphql.org/June2018/#sec-Fragment-spread-is-possible
   def getPossibleTypes[F[_], G[_]](typename: String, schema: Schema[G, _])(implicit
       F: MonadError[F, String],
@@ -158,9 +146,9 @@ object PreparedQuery {
     D.defer[Set[String]] {
       schema.types.get(typename) match {
         case None                                    => F.raiseError(s"type $typename not found")
-        case Some(Output.Obj(name, _))            => F.pure(Set(name))
+        case Some(Output.Obj(name, _))               => F.pure(Set(name))
         case Some(Output.Interface(_, instances, _)) => F.pure(instances.map(_.ot.name).toSet)
-        case Some(Output.Union(_, fields))     => F.pure(fields.map(_.name).toList.toSet)
+        case Some(Output.Union(_, fields))           => F.pure(fields.map(_.name).toList.toSet)
         case Some(t)                                 => F.raiseError(s"type $typename is not an object or union, but instead ${t.name}")
       }
     }
@@ -286,7 +274,7 @@ object PreparedQuery {
                       case ot: ObjectLike[G, Any] =>
                         def inputCheck(x: Any): Boolean = ot match {
                           case Output.Interface(_, interfaces, _) => interfaces.exists(_.specify(x).isDefined)
-                          case Output.Obj(_, _)                => true
+                          case Output.Obj(_, _)                   => true
                         }
 
                         prepareSelections[F, G](
@@ -295,7 +283,14 @@ object PreparedQuery {
                           ot.fields,
                           schema,
                           variableMap
-                        ).map(Selection(_)).map(s => PreparedInlineFragment(inputCheck, s))
+                        )
+                          .map(Selection(_))
+                          .map(s => PreparedInlineFragment(inputCheck, s))
+                          .attempt
+                          .flatMap {
+                            case Left(e)  => F.raiseError(s"in inline fragment with condition ${field.typeCondition}: $e")
+                            case Right(x) => F.pure(x)
+                          }
                       case _ => F.raiseError(s"unsupported operation")
                     }
                 }
@@ -314,7 +309,7 @@ object PreparedQuery {
         case Some(ot: ObjectLike[G, Any]) =>
           def inputCheck(x: Any): Boolean = ot match {
             case Output.Interface(_, interfaces, _) => interfaces.exists(_.specify(x).isDefined)
-            case Output.Obj(_, _)                => true
+            case Output.Obj(_, _)                   => true
           }
 
           prepareSelections[F, G](f.selectionSet, ot.name, ot.fields, schema, variableMap).attempt.flatMap {
@@ -325,11 +320,6 @@ object PreparedQuery {
           F.raiseError(s"fragment ${f.name} references scalar type ${ot.name}, but scalars are not allowed in fragments")
       }
     }
-
-  final case class PreparedSchema[F[_], Q](query: Prepared[F, Q])
-
-  // mapping from variable name to value and type
-  final case class VariableMap(value: Map[String, (String, GQLParser.Type)]) extends AnyVal
 
   def prepareParts[F[_], G[_], Q](
       ops: List[GQLParser.OperationDefinition],
