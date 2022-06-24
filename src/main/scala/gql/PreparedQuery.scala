@@ -69,7 +69,7 @@ object PreparedQuery {
   final case class FragmentDefinition[F[_], A](
       name: String,
       typeCondition: String,
-      runtimeCheck: Any => Boolean,
+      specify: Any => Option[A],
       fields: NonEmptyList[PreparedField[F, A]]
   )
 
@@ -78,7 +78,7 @@ object PreparedQuery {
   ) extends PreparedField[F, A]
 
   final case class PreparedInlineFragment[F[_], A](
-      runtimeCheck: Any => Boolean,
+      specify: Any => Option[A],
       selection: Selection[F, A]
   ) extends PreparedField[F, A]
 
@@ -147,8 +147,8 @@ object PreparedQuery {
       schema.types.get(typename) match {
         case None                                    => F.raiseError(s"type $typename not found")
         case Some(Output.Obj(name, _))               => F.pure(Set(name))
-        case Some(Output.Interface(_, instances, _)) => F.pure(instances.map(_.ot.name).toSet)
-        case Some(Output.Union(_, fields))           => F.pure(fields.map(_.name).toList.toSet)
+        case Some(Output.Interface(_, instances, _)) => F.pure(instances.map(_.ol.name).toSet)
+        case Some(Output.Union(_, fields))           => F.pure(fields.map(_.ol.name).toList.toSet)
         case Some(t)                                 => F.raiseError(s"type $typename is not an object or union, but instead ${t.name}")
       }
     }
@@ -156,16 +156,16 @@ object PreparedQuery {
   def prepareSelections[F[_], G[_]](
       s: GQLParser.SelectionSet,
       typename: String,
-      types: NonEmptyList[(String, Output.Fields.Field[G, _, _])],
+      types: List[(String, Output.Fields.Field[G, _, _])],
       schema: Schema[G, _],
       variableMap: Map[String, Json]
   )(implicit S: Stateful[F, AnalysisState[G]], F: MonadError[F, String], D: Defer[F]): F[NonEmptyList[PreparedField[G, Any]]] = D.defer {
-    val schemaMap = types.toNem
+    val schemaMap = types.toMap
 
     s.selections
       .traverse[F, PreparedField[G, Any]] {
         case GQLParser.Selection.FieldSelection(field) =>
-          schemaMap.lookup(field.name) match {
+          schemaMap.get(field.name) match {
             case None    => F.raiseError(s"unknown field name ${field.name}")
             case Some(f) =>
               // unify parameterized and non-prameterized fields by closing in parameters
@@ -174,7 +174,8 @@ object PreparedQuery {
                   case (Output.Fields.SimpleField(_, _), Some(_)) =>
                     F.raiseError(s"field ${field.name} has arguments, but none were expected")
                   case (Output.Fields.SimpleField(resolve, graphqlType), None) =>
-                    F.pure((resolve.asInstanceOf[Any => Output.Fields.Resolution[G, Any]], graphqlType.value))
+                    val nr = resolve.asInstanceOf[Any => Output.Fields.Resolution[G, Any]]
+                    F.pure((nr, graphqlType.value))
                   case (Output.Fields.ArgField(args, _, _), None) =>
                     F.raiseError(s"no arguments provided for ${field.name}, expected ${args.entries.size}")
                   case (Output.Fields.ArgField(args, resolve, graphqlType), Some(provided)) =>
@@ -205,13 +206,15 @@ object PreparedQuery {
                 val prepF: F[Prepared[G, Any]] =
                   (tpe, field.selectionSet) match {
                     case (ol: ObjectLike[G, Any], Some(ss)) =>
-                      prepareSelections[F, G](ss, ol.name, ol.fields, schema, variableMap).map(Selection(_))
+                      prepareSelections[F, G](ss, ol.name, ol.fields.toList, schema, variableMap).map(Selection(_))
+                    case (u: Output.Union[G, Any], Some(ss)) =>
+                      prepareSelections[F, G](ss, u.name, Nil, schema, variableMap).map(Selection(_))
                     case (Output.Arr(ol: ObjectLike[G, Any]), Some(ss)) =>
-                      prepareSelections[F, G](ss, ol.name, ol.fields, schema, variableMap)
+                      prepareSelections[F, G](ss, ol.name, ol.fields.toList, schema, variableMap)
                         .map(Selection(_))
                         .map(x => PreparedList(x).asInstanceOf[Prepared[G, Any]])
                     case (Output.Opt(ol: ObjectLike[G, Any]), Some(ss)) =>
-                      prepareSelections[F, G](ss, ol.name, ol.fields, schema, variableMap).map(Selection(_))
+                      prepareSelections[F, G](ss, ol.name, ol.fields.toList, schema, variableMap).map(Selection(_))
                     case (Output.Enum(name, encode), None) =>
                       F.pure(PreparedLeaf(name, (x: Any) => Right(Json.fromString(encode.asInstanceOf[Any => String](x)))))
                     case (Output.Scalar(name, encode), None) =>
@@ -266,15 +269,18 @@ object PreparedQuery {
                   else
                     schema.types(x) match {
                       case ot: ObjectLike[G, Any] =>
-                        def inputCheck(x: Any): Boolean = ot match {
-                          case Output.Interface(_, interfaces, _) => interfaces.exists(_.specify(x).isDefined)
-                          case Output.Obj(_, _)                   => true
+                        def inputCheck(x: Any): Option[Any] = ot match {
+                          case Output.Interface(_, interfaces, _) =>
+                            interfaces
+                              .map(_.specify(x))
+                              .collectFirst { case Some(x) => x }
+                          case Output.Obj(_, _) => Some(x)
                         }
 
                         prepareSelections[F, G](
                           field.selectionSet,
                           x,
-                          ot.fields,
+                          ot.fields.toList,
                           schema,
                           variableMap
                         )
@@ -301,12 +307,15 @@ object PreparedQuery {
       schema.types.get(f.typeCnd) match {
         case None => F.raiseError(s"fragment ${f.name} references unknown type ${f.typeCnd}")
         case Some(ot: ObjectLike[G, Any]) =>
-          def inputCheck(x: Any): Boolean = ot match {
-            case Output.Interface(_, interfaces, _) => interfaces.exists(_.specify(x).isDefined)
-            case Output.Obj(_, _)                   => true
+          def inputCheck(x: Any): Option[Any] = ot match {
+            case Output.Interface(_, interfaces, _) =>
+              interfaces
+                .map(_.specify(x))
+                .collectFirst { case Some(x) => x }
+            case Output.Obj(_, _) => Some(x)
           }
 
-          prepareSelections[F, G](f.selectionSet, ot.name, ot.fields, schema, variableMap).attempt.flatMap {
+          prepareSelections[F, G](f.selectionSet, ot.name, ot.fields.toList, schema, variableMap).attempt.flatMap {
             case Left(err) => F.raiseError(s"in fragment ${f.name}: $err")
             case Right(x)  => F.pure(FragmentDefinition(f.name, f.typeCnd, inputCheck, x))
           }
@@ -335,7 +344,7 @@ object PreparedQuery {
         prepareSelections[F, G](
           sel,
           schema.query.name,
-          schema.query.fields,
+          schema.query.fields.toList,
           schema,
           variableMap
         )

@@ -18,6 +18,7 @@ import gql.GQLParser.Value.IntValue
 import gql.GQLParser.Value.ListValue
 import gql.GQLParser.Value.StringValue
 import conversions._
+import cats.effect.std.Random
 
 object Main extends App {
   val q = """
@@ -149,6 +150,17 @@ query {
       c: F[Seq[Data[F]]]
   )
 
+  final case class OtherData[F[_]](
+      value: String,
+      d1: F[Data[F]]
+  )
+
+  sealed trait Datas[F[_]]
+  object Datas {
+    final case class Other[F[_]](value: OtherData[F]) extends Datas[F]
+    final case class Dat[F[_]](value: Data[F]) extends Datas[F]
+  }
+
   def getFriends[F[_]](name: String)(implicit F: Sync[F]): F[Seq[Data[F]]] =
     if (name == "John") F.delay(getData[F]("Jane")).map(List(_))
     else if (name == "Jane") F.delay(getData[F]("John")).map(List(_))
@@ -167,30 +179,39 @@ query {
 
   implicit def listTypeForSome[F[_], A](implicit of: Output[F, A]): Output[F, Seq[A]] = Output.Arr(of)
 
-  implicit def dataType[F[_]: Async]: Output.Obj[F, Data[F]] = {
+  implicit def dataType[F[_]: Async]: Output.Obj[F, Data[F]] =
     outputObject[F, Data[F]](
       "Data",
       "a" -> pure(_.a),
       "b" -> effect(_.b),
       "c" -> effect(_.c)
     )
-  }
+
+  implicit def otherDataType[F[_]: Async]: Output.Obj[F, OtherData[F]] =
+    outputObject[F, OtherData[F]](
+      "OtherData",
+      "value" -> pure(_.value),
+      "d1" -> effect(_.d1)
+    )
+
+  implicit def datasType[F[_]: Async]: Output.Union[F, Datas[F]] =
+    union[F, Datas[F]](
+      "Datas",
+      instance(dataType[F].contramap[Datas.Dat[F]](_.value)),
+      instance(otherDataType[F].contramap[Datas.Other[F]](_.value))
+    )
 
   def root[F[_]: Sync]: Data[F] = getData[F]("John")
 
-  /*
-  query withNestedFragments {
-  user(id: 4) {
-    friends(first: 10) {
-      ...friendFields
-    }
-    mutualFriends(first: 10) {
-      ...friendFields
-    }
-  }
-}
-   */
-  val qn = """
+  def datasRoot[F[_]: Async]: Datas[F] =
+    Datas.Other(
+      OtherData(
+        "toplevel",
+        Async[F].delay(getData[F]("Jane"))
+      )
+    )
+
+  val q0 = """
 query withNestedFragments {
   getData {
     ... on Data {
@@ -225,12 +246,22 @@ query withNestedFragments {
     }
   """
 
+  val qn = """
+query withNestedFragments {
+  getDatas {
+    ... on OtherData {
+      value
+    }
+  }
+}
+  """
+
   val schema = Schema[IO, Unit](
     outputObject[IO, Unit](
       "Query",
-      "getData" -> pure(_ => root[IO])
-    ),
-    Map("Data" -> dataType[IO])
+      "getData" -> pure(_ => root[IO]),
+      "getDatas" -> pure(_ => datasRoot[IO])
+    )
   )
 
   val result =
@@ -238,7 +269,39 @@ query withNestedFragments {
       PreparedQuery.prepare(xs, schema, Map.empty)
     }
 
-  println(result)
+  // println(
+  //   otherDataType[IO].fields.head._2
+  //     .asInstanceOf[Output.Fields.SimpleField[IO, Any, Any]]
+  //     .resolve(
+  //       OtherData(
+  //         "toplevel",
+  //         IO.delay(getData[IO]("Jane"))
+  //       )
+  //     )
+  // )
+  // println(
+  //   datasType[IO].types.last.ol.fields.head._2
+  //     .asInstanceOf[Output.Fields.SimpleField[IO, Any, Any]]
+  //     .resolve(
+  //       Datas.Other(
+  //         OtherData(
+  //           "toplevel",
+  //           IO.delay(getData[IO]("Jane"))
+  //         )
+  //       )
+  //     )
+  // )
+  // println(
+  //   datasType[IO].types.last.specify(
+  //     Datas.Other(
+  //       OtherData(
+  //         "toplevel",
+  //         IO.delay(getData[IO]("Jane"))
+  //       )
+  //     )
+  //   )
+  // )
+  // println(result)
 
   val x = result.toOption.get.toOption.get
 

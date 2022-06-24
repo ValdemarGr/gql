@@ -6,6 +6,8 @@ import io.circe._
 import Value._
 import cats._
 import scala.reflect.ClassTag
+import gql.Output.Interface
+import gql.Output.Obj
 
 sealed trait Output[F[_], +A] {
   def mapK[G[_]](fk: F ~> G): Output[G, A]
@@ -21,12 +23,11 @@ sealed trait ObjectLike[F[_], A] extends Output[F, A] {
   def fields: NonEmptyList[(String, Output.Fields.Field[F, A, _])]
 
   override def mapK[G[_]](fk: F ~> G): ObjectLike[G, A]
+
+  def contramap[B](f: B => A): Output[F, B]
 }
 
-final case class Schema[F[_], Q](
-    query: Output.Obj[F, Q],
-    types: Map[String, ToplevelOutput[F, _]]
-)
+final case class Schema[F[_], Q](query: Output.Obj[F, Q])
 
 object Output {
   final case class Arr[F[_], A](of: Output[F, A]) extends Output[F, Vector[A]] {
@@ -43,7 +44,7 @@ object Output {
 
   final case class Interface[F[_], A](
       name: String,
-      instances: List[Interface.Instance[F, A, _]],
+      instances: List[Unification.Instance[F, A, _]],
       fields: NonEmptyList[(String, Fields.Field[F, A, _])]
   ) extends Output[F, A]
       with ToplevelOutput[F, A]
@@ -53,15 +54,32 @@ object Output {
         instances = instances.map(_.mapK(fk)),
         fields = fields.map { case (k, v) => k -> v.mapK(fk) }
       )
-  }
-  object Interface {
-    final case class Instance[F[_], A, B <: A](
-        ot: ObjectLike[F, B]
-    )(implicit val ct: ClassTag[B]) {
-      def mapK[G[_]](fk: F ~> G): Instance[G, A, B] =
-        Instance(ot.mapK(fk))
 
-      def specify(a: A): Option[B] = Some(a).collect { case b: B => b }
+    def contramap[B](g: B => A): Interface[F, B] =
+      Interface(name, instances.map(_.contramap(g)), fields.map { case (k, v) => k -> v.contramap(g) })
+  }
+  object Unification {
+    sealed trait Specify[A, B] extends (A => Option[B]) { self =>
+      def contramap[C](g: C => A): Specify[C, B] =
+        new Specify[C, B] {
+          def apply(c: C): Option[B] = self(g(c))
+        }
+    }
+    object Specify {
+      implicit def specifyForSubtype[A, B <: A: ClassTag]: Specify[A, B] =
+        new Specify[A, B] {
+          def apply(a: A): Option[B] = Some(a).collect { case b: B => b }
+        }
+    }
+
+    final case class Instance[F[_], A, B](
+        ol: ObjectLike[F, B]
+    )(implicit val specify: Specify[A, B]) {
+      def mapK[G[_]](fk: F ~> G): Instance[G, A, B] =
+        Instance(ol.mapK(fk))
+
+      def contramap[C](g: C => A): Instance[F, C, B] =
+        Instance[F, C, B](ol)(specify.contramap(g))
     }
   }
 
@@ -71,6 +89,10 @@ object Output {
   ) extends Output[F, A]
       with ToplevelOutput[F, A]
       with ObjectLike[F, A] {
+
+    override def contramap[B](f: B => A): Obj[F, B] =
+      Obj(name, fields.map { case (k, v) => k -> v.contramap(f) })
+
     def mapK[G[_]](fk: F ~> G): Obj[G, A] =
       Obj(name, fields.map { case (k, v) => k -> v.mapK(fk) })
   }
@@ -92,6 +114,8 @@ object Output {
       def output: Eval[Output[F, T]]
 
       def mapK[G[_]](fk: F ~> G): Field[G, I, T]
+
+      def contramap[B](g: B => I): Field[F, B, T]
     }
 
     final case class SimpleField[F[_], I, T](
@@ -100,6 +124,13 @@ object Output {
     ) extends Field[F, I, T] {
       def mapK[G[_]](fk: F ~> G): Field[G, I, T] =
         SimpleField(resolve andThen (_.mapK(fk)), output.map(_.mapK(fk)))
+
+      def contramap[B](g: B => I): SimpleField[F, B, T] = {
+        SimpleField(
+          i => resolve(g(i)),
+          output
+        )
+      }
     }
 
     final case class Arg[A](
@@ -143,12 +174,19 @@ object Output {
           (i, a) => (resolve(i, a).mapK(fk)),
           output.map(_.mapK(fk))
         )
+
+      def contramap[B](g: B => I): ArgField[F, B, T, A] =
+        ArgField(
+          args,
+          (b, a) => (resolve(g(b), a)),
+          output
+        )
     }
   }
 
   final case class Union[F[_], A](
       name: String,
-      types: NonEmptyList[ObjectLike[F, A]]
+      types: NonEmptyList[Unification.Instance[F, A, _]]
   ) extends Output[F, A]
       with ToplevelOutput[F, A] {
     def mapK[G[_]](fk: F ~> G): Union[G, A] =
