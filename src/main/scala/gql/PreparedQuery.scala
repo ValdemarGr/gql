@@ -192,8 +192,11 @@ object PreparedQuery {
 
                     F.fromEither(argResolution)
                       .map(args.decode)
-                      .map { resolvedArg =>
-                        ((x: Any) => resolve.asInstanceOf[Any => Output.Fields.Resolution[G, Any]](x, resolvedArg), graphqlType.value)
+                      .map { case (_, resolvedArg) =>
+                        (
+                          (x: Any) => resolve.asInstanceOf[(Any, Any) => Output.Fields.Resolution[G, Any]](x, resolvedArg),
+                          graphqlType.value
+                        )
                       }
                 }
 
@@ -201,29 +204,20 @@ object PreparedQuery {
               closedProgram.flatMap { case (resolve, tpe) =>
                 val prepF: F[Prepared[G, Any]] =
                   (tpe, field.selectionSet) match {
-                    case (ol: ObjectLike[G, _], Some(ss)) =>
+                    case (ol: ObjectLike[G, Any], Some(ss)) =>
                       prepareSelections[F, G](ss, ol.name, ol.fields, schema, variableMap).map(Selection(_))
-                    case (ol: ObjectLike[G, _], None) =>
-                      F.raiseError(s"object type ${ol.name} had no selections")
-                    case (Output.Arr(ol: ObjectLike[G, _]), Some(ss)) =>
+                    case (Output.Arr(ol: ObjectLike[G, Any]), Some(ss)) =>
                       prepareSelections[F, G](ss, ol.name, ol.fields, schema, variableMap)
                         .map(Selection(_))
                         .map(x => PreparedList(x).asInstanceOf[Prepared[G, Any]])
-                    case (Output.Arr(ol: ObjectLike[G, _]), None) =>
-                      F.raiseError(s"object type ${ol.name} in list had no selections")
-                    case (Output.Opt(ol: ObjectLike[G, _]), Some(ss)) =>
+                    case (Output.Opt(ol: ObjectLike[G, Any]), Some(ss)) =>
                       prepareSelections[F, G](ss, ol.name, ol.fields, schema, variableMap).map(Selection(_))
-                    case (Output.Opt(ol: ObjectLike[G, _]), None) =>
-                      F.raiseError(s"optional object type ${ol.name} had no selections")
-                    case (c @ Output.Enum(_), None) =>
-                      F.pure(PreparedLeaf(c.codec.name, (x: Any) => c.encode(x).map(Json.fromString(_))))
-                    case (Output.Enum(c), Some(_)) =>
-                      F.raiseError(s"enum type ${c.name} cannot have selections")
-                    case (Output.Scalar(c), None) =>
-                      F.pure(PreparedLeaf(c.name, (x: Any) => Right(c.encoder(x))))
-                    case (Output.Scalar(c), Some(_)) =>
-                      F.raiseError(s"scalar type ${c.name} cannot have selections")
-                    case _ => ???
+                    case (Output.Enum(name, encode), None) =>
+                      F.pure(PreparedLeaf(name, (x: Any) => Right(Json.fromString(encode.asInstanceOf[Any => String](x)))))
+                    case (Output.Scalar(name, encode), None) =>
+                      F.pure(PreparedLeaf(name, (x: Any) => Right(encode(x))))
+                    case (o, Some(_)) => F.raiseError(s"type ${o.name} cannot have selections")
+                    case (o, None)    => F.raiseError(s"object like type ${o.name} must have a selection")
                   }
 
                 prepF.map(p => PreparedDataField(field.name, resolve, p))
@@ -266,7 +260,7 @@ object PreparedQuery {
                 .flatMap[PreparedField[G, Any]] { case (parent, frag) =>
                   if ((frag & parent).isEmpty)
                     F.raiseError(
-                      s"inline fragment spread on condition $x is not valid for type ${typename}, since the intersection of ${frag
+                      s"inline fragment spread on condition $x is not valid for type $typename, since the intersection of ${frag
                         .mkString(",")} and ${parent.mkString(",")} is empty"
                     )
                   else

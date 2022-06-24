@@ -110,23 +110,23 @@ object Input {
     )
   }
 
-  final case class Scalar[A](codec: ScalarCodec[A]) extends Input[A] {
+  final case class Scalar[A](name: String, dec: Decoder[A]) extends Input[A] {
     override def decode(value: Value): Either[String, A] =
-      codec.decoder.decodeJson(value.asJson).leftMap(_.show)
+      dec.decodeJson(value.asJson).leftMap(_.show)
   }
 
-  final case class Enum[A](codec: EnumCodec[A]) extends Input[A] {
+  final case class Enum[A](name: String, fields: NonEmptyMap[String, A]) extends Input[A] {
     def decodeString(s: String): Either[String, A] =
-      codec.fields.lookup(s) match {
+      fields.lookup(s) match {
         case Some(a) => Right(a)
-        case None    => Left(s"unknown value $s for enum ${codec.name}")
+        case None    => Left(s"unknown value $s for enum $name")
       }
 
     override def decode(value: Value): Either[String, A] =
       value match {
         case JsonValue(v) if v.isString => decodeString(v.asString.get)
         case EnumValue(s)               => decodeString(s)
-        case _                          => Left(s"expected enum ${codec.name}, got ${value.name}")
+        case _                          => Left(s"expected enum $name, got ${value.name}")
       }
   }
 }

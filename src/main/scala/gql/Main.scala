@@ -160,25 +160,21 @@ query {
       F.delay(if (name == "John") 22 else 20),
       F.defer(getFriends[F](name))
     )
-  implicit def outputScalarForCodec[F[_], A](implicit sc: ScalarCodec[A]): Output.Scalar[F, A] =
-    Output.Scalar[F, A](sc)
-
   import gql.syntax._
-  implicit lazy val intType: ScalarCodec[Int] = ScalarCodec("Int", Encoder.encodeInt, Decoder.decodeInt)
-  implicit def outputIntScalar[F[_]] = gql.syntax.outputScalar[F, Int](intType)
+  implicit def intType[F[_]]: Output.Scalar[F, Int] = Output.Scalar("Int", Encoder.encodeInt)
 
-  implicit lazy val stringType: ScalarCodec[String] = ScalarCodec("String", Encoder.encodeString, Decoder.decodeString)
-  implicit def outputStringScalar[F[_]] = gql.syntax.outputScalar[F, String](stringType)
+  implicit def stringType[F[_]]: Output.Scalar[F, String] = Output.Scalar("String", Encoder.encodeString)
 
   implicit def listTypeForSome[F[_], A](implicit of: Output[F, A]): Output[F, Seq[A]] = Output.Arr(of)
 
-  implicit def dataType[F[_]: Async]: Output.Obj[F, Data[F]] =
+  implicit def dataType[F[_]: Async]: Output.Obj[F, Data[F]] = {
     outputObject[F, Data[F]](
       "Data",
-      "a" -> pure(_.a),
-      "b" -> effect(_.b),
-      "c" -> effect(_.c)
+      "a" -> pure(_.a)
+      // "b" -> effect(_.b),
+      // "c" -> effect(_.c)
     )
+  }
 
   def root[F[_]: Sync]: Data[F] = getData[F]("John")
 

@@ -76,16 +76,16 @@ object Output {
   }
 
   object Fields {
-    sealed trait Resolution[F[_], +A] {
+    sealed trait Resolution[F[_], A] {
       def mapK[G[_]](fk: F ~> G): Resolution[G, A]
     }
-    final case class PureResolution[F[_], +A](value: A) extends Resolution[F, A] {
+    final case class PureResolution[F[_], A](value: A) extends Resolution[F, A] {
       override def mapK[G[_]](fk: F ~> G): Resolution[G, A] =
         PureResolution(value)
     }
-    final case class DeferredResolution[F[_], A](f: F[A]) extends Resolution[F, A] {
+    final case class DeferredResolution[F[_], A](fa: F[A]) extends Resolution[F, A] {
       override def mapK[G[_]](fk: F ~> G): Resolution[G, A] =
-        DeferredResolution(fk(f))
+        DeferredResolution(fk(fa))
     }
 
     sealed trait Field[F[_], I, T] {
@@ -99,7 +99,7 @@ object Output {
         output: Eval[Output[F, T]]
     ) extends Field[F, I, T] {
       def mapK[G[_]](fk: F ~> G): Field[G, I, T] =
-        SimpleField(resolve.andThen(_.mapK(fk)), output.map(_.mapK(fk)))
+        SimpleField(resolve andThen (_.mapK(fk)), output.map(_.mapK(fk)))
     }
 
     final case class Arg[A](
@@ -140,7 +140,7 @@ object Output {
       def mapK[G[_]](fk: F ~> G): Field[G, I, T] =
         ArgField[G, I, T, A](
           args,
-          (i, a) => resolve(i, a).mapK(fk),
+          (i, a) => (resolve(i, a).mapK(fk)),
           output.map(_.mapK(fk))
         )
     }
@@ -158,26 +158,13 @@ object Output {
       )
   }
 
-  final case class Scalar[F[_], A](codec: ScalarCodec[A]) extends Output[F, A] with ToplevelOutput[F, A] {
+  final case class Scalar[F[_], A](name: String, encoder: Encoder[A]) extends Output[F, A] with ToplevelOutput[F, A] {
     override def mapK[G[_]](fk: F ~> G): Scalar[G, A] =
-      Scalar(codec)
-
-    override def name: String = codec.name
+      Scalar(name, encoder)
   }
 
-  final case class Enum[F[_], A](codec: EnumCodec[A]) extends Output[F, A] with ToplevelOutput[F, A] {
+  final case class Enum[F[_], A](name: String, encoder: A => String) extends Output[F, A] with ToplevelOutput[F, A] {
     override def mapK[G[_]](fk: F ~> G): Output[G, A] =
-      Enum(codec)
-
-    lazy val reverseMapping =
-      codec.fields.toNel.toList.map { case (k, v) => v -> k }.toMap
-
-    def encode(a: A): Either[String, String] =
-      reverseMapping.get(a) match {
-        case None        => Left(s"unknown enum value $a for enum type ${codec.name}")
-        case Some(value) => Right(value)
-      }
-
-    override def name: String = codec.name
+      Enum(name, encoder)
   }
 }
