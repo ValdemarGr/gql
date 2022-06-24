@@ -40,7 +40,12 @@ object Interpreter {
         } else {
           F.pure(JsonObject.empty)
         }
-      case PreparedInlineFragment(runtimeCheck, selection) => ???
+      case PreparedInlineFragment(runtimeCheck, selection) => 
+        if (runtimeCheck(input)) {
+          interpret(input, selection.fields).map(_.reduceLeft(_ deepMerge _))
+        } else {
+          F.pure(JsonObject.empty)
+        }
     }
   }
 

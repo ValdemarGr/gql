@@ -193,7 +193,13 @@ query {
   val qn = """
 query withNestedFragments {
   getData {
-    ... DataFragment
+    ... on Data {
+      a
+      b
+      c {
+        ... DataFragment
+      }
+    }
   }
 }
 
