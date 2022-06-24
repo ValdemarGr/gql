@@ -11,15 +11,15 @@ object syntax {
       tl: (String, Output.Fields.Field[F, A, _])*
   ) = Output.Obj[F, A](name, NonEmptyList(hd, tl.toList))
 
-  def effect[F[_], I, T](resolver: I => F[T])(implicit tpe: Lazy[Output[F, T]]): Output.Fields.Field[F, I, T] =
+  def effect[F[_], I, T](resolver: I => F[T])(implicit tpe: => Output[F, T]): Output.Fields.Field[F, I, T] =
     Output.Fields.SimpleField[F, I, T](
       i => Output.Fields.DeferredResolution(resolver(i)),
-      Eval.later(tpe.value)
+      Eval.later(tpe)
     )
 
-  def pure[F[_], I, T](resolver: I => T)(implicit tpe: Output[F, T]): Output.Fields.Field[F, I, T] =
+  def pure[F[_], I, T](resolver: I => T)(implicit tpe: => Output[F, T]): Output.Fields.Field[F, I, T] =
     Output.Fields.SimpleField[F, I, T](
-      resolver andThen (fa => Output.Fields.PureResolution(fa)),
+      i => Output.Fields.PureResolution(resolver(i)),
       Eval.later(tpe)
     )
 }

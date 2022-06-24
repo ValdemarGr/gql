@@ -170,9 +170,9 @@ query {
   implicit def dataType[F[_]: Async]: Output.Obj[F, Data[F]] = {
     outputObject[F, Data[F]](
       "Data",
-      "a" -> pure(_.a)
-      // "b" -> effect(_.b),
-      // "c" -> effect(_.c)
+      "a" -> pure(_.a),
+      "b" -> effect(_.b),
+      "c" -> effect(_.c)
     )
   }
 
