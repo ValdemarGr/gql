@@ -298,19 +298,25 @@ object PreparedQuery {
       }
   }
 
-  def prepareFragment[F[_], G[_]](f: GQLParser.FragmentDefinition, schema: Schema[G, _], variableMap: Map[String, Json])(implicit
+  def prepareFragment[F[_], G[_]](
+      parent: Unifyable[F, _],
+      f: GQLParser.FragmentDefinition,
+      schema: Schema[G, _],
+      variableMap: Map[String, Json]
+  )(implicit
       S: Stateful[F, AnalysisState[G]],
       F: MonadError[F, String],
       D: Defer[F]
   ): F[FragmentDefinition[G, Any]] =
     D.defer {
-      schema.types.get(f.typeCnd) match {
-        case None => F.raiseError(s"fragment ${f.name} references unknown type ${f.typeCnd}")
-        case Some(ot: ObjectLike[G, Any]) =>
+      parent.instances.get(f.typeCnd) match {
+        case None => F.raiseError(s"fragment ${f.name} references unknown type ${f.typeCnd} in parent type ${parent.name}")
+        case Some(i) =>
+          val ot = i.ol
           def inputCheck(x: Any): Option[Any] = ot match {
-            case Output.Interface(_, interfaces, _) =>
-              interfaces
-                .map(_.specify(x))
+            case Output.Interface(_, impls, _) =>
+              impls
+                .map { case (_, v) => v.specify(x) }
                 .collectFirst { case Some(x) => x }
             case Output.Obj(_, _) => Some(x)
           }

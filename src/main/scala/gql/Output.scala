@@ -17,6 +17,10 @@ sealed trait Output[F[_], +A] {
 
 sealed trait ToplevelOutput[F[_], +A] extends Output[F, A]
 
+sealed trait Unifyable[F[_], +A] extends Output[F, A] {
+  def instances: Map[String, Output.Unification.Instance[F, A, _]]
+}
+
 sealed trait ObjectLike[F[_], A] extends Output[F, A] {
   def name: String
 
@@ -44,19 +48,20 @@ object Output {
 
   final case class Interface[F[_], A](
       name: String,
-      instances: List[Unification.Instance[F, A, _]],
+      instances: Map[String, Unification.Instance[F, A, _]],
       fields: NonEmptyList[(String, Fields.Field[F, A, _])]
   ) extends Output[F, A]
       with ToplevelOutput[F, A]
+      with Unifyable[F, A]
       with ObjectLike[F, A] {
     override def mapK[G[_]](fk: F ~> G): Interface[G, A] =
       copy[G, A](
-        instances = instances.map(_.mapK(fk)),
+        instances = instances.map { case (k, v) => k -> v.mapK(fk) },
         fields = fields.map { case (k, v) => k -> v.mapK(fk) }
       )
 
     def contramap[B](g: B => A): Interface[F, B] =
-      Interface(name, instances.map(_.contramap(g)), fields.map { case (k, v) => k -> v.contramap(g) })
+      Interface(name, instances.map { case (k, v) => k -> v.contramap(g) }, fields.map { case (k, v) => k -> v.contramap(g) })
   }
   object Unification {
     sealed trait Specify[A, B] extends (A => Option[B]) { self =>
@@ -186,9 +191,12 @@ object Output {
 
   final case class Union[F[_], A](
       name: String,
-      types: NonEmptyList[Unification.Instance[F, A, _]]
+      types: NonEmptyMap[String, Unification.Instance[F, A, _]]
   ) extends Output[F, A]
+      with Unifyable[F, A]
       with ToplevelOutput[F, A] {
+    lazy val instances = types.toSortedMap.toMap
+
     def mapK[G[_]](fk: F ~> G): Union[G, A] =
       Union(
         name,
