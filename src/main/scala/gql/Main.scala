@@ -261,7 +261,8 @@ query withNestedFragments {
       "Query",
       "getData" -> pure(_ => root[IO]),
       "getDatas" -> pure(_ => datasRoot[IO])
-    )
+    ),
+  Map.empty
   )
 
   val result =

@@ -147,7 +147,7 @@ object PreparedQuery {
       schema.types.get(typename) match {
         case None                                    => F.raiseError(s"type $typename not found")
         case Some(Output.Obj(name, _))               => F.pure(Set(name))
-        case Some(Output.Interface(_, instances, _)) => F.pure(instances.map(_.ol.name).toSet)
+        case Some(Output.Interface(_, instances, _)) => F.pure(instances.keySet)
         case Some(Output.Union(_, fields))           => F.pure(fields.map(_.ol.name).toList.toSet)
         case Some(t)                                 => F.raiseError(s"type $typename is not an object or union, but instead ${t.name}")
       }
@@ -237,7 +237,7 @@ object PreparedQuery {
                     state.fragments.get(field.fragmentName) match {
                       case None => F.raiseError[FragmentDefinition[G, Any]](s"fragment by name ${field.fragmentName} not found")
                       case Some(FragmentAnalysis.Unevaluated(fd)) =>
-                        prepareFragment(fd, schema, variableMap).flatTap { frag =>
+                        prepareFragment(null, fd, schema, variableMap).flatTap { frag =>
                           S.modify(s => s.copy(fragments = s.fragments + (field.fragmentName -> FragmentAnalysis.Cached(frag))))
                         }
                       case Some(FragmentAnalysis.Cached(p)) => F.pure(p)
@@ -271,8 +271,8 @@ object PreparedQuery {
                       case ot: ObjectLike[G, Any] =>
                         def inputCheck(x: Any): Option[Any] = ot match {
                           case Output.Interface(_, interfaces, _) =>
-                            interfaces
-                              .map(_.specify(x))
+                            interfaces.toList
+                              .map { case (_, v) => v.specify(x) }
                               .collectFirst { case Some(x) => x }
                           case Output.Obj(_, _) => Some(x)
                         }
@@ -316,17 +316,17 @@ object PreparedQuery {
           def inputCheck(x: Any): Option[Any] = ot match {
             case Output.Interface(_, impls, _) =>
               impls
-                .map { case (_, v) => v.specify(x) }
+                .map { case (_, v) => v.specify(x.asInstanceOf) }
                 .collectFirst { case Some(x) => x }
             case Output.Obj(_, _) => Some(x)
           }
 
-          prepareSelections[F, G](f.selectionSet, ot.name, ot.fields.toList, schema, variableMap).attempt.flatMap {
+          prepareSelections[F, G](f.selectionSet, ot.name, ot.fields.toList.asInstanceOf, schema, variableMap).attempt.flatMap {
             case Left(err) => F.raiseError(s"in fragment ${f.name}: $err")
             case Right(x)  => F.pure(FragmentDefinition(f.name, f.typeCnd, inputCheck, x))
           }
         case Some(ot) =>
-          F.raiseError(s"fragment ${f.name} references scalar type ${ot.name}, but scalars are not allowed in fragments")
+          F.raiseError(s"fragment ${f.name} references scalar type ${ot}, but scalars are not allowed in fragments")
       }
     }
 
@@ -341,7 +341,7 @@ object PreparedQuery {
       D: Defer[F]
   ) = {
     // prepare all fragments
-    val prepped: F[Unit] = frags.traverse(frag => prepareFragment[F, G](frag, schema, variableMap)).void
+    val prepped: F[Unit] = frags.traverse(frag => prepareFragment[F, G](null, frag, schema, variableMap)).void
 
     prepped >> (ops.head match {
       //case Simple(_)                                            => ???

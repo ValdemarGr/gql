@@ -17,7 +17,7 @@ sealed trait Output[F[_], +A] {
 
 sealed trait ToplevelOutput[F[_], +A] extends Output[F, A]
 
-sealed trait Unifyable[F[_], +A] extends Output[F, A] {
+sealed trait Unifyable[F[_], A] extends Output[F, A] {
   def instances: Map[String, Output.Unification.Instance[F, A, _]]
 }
 
@@ -31,7 +31,7 @@ sealed trait ObjectLike[F[_], A] extends Output[F, A] {
   def contramap[B](f: B => A): Output[F, B]
 }
 
-final case class Schema[F[_], Q](query: Output.Obj[F, Q])
+final case class Schema[F[_], Q](query: Output.Obj[F, Q], types: Map[String, ToplevelOutput[F, _]])
 
 object Output {
   final case class Arr[F[_], A](of: Output[F, A]) extends Output[F, Vector[A]] {
