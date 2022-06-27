@@ -19,6 +19,9 @@ import gql.GQLParser.Value.NullValue
 import gql.GQLParser.Value.ListValue
 import gql.GQLParser.OperationDefinition.Detailed
 import gql.GQLParser.OperationDefinition.Simple
+import gql.Output.Interface
+import gql.Output.Obj
+import gql.Output.Union
 
 object PreparedQuery {
   /*
@@ -297,6 +300,68 @@ object PreparedQuery {
           }
       }
   }
+
+  def subtypeSpecification[F[_], G[_]](
+      name: String,
+      sel: Selectable[G, _]
+  ): Any => Option[Any] = a =>
+    sel match {
+      case Obj(name, fields)                  => Some(a)
+      case Interface(name, instances, fields) => ???
+      case Union(name, types)                 => ???
+    }
+
+  def prepareFragment2[F[_], G[_]](
+      parent: Output[G, _],
+      f: GQLParser.FragmentDefinition,
+      schema: Schema[G, _],
+      variableMap: Map[String, Json]
+  )(implicit
+      S: Stateful[F, AnalysisState[G]],
+      F: MonadError[F, String],
+      D: Defer[F]
+  ): F[FragmentDefinition[G, Any]] =
+    D.defer {
+      S.get.flatMap {
+        case c if c.cycleSet(f.name) =>
+          F.raiseError(s"fragment by name ${f.name} is cyclic, discovered through path ${c.cycleSet.mkString(" -> ")}")
+        case _ =>
+          val beforeF = S.modify(s => s.copy(cycleSet = s.cycleSet + f.name))
+          val afterF = S.modify(s => s.copy(cycleSet = s.cycleSet - f.name))
+
+          // can apply to any of the following
+          parent match {
+            case Interface(name, instances, _) =>
+              f.typeCnd == name
+              instances.contains(name)
+            case Output.Obj(name, _) =>
+              f.typeCnd == name
+            case Output.Union(name, instances) =>
+              f.typeCnd == name
+              instances.contains(f.typeCnd)
+          }
+          ???
+      }
+      // parent.instances.get(f.typeCnd) match {
+      //   case None => F.raiseError(s"fragment ${f.name} references unknown type ${f.typeCnd} in parent type ${parent.name}")
+      //   case Some(i) =>
+      //     val ot = i.ol
+      //     def inputCheck(x: Any): Option[Any] = ot match {
+      //       case Output.Interface(_, impls, _) =>
+      //         impls
+      //           .map { case (_, v) => v.specify(x.asInstanceOf) }
+      //           .collectFirst { case Some(x) => x }
+      //       case Output.Obj(_, _) => Some(x)
+      //     }
+
+      //     prepareSelections[F, G](f.selectionSet, ot.name, ot.fields.toList.asInstanceOf, schema, variableMap).attempt.flatMap {
+      //       case Left(err) => F.raiseError(s"in fragment ${f.name}: $err")
+      //       case Right(x)  => F.pure(FragmentDefinition(f.name, f.typeCnd, inputCheck, x))
+      //     }
+      //   case Some(ot) =>
+      //     F.raiseError(s"fragment ${f.name} references scalar type ${ot}, but scalars are not allowed in fragments")
+      // }
+    }
 
   def prepareFragment[F[_], G[_]](
       parent: Unifyable[F, _],

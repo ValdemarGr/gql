@@ -21,6 +21,10 @@ sealed trait Unifyable[F[_], A] extends Output[F, A] {
   def instances: Map[String, Output.Unification.Instance[F, A, _]]
 }
 
+sealed trait Selectable[F[_], A] extends Output[F, A] {
+  def fieldMap: Map[String, Output.Fields.Field[F, A, _]]
+}
+
 sealed trait ObjectLike[F[_], A] extends Output[F, A] {
   def name: String
 
@@ -52,6 +56,7 @@ object Output {
       fields: NonEmptyList[(String, Fields.Field[F, A, _])]
   ) extends Output[F, A]
       with ToplevelOutput[F, A]
+      with Selectable[F, A]
       with Unifyable[F, A]
       with ObjectLike[F, A] {
     override def mapK[G[_]](fk: F ~> G): Interface[G, A] =
@@ -59,6 +64,8 @@ object Output {
         instances = instances.map { case (k, v) => k -> v.mapK(fk) },
         fields = fields.map { case (k, v) => k -> v.mapK(fk) }
       )
+
+    lazy val fieldMap = fields.toNem.toSortedMap.toMap
 
     def contramap[B](g: B => A): Interface[F, B] =
       Interface(name, instances.map { case (k, v) => k -> v.contramap(g) }, fields.map { case (k, v) => k -> v.contramap(g) })
@@ -93,10 +100,13 @@ object Output {
       fields: NonEmptyList[(String, Fields.Field[F, A, _])]
   ) extends Output[F, A]
       with ToplevelOutput[F, A]
+      with Selectable[F, A]
       with ObjectLike[F, A] {
 
     override def contramap[B](f: B => A): Obj[F, B] =
       Obj(name, fields.map { case (k, v) => k -> v.contramap(f) })
+
+    lazy val fieldMap = fields.toNem.toSortedMap.toMap
 
     def mapK[G[_]](fk: F ~> G): Obj[G, A] =
       Obj(name, fields.map { case (k, v) => k -> v.mapK(fk) })
@@ -194,8 +204,11 @@ object Output {
       types: NonEmptyMap[String, Unification.Instance[F, A, _]]
   ) extends Output[F, A]
       with Unifyable[F, A]
+      with Selectable[F, A]
       with ToplevelOutput[F, A] {
     lazy val instances = types.toSortedMap.toMap
+
+    lazy val fieldMap = Map.empty
 
     def mapK[G[_]](fk: F ~> G): Union[G, A] =
       Union(
