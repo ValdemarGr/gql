@@ -409,16 +409,6 @@ object PreparedQuery {
             else None
           }
     }
-  // def subtypeSpecializationMap[F[_], G[_]](
-  //     sel: Selectable[G, Any]
-  // ): Map[String, Any => Option[Any]] =
-  //   sel match {
-  //     case Obj(name, _) => Map(name -> (x => Some(x)))
-  //     case Interface(name, instances, fields) =>
-  //       instances.toMap.map { case (k, v) => k -> (v.specify(_)) } + (name -> (Some(_)))
-  //     case Union(name, types) =>
-  //       types.toSortedMap.toMap.map { case (k, v) => k -> (v.specify(_)) } + (name -> (Some(_)))
-  //   }
 
   def prepareFragment2[F[_], G[_]](
       ol: ObjectLike[G, Any],
