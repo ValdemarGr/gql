@@ -28,7 +28,9 @@ sealed trait Selectable[F[_], A] extends Output[F, A] {
 sealed trait ObjectLike[F[_], A] extends Output[F, A] {
   def name: String
 
-  def fields: NonEmptyList[(String, Output.Fields.Field[F, A, _])]
+  def fieldsList: List[(String, Output.Fields.Field[F, A, _])]
+
+  def fieldMap: Map[String, Output.Fields.Field[F, A, _]]
 
   override def mapK[G[_]](fk: F ~> G): ObjectLike[G, A]
 
@@ -52,7 +54,7 @@ object Output {
 
   final case class Interface[F[_], A](
       name: String,
-      instances: Map[String, Unification.Instance[F, A, _]],
+      instances: Map[String, Unification.Instance[F, A, Any]],
       fields: NonEmptyList[(String, Fields.Field[F, A, _])]
   ) extends Output[F, A]
       with ToplevelOutput[F, A]
@@ -64,6 +66,8 @@ object Output {
         instances = instances.map { case (k, v) => k -> v.mapK(fk) },
         fields = fields.map { case (k, v) => k -> v.mapK(fk) }
       )
+
+    lazy val fieldsList = fields.toList
 
     lazy val fieldMap = fields.toNem.toSortedMap.toMap
 
@@ -102,6 +106,7 @@ object Output {
       with ToplevelOutput[F, A]
       with Selectable[F, A]
       with ObjectLike[F, A] {
+    lazy val fieldsList: List[(String, gql.Output.Fields.Field[F, A, _])] = fields.toList
 
     override def contramap[B](f: B => A): Obj[F, B] =
       Obj(name, fields.map { case (k, v) => k -> v.contramap(f) })
@@ -201,14 +206,21 @@ object Output {
 
   final case class Union[F[_], A](
       name: String,
-      types: NonEmptyMap[String, Unification.Instance[F, A, _]]
+      types: NonEmptyMap[String, Unification.Instance[F, A, Any]]
   ) extends Output[F, A]
       with Unifyable[F, A]
+      with ObjectLike[F, A]
       with Selectable[F, A]
       with ToplevelOutput[F, A] {
+
+    override def contramap[B](f: B => A): Union[F, B] =
+      Union(name, types.map(_.contramap(f)))
+
     lazy val instances = types.toSortedMap.toMap
 
     lazy val fieldMap = Map.empty
+
+    lazy val fieldsList: List[(String, gql.Output.Fields.Field[F, A, _])] = Nil
 
     def mapK[G[_]](fk: F ~> G): Union[G, A] =
       Union(
