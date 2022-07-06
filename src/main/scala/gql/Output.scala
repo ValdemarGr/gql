@@ -11,13 +11,13 @@ import gql.Output.Obj
 
 sealed trait Output[F[_], +A] {
   def mapK[G[_]](fk: F ~> G): Output[G, A]
+}
 
+sealed trait ToplevelOutput[F[_], +A] extends Output[F, A] {
   def name: String
 }
 
-sealed trait ToplevelOutput[F[_], +A] extends Output[F, A]
-
-sealed trait Unifyable[F[_], A] extends Output[F, A] {
+sealed trait Unifyable[F[_], A] extends ToplevelOutput[F, A] {
   def instances: Map[String, Output.Unification.Instance[F, A, _]]
 }
 
@@ -25,9 +25,7 @@ sealed trait Selectable[F[_], A] extends Output[F, A] {
   def fieldMap: Map[String, Output.Fields.Field[F, A, _]]
 }
 
-sealed trait ObjectLike[F[_], A] extends Output[F, A] {
-  def name: String
-
+sealed trait ObjectLike[F[_], A] extends ToplevelOutput[F, A] {
   def fieldsList: List[(String, Output.Fields.Field[F, A, _])]
 
   def fieldMap: Map[String, Output.Fields.Field[F, A, _]]
@@ -40,16 +38,16 @@ sealed trait ObjectLike[F[_], A] extends Output[F, A] {
 final case class Schema[F[_], Q](query: Output.Obj[F, Q], types: Map[String, ToplevelOutput[F, _]])
 
 object Output {
+  final case class WeakReference[F[_], A](name: String) extends Output[F, A] {
+    override def mapK[G[_]](fk: F ~> G): Output[G, A] = this.asInstanceOf[Output[G, A]]
+  }
+
   final case class Arr[F[_], A](of: Output[F, A]) extends Output[F, Vector[A]] {
     def mapK[G[_]](fk: F ~> G): Output[G, Vector[A]] = Arr(of.mapK(fk))
-
-    def name: String = s"[${of.name}]"
   }
 
   final case class Opt[F[_], A](of: Output[F, A]) extends Output[F, Option[A]] {
     def mapK[G[_]](fk: F ~> G): Output[G, Option[A]] = Opt(of.mapK(fk))
-
-    def name: String = s"(${of.name} | null)"
   }
 
   final case class Interface[F[_], A](
@@ -61,6 +59,7 @@ object Output {
       with Selectable[F, A]
       with Unifyable[F, A]
       with ObjectLike[F, A] {
+
     override def mapK[G[_]](fk: F ~> G): Interface[G, A] =
       copy[G, A](
         instances = instances.map { case (k, v) => k -> v.mapK(fk) },
@@ -72,7 +71,11 @@ object Output {
     lazy val fieldMap = fields.toNem.toSortedMap.toMap
 
     def contramap[B](g: B => A): Interface[F, B] =
-      Interface(name, instances.map { case (k, v) => k -> v.contramap(g) }, fields.map { case (k, v) => k -> v.contramap(g) })
+      Interface(
+        name,
+        instances.map { case (k, v) => k -> v.contramap(g) },
+        fields.map { case (k, v) => k -> v.contramap(g) }
+      )
   }
   object Unification {
     sealed trait Specify[A, B] extends (A => Option[B]) { self =>

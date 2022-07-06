@@ -22,6 +22,9 @@ import gql.GQLParser.OperationDefinition.Simple
 import gql.Output.Interface
 import gql.Output.Obj
 import gql.Output.Union
+import gql.Output.Scalar
+import gql.Output.Opt
+import gql.Output.Arr
 
 object PreparedQuery {
   /*
@@ -101,6 +104,16 @@ object PreparedQuery {
       fragments: Map[String, FragmentAnalysis[F]],
       cycleSet: Set[String]
   )
+
+  def friendlyName[G[_], A](ot: Output[G, A]): String = ot match {
+    case Scalar(name, _)       => name
+    case Output.Enum(name, _)  => name
+    case Obj(name, _)          => name
+    case Union(name, _)        => name
+    case Interface(name, _, _) => name
+    case x: Opt[G, _]          => s"(${friendlyName[G, Any](x.of)} | null)"
+    case x: Arr[G, _]          => s"[${friendlyName[G, Any](x.of)}]"
+  }
 
   def valueName(value: GQLParser.Value): String = value match {
     case ObjectValue(_)   => "object"
@@ -231,8 +244,8 @@ object PreparedQuery {
             F.pure(PreparedLeaf(e.name, x => Right(Json.fromString(e.encoder(x)))))
           case (s: Output.Scalar[G, Any], None) =>
             F.pure(PreparedLeaf(s.name, x => Right(s.encoder(x))))
-          case (o, Some(_)) => F.raiseError(s"type ${o.name} cannot have selections")
-          case (o, None)    => F.raiseError(s"object like type ${o.name} must have a selection")
+          case (o, Some(_)) => F.raiseError(s"type ${friendlyName[G, Any](o)} cannot have selections")
+          case (o, None)    => F.raiseError(s"object like type ${friendlyName[G, Any](o)} must have a selection")
         }
 
       prepF.map(p => PreparedDataField(gqlField.name, resolve, p))
@@ -305,8 +318,8 @@ object PreparedQuery {
                       F.pure(PreparedLeaf(name, (x: Any) => Right(Json.fromString(encode.asInstanceOf[Any => String](x)))))
                     case (Output.Scalar(name, encode), None) =>
                       F.pure(PreparedLeaf(name, (x: Any) => Right(encode(x))))
-                    case (o, Some(_)) => F.raiseError(s"type ${o.name} cannot have selections")
-                    case (o, None)    => F.raiseError(s"object like type ${o.name} must have a selection")
+                    case (o, Some(_)) => F.raiseError(s"type ${friendlyName[G, Any](o)} cannot have selections")
+                    case (o, None)    => F.raiseError(s"object like type ${friendlyName[G, Any](o)} must have a selection")
                   }
 
                 prepF.map(p => PreparedDataField(field.name, resolve, p))
