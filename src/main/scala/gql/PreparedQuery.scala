@@ -181,8 +181,9 @@ object PreparedQuery {
           case None                                      => F.raiseError(s"unknown field name ${field.name}")
           case Some(f: Output.Fields.Field[G, Any, Any]) => prepareField[F, G](field, f, variableMap)
         }
-      case _ =>
+      case GQLParser.Selection.FragmentSpreadSelection(f) =>
         ???
+      case _ => ???
     }
   }
 
@@ -396,6 +397,34 @@ object PreparedQuery {
           }
       }
   }
+
+  // name is the type in the pattern match case
+  // sel is the type we match on
+  // sel match { case x if x.name == name  => ... }
+  def getPossibleType2[F[_], G[_]](
+      name: String,
+      sel: ObjectLike[G, Any]
+  )(implicit F: MonadError[F, String]): F[(ObjectLike[G, Any], Any => Option[Any])] =
+    if (sel.name == name) F.pure((sel, Some(_)))
+    else {
+      sel match {
+        case Obj(n, _) => F.raiseError(s"tried to match with type $name on type $n")
+        case Interface(n, instances, fields) =>
+          F.fromOption(
+            instances
+              .get(name)
+              .map(i => (i.ol, i.specify)),
+            "..."
+          )
+        case Union(n, types) =>
+          F.fromOption(
+            types
+              .lookup(name)
+              .map(i => (i.ol, i.specify)),
+            "..."
+          )
+      }
+    }
 
   // sel is the "current" type
   // we construct a mapping from name to specialization
