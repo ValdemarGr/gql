@@ -326,6 +326,18 @@ query withNestedFragments {
   getDatas {
     ... Frag
   }
+  getData {
+    ... F2
+  }
+}
+
+fragment F2 on Data {
+  a
+  b
+  c {
+    a
+    b
+  }
 }
 
   fragment Frag on Datas {
@@ -335,12 +347,7 @@ query withNestedFragments {
         a
         b
         c {
-          a
-          b
-          c {
-            a
-            b
-          }
+          ... F2
         }
       }
     }
