@@ -377,20 +377,19 @@ object PreparedQuery {
       D: Defer[F]
   ) = {
     // prepare all fragments
-    val prepped: F[Unit] = frags.traverse(frag => prepareFragment[F, G](null, frag, variableMap, null)).void
+    // val prepped: F[Unit] = frags.traverse(frag => prepareFragment[F, G](null, frag, variableMap, null)).void
 
-    prepped >> (ops.head match {
+    /*prepped >>*/
+    (ops.head match {
       //case Simple(_)                                            => ???
       //case Detailed(tpe, name, Some(variableDefinitions), _, _) => ???
       case Detailed(_, _, None, _, sel) =>
-        ???
-      // prepareSelections[F, G](
-      //   sel,
-      //   schema.query.name,
-      //   schema.query.fields.toList,
-      //   schema,
-      //   variableMap
-      // )
+        prepareSelections[F, G](
+          schema.query.asInstanceOf[ObjectLike[G, Any]],
+          sel,
+          variableMap,
+          frags.map(f => f.name -> f).toMap
+        )
     })
   }
 

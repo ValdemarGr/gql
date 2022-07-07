@@ -16,7 +16,10 @@ object syntax {
       name: String,
       hd: Output.Unification.Instance[F, A, _],
       tl: Output.Unification.Instance[F, A, _]*
-  ) = Output.Union[F, A](name, NonEmptyList(hd, tl.toList).asInstanceOf)
+  ) = Output.Union[F, A](
+    name,
+    NonEmptyList(hd, tl.toList).map(x => x.ol.name -> x.asInstanceOf[Output.Unification.Instance[F, A, Any]]).toNem
+  )
 
   def instance[F[_], A, B <: A: ClassTag](ol: ObjectLike[F, B]): Output.Unification.Instance[F, A, B] =
     Output.Unification.Instance(ol)

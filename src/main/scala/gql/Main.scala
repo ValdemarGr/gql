@@ -19,8 +19,83 @@ import gql.GQLParser.Value.ListValue
 import gql.GQLParser.Value.StringValue
 import conversions._
 import cats.effect.std.Random
+import cats.parse.Parser
+import cats.parse.Parser.Expectation._
+import scala.io.AnsiColor
 
 object Main extends App {
+  def showExpectation(e: Parser.Expectation): Eval[String] =
+    Eval.defer {
+      e match {
+        case WithContext(contextStr, expect) =>
+          showExpectation(expect).map(x => s"context:\n$contextStr\nwith underlying $x")
+        case Fail(offset) =>
+          Eval.now(s"failed at offset $offset")
+        case FailWith(offset, message) =>
+          Eval.now(s"failed at offset $offset with message $message")
+        case OneOfStr(offset, strs) =>
+          Eval.now(s"failed at offset $offset with one of ${strs.map(s => s"\"$s\"").mkString(" | ")}")
+        case StartOfString(offset) =>
+          Eval.now(s"failed at offset $offset with start of string")
+        case Length(offset, expected, actual) =>
+          Eval.now(s"failed at offset $offset with length $expected, but found $actual")
+        case EndOfString(offset, length) =>
+          Eval.now(s"failed at offset $offset with end of string but expected length $length")
+        case InRange(offset, lower, upper) =>
+          Eval.now(
+            s"failed at offset $offset with char in range $lower to $upper (code ${lower.toInt} to ${upper.toInt})"
+          )
+        case ExpectedFailureAt(offset, matched) =>
+          Eval.now(s"failed at offset $offset with expected failure at $matched")
+      }
+    }
+
+  def showExpectations(es: NonEmptyList[cats.parse.Parser.Expectation]): String =
+    es.traverse(showExpectation).value.mkString_("-" * 10)
+
+  def errorMessage(data: String, e: Parser.Error) = {
+    val (left, right) = data.splitAt(e.failedAtOffset)
+    val c = data(e.failedAtOffset)
+    val ln = left.count(_ == '\n') + 1
+
+    val virtualErrorLineOffset = left.reverse.takeWhile(_ != '\n').length()
+    val virtualN = 3
+    // val virtualLineCharsLeft = math.min(virtualErrorLineOffset - 3, 0)
+    val virtualLineStart = math.max(virtualErrorLineOffset - 3, 0)
+    val virtualErrorLine: String =
+      (">" * virtualLineStart) + ("^" * (virtualN * 2 + 1)) + s" line:$ln code:${c.toInt}"
+
+    val green = AnsiColor.RESET + AnsiColor.GREEN
+
+    val conflict = s"${data(e.failedAtOffset)}"
+    val n = 400
+    val leftChunk = left.takeRight(n)
+    // val leftThisLine = leftChunk.takeRight(virtualErrorLineOffset)
+    // val leftOtherLines = left.dropRight(n)
+
+    val rightChunk = right.drop(1).take(n)
+    val rightChunkThisline = rightChunk.takeWhile(_ != '\n')
+    val rightChunkNextLines = rightChunk.dropWhile(_ != '\n')
+    val rightChunks =
+      green + rightChunkThisline + "\n" +
+        AnsiColor.RED + virtualErrorLine +
+        green + rightChunkNextLines + AnsiColor.RESET
+
+    val conflictFmt = scala.io.AnsiColor.RED_B + scala.io.AnsiColor.BLACK + conflict
+
+    val chunk =
+      green + leftChunk + conflictFmt + rightChunks
+
+    val msg =
+      green + chunk
+        .split("\n")
+        .map(x => s"| $x")
+        .mkString("\n")
+    val niceError = showExpectations(e.expected)
+    scala.io.AnsiColor.BLUE +
+      s"failed with char $c at offset ${e.failedAtOffset} on line $ln with code ${c.toInt}: \n${niceError}\nfor data:\n$msg"
+  }
+
   val q = """
 query FragmentTyping {
   profiles(handles: ["zuck", "cocacola"]) {
@@ -122,6 +197,41 @@ query {
 }
 """
 
+  val q0 = """
+query withNestedFragments {
+  getData {
+    ... on Data {
+      a
+      b
+      c {
+        ... DataFragment
+      }
+    }
+  }
+}
+
+    fragment DataFragment on Data {
+      a
+      b
+      c {
+        ... NestedData
+      }
+    }
+
+    fragment NestedData on Data {
+      a
+      b
+      c {
+        ... NestedData2
+      }
+    }
+
+    fragment NestedData2 on Data {
+      a
+      b
+    }
+  """
+
   val p = GQLParser.executableDefinition.rep
   def tryParse[A](p: cats.parse.Parser[A], q: String): Unit =
     p.parseAll(q) match {
@@ -211,49 +321,30 @@ query {
       )
     )
 
-  val q0 = """
-query withNestedFragments {
-  getData {
-    ... on Data {
-      a
-      b
-      c {
-        ... DataFragment
-      }
-    }
-  }
-}
-
-    fragment DataFragment on Data {
-      a
-      b
-      c {
-        ... NestedData
-      }
-    }
-
-    fragment NestedData on Data {
-      a
-      b
-      c {
-        ... NestedData2
-      }
-    }
-
-    fragment NestedData2 on Data {
-      a
-      b
-    }
-  """
-
   val qn = """
 query withNestedFragments {
   getDatas {
-    ... on OtherData {
-      value
-    }
+    ... Frag
   }
 }
+
+  fragment Frag on Datas {
+    ... on OtherData {
+      value
+      d1 {
+        a
+        b
+        c {
+          a
+          b
+          c {
+            a
+            b
+          }
+        }
+      }
+    }
+  }
   """
 
   val schema = Schema[IO, Unit](
@@ -262,7 +353,7 @@ query withNestedFragments {
       "getData" -> pure(_ => root[IO]),
       "getDatas" -> pure(_ => datasRoot[IO])
     ),
-  Map.empty
+    Map.empty
   )
 
   val result =
@@ -270,41 +361,10 @@ query withNestedFragments {
       PreparedQuery.prepare(xs, schema, Map.empty)
     }
 
-  // println(
-  //   otherDataType[IO].fields.head._2
-  //     .asInstanceOf[Output.Fields.SimpleField[IO, Any, Any]]
-  //     .resolve(
-  //       OtherData(
-  //         "toplevel",
-  //         IO.delay(getData[IO]("Jane"))
-  //       )
-  //     )
-  // )
-  // println(
-  //   datasType[IO].types.last.ol.fields.head._2
-  //     .asInstanceOf[Output.Fields.SimpleField[IO, Any, Any]]
-  //     .resolve(
-  //       Datas.Other(
-  //         OtherData(
-  //           "toplevel",
-  //           IO.delay(getData[IO]("Jane"))
-  //         )
-  //       )
-  //     )
-  // )
-  // println(
-  //   datasType[IO].types.last.specify(
-  //     Datas.Other(
-  //       OtherData(
-  //         "toplevel",
-  //         IO.delay(getData[IO]("Jane"))
-  //       )
-  //     )
-  //   )
-  // )
-  // println(result)
-
-  val x = result.toOption.get.toOption.get
-
-  println(Interpreter.interpret[IO]((), x).unsafeRunSync())
+  result match {
+    case Left(e)        => println(errorMessage(qn, e))
+    case Right(Left(x)) => println(x)
+    case Right(Right(x)) =>
+      println(Interpreter.interpret[IO]((), x).unsafeRunSync())
+  }
 }
