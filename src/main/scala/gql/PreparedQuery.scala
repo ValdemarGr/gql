@@ -401,6 +401,69 @@ object PreparedQuery {
   // name is the type in the pattern match case
   // sel is the type we match on
   // sel match { case x if x.name == name  => ... }
+  def matchType[F[_], G[_]](
+      name: String,
+      sel: ObjectLike[G, Any]
+  )(implicit F: MonadError[F, String]): F[(ObjectLike[G, Any], Any => Option[Any])] =
+    if (sel.name == name) F.pure((sel, Some(_)))
+    else {
+      /*
+       TODO(also check supertypes, maybe the name is an interface that this selection implements)
+       example:
+         # schema
+         interface A {
+           x: Int!
+         }
+
+         type C implements A {
+           x: Int!
+           z: Boolean!
+         }
+
+         type B implements A {
+           x: Int!
+           y: String!
+         }
+
+         fragment AFrag on A {
+           a
+           ... on C {
+             z
+           }
+           ... on B {
+             y
+           }
+         }
+
+         # query
+         query {
+           b: {
+             ...AFrag
+           }
+         }
+
+       We must be able to re-lift the gql type B to gql type A such that the fragment resolver for
+       AFrag resolves matches on B and picks that implementation
+      */
+      sel match {
+        case Obj(n, _) => F.raiseError(s"tried to match with type $name on type object type $n")
+        case Interface(n, instances, fields) =>
+          F.fromOption(
+            instances
+              .get(name)
+              .map(i => (i.ol, i.specify)),
+            s"$name does not implement interface $n, possible implementations are ${instances.keySet.mkString(", ")}"
+          )
+        case Union(n, types) =>
+          F.fromOption(
+            types
+              .lookup(name)
+              .map(i => (i.ol, i.specify)),
+            s"$name is not a member of the union $n, possible members are ${types.keys.mkString_(", ")}"
+          )
+      }
+    }
+
   def getPossibleType2[F[_], G[_]](
       name: String,
       sel: ObjectLike[G, Any]
@@ -408,20 +471,20 @@ object PreparedQuery {
     if (sel.name == name) F.pure((sel, Some(_)))
     else {
       sel match {
-        case Obj(n, _) => F.raiseError(s"tried to match with type $name on type $n")
+        case Obj(n, _) => F.raiseError(s"tried to match with type $name on type object type $n")
         case Interface(n, instances, fields) =>
           F.fromOption(
             instances
               .get(name)
               .map(i => (i.ol, i.specify)),
-            "..."
+            s"$name does not implement interface $n, possible implementations are ${instances.keySet.mkString(", ")}"
           )
         case Union(n, types) =>
           F.fromOption(
             types
               .lookup(name)
               .map(i => (i.ol, i.specify)),
-            "..."
+            s"$name is not a member of the union $n, possible members are ${types.keys.mkString_(", ")}"
           )
       }
     }
