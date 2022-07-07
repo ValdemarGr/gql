@@ -172,18 +172,34 @@ object PreparedQuery {
   def prepareSelections2[F[_], G[_]](
       ol: ObjectLike[G, Any],
       s: GQLParser.SelectionSet,
-      variableMap: Map[String, Json]
-  )(implicit S: Stateful[F, AnalysisState[G]], F: MonadError[F, String], D: Defer[F]) = D.defer {
+      variableMap: Map[String, Json],
+      fragments: Map[String, GQLParser.FragmentDefinition]
+  )(implicit S: Stateful[F, AnalysisState[G]], F: MonadError[F, String], D: Defer[F]): F[NonEmptyList[PreparedField[G, Any]]] = D.defer {
     val schemaMap = ol.fieldMap
     s.selections.traverse[F, PreparedField[G, Any]] {
       case GQLParser.Selection.FieldSelection(field) =>
         schemaMap.get(field.name) match {
           case None                                      => F.raiseError(s"unknown field name ${field.name}")
-          case Some(f: Output.Fields.Field[G, Any, Any]) => prepareField[F, G](field, f, variableMap)
+          case Some(f: Output.Fields.Field[G, Any, Any]) => prepareField[F, G](field, f, variableMap, fragments)
+        }
+      case GQLParser.Selection.InlineFragmentSelection(f) =>
+        f.typeCondition match {
+          case None => F.raiseError(s"inline fragment must have a type condition")
+          case Some(typeCnd) =>
+            matchType[F, G](typeCnd, ol).flatMap { case (ol, specialize) =>
+              prepareSelections2[F, G](ol, f.selectionSet, variableMap, fragments)
+                .map(Selection(_))
+                .map[PreparedField[G, Any]](s => PreparedInlineFragment(specialize, s))
+                .adaptError(e => s"in inline fragment with condition $typeCnd: $e")
+            }
         }
       case GQLParser.Selection.FragmentSpreadSelection(f) =>
-        ???
-      case _ => ???
+        fragments.get(f.fragmentName) match {
+          case None => F.raiseError(s"unknown fragment name ${f.fragmentName}")
+          case Some(fd) =>
+            prepareFragment2[F, G](ol, fd, variableMap, fragments)
+              .map[PreparedField[G, Any]](PreparedFragmentReference(_))
+        }
     }
   }
 
@@ -225,7 +241,8 @@ object PreparedQuery {
   def prepareField[F[_], G[_]](
       gqlField: GQLParser.Field,
       field: Output.Fields.Field[G, Any, Any],
-      variableMap: Map[String, Json]
+      variableMap: Map[String, Json],
+      fragments: Map[String, GQLParser.FragmentDefinition]
   )(implicit
       S: Stateful[F, AnalysisState[G]],
       F: MonadError[F, String],
@@ -235,10 +252,10 @@ object PreparedQuery {
       val prepF: F[Prepared[G, Any]] =
         (tpe, gqlField.selectionSet) match {
           case (ol: ObjectLike[G, Any], Some(ss)) =>
-            prepareSelections2[F, G](ol, ss, variableMap)
+            prepareSelections2[F, G](ol, ss, variableMap, fragments)
               .map(Selection(_))
           case (Output.Arr(ol: ObjectLike[G, Any]), Some(ss)) =>
-            prepareSelections2[F, G](ol, ss, variableMap)
+            prepareSelections2[F, G](ol, ss, variableMap, fragments)
               .map(Selection(_))
               .map(x => PreparedList(x).asInstanceOf[Prepared[G, Any]])
           case (e: Output.Enum[G, Any], None) =>
@@ -443,8 +460,8 @@ object PreparedQuery {
          }
 
        We must be able to re-lift the gql type B to gql type A such that the fragment resolver for
-       AFrag resolves matches on B and picks that implementation
-      */
+       AFrag resolves matches on B and picks that implementation.
+       */
       sel match {
         case Obj(n, _) => F.raiseError(s"tried to match with type $name on type object type $n")
         case Interface(n, instances, fields) =>
@@ -518,8 +535,8 @@ object PreparedQuery {
   def prepareFragment2[F[_], G[_]](
       ol: ObjectLike[G, Any],
       f: GQLParser.FragmentDefinition,
-      schema: Schema[G, _],
-      variableMap: Map[String, Json]
+      variableMap: Map[String, Json],
+      fragments: Map[String, GQLParser.FragmentDefinition]
   )(implicit
       S: Stateful[F, AnalysisState[G]],
       F: MonadError[F, String],
@@ -534,13 +551,11 @@ object PreparedQuery {
           val afterF: F[Unit] = S.modify(s => s.copy(cycleSet = s.cycleSet - f.name))
 
           val programF: F[FragmentDefinition[G, Any]] =
-            getPossibleType[F, G](f.typeCnd, ol) match {
-              case None => F.raiseError(s"fragment ${f.name} references unknown type ${f.typeCnd} in parent type ${ol.name}")
-              case Some((t, specialize)) =>
-                prepareSelections2[F, G](t, f.selectionSet, variableMap).attempt.flatMap {
-                  case Left(err) => F.raiseError[FragmentDefinition[G, Any]](s"in fragment ${f.name}: $err")
-                  case Right(x)  => F.pure(FragmentDefinition(f.name, f.typeCnd, specialize, x))
-                }
+            matchType[F, G](f.typeCnd, ol).flatMap { case (t, specialize) =>
+              prepareSelections2[F, G](t, f.selectionSet, variableMap, fragments).attempt.flatMap {
+                case Left(err) => F.raiseError[FragmentDefinition[G, Any]](s"in fragment ${f.name}: $err")
+                case Right(x)  => F.pure(FragmentDefinition(f.name, f.typeCnd, specialize, x))
+              }
             }
 
           beforeF *> programF <* afterF
