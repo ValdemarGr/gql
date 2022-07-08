@@ -408,12 +408,63 @@ fragment F2 on Data {
     Map.empty
   )
 
-  val b1 = System.currentTimeMillis()
-  val result =
-    p.parseAll(qn).map { xs =>
-      PreparedQuery.prepare(xs, schema, Map.empty)
-    }
-  println(System.currentTimeMillis() - b1)
+  def parse = {
+    val b1 = System.currentTimeMillis()
+    val result =
+      p.parseAll(qn).map { xs =>
+        PreparedQuery.prepare(xs, schema, Map.empty)
+      }
+    println(System.currentTimeMillis() - b1)
+    result
+  }
+
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+  // parse
+
+  val result = parse
 
   def go = {
     val b2 = System.currentTimeMillis()
@@ -426,74 +477,74 @@ fragment F2 on Data {
     println(System.currentTimeMillis() - b2)
   }
 
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
-  go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
+  // go
 }
