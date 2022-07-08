@@ -111,8 +111,8 @@ object PreparedQuery {
     case Obj(name, _)          => name
     case Union(name, _)        => name
     case Interface(name, _, _) => name
-    case x: Opt[G, _]          => s"(${friendlyName[G, Any](x.of)} | null)"
-    case x: Arr[G, _]          => s"[${friendlyName[G, Any](x.of)}]"
+    case x: Opt[G, _]          => s"(${friendlyName[G, Any](x.of.asInstanceOf[Output[G, Any]])} | null)"
+    case x: Arr[G, _]          => s"[${friendlyName[G, Any](x.of.asInstanceOf[Output[G, Any]])}]"
   }
 
   def valueName(value: GQLParser.Value): String = value match {

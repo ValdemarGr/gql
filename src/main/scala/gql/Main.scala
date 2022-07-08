@@ -287,14 +287,14 @@ query withNestedFragments {
 
   implicit def stringType[F[_]]: Output.Scalar[F, String] = Output.Scalar("String", Encoder.encodeString)
 
-  implicit def listTypeForSome[F[_], A](implicit of: Output[F, A]): Output[F, Seq[A]] = Output.Arr(of)
+  implicit def listTypeForSome[F[_], A](implicit of: Output[F, A]): Output[F, Vector[A]] = Output.Arr(of)
 
   implicit def dataType[F[_]: Async]: Output.Obj[F, Data[F]] =
     outputObject[F, Data[F]](
       "Data",
       "a" -> pure(_.a),
       "b" -> effect(_.b),
-      "c" -> effect(_.c)
+      "c" -> effect(_.c.map(_.toVector))
     )
 
   implicit def otherDataType[F[_]: Async]: Output.Obj[F, OtherData[F]] =
@@ -304,12 +304,40 @@ query withNestedFragments {
       "d1" -> effect(_.d1)
     )
 
+  def satnh[F[_]: Async]: Output.Unification.Instance[F, Datas.Dat[F], Data[F]] = {
+    instance(dataType[F]).contramap[Datas.Dat[F]](_.value)
+  }
+
   implicit def datasType[F[_]: Async]: Output.Union[F, Datas[F]] =
     union[F, Datas[F]](
       "Datas",
-      instance(dataType[F].contramap[Datas.Dat[F]](_.value)),
-      instance(otherDataType[F].contramap[Datas.Other[F]](_.value))
+      // instance(dataType[F].contramap[Datas.Dat[F]](_.value)),
+      // instance(otherDataType[F].contramap[Datas.Other[F]](_.value)),
+
+      contra(dataType[F]) { case Datas.Dat(d) => d },
+      contra(otherDataType[F]) { case Datas.Other(o) => o }
+
+      // contraInstance[F, Datas[F], Datas.Dat[F], Data[F]](dataType[F], _.value),
+      // contraInstance[F, Datas[F], Datas.Other[F], OtherData[F]](otherDataType[F], _.value),
     )
+
+  trait A {
+    def a: String
+  }
+  implicit def aType[F[_]]: Output.Interface[F, A] =
+    interface[F, A](
+      outputObject[F, A](
+        "A",
+        "a" -> pure(_ => "A")
+      ),
+      contra(bType[F]) { case b: B => b },
+      contra(cType[F]) { case c: C => c }
+    )
+
+  final case class B(a: String) extends A
+  def bType[F[_]] = outputObject[F, B]("B", "a" -> pure(_ => "B"))
+  final case class C(a: String) extends A
+  def cType[F[_]] = outputObject[F, C]("C", "a" -> pure(_ => "C"))
 
   def root[F[_]: Sync]: Data[F] = getData[F]("John")
 
@@ -328,6 +356,22 @@ query withNestedFragments {
   }
   getData {
     ... F2
+  }
+  getInterface {
+    ... F4
+  }
+}
+
+fragment F4 on A {
+  a
+}
+
+fragment F3 on A {
+  ... on B {
+    a
+  }
+  ... on C {
+    a
   }
 }
 
@@ -358,7 +402,8 @@ fragment F2 on Data {
     outputObject[IO, Unit](
       "Query",
       "getData" -> pure(_ => root[IO]),
-      "getDatas" -> pure(_ => datasRoot[IO])
+      "getDatas" -> pure(_ => datasRoot[IO]),
+      "getInterface" -> pure(_ => (C("hey"): A))
     ),
     Map.empty
   )

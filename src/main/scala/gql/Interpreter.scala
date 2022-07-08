@@ -19,7 +19,7 @@ object Interpreter {
         }
       case pl if pl.isInstanceOf[PreparedList[F, Any]] =>
         val pl2 = pl.asInstanceOf[PreparedList[F, Any]]
-        input.asInstanceOf[List[Any]].traverse(i => interpretPrep[F](i, pl2.of)).map(_.reduceLeft(_ deepMerge _).asJson)
+        input.asInstanceOf[Vector[Any]].traverse(i => interpretPrep[F](i, pl2.of)).map(_.reduceLeft(_ deepMerge _).asJson)
     }
   }
 

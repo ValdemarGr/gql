@@ -79,9 +79,18 @@ object Output {
         new Specify[C, B] {
           def apply(c: C): Option[B] = self(g(c))
         }
+
+      def map[C](f: B => C): Specify[A, C] =
+        new Specify[A, C] {
+          def apply(a: A): Option[C] = self(a).map(f)
+        }
     }
     object Specify {
-      implicit def specifyForSubtype[A, B <: A: ClassTag]: Specify[A, B] =
+      def make[A, B](f: A => Option[B]): Specify[A, B] = new Specify[A, B] {
+        def apply(a: A): Option[B] = f(a)
+      }
+
+      def specifyForSubtype[A, B <: A: ClassTag]: Specify[A, B] =
         new Specify[A, B] {
           def apply(a: A): Option[B] = Some(a).collect { case b: B => b }
         }
@@ -94,7 +103,7 @@ object Output {
         Instance(ol.mapK(fk))
 
       def contramap[C](g: C => A): Instance[F, C, B] =
-        Instance[F, C, B](ol)(specify.contramap(g))
+        Instance[F, C, B](ol)(specify.contramap[C](g))
     }
   }
 
