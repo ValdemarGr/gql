@@ -408,15 +408,92 @@ fragment F2 on Data {
     Map.empty
   )
 
+  val b1 = System.currentTimeMillis()
   val result =
     p.parseAll(qn).map { xs =>
       PreparedQuery.prepare(xs, schema, Map.empty)
     }
+  println(System.currentTimeMillis() - b1)
 
-  result match {
-    case Left(e)        => println(errorMessage(qn, e))
-    case Right(Left(x)) => println(x)
-    case Right(Right(x)) =>
-      println(Interpreter.interpret[IO]((), x).unsafeRunSync())
+  def go = {
+    val b2 = System.currentTimeMillis()
+    result match {
+      case Left(e)        => println(errorMessage(qn, e))
+      case Right(Left(x)) => println(x)
+      case Right(Right(x)) =>
+        println(Interpreter.interpret[IO]((), x).unsafeRunSync())
+    }
+    println(System.currentTimeMillis() - b2)
   }
+
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
+  go
 }
