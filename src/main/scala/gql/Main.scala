@@ -323,7 +323,7 @@ query withNestedFragments {
   object A {
     implicit def t[F[_]]: Output.Interface[F, A] =
       interface[F, A](
-        outputObject[F, A](
+        outputObject(
           "A",
           "a" -> pure(_ => "A")
         ),
@@ -332,13 +332,27 @@ query withNestedFragments {
       )
   }
 
+  trait D {
+    def d: String
+  }
+  object D {
+    implicit def t[F[_]]: Output.Interface[F, D] =
+      interface[F, D](
+        outputObject(
+          "D",
+          "d" -> pure(_ => "D")
+        ),
+        contra[C] { case c: C => c }
+      )
+  }
+
   final case class B(a: String) extends A
   object B {
     implicit def t[F[_]]: Output.Obj[F, B] = outputObject[F, B]("B", "a" -> pure(_ => "B"), "b" -> pure(_ => Option("BO")))
   }
-  final case class C(a: String) extends A
+  final case class C(a: String, d: String) extends A with D
   object C {
-    implicit def t[F[_]]: Output.Obj[F, C] = outputObject[F, C]("C", "a" -> pure(_ => "C"))
+    implicit def t[F[_]]: Output.Obj[F, C] = outputObject[F, C]("C", "a" -> pure(_ => "C"), "d" -> pure(_ => "D"))
   }
 
   def root[F[_]: Sync]: Data[F] = getData[F]("John")
@@ -405,7 +419,8 @@ fragment F2 on Data {
       "Query",
       "getData" -> pure(_ => root[IO]),
       "getDatas" -> pure(_ => datasRoot[IO]),
-      "getInterface" -> pure(_ => (C("hey"): A))
+      "getInterface" -> pure(_ => (C("hey", "tun"): A)),
+      "getOther" -> pure(_ => (C("hey", "tun"): D))
     ),
     Map.empty
   )
