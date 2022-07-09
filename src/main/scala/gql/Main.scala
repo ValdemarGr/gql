@@ -418,133 +418,17 @@ fragment F2 on Data {
     result
   }
 
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-  // parse
-
   val result = parse
 
-  def go = {
-    val b2 = System.currentTimeMillis()
+  def go =
     result match {
       case Left(e)        => println(errorMessage(qn, e))
       case Right(Left(x)) => println(x)
       case Right(Right(x)) =>
         println(Interpreter.interpret[IO]((), x).unsafeRunSync())
     }
-    println(System.currentTimeMillis() - b2)
-  }
 
   go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
-  // go
+
+  println(Render.renderSchema(schema))
 }

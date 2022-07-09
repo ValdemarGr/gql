@@ -12,25 +12,28 @@ object Render {
       toRender: List[ToplevelOutput[F, Any]]
   )
 
+  def maybeAdd[F[_], G[_]](tpe: ToplevelOutput[G, Any])(implicit
+      F: Monad[F],
+      D: Defer[F],
+      S: Stateful[F, RenderState[G]]
+  ) =
+    S.get.flatMap { state =>
+      if (state.discoveredTypes.contains(tpe.name)) F.unit
+      else {
+        S.set(
+          RenderState(
+            state.discoveredTypes + tpe.name,
+            tpe :: state.toRender
+          )
+        )
+      }
+    }
+
   def renderToplevelTypeInline[F[_], G[_]](tl: ToplevelOutput[G, Any])(implicit
       F: Monad[F],
       D: Defer[F],
       S: Stateful[F, RenderState[G]]
-  ): F[String] =
-    S.get.flatMap { state =>
-      val fa =
-        if (state.discoveredTypes.contains(tl.name)) F.unit
-        else {
-          S.set(
-            RenderState(
-              state.discoveredTypes + tl.name,
-              tl :: state.toRender
-            )
-          )
-        }
-
-      fa.as(tl.name)
-    }
+  ): F[String] = maybeAdd[F, G](tl).as(tl.name)
 
   def renderField[F[_], G[_]](o: Output[G, Any])(implicit
       F: Monad[F],
@@ -67,31 +70,31 @@ object Render {
       D: Defer[F],
       S: Stateful[F, RenderState[G]]
   ) = tpe match {
-    case Union(name, types) =>
-      F.pure(s"union $name = ${types.keys.mkString_(" | ")}")
     case Scalar(name, encoder) =>
-      F.pure(s"scalar $name")
+      F.pure(s"""
+        |scalar $name""".stripMargin)
     case Enum(name, encoder) =>
       F.pure(s"""
         |enum $name {
         ${encoder.toList.map(x => s"|  $x").mkString("\n")}
-        |}
-        |""".stripMargin)
+        |}""".stripMargin)
+    case Union(name, types) =>
+      F.pure(s"""
+        |union $name = ${types.keys.mkString_(" | ")}""".stripMargin) <*
+        types.toList.traverse_(inst => maybeAdd[F, G](inst.ol))
     case Interface(name, instances, fields) =>
       renderFields[F, G](fields).map { fields =>
         s"""
             |interface $name {
             ${fields.map(x => s"|  $x").mkString_(",\n")}
-            |}
-            |""".stripMargin
-      }
+            |}""".stripMargin
+      } <* instances.toList.traverse_ { case (_, inst) => maybeAdd[F, G](inst.ol) }
     case Obj(name, fields) =>
       renderFields[F, G](fields).map { fields =>
         s"""
             |type $name {
             ${fields.map(x => s"|  $x").mkString_(",\n")}
-            |}
-            |""".stripMargin
+            |}""".stripMargin
       }
   }
 
@@ -104,7 +107,7 @@ object Render {
       S.inspect(_.toRender).flatMap {
         case x :: xs =>
           S.modify(_.copy(toRender = xs)) >> renderToplevelType[F, G](x).flatMap { prefix =>
-            renderAll[F, G].map(suffix => s"$prefix\nsuffix")
+            renderAll[F, G].map(suffix => s"$prefix\n$suffix")
           }
         case Nil => F.pure("")
       }
