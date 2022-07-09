@@ -60,13 +60,18 @@ package gql
  *
  * The question that begs now, is how?
  * We could start bottom up maybe?
- * 1. Pick an arbitary leaf node L_1 and start there.
- * 2. Add L to the set of batched nodes with size 1.
- * 3. Move back up and set dist(L_1) = {1}.
- * 4. Now move to the next child.
- * 5. If the child is a leaf L_2 the add L_2 to the set of batched nodes with size 1.
- * 6. If the child is not a leaf, goto 4.
- * 7. Once we are back at L_1 and L_2's parent, we can merging children.
+ * optimize(N) =
+ *  if N is a leaf node return (N, 1, 1)
+ *  else
+ *    let o = children.map(optimize)
+ *    return merge(o).map{ (node, count, level) => (node, count, (level + 1))}
+ *
+ * merge(o) =
+ *  nodes = o.map{ (node, _, _) => node}.toSet
+ *  nodes.map { node =>
+ *    // find nodes that are at this level
+ *  }
+ *
  */
 object Optimizer {
   // def optimize[F[_]]()
