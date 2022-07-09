@@ -289,6 +289,8 @@ query withNestedFragments {
 
   implicit def listTypeForSome[F[_], A](implicit of: Output[F, A]): Output[F, Vector[A]] = Output.Arr(of)
 
+  implicit def optTypeForSome[F[_], A](implicit of: Output[F, A]): Output[F, Option[A]] = Output.Opt(of)
+
   implicit def dataType[F[_]: Async]: Output.Obj[F, Data[F]] =
     outputObject[F, Data[F]](
       "Data",
@@ -311,33 +313,33 @@ query withNestedFragments {
   implicit def datasType[F[_]: Async]: Output.Union[F, Datas[F]] =
     union[F, Datas[F]](
       "Datas",
-      // instance(dataType[F].contramap[Datas.Dat[F]](_.value)),
-      // instance(otherDataType[F].contramap[Datas.Other[F]](_.value)),
-
-      contra(dataType[F]) { case Datas.Dat(d) => d },
-      contra(otherDataType[F]) { case Datas.Other(o) => o }
-
-      // contraInstance[F, Datas[F], Datas.Dat[F], Data[F]](dataType[F], _.value),
-      // contraInstance[F, Datas[F], Datas.Other[F], OtherData[F]](otherDataType[F], _.value),
+      contra[Data[F]] { case Datas.Dat(d) => d },
+      contra[OtherData[F]] { case Datas.Other(o) => o }
     )
 
   trait A {
     def a: String
   }
-  implicit def aType[F[_]]: Output.Interface[F, A] =
-    interface[F, A](
-      outputObject[F, A](
-        "A",
-        "a" -> pure(_ => "A")
-      ),
-      contra(bType[F]) { case b: B => b },
-      contra(cType[F]) { case c: C => c }
-    )
+  object A {
+    implicit def t[F[_]]: Output.Interface[F, A] =
+      interface[F, A](
+        outputObject[F, A](
+          "A",
+          "a" -> pure(_ => "A")
+        ),
+        contra[B] { case b: B => b },
+        contra[C] { case c: C => c }
+      )
+  }
 
   final case class B(a: String) extends A
-  def bType[F[_]] = outputObject[F, B]("B", "a" -> pure(_ => "B"))
+  object B {
+    implicit def t[F[_]]: Output.Obj[F, B] = outputObject[F, B]("B", "a" -> pure(_ => "B"), "b" -> pure(_ => Option("BO")))
+  }
   final case class C(a: String) extends A
-  def cType[F[_]] = outputObject[F, C]("C", "a" -> pure(_ => "C"))
+  object C {
+    implicit def t[F[_]]: Output.Obj[F, C] = outputObject[F, C]("C", "a" -> pure(_ => "C"))
+  }
 
   def root[F[_]: Sync]: Data[F] = getData[F]("John")
 
