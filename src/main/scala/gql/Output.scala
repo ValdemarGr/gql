@@ -242,7 +242,7 @@ object Output {
       Scalar(name, encoder)
   }
 
-  final case class Enum[F[_], A](name: String, encoder: A => String) extends Output[F, A] with ToplevelOutput[F, A] {
+  final case class Enum[F[_], A](name: String, encoder: NonEmptyMap[A, String]) extends Output[F, A] with ToplevelOutput[F, A] {
     override def mapK[G[_]](fk: F ~> G): Output[G, A] =
       Enum(name, encoder)
   }

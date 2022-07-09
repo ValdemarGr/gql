@@ -477,7 +477,7 @@ fragment F2 on Data {
     println(System.currentTimeMillis() - b2)
   }
 
-  // go
+  go
   // go
   // go
   // go

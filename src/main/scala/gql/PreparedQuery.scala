@@ -259,7 +259,7 @@ object PreparedQuery {
               .map(Selection(_))
               .map(x => PreparedList(x).asInstanceOf[Prepared[G, Any]])
           case (e: Output.Enum[G, Any], None) =>
-            F.pure(PreparedLeaf(e.name, x => Right(Json.fromString(e.encoder(x)))))
+            F.pure(PreparedLeaf(e.name, x => Right(Json.fromString(e.encoder(x).get))))
           case (s: Output.Scalar[G, Any], None) =>
             F.pure(PreparedLeaf(s.name, x => Right(s.encoder(x))))
           case (o, Some(_)) => F.raiseError(s"type ${friendlyName[G, Any](o)} cannot have selections")
