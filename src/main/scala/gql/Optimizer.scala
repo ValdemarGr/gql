@@ -57,6 +57,16 @@ package gql
  * Maybe for a contraction [V] where the naive execution cost is |[V]| * cost(V), 
  * the 'batchability' could be measured by cost(V) - (|[V]| - 1) * b(V) where b(V) is the cost savings of batching?.
  * By using such a method we can adjust the aggressiveness of the query rewriter.
+ *
+ * The question that begs now, is how?
+ * We could start bottom up maybe?
+ * 1. Pick an arbitary leaf node L_1 and start there.
+ * 2. Add L to the set of batched nodes with size 1.
+ * 3. Move back up and set dist(L_1) = {1}.
+ * 4. Now move to the next child.
+ * 5. If the child is a leaf L_2 the add L_2 to the set of batched nodes with size 1.
+ * 6. If the child is not a leaf, goto 4.
+ * 7. Once we are back at L_1 and L_2's parent, we can merging children.
  */
 object Optimizer {
   // def optimize[F[_]]()
