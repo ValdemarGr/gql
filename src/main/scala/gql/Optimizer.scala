@@ -41,11 +41,11 @@ package gql
  *
  *            A 
  *            | 
- *         (B, E)  
- *           |   
- *      (C, Defer) 
- *          |
- *         [D] 
+ *          (B, E)  
+ *            |   
+ *        (C, Defer) 
+ *            |
+ *           [D] 
  *
  * Calculating the maximum time of execution for the first query max(B(5) + C(5) + D(10), E(10) + D(10)) = 20
  * And the second = max(B(5), E(10)) + C(5) + D(10) = 25
