@@ -113,7 +113,7 @@ object Render {
     }
 
   final case class InterfaceDiscovery(
-      cycleSet: Set[String]
+      alreadyChecked: Set[String]
   )
 
   def discoverInterfaceInstances[F[_], G[_]](x: ObjectLike[G, _])(implicit
@@ -121,7 +121,7 @@ object Render {
       D: Defer[F],
       S: Stateful[F, InterfaceDiscovery]
   ): F[Chain[(String, String)]] = D.defer {
-    S.inspect(_.cycleSet).flatMap { cc =>
+    S.inspect(_.alreadyChecked).flatMap { cc =>
       if (cc.contains(x.name)) F.pure(Chain.nil)
       else {
         S.set(InterfaceDiscovery(cc + x.name)) >> {

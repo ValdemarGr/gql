@@ -7,6 +7,7 @@ import cats.effect._
 import cats.effect.implicits._
 import io.circe._
 import io.circe.syntax._
+import cats.Eval
 
 object Interpreter {
   def interpretPrep[F[_]](input: Any, prep: Prepared[F, Any])(implicit F: Async[F]): F[Json] = {
