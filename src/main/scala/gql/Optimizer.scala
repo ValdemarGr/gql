@@ -50,10 +50,13 @@ package gql
  * Calculating the maximum time of execution for the first query max(B(5) + C(5) + D(10), E(10) + D(10)) = 20
  * And the second = max(B(5), E(10)) + C(5) + D(10) = 25
  * Clearly the running time has been traded for more batching.
+ * In fact, a tree with better running time cannot be constructed, 
+ * since every node is already the shortest distance from root.
  * There are a couple of choices to be made here which essentially boil down to how one chooses to calculate cost.
  * How does one measure 'batchability', the reduction in cost of batching? 
- * Maybe for a contraction [V] where the navie execution cost is |[V]| * cost(V), 
+ * Maybe for a contraction [V] where the naive execution cost is |[V]| * cost(V), 
  * the 'batchability' could be measured by cost(V) - (|[V]| - 1) * b(V) where b(V) is the cost savings of batching?.
+ * By using such a method we can adjust the aggressiveness of the query rewriter.
  */
 object Optimizer {
   // def optimize[F[_]]()
