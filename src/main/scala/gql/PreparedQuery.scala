@@ -115,18 +115,6 @@ object PreparedQuery {
     case x: Arr[G, _]          => s"[${friendlyName[G, Any](x.of.asInstanceOf[Output[G, Any]])}]"
   }
 
-  def valueName(value: GQLParser.Value): String = value match {
-    case ObjectValue(_)   => "object"
-    case EnumValue(_)     => "enum"
-    case StringValue(_)   => "string"
-    case IntValue(_)      => "int"
-    case BooleanValue(_)  => "boolean"
-    case VariableValue(_) => "variable"
-    case ListValue(_)     => "list"
-    case FloatValue(_)    => "float"
-    case NullValue        => "null"
-  }
-
   def parserValueToValue(value: GQLParser.Value, variableMap: Map[String, Json]): Either[String, Value] = {
     def go[F[_]](x: GQLParser.Value)(implicit
         F: MonadError[F, String],
@@ -153,21 +141,6 @@ object PreparedQuery {
 
     go[EitherT[Eval, String, *]](value).value.value
   }
-
-  // https://spec.graphql.org/June2018/#sec-Fragment-spread-is-possible
-  def getPossibleTypes[F[_], G[_]](typename: String, schema: Schema[G, _])(implicit
-      F: MonadError[F, String],
-      D: Defer[F]
-  ): F[Set[String]] =
-    D.defer[Set[String]] {
-      schema.types.get(typename) match {
-        case None                                    => F.raiseError(s"type $typename not found")
-        case Some(Output.Obj(name, _))               => F.pure(Set(name))
-        case Some(Output.Interface(_, instances, _)) => F.pure(instances.keySet)
-        case Some(Output.Union(_, fields))           => F.pure(fields.map(_.ol.name).toList.toSet)
-        case Some(t)                                 => F.raiseError(s"type $typename is not an object or union, but instead ${t.name}")
-      }
-    }
 
   def prepareSelections[F[_], G[_]](
       ol: ObjectLike[G, Any],
