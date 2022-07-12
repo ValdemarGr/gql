@@ -35,14 +35,26 @@ import cats.data._
  * cost(C) = 5
  * cost(E) = 10
  * cost(D) = 10
+ * cost(A) = 1
  *
- *            A
- *           / \
- *          B   E
- *          |   | \
- *          C   D  D
- *         / \
- *        D  D
+ *        ____A
+ *       /   / \
+ *      D   B   E
+ *     / \  |   |  
+ *    A   D C   A   
+ *  / |     |   | \
+ * E  C     A   D  D
+ * |  |    / \
+ * D  D   D   D
+ *        
+ *        
+ *      A           
+ *     / \
+ *    B   E
+ *    |   | \
+ *    C   D  D
+ *   / \            
+ *  D  D            
  *
  *            A
  *            |
