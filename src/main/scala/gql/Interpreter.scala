@@ -35,17 +35,10 @@ object Interpreter {
         fa
           .flatMap(i => interpretPrep[F](i, selection))
           .map(x => JsonObject(name -> x))
-      case PreparedFragmentReference(reference) =>
-        reference.specify(input) match {
-          case None => F.pure(JsonObject.empty)
-          case Some(i) =>
-            interpret(i, reference.fields).map(_.reduceLeft(_ deepMerge _))
-        }
-      case PreparedInlineFragment(specify, selection) =>
+      case PreparedFragField(specify, Selection(fields)) =>
         specify(input) match {
-          case None => F.pure(JsonObject.empty)
-          case Some(i) =>
-            interpret(i, selection.fields).map(_.reduceLeft(_ deepMerge _))
+          case None    => F.pure(JsonObject.empty)
+          case Some(i) => interpret(i, fields).map(_.reduceLeft(_ deepMerge _))
         }
     }
   }

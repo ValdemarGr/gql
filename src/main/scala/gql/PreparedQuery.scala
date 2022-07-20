@@ -72,6 +72,11 @@ object PreparedQuery {
       selection: Prepared[F, T]
   ) extends PreparedField[F, I]
 
+  final case class PreparedFragField[F[_], A](
+      specify: Any => Option[A],
+      selection: Selection[F, A]
+  ) extends PreparedField[F, A]
+
   final case class FragmentDefinition[F[_], A](
       name: String,
       typeCondition: String,
@@ -79,31 +84,13 @@ object PreparedQuery {
       fields: NonEmptyList[PreparedField[F, A]]
   )
 
-  final case class PreparedFragmentReference[F[_], A](
-      reference: FragmentDefinition[F, A]
-  ) extends PreparedField[F, A]
-
-  final case class PreparedInlineFragment[F[_], A](
-      specify: Any => Option[A],
-      selection: Selection[F, A]
-  ) extends PreparedField[F, A]
-
   final case class Selection[F[_], A](fields: NonEmptyList[PreparedField[F, A]]) extends Prepared[F, A]
 
   final case class PreparedList[F[_], A](of: Prepared[F, A]) extends Prepared[F, List[A]]
 
   final case class PreparedLeaf[F[_], A](name: String, encode: A => Either[String, Json]) extends Prepared[F, A]
 
-  sealed trait FragmentAnalysis[F[_]]
-  object FragmentAnalysis {
-    final case class Cached[F[_]](fd: FragmentDefinition[F, Any]) extends FragmentAnalysis[F]
-    final case class Unevaluated[F[_]](fd: GQLParser.FragmentDefinition) extends FragmentAnalysis[F]
-  }
-
-  final case class AnalysisState[F[_]](
-      fragments: Map[String, FragmentAnalysis[F]],
-      cycleSet: Set[String]
-  )
+  final case class AnalysisState[F[_]](cycleSet: Set[String])
 
   def friendlyName[G[_], A](ot: Output[G, A]): String = ot match {
     case Scalar(name, _)       => name
@@ -162,7 +149,7 @@ object PreparedQuery {
             matchType[F, G](typeCnd, ol).flatMap { case (ol, specialize) =>
               prepareSelections[F, G](ol, f.selectionSet, variableMap, fragments)
                 .map(Selection(_))
-                .map[PreparedField[G, Any]](s => PreparedInlineFragment(specialize, s))
+                .map[PreparedField[G, Any]](s => PreparedFragField(specialize, s))
                 .adaptError(e => s"in inline fragment with condition $typeCnd: $e")
             }
         }
@@ -171,7 +158,8 @@ object PreparedQuery {
           case None => F.raiseError(s"unknown fragment name ${f.fragmentName}")
           case Some(fd) =>
             prepareFragment[F, G](ol, fd, variableMap, fragments)
-              .map[PreparedField[G, Any]](PreparedFragmentReference(_))
+              .map[PreparedField[G, Any]](fd => PreparedFragField(fd.specify, Selection(fd.fields)))
+              .adaptError(e => s"in fragment ${fd.name}: $e")
         }
     }
   }
@@ -389,14 +377,7 @@ object PreparedQuery {
     val o = prepareParts[G, F, Q](ops, frags, schema, variableMap)
 
     o
-      .runA(
-        AnalysisState(
-          frags.map { fd =>
-            fd.name -> FragmentAnalysis.Unevaluated[F](fd)
-          }.toMap,
-          Set.empty
-        )
-      )
+      .runA(AnalysisState(Set.empty))
       .value
       .value
   }
