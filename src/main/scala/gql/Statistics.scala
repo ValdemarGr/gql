@@ -21,21 +21,34 @@ object Statistics {
    * From this sequence of data points we must guess how long an entry of n=1 takes, that is,
    * how long it takes to process a batch of size 1.
    * We must figure out the *additional* cost of n compared to n - 1.
-   * Let the additional element cost be b such that for n'=1 then t' = avg((t_i, t_i+1, ..., t_k)).
+   * Let the additional element cost be b.
+   * B can be found by computing the standard deviation (that is, the average difference) of both t and n
+   * Then we can divide \sigma(t) by \sigma(n) to get the "time per element"
    *
    * An example:
    * D = ((2, 2), (3, 4))
-   * Such that b=0.5 and t'=1.5 such that 
-   * t_1 = t' + (n_1 - 1) * b = 1.5 + (2 - 1) * 0.5 = 1.5 + 1 * 0.5 = 2
-   * t_2 = t' + (4 - 1) * b = 1.5 + 3 * 0.5 = 1.5 + 1.5 = 3
-   * n_3 = 7
-   * t_3 = 1.5 + 6 * 0.5 = 1.5 + 3 = 4.5
+   * (2 - 3, 2 - 4) = (1, 2) = 1 / 2 = 0.5
+   * avg(2, 3) = 2.5
+   * delta_t = avgsum(2 - 2.5, 3 - 2.5) = (0.5 + 0.5) / 2 = 0.5
+   * avg(2, 4) = 3
+   * delta_n = avgsum(2 - 3, 4 - 3) = (1 + 1) / 2 = 1
+   * b = delta_t / delta_n = 0.5
    *
-   * That is we must solve for b and average all bs:
-   * b_i = |t_i / (n_i - 1) - t'|
-   * b_1 = |2 / (2 - 1) - t'| = |2/1 - 1.5| = 0.5
-   * b_2 = |3 / 3 - 1.5| = 0.5
-   * b = avg((b_1, b_2)) = 0.5
+   * D = ((2, 2), (3, 4), (10, 16))
+   * avg(2, 3, 10) = 5
+   * delta_t = avgsum(2 - 5, 3 - 5, 10 - 5) = (3 + 2 + 5) / 3 = 3 + 1/3
+   * avg(2, 4, 16) = 24 / 3 = 8
+   * delta_n = avgsum(2 - 8, 4 - 8, 16 - 8) = (6 + 4 + 8) / 3 = 18 / 3 = 6
+   * b = delta_t / delta_n = (3.33 / 6) ~= 0.55555
+   *
+   * D = ((2, 2), (3, 4), (10, 16), (10, 20))
+   * t_avg = avg(2, 3, 10, 10) = 5
+   * delta_t = avgsum(|2 - 5|, |3 - 5|, |10 - 5|, |10 - 5|) = (3 + 2 + 5 + 5) / 4 = 15 / 4 = 3.75
+   * n_avg = avg(2, 4, 16, 20) = 44 / 4 = 11
+   * delta_n = avgsum(|2 - 11|, |4 - 11|, |16 - 11|, |20 - 11|) = (9 + 7 + 5 + 9) / 4 = 30 / 4 = 7.5
+   * b = delta_t / delta_n = (3.75 / 7.5) ~= 0.5
+   *
+   * Linreg
    */
   final case class BatchStats(
       batchSize: Int,
