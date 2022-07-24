@@ -50,6 +50,59 @@ object Statistics {
    *
    * Linreg
    */
+  final case class NodeTypeRegression(
+      sumx: Double,
+      sumxx: Double,
+      sumy: Double,
+      sumyy: Double,
+      sumxy: Double,
+      n: Int,
+      // averages
+      xbar: Double,
+      ybar: Double
+  ) {
+    def remove(x: Double, y: Double) = {
+      val newN = n - 1
+      val ratio = n.toDouble / newN.toDouble
+      val dx = x - xbar
+      val dy = y - ybar
+      copy(
+        sumxx = sumxx - dx * dx * ratio,
+        sumyy = sumyy - dy * dy * ratio,
+        sumxy = sumxy - dx * dy * ratio,
+        xbar = xbar - dx / newN.toDouble,
+        ybar = ybar - dy / newN.toDouble,
+        n = newN,
+        sumx = sumx - x,
+        sumy = sumy - y
+      )
+    }
+
+    def add(x: Double, y: Double): NodeTypeRegression = {
+      val newN = n + 1
+      val ratio = n.toDouble / newN.toDouble
+      val dx = x - xbar
+      val dy = y - ybar
+      copy(
+        sumxx = sumxx + dx * dx * ratio,
+        sumyy = sumyy + dy * dy * ratio,
+        sumxy = sumxy + dx * dy * ratio,
+        xbar = xbar + dx / newN.toDouble,
+        ybar = ybar + dy / newN.toDouble,
+        n = newN,
+        sumx = sumx + x,
+        sumy = sumy + y
+      )
+    }
+
+    lazy val intercept: Double = (sumy - slope * sumx) / n.toDouble
+
+    lazy val slope: Double = sumxy / sumxx
+
+    def apply(x: Double): Double =
+      slope * x + intercept
+  }
+
   final case class BatchStats(
       batchSize: Int,
       elapsed: FiniteDuration

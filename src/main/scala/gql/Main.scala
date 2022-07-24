@@ -448,4 +448,32 @@ fragment F2 on Data {
   go
 
   println(Render.renderSchema(schema))
+
+  val n =
+    Statistics.NodeTypeRegression(
+      sumx = 0d,
+      sumxx = 0d,
+      sumy = 0d,
+      sumyy = 0d,
+      sumxy = 0d,
+      n = 0,
+      // averages
+      xbar = 0d,
+      ybar = 0d
+    )
+
+  val res = n
+    .add(2 - 1, 2)
+    .add(4 - 1, 3)
+    .add(16 - 1, 10)
+  println(s"${res.slope} * x + ${res.intercept}")
+
+  val res1 = res
+    .remove(16 - 1, 10)
+  println(s"${res1.slope} * x + ${res1.intercept}")
+
+  val res2 = n
+    .add(2 - 1, 2)
+    .add(4 - 1, 3)
+  println(s"${res2.slope} * x + ${res2.intercept}")
 }
