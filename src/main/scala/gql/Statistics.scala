@@ -5,6 +5,7 @@ import cats.implicits._
 import scala.concurrent.duration.FiniteDuration
 import scala.collection.immutable.Queue
 import cats.data.NonEmptyList
+import scala.annotation.tailrec
 
 trait Statistics[F[_]] {
   def getStatsOpt(name: String): F[Option[Statistics.Stats]]
@@ -103,19 +104,65 @@ object Statistics {
   ) {
     def apply(x: Double): Double = slope * x + intercept
 
-    def add(x: Double, y: Double): GradientDecentRegression = {
+    def add(x: Double, y: Double, errorImportance: Double = 1d / n.toDouble): GradientDecentRegression = {
       val m = slope
       val b = intercept
 
-      // val appliedPDB = 1d / n * points.map(p => pred(p.x) - p.y).sumAll
-      // val appliedPDM = 1d / n * points.map(p => (pred(p.x) - p.y) * p.x).sumAll
-      ???
+      val diff = (x * m + b) - y
+
+      val err = error + errorImportance * math.pow(diff, 2d)
+
+      val thisPDB = 2d * errorImportance * x * (b + m * x - y)
+      val thisPDM = 2d * errorImportance * (b + m * x - y)
+
+      val optB = b - 0.01d * thisPDB
+      val optM = m - 0.01d * thisPDM
+
+      GradientDecentRegression(err, n + 1, optM, optB)
     }
   }
 
   final case class Point(x: Double, y: Double)
 
   object GradientDecentRegression {
+    //def fitPar(points: NonEmptyList[Point]): IO[GradientDecentRegression] = {
+    //  // the error/cost function will be 1 / n * sum((y - (slope * x + intercept))^2)
+    //  // we want to figure out what direction to move the slope and intercept to minimize this error
+    //  // the error function of n^2 is a parabola
+    //  // such that taking the partial derivative is the rate of error
+    //  //
+    //  // now we should just re-adjust the slope and intercept by applying their respective derived functions
+    //  // and multiply by a learning rate
+    //  //
+    //  // since a function of a parabola is linear, re-adjusting by the rate of error will very quickly converge
+
+    //  val n = points.size.toDouble
+
+    //  def go(its: Int, strikes: Int, alpha: Double, m: Double, b: Double, prevErr: Double): IO[(Double, Double)] = {
+    //    if (its == 100000 || strikes == 10) IO.pure((m, b))
+    //    else {
+    //      def pred(x: Double) = m * x + b
+    //      (
+    //        IO(1d / n * points.map(p => pred(p.x) - p.y).sumAll).map(b - alpha * _),
+    //        IO(1d / n * points.map(p => (pred(p.x) - p.y) * p.x).sumAll).map(m - alpha * _)
+    //      ).parTupled.flatMap { case (optB, optM) =>
+    //        val err = 1d / n * points.map(p => math.pow(p.y - (optM * p.x + optB), 2d)).sumAll
+    //        if (err >= prevErr) go(its + 1, strikes + 1, alpha / 2d, m, b, prevErr)
+    //        else go(its + 1, 0, alpha * 2d, optM, optB, err)
+    //      }
+    //    }
+    //  }
+
+    //  go(0, 0, 0.01d, 0d, 0d, Double.MaxValue).map { case (m, b) =>
+    //    GradientDecentRegression(
+    //      1d / n * points.map(p => math.pow(m * p.x + b - p.y, 2d)).sumAll,
+    //      points.size,
+    //      m,
+    //      b
+    //    )
+    //  }
+    //}
+
     def fit(points: NonEmptyList[Point]): GradientDecentRegression = {
       // the error/cost function will be 1 / n * sum((y - (slope * x + intercept))^2)
       // we want to figure out what direction to move the slope and intercept to minimize this error
@@ -129,32 +176,22 @@ object Statistics {
 
       val n = points.size.toDouble
 
-      def go(its: Int, alpha: Double, m: Double, b: Double, prevErr: Double): (Double, Double) = {
-        if (its == 1000) (m, b)
+      @tailrec
+      def go(its: Int, strikes: Int, alpha: Double, m: Double, b: Double, prevErr: Double): (Double, Double) = {
+        if (its == 100000 || strikes == 10) (m, b)
         else {
           def pred(x: Double) = m * x + b
-          // val gradB = -2d * points.map(p => p.y - pred(p.x)).sumAll / n
-          // val gradM = -2d * points.map(p => p.x * (p.y - pred(p.x))).sumAll / n
-          // val newB = b + alpha * gradB
-          // val newM = m - alpha * gradM
           val appliedPDB = 1d / n * points.map(p => pred(p.x) - p.y).sumAll
           val appliedPDM = 1d / n * points.map(p => (pred(p.x) - p.y) * p.x).sumAll
           val optB = b - alpha * appliedPDB
           val optM = m - alpha * appliedPDM
           val err = 1d / n * points.map(p => math.pow(p.y - (optM * p.x + optB), 2d)).sumAll
-          // println(s"$its: err: $err, prevSlope: $m, slope: $optM, prevIntercept: $b, intercept: $optB, alpha: $alpha, pdb: $appliedPDB, pdm: $appliedPDM")
-          // println(s"partial derivation b function = 1 / ${n.toInt} * sum i=1 to n {($m * x_i + b) - y_i}")
-          // println(s"partial derivation for b=$b = 1 / ${n.toInt} * sum i=1 to n {($m * x_i + $b) - y_i} = $appliedPDB")
-          // println(s"partial derivation m function = 1 / ${n.toInt} * sum i=1 to n {x_i * ((m * x_i + $b) - y_i)}")
-          // println(s"partial derivation for m=$m = 1 / ${n.toInt} * sum i=1 to n {x_i * (($m * x_i + $b) - y_i)} = $appliedPDM")
-          // println(s"error equation: 1 / ${n.toInt} * sum i=1 to n {y_i - ($optM * x_i + $optB)^2} = $err")
-          // go(its + 1, alpha, newM, newB, prevErr)
-          if (err >= prevErr) go(its + 1, alpha / 2d, m, b, prevErr)
-          else go(its + 1, alpha * 2d, optM, optB, err)
+          if (err >= prevErr) go(its + 1, strikes + 1, alpha / 2d, m, b, prevErr)
+          else go(its + 1, 0, alpha * 2d, optM, optB, err)
         }
       }
 
-      val (m, b) = go(0, 0.01d, 0d, 0d, Double.MaxValue)
+      val (m, b) = go(0, 0, 0.01d, 0d, 0d, Double.MaxValue)
 
       GradientDecentRegression(
         1d / n * points.map(p => math.pow(m * p.x + b - p.y, 2d)).sumAll,

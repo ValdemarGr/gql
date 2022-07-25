@@ -523,15 +523,35 @@ fragment F2 on Data {
 
   {
     println("gradient")
-    val n = Statistics.GradientDecentRegression
-      .fit(
-        NonEmptyList.of(
-          Statistics.Point(2 - 1, 2),
-          Statistics.Point(4 - 1, 3),
-          Statistics.Point(16 - 1, 10)
-        )
+    val b0 =
+      NonEmptyList.of(
+        Statistics.Point(2 - 1, 2),
+        Statistics.Point(4 - 1, 3),
+        Statistics.Point(16 - 1, 10)
       )
+    val b1 = b0 concatNel b0
+    val b2 = b1 concatNel b1
+    val b3 = b2 concatNel b2
+    val b4 = b3 concatNel b3
+    val b5 = b4 concatNel b4
+    val b6 = b5 concatNel b5
+    val b7 = b6 concatNel b6
+    val b8 = b7 concatNel b7
+    val b9 = b8 concatNel b8
+    val b10 = b9 concatNel b9
+    val b11 = b10 concatNel b10
+    val b12 = b11 concatNel b11
+    val b13 = b12 concatNel b12
+    val b14 = b13 concatNel b13
+    val b15 = b14 concatNel b14
+    val b16 = b15 concatNel b15
+    println(b10.size)
 
+    val n = Statistics.GradientDecentRegression.fit(b10)
     println(s"${n.slope} * x + ${n.intercept}")
+
+    val n1 = n
+      .add(10 - 1, 10, 3d)
+    println(s"${n1.slope} * x + ${n1.intercept}")
   }
 }
