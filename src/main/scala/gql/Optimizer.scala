@@ -95,4 +95,6 @@ import cats.data._
  *    tag den senest mulige, ellers assign bare senest mulige sluttidspunkt
  */
 object Optimizer {
+  def schedule[F[_]](implicit stats: Statistics[F]) = {
+  }
 }

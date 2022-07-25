@@ -550,8 +550,7 @@ fragment F2 on Data {
     val n = Statistics.GradientDecentRegression.fit(b10)
     println(s"${n.slope} * x + ${n.intercept}")
 
-    val n1 = n
-      .add(10 - 1, 10, 3d)
+    val n1 = n.add(10 - 1, 10)
     println(s"${n1.slope} * x + ${n1.intercept}")
   }
 }

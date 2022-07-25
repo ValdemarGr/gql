@@ -98,27 +98,36 @@ object Statistics {
 
   final case class GradientDecentRegression(
       error: Double,
-      n: Int,
+      count: Int,
       slope: Double,
       intercept: Double
   ) {
     def apply(x: Double): Double = slope * x + intercept
 
-    def add(x: Double, y: Double, errorImportance: Double = 1d / n.toDouble): GradientDecentRegression = {
-      val m = slope
-      val b = intercept
+    def add(x: Double, y: Double, errorImportance: Double = 1d / count.toDouble): GradientDecentRegression = {
+      val n = count.toDouble
 
-      val diff = (x * m + b) - y
+      @tailrec
+      def go(its: Int, strikes: Int, alpha: Double, m: Double, b: Double, prevErr: Double): (Double, Double, Double) = {
+        if (its == 100000 || strikes == 10) (m, b, prevErr)
+        else {
+          val diff = (x * m + b) - y
 
-      val err = error + errorImportance * math.pow(diff, 2d)
+          val thisPDB = 2d * errorImportance * x * (b + m * x - y)
+          val thisPDM = 2d * errorImportance * (b + m * x - y)
 
-      val thisPDB = 2d * errorImportance * x * (b + m * x - y)
-      val thisPDM = 2d * errorImportance * (b + m * x - y)
+          val optB = b - 0.01d * thisPDB
+          val optM = m - 0.01d * thisPDM
 
-      val optB = b - 0.01d * thisPDB
-      val optM = m - 0.01d * thisPDM
+          val err = prevErr + errorImportance * math.pow(x * optM + optB, 2d)
+          if (err >= prevErr) go(its + 1, strikes + 1, alpha / 2d, m, b, prevErr)
+          else go(its + 1, 0, alpha * 2d, optM, optB, err)
+        }
+      }
 
-      GradientDecentRegression(err, n + 1, optM, optB)
+      val (m, b, err) = go(0, 0, 0.01d, slope, intercept, Double.MaxValue)
+
+      GradientDecentRegression(err, count + 1, m, b)
     }
   }
 
@@ -193,12 +202,7 @@ object Statistics {
 
       val (m, b) = go(0, 0, 0.01d, 0d, 0d, Double.MaxValue)
 
-      GradientDecentRegression(
-        1d / n * points.map(p => math.pow(m * p.x + b - p.y, 2d)).sumAll,
-        points.size,
-        m,
-        b
-      )
+      GradientDecentRegression(1d / n * points.map(p => math.pow(m * p.x + b - p.y, 2d)).sumAll, points.size, m, b)
     }
   }
 
