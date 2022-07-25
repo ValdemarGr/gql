@@ -202,25 +202,19 @@ object Statistics {
     }
   }
 
-  final case class BatchStats(
-      batchSize: Int,
-      elapsed: FiniteDuration
-  )
   final case class Stats(
-      name: String,
-      count: Int,
-      previousK: Queue[BatchStats],
-      average0toK: FiniteDuration,
-      average0toKBatchSize: Int,
-      average0toKTimeBatchElem: Option[FiniteDuration]
+      initialCost: Double,
+      extraElementCost: Double
   )
 
   def apply[F[_]](implicit F: Concurrent[F]): F[Statistics[F]] =
-    F.ref(Map.empty[String, Stats])
+    F.ref(Map.empty[String, Ref[F, Either[NonEmptyList[Point], CovVarRegression]]])
       .map { state =>
         new Statistics[F] {
           override def getStatsOpt(name: String): F[Option[Stats]] =
-            state.get.map(_.get(name))
+            state.get.flatMap(
+              _.get(name).flatTraverse(_.get.map(_.toOption.map(reg => Stats(initialCost = reg.intercept, extraElementCost = reg.slope))))
+            )
 
           override def getStats(name: String): F[Stats] =
             getStatsOpt(name)
@@ -229,20 +223,36 @@ object Statistics {
                 case None    => F.raiseError(new Exception(s"stats not found for $name"))
               }
 
-          override def updateStats(name: String, elapsed: FiniteDuration, batchElems: Int): F[Unit] =
-            state.update { m =>
-              ???
-            // m.get(name) match {
-            //   case None => m + (name -> Stats(name, 1, elapsed, elapsed / batchElems))
-            //   case Some(s) =>
-            //     val avg = s.average
-            //     val batchElemIncrease = batchElems * s.timePerBatchElem
-            //     val newAvg = (avg + elapsed) / 2
-            //     val newBatchElemTime = s.timePerBatchElem + (elapsed)
-            //     ???
-            //     // m + (name -> Stats(name, s.count + 1, s.totalTime + elapsed))
-            // }
-            }
+          override def updateStats(name: String, elapsed: FiniteDuration, batchElems: Int): F[Unit] = {
+            val elapsedNorm = elapsed.toMillis
+            val asPoint = Point(batchElems - 1, elapsedNorm)
+
+            F.ref[Either[NonEmptyList[Point], CovVarRegression]](Left(NonEmptyList.of(asPoint)))
+              .flatMap { fallbackState =>
+                state.modify { m =>
+                  m.get(name) match {
+                    case None => (m + (name -> fallbackState), F.unit)
+                    case Some(s) =>
+                      val subroutine =
+                        s.update {
+                          case Left(xs) =>
+                            val newPoints = xs.append(asPoint)
+                            if (newPoints.size > 5) {
+                              Right {
+                                xs.foldLeft(CovVarRegression(0L, 0d, 0d, 0d, 0d)) { case (reg, point) =>
+                                  reg.add(point.x, point.y)
+                                }
+                              }
+                            } else Left(newPoints)
+                          case Right(reg) => Right(reg.add(asPoint.x, asPoint.y))
+                        }
+
+                      (m, subroutine)
+                  }
+                }
+              }
+              .flatten
+          }
         }
       }
 }
