@@ -449,31 +449,89 @@ fragment F2 on Data {
 
   println(Render.renderSchema(schema))
 
-  val n =
-    Statistics.NodeTypeRegression(
-      sumx = 0d,
-      sumxx = 0d,
-      sumy = 0d,
-      sumyy = 0d,
-      sumxy = 0d,
-      n = 0,
-      // averages
-      xbar = 0d,
-      ybar = 0d
-    )
+  {
+    println("apache")
+    val n =
+      Statistics.NodeTypeRegression(
+        sumx = 0d,
+        sumxx = 0d,
+        sumy = 0d,
+        sumxy = 0d,
+        n = 0,
+        // averages
+        xbar = 0d,
+        ybar = 0d
+      )
 
-  val res = n
-    .add(2 - 1, 2)
-    .add(4 - 1, 3)
-    .add(16 - 1, 10)
-  println(s"${res.slope} * x + ${res.intercept}")
+    val res = n
+      .add(2 - 1, 2)
+      .add(4 - 1, 3)
+      .add(16 - 1, 10)
+    println(s"${res.slope} * x + ${res.intercept}")
 
-  val res1 = res
-    .remove(16 - 1, 10)
-  println(s"${res1.slope} * x + ${res1.intercept}")
+    // val res1 = res
+    //   .remove(16 - 1, 10)
+    // println(s"${res1.slope} * x + ${res1.intercept}")
 
-  val res2 = n
-    .add(2 - 1, 2)
-    .add(4 - 1, 3)
-  println(s"${res2.slope} * x + ${res2.intercept}")
+    val res2 = n
+      .add(2 - 1, 2)
+      .add(4 - 1, 3)
+    println(s"${res2.slope} * x + ${res2.intercept}")
+
+    val res3 = res
+      .add(10 - 1, 10)
+    println(s"${res3.slope} * x + ${res3.intercept}")
+  }
+
+  {
+    println("covariance variance")
+    val n =
+      Statistics.CovVarRegression(
+        0,
+        0d,
+        0d,
+        0d,
+        0d
+      )
+
+    val res = n
+      .add(2 - 1, 2)
+      .add(4 - 1, 3)
+      .add(16 - 1, 10)
+    println("original")
+    println(s"${res.slope} * x + ${res.intercept}")
+
+    val res2 = n
+      .add(2 - 1, 2)
+      .add(4 - 1, 3)
+    println(s"${res2.slope} * x + ${res2.intercept}")
+
+    val res3 = res
+      .add(10 - 1, 10)
+    println(s"${res3.slope} * x + ${res3.intercept}")
+
+    val res4 = res
+      .add(10 - 1, 10, 3d)
+    println("5 times")
+    println(s"${res4.slope} * x + ${res4.intercept}")
+
+    val res5 = res
+      .add(10 - 1, 10, math.max(1d, (res.count.toDouble / 1000d).toLong))
+    println("0.1 times")
+    println(s"${res5.slope} * x + ${res5.intercept}")
+  }
+
+  {
+    println("gradient")
+    val n = Statistics.GradientDecentRegression
+      .fit(
+        NonEmptyList.of(
+          Statistics.Point(2 - 1, 2),
+          Statistics.Point(4 - 1, 3),
+          Statistics.Point(16 - 1, 10)
+        )
+      )
+
+    println(s"${n.slope} * x + ${n.intercept}")
+  }
 }

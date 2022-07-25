@@ -4,6 +4,7 @@ import cats.effect._
 import cats.implicits._
 import scala.concurrent.duration.FiniteDuration
 import scala.collection.immutable.Queue
+import cats.data.NonEmptyList
 
 trait Statistics[F[_]] {
   def getStatsOpt(name: String): F[Option[Statistics.Stats]]
@@ -14,47 +15,40 @@ trait Statistics[F[_]] {
 }
 
 object Statistics {
-  /*
-   * We have a sub-sequence of data points D = ((t_i, n_i), (t_i+1, n_i+1), ..., (t_k, n_k))
-   * Where t is the elapsed time, n is the batch size i > 0 and k is the number of all points.
-   *
-   * From this sequence of data points we must guess how long an entry of n=1 takes, that is,
-   * how long it takes to process a batch of size 1.
-   * We must figure out the *additional* cost of n compared to n - 1.
-   * Let the additional element cost be b.
-   * B can be found by computing the standard deviation (that is, the average difference) of both t and n
-   * Then we can divide \sigma(t) by \sigma(n) to get the "time per element"
-   *
-   * An example:
-   * D = ((2, 2), (3, 4))
-   * (2 - 3, 2 - 4) = (1, 2) = 1 / 2 = 0.5
-   * avg(2, 3) = 2.5
-   * delta_t = avgsum(2 - 2.5, 3 - 2.5) = (0.5 + 0.5) / 2 = 0.5
-   * avg(2, 4) = 3
-   * delta_n = avgsum(2 - 3, 4 - 3) = (1 + 1) / 2 = 1
-   * b = delta_t / delta_n = 0.5
-   *
-   * D = ((2, 2), (3, 4), (10, 16))
-   * avg(2, 3, 10) = 5
-   * delta_t = avgsum(2 - 5, 3 - 5, 10 - 5) = (3 + 2 + 5) / 3 = 3 + 1/3
-   * avg(2, 4, 16) = 24 / 3 = 8
-   * delta_n = avgsum(2 - 8, 4 - 8, 16 - 8) = (6 + 4 + 8) / 3 = 18 / 3 = 6
-   * b = delta_t / delta_n = (3.33 / 6) ~= 0.55555
-   *
-   * D = ((2, 2), (3, 4), (10, 16), (10, 20))
-   * t_avg = avg(2, 3, 10, 10) = 5
-   * delta_t = avgsum(|2 - 5|, |3 - 5|, |10 - 5|, |10 - 5|) = (3 + 2 + 5 + 5) / 4 = 15 / 4 = 3.75
-   * n_avg = avg(2, 4, 16, 20) = 44 / 4 = 11
-   * delta_n = avgsum(|2 - 11|, |4 - 11|, |16 - 11|, |20 - 11|) = (9 + 7 + 5 + 9) / 4 = 30 / 4 = 7.5
-   * b = delta_t / delta_n = (3.75 / 7.5) ~= 0.5
-   *
-   * Linreg
-   */
+
+  final case class CovVarRegression(
+      count: Long,
+      meanX: Double,
+      meanY: Double,
+      varX: Double,
+      covXY: Double
+  ) {
+    lazy val slope: Double = covXY / varX
+
+    lazy val intercept: Double = meanY - slope * meanX
+
+    def apply(x: Double): Double = intercept + slope * x
+
+    def add(x: Double, y: Double, weight: Double = 1d): CovVarRegression = {
+      val n = (count + 1).toDouble
+
+      val dx = x - meanX
+      val dy = y - meanY
+
+      val newVarX = varX + (((n - 1d) / n) * dx * dx * weight - varX) / n
+      val newCovXY = covXY + (((n - 1d) / n) * dx * dy * weight - covXY) / n
+
+      val newMeanX = meanX + (dx * weight) / n
+      val newMeanY = meanY + (dy * weight) / n
+
+      CovVarRegression(count + 1, newMeanX, newMeanY, newVarX, newCovXY)
+    }
+  }
+
   final case class NodeTypeRegression(
       sumx: Double,
       sumxx: Double,
       sumy: Double,
-      sumyy: Double,
       sumxy: Double,
       n: Int,
       // averages
@@ -68,7 +62,6 @@ object Statistics {
       val dy = y - ybar
       copy(
         sumxx = sumxx - dx * dx * ratio,
-        sumyy = sumyy - dy * dy * ratio,
         sumxy = sumxy - dx * dy * ratio,
         xbar = xbar - dx / newN.toDouble,
         ybar = ybar - dy / newN.toDouble,
@@ -85,7 +78,6 @@ object Statistics {
       val dy = y - ybar
       copy(
         sumxx = sumxx + dx * dx * ratio,
-        sumyy = sumyy + dy * dy * ratio,
         sumxy = sumxy + dx * dy * ratio,
         xbar = xbar + dx / newN.toDouble,
         ybar = ybar + dy / newN.toDouble,
@@ -101,6 +93,76 @@ object Statistics {
 
     def apply(x: Double): Double =
       slope * x + intercept
+  }
+
+  final case class GradientDecentRegression(
+      error: Double,
+      n: Int,
+      slope: Double,
+      intercept: Double
+  ) {
+    def apply(x: Double): Double = slope * x + intercept
+
+    def add(x: Double, y: Double): GradientDecentRegression = {
+      val m = slope
+      val b = intercept
+
+      // val appliedPDB = 1d / n * points.map(p => pred(p.x) - p.y).sumAll
+      // val appliedPDM = 1d / n * points.map(p => (pred(p.x) - p.y) * p.x).sumAll
+      ???
+    }
+  }
+
+  final case class Point(x: Double, y: Double)
+
+  object GradientDecentRegression {
+    def fit(points: NonEmptyList[Point]): GradientDecentRegression = {
+      // the error/cost function will be 1 / n * sum((y - (slope * x + intercept))^2)
+      // we want to figure out what direction to move the slope and intercept to minimize this error
+      // the error function of n^2 is a parabola
+      // such that taking the partial derivative is the rate of error
+      //
+      // now we should just re-adjust the slope and intercept by applying their respective derived functions
+      // and multiply by a learning rate
+      //
+      // since a function of a parabola is linear, re-adjusting by the rate of error will very quickly converge
+
+      val n = points.size.toDouble
+
+      def go(its: Int, alpha: Double, m: Double, b: Double, prevErr: Double): (Double, Double) = {
+        if (its == 1000) (m, b)
+        else {
+          def pred(x: Double) = m * x + b
+          // val gradB = -2d * points.map(p => p.y - pred(p.x)).sumAll / n
+          // val gradM = -2d * points.map(p => p.x * (p.y - pred(p.x))).sumAll / n
+          // val newB = b + alpha * gradB
+          // val newM = m - alpha * gradM
+          val appliedPDB = 1d / n * points.map(p => pred(p.x) - p.y).sumAll
+          val appliedPDM = 1d / n * points.map(p => (pred(p.x) - p.y) * p.x).sumAll
+          val optB = b - alpha * appliedPDB
+          val optM = m - alpha * appliedPDM
+          val err = 1d / n * points.map(p => math.pow(p.y - (optM * p.x + optB), 2d)).sumAll
+          // println(s"$its: err: $err, prevSlope: $m, slope: $optM, prevIntercept: $b, intercept: $optB, alpha: $alpha, pdb: $appliedPDB, pdm: $appliedPDM")
+          // println(s"partial derivation b function = 1 / ${n.toInt} * sum i=1 to n {($m * x_i + b) - y_i}")
+          // println(s"partial derivation for b=$b = 1 / ${n.toInt} * sum i=1 to n {($m * x_i + $b) - y_i} = $appliedPDB")
+          // println(s"partial derivation m function = 1 / ${n.toInt} * sum i=1 to n {x_i * ((m * x_i + $b) - y_i)}")
+          // println(s"partial derivation for m=$m = 1 / ${n.toInt} * sum i=1 to n {x_i * (($m * x_i + $b) - y_i)} = $appliedPDM")
+          // println(s"error equation: 1 / ${n.toInt} * sum i=1 to n {y_i - ($optM * x_i + $optB)^2} = $err")
+          // go(its + 1, alpha, newM, newB, prevErr)
+          if (err >= prevErr) go(its + 1, alpha / 2d, m, b, prevErr)
+          else go(its + 1, alpha * 2d, optM, optB, err)
+        }
+      }
+
+      val (m, b) = go(0, 0.01d, 0d, 0d, Double.MaxValue)
+
+      GradientDecentRegression(
+        1d / n * points.map(p => math.pow(m * p.x + b - p.y, 2d)).sumAll,
+        points.size,
+        m,
+        b
+      )
+    }
   }
 
   final case class BatchStats(
