@@ -469,11 +469,34 @@ fragment F2 on Data {
             .mkString_("")
         }
 
+        def planCost(nodes: NonEmptyList[Optimizer.Node]): Double = {
+          val fnt = Optimizer.flattenNodeTree(nodes)
+          // val g =
+          //   fnt.groupBy(_.name).map { case (k, nodes) =>
+          //     k -> ((nodes.head.cost, nodes.head.elemCost, nodes.groupBy(_.start.toInt)))
+          //   }
+
+          fnt
+            .groupBy(_.name)
+            .toList
+            .map { case (_, nodes) =>
+              val c = nodes.head.cost
+              val e = nodes.head.elemCost
+              val costCnt = nodes.groupBy(_.start.toInt)
+              val groups = costCnt.size
+              val batched = nodes.size - groups
+              groups * c + batched * e
+            }
+            .sumAll
+        }
+
         val costTree = Optimizer.costTree[IO](x).unsafeRunSync()
         val p = Optimizer.plan(costTree)
         // println(showTree(0, costTree))
         // println(showTree(0, p))
         println(showDiff(0, p, costTree))
+        println(s"inital plan cost: ${planCost(costTree)}")
+        println(s"optimized plan cost: ${planCost(p)}")
         println(Interpreter.interpret[IO]((), x).unsafeRunSync())
     }
 

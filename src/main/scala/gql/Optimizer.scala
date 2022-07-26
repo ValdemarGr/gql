@@ -103,7 +103,7 @@ import cats.mtl.Stateful
  *    tag den senest mulige, ellers assign bare senest mulige sluttidspunkt
  */
 object Optimizer {
-  final case class Node(id: Int, name: String, cost: Double, end: Double, children: List[Node]) {
+  final case class Node(id: Int, name: String, cost: Double, end: Double, children: List[Node], elemCost: Double) {
     lazy val start = end - cost
   }
 
@@ -120,7 +120,7 @@ object Optimizer {
         stats
           .getStatsOpt(bn)
           .map {
-            case None    => Statistics.Stats(100d, 100d)
+            case None    => Statistics.Stats(100d, 5d)
             case Some(x) => x
           }
           .flatMap { s =>
@@ -129,9 +129,10 @@ object Optimizer {
             def handleSelection(p: PreparedQuery.Prepared[G, Any]): F[Node] =
               p match {
                 case PreparedLeaf(_, _) =>
-                  nextId.map(id => Node(id, bn, s.initialCost, end, Nil))
+                  nextId.map(id => Node(id, bn, s.initialCost, end, Nil, s.extraElementCost))
                 case Selection(fields) =>
-                  constructCostTree[F, G](end, fields).flatMap(nel => nextId.map(id => Node(id, bn, s.initialCost, end, nel.toList)))
+                  constructCostTree[F, G](end, fields)
+                    .flatMap(nel => nextId.map(id => Node(id, bn, s.initialCost, end, nel.toList, s.extraElementCost)))
                 case pl if pl.isInstanceOf[PreparedList[G, Any]] =>
                   val pl2 = pl.asInstanceOf[PreparedList[G, Any]]
                   handleSelection(pl2.of)
@@ -151,14 +152,14 @@ object Optimizer {
     constructCostTree[G, F](0d, prepared).runA(0)
   }
 
-  def plan(nodes: NonEmptyList[Node]): NonEmptyList[Node] = {
-    def flat(xs: NonEmptyList[Node]): NonEmptyList[Node] =
-      xs.flatMap {
-        case n @ Node(_, _, _, _, Nil)     => NonEmptyList.one(n)
-        case n @ Node(_, _, _, _, x :: xs) => NonEmptyList.one(n) ++ flat(NonEmptyList(x, xs)).toList
-      }
+  def flattenNodeTree(xs: NonEmptyList[Node]): NonEmptyList[Node] =
+    xs.flatMap {
+      case n @ Node(_, _, _, _, Nil, _)     => NonEmptyList.one(n)
+      case n @ Node(_, _, _, _, x :: xs, _) => NonEmptyList.one(n) ++ flattenNodeTree(NonEmptyList(x, xs)).toList
+    }
 
-    val flatNodes = flat(nodes)
+  def plan(nodes: NonEmptyList[Node]): NonEmptyList[Node] = {
+    val flatNodes = flattenNodeTree(nodes)
 
     val orderedFlatNodes = flatNodes.sortBy(_.end).reverse
 
