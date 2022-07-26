@@ -1,5 +1,6 @@
 package gql
 
+import cats._
 import cats.effect._
 import cats.implicits._
 import scala.concurrent.duration.FiniteDuration
@@ -7,12 +8,24 @@ import scala.collection.immutable.Queue
 import cats.data.NonEmptyList
 import scala.annotation.tailrec
 
-trait Statistics[F[_]] {
+trait Statistics[F[_]] { self =>
   def getStatsOpt(name: String): F[Option[Statistics.Stats]]
 
   def getStats(name: String): F[Statistics.Stats]
 
   def updateStats(name: String, elapsed: FiniteDuration, batchElems: Int): F[Unit]
+
+  def mapK[G[_]](f: F ~> G): Statistics[G] =
+    new Statistics[G] {
+      def getStatsOpt(name: String): G[Option[Statistics.Stats]] =
+        f(self.getStatsOpt(name))
+
+      def getStats(name: String): G[Statistics.Stats] =
+        f(self.getStats(name))
+
+      def updateStats(name: String, elapsed: FiniteDuration, batchElems: Int): G[Unit] =
+        f(self.updateStats(name, elapsed, batchElems))
+    }
 }
 
 object Statistics {

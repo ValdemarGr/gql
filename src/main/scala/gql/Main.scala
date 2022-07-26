@@ -443,9 +443,37 @@ fragment F2 on Data {
       case Right(Left(x)) => println(x)
       case Right(Right(x)) =>
         implicit lazy val stats = Statistics[IO].unsafeRunSync()
-        val costTree = Optimizer.constructCostTree[IO](0d, x).unsafeRunSync()
+        def showTree(indent: Int, nodes: NonEmptyList[Optimizer.Node]): String = {
+          val pad = "  " * indent
+          nodes
+            .map { n =>
+              val thisInfo = pad + s"name: ${n.name}, cost: ${n.cost.toInt}, start: ${n.start}, end: ${n.end}, id: ${n.id}\n"
+              thisInfo + n.children.toNel.map(showTree(indent + 1, _)).mkString_("")
+            }
+            .mkString_("")
+        }
+
+        def showDiff(indent: Int, fa: NonEmptyList[Optimizer.Node], fb: NonEmptyList[Optimizer.Node]): String = {
+          val pad = "  " * indent
+          fa.sortBy(_.id)
+            .zip(fb.sortBy(_.id))
+            .map { case (a, b) =>
+              val thisInfo =
+                if (a.end.toInt != b.end.toInt) {
+                  AnsiColor.GREEN_B + pad + s"name: ${a.name}, cost: ${a.cost.toInt}, start: ${a.start}, end: ${a.end}, id: ${a.id}" + AnsiColor.RESET + "\n" +
+                    AnsiColor.RED_B + pad + s"name: ${b.name}, cost: ${b.cost.toInt}, start: ${b.start}, end: ${b.end}, id: ${b.id}" + AnsiColor.RESET + "\n"
+                } else pad + s"name: ${a.name}, cost: ${a.cost.toInt}, start: ${a.start}, end: ${a.end}, id: ${a.id}\n"
+
+              thisInfo + a.children.toNel.map(showDiff(indent + 1, _, b.children.toNel.get)).mkString_("")
+            }
+            .mkString_("")
+        }
+
+        val costTree = Optimizer.costTree[IO](x).unsafeRunSync()
         val p = Optimizer.plan(costTree)
-        println(p)
+        println(showTree(0, costTree))
+        println(showTree(0, p))
+        println(showDiff(0, p, costTree))
         println(Interpreter.interpret[IO]((), x).unsafeRunSync())
     }
 

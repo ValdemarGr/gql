@@ -10,6 +10,8 @@ import gql.PreparedQuery.PreparedFragField
 import gql.PreparedQuery.PreparedLeaf
 import gql.PreparedQuery.PreparedList
 import gql.PreparedQuery.Selection
+import cats.Monad
+import cats.mtl.Stateful
 
 /*
  * The executable GraphQL query is a tree of potentially effectful functions to run.
@@ -101,14 +103,17 @@ import gql.PreparedQuery.Selection
  *    tag den senest mulige, ellers assign bare senest mulige sluttidspunkt
  */
 object Optimizer {
-  final case class Node(name: String, cost: Double, end: Double, children: List[Node]) {
+  final case class Node(id: Int, name: String, cost: Double, end: Double, children: List[Node]) {
     lazy val start = end - cost
   }
 
-  def constructCostTree[F[_]](currentCost: Double, prepared: NonEmptyList[PreparedQuery.PreparedField[F, Any]])(implicit
-      F: Async[F],
+  def constructCostTree[F[_], G[_]](currentCost: Double, prepared: NonEmptyList[PreparedQuery.PreparedField[G, Any]])(implicit
+      F: Monad[F],
+      S: Stateful[F, Int],
       stats: Statistics[F]
   ): F[NonEmptyList[Node]] = {
+    val nextId = S.get <* S.modify(_ + 1)
+
     prepared.traverse {
       case PreparedDataField(name, resolve, selection, meta) =>
         val bn = meta.batchName.getOrElse(name)
@@ -121,27 +126,39 @@ object Optimizer {
           .flatMap { s =>
             val end = currentCost + s.initialCost
 
-            def handleSelection(p: PreparedQuery.Prepared[F, Any]): F[Node] =
+            def handleSelection(p: PreparedQuery.Prepared[G, Any]): F[Node] =
               p match {
-                case PreparedLeaf(_, _) => F.pure(Node(bn, s.initialCost, end, Nil))
-                case Selection(fields)  => constructCostTree[F](end, fields).map(nel => Node(bn, s.initialCost, end, nel.toList))
-                case pl if pl.isInstanceOf[PreparedList[F, Any]] =>
-                  val pl2 = pl.asInstanceOf[PreparedList[F, Any]]
+                case PreparedLeaf(_, _) =>
+                  nextId.map(id => Node(id, bn, s.initialCost, end, Nil))
+                case Selection(fields) =>
+                  constructCostTree[F, G](end, fields).flatMap(nel => nextId.map(id => Node(id, bn, s.initialCost, end, nel.toList)))
+                case pl if pl.isInstanceOf[PreparedList[G, Any]] =>
+                  val pl2 = pl.asInstanceOf[PreparedList[G, Any]]
                   handleSelection(pl2.of)
               }
 
             handleSelection(selection)
           }
       case PreparedFragField(specify, selection) =>
-        constructCostTree[F](currentCost, selection.fields).map(nel => Node("frag", 0, currentCost, nel.toList))
+        constructCostTree[F, G](currentCost, selection.fields).flatMap(nel =>
+          nextId.map(id => Node(id, "frag", 0, currentCost, nel.toList))
+        )
     }
   }
 
-  def plan(nodes: NonEmptyList[Node]): List[Node] = {
+  def costTree[F[_]: Monad](
+      prepared: NonEmptyList[PreparedQuery.PreparedField[F, Any]]
+  )(implicit stats: Statistics[F]): F[NonEmptyList[Node]] = {
+    type G[A] = StateT[F, Int, A]
+    implicit val statsK = stats.mapK(StateT.liftK[F, Int])
+    constructCostTree[G, F](0d, prepared).runA(0)
+  }
+
+  def plan(nodes: NonEmptyList[Node]): NonEmptyList[Node] = {
     def flat(xs: NonEmptyList[Node]): NonEmptyList[Node] =
       xs.flatMap {
-        case n @ Node(_, _, _, Nil)     => NonEmptyList.one(n)
-        case n @ Node(_, _, _, x :: xs) => NonEmptyList.one(n) ++ flat(NonEmptyList(x, xs)).toList
+        case n @ Node(_, _, _, _, Nil)     => NonEmptyList.one(n)
+        case n @ Node(_, _, _, _, x :: xs) => NonEmptyList.one(n) ++ flat(NonEmptyList(x, xs)).toList
       }
 
     val flatNodes = flat(nodes)
@@ -167,6 +184,19 @@ object Optimizer {
           go(rs, r.copy(end = compatible.map(_.end).getOrElse(maxEnd)) :: handled)
       }
 
-    go(orderedFlatNodes.toList, Nil)
+    val planned = go(orderedFlatNodes.toList, Nil)
+
+    val plannedMap = planned.map(n => n.id -> n).toMap
+
+    def reConstruct(ns: NonEmptyList[Int]): NonEmptyList[Node] =
+      ns.map { n =>
+        val newN = plannedMap(n)
+        newN.children match {
+          case Nil     => newN
+          case x :: xs => newN.copy(children = reConstruct(NonEmptyList(x, xs).map(_.id)).toList)
+        }
+      }
+
+    reConstruct(nodes.map(_.id))
   }
 }
