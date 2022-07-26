@@ -44,6 +44,15 @@ object Statistics {
 
       CovVarRegression(count + 1, newMeanX, newMeanY, newVarX, newCovXY)
     }
+
+    def scale(newN: Long): CovVarRegression = {
+      val factor = newN.toDouble / count.toDouble
+      copy(
+        varX = varX * math.pow(factor, 2d),
+        covXY = covXY * math.pow(factor, 2d),
+        count = newN
+      )
+    }
   }
 
   final case class NodeTypeRegression(

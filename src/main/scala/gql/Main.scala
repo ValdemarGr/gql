@@ -511,13 +511,16 @@ fragment F2 on Data {
     println(s"${res3.slope} * x + ${res3.intercept}")
 
     val res4 = res
-      .add(10 - 1, 10, 3d)
-    println("5 times")
+      .scale(3)
+      .add(10 - 1, 10)
+      .scale(328)
+    println("scaled 3")
     println(s"${res4.slope} * x + ${res4.intercept}")
 
     val res5 = res
-      .add(10 - 1, 10, math.max(1d, (res.count.toDouble / 1000d).toLong))
-    println("0.1 times")
+      .scale(1000)
+      .add(10 - 1, 10)
+    println("scaled 10000")
     println(s"${res5.slope} * x + ${res5.intercept}")
   }
 
