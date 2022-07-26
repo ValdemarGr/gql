@@ -471,10 +471,6 @@ fragment F2 on Data {
 
         def planCost(nodes: NonEmptyList[Optimizer.Node]): Double = {
           val fnt = Optimizer.flattenNodeTree(nodes)
-          // val g =
-          //   fnt.groupBy(_.name).map { case (k, nodes) =>
-          //     k -> ((nodes.head.cost, nodes.head.elemCost, nodes.groupBy(_.start.toInt)))
-          //   }
 
           fnt
             .groupBy(_.name)
