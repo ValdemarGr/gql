@@ -114,7 +114,7 @@ object Optimizer {
   ): F[NonEmptyList[Node]] = {
     val nextId = S.get <* S.modify(_ + 1)
 
-    prepared.traverse {
+    prepared.flatTraverse {
       case PreparedDataField(name, resolve, selection, meta) =>
         val bn = meta.batchName.getOrElse(name)
         stats
@@ -137,12 +137,9 @@ object Optimizer {
                   handleSelection(pl2.of)
               }
 
-            handleSelection(selection)
+            handleSelection(selection).map(NonEmptyList.one(_))
           }
-      case PreparedFragField(specify, selection) =>
-        constructCostTree[F, G](currentCost, selection.fields).flatMap(nel =>
-          nextId.map(id => Node(id, "frag", 0, currentCost, nel.toList))
-        )
+      case PreparedFragField(_, selection) => constructCostTree[F, G](currentCost, selection.fields)
     }
   }
 
@@ -165,7 +162,7 @@ object Optimizer {
 
     val orderedFlatNodes = flatNodes.sortBy(_.end).reverse
 
-    val m = flatNodes.last.end
+    val m = orderedFlatNodes.head.end
 
     def go(remaining: List[Node], handled: List[Node]): List[Node] =
       remaining match {
@@ -173,7 +170,7 @@ object Optimizer {
         case r :: rs =>
           val maxEnd: Double = r.children match {
             case Nil     => m
-            case x :: xs => NonEmptyList(x, xs).map(_.start).maximum
+            case x :: xs => NonEmptyList(x, xs).map(_.start).minimum
           }
 
           val compatible =
@@ -181,7 +178,11 @@ object Optimizer {
               .filter(h => h.name == r.name && r.end <= h.end && h.end <= maxEnd)
               .maximumByOption(_.end)
 
-          go(rs, r.copy(end = compatible.map(_.end).getOrElse(maxEnd)) :: handled)
+          val newEnd = compatible.map(_.end).getOrElse(maxEnd)
+
+          // println(s"minimum end for ${r.id} is $maxEnd and compatible is ${compatible.map(_.id)} such that end is $newEnd")
+
+          go(rs, r.copy(end = newEnd) :: handled)
       }
 
     val planned = go(orderedFlatNodes.toList, Nil)

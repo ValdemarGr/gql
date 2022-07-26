@@ -471,8 +471,8 @@ fragment F2 on Data {
 
         val costTree = Optimizer.costTree[IO](x).unsafeRunSync()
         val p = Optimizer.plan(costTree)
-        println(showTree(0, costTree))
-        println(showTree(0, p))
+        // println(showTree(0, costTree))
+        // println(showTree(0, p))
         println(showDiff(0, p, costTree))
         println(Interpreter.interpret[IO]((), x).unsafeRunSync())
     }
