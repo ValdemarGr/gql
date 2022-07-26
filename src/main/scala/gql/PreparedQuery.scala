@@ -69,7 +69,8 @@ object PreparedQuery {
   final case class PreparedDataField[F[_], I, T](
       name: String,
       resolve: I => Output.Fields.Resolution[F, T],
-      selection: Prepared[F, T]
+      selection: Prepared[F, T],
+      meta: FieldMetadata[F, I]
   ) extends PreparedField[F, I]
 
   final case class PreparedFragField[F[_], A](
@@ -227,7 +228,7 @@ object PreparedQuery {
           case (o, None)    => F.raiseError(s"object like type ${friendlyName[G, Any](o)} must have a selection")
         }
 
-      prepF.map(p => PreparedDataField(gqlField.name, resolve, p))
+      prepF.map(p => PreparedDataField(gqlField.name, resolve, p, FieldMetadata()))
     }
   }
 

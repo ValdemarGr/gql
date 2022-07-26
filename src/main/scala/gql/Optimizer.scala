@@ -1,9 +1,15 @@
 package gql
 
+import cats.effect._
 import cats.implicits._
 import scala.collection.immutable.SortedSet
 import scala.collection.immutable.SortedMap
 import cats.data._
+import gql.PreparedQuery.PreparedDataField
+import gql.PreparedQuery.PreparedFragField
+import gql.PreparedQuery.PreparedLeaf
+import gql.PreparedQuery.PreparedList
+import gql.PreparedQuery.Selection
 
 /*
  * The executable GraphQL query is a tree of potentially effectful functions to run.
@@ -40,21 +46,21 @@ import cats.data._
  *        ____A
  *       /   / \
  *      D   B   E
- *     / \  |   |  
- *    A   D C   A   
+ *     / \  |   |
+ *    A   D C   A
  *  / |     |   | \
  * E  C     A   D  D
  * |  |    / \
  * D  D   D   D
- *        
- *        
- *      A           
+ *
+ *
+ *      A
  *     / \
  *    B   E
  *    |   | \
  *    C   D  D
- *   / \            
- *  D  D            
+ *   / \
+ *  D  D
  *
  *            A
  *            |
@@ -95,6 +101,72 @@ import cats.data._
  *    tag den senest mulige, ellers assign bare senest mulige sluttidspunkt
  */
 object Optimizer {
-  def schedule[F[_]](implicit stats: Statistics[F]) = {
+  final case class Node(name: String, cost: Double, end: Double, children: List[Node]) {
+    lazy val start = end - cost
+  }
+
+  def constructCostTree[F[_]](currentCost: Double, prepared: NonEmptyList[PreparedQuery.PreparedField[F, Any]])(implicit
+      F: Async[F],
+      stats: Statistics[F]
+  ): F[NonEmptyList[Node]] = {
+    prepared.traverse {
+      case PreparedDataField(name, resolve, selection, meta) =>
+        val bn = meta.batchName.getOrElse(name)
+        stats
+          .getStatsOpt(bn)
+          .map {
+            case None    => Statistics.Stats(100d, 100d)
+            case Some(x) => x
+          }
+          .flatMap { s =>
+            val end = currentCost + s.initialCost
+
+            def handleSelection(p: PreparedQuery.Prepared[F, Any]): F[Node] =
+              p match {
+                case PreparedLeaf(_, _) => F.pure(Node(bn, s.initialCost, end, Nil))
+                case Selection(fields)  => constructCostTree[F](end, fields).map(nel => Node(bn, s.initialCost, end, nel.toList))
+                case pl if pl.isInstanceOf[PreparedList[F, Any]] =>
+                  val pl2 = pl.asInstanceOf[PreparedList[F, Any]]
+                  handleSelection(pl2.of)
+              }
+
+            handleSelection(selection)
+          }
+      case PreparedFragField(specify, selection) =>
+        constructCostTree[F](currentCost, selection.fields).map(nel => Node("frag", 0, currentCost, nel.toList))
+    }
+  }
+
+  def plan(nodes: NonEmptyList[Node]): List[Node] = {
+    def flat(xs: NonEmptyList[Node]): NonEmptyList[Node] =
+      xs.flatMap {
+        case n @ Node(_, _, _, Nil)     => NonEmptyList.one(n)
+        case n @ Node(_, _, _, x :: xs) => NonEmptyList.one(n) ++ flat(NonEmptyList(x, xs)).toList
+      }
+
+    val flatNodes = flat(nodes)
+
+    val orderedFlatNodes = flatNodes.sortBy(_.end).reverse
+
+    val m = flatNodes.last.end
+
+    def go(remaining: List[Node], handled: List[Node]): List[Node] =
+      remaining match {
+        case Nil => handled
+        case r :: rs =>
+          val maxEnd: Double = r.children match {
+            case Nil     => m
+            case x :: xs => NonEmptyList(x, xs).map(_.start).maximum
+          }
+
+          val compatible =
+            handled
+              .filter(h => h.name == r.name && r.end <= h.end && h.end <= maxEnd)
+              .maximumByOption(_.end)
+
+          go(rs, r.copy(end = compatible.map(_.end).getOrElse(maxEnd)) :: handled)
+      }
+
+    go(orderedFlatNodes.toList, Nil)
   }
 }

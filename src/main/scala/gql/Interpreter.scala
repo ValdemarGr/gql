@@ -26,7 +26,7 @@ object Interpreter {
 
   def interpretField[F[_]](input: Any, pf: PreparedField[F, Any])(implicit F: Async[F]): F[JsonObject] = {
     pf match {
-      case PreparedDataField(name, resolve, selection) =>
+      case PreparedDataField(name, resolve, selection, _) =>
         val fa = resolve(input) match {
           case Output.Fields.PureResolution(value)  => F.pure(value)
           case Output.Fields.DeferredResolution(fa) => fa
