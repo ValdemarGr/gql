@@ -453,21 +453,27 @@ fragment F2 on Data {
             .mkString_("")
         }
 
-        def showDiff(indent: Int, fa: NonEmptyList[Optimizer.Node], fb: NonEmptyList[Optimizer.Node]): String = {
-          val pad = "  " * indent
+        def showDiff_(fa: NonEmptyList[Optimizer.Node], fb: NonEmptyList[Optimizer.Node]): String = {
           fa.sortBy(_.id)
             .zip(fb.sortBy(_.id))
             .map { case (a, b) =>
               val thisInfo =
                 if (a.end.toInt != b.end.toInt) {
-                  AnsiColor.GREEN_B + pad + s"name: ${a.name}, cost: ${a.cost.toInt}, start: ${a.start}, end: ${a.end}, id: ${a.id}" + AnsiColor.RESET + "\n" +
-                    AnsiColor.RED_B + pad + s"name: ${b.name}, cost: ${b.cost.toInt}, start: ${b.start}, end: ${b.end}, id: ${b.id}" + AnsiColor.RESET + "\n"
-                } else pad + s"name: ${a.name}, cost: ${a.cost.toInt}, start: ${a.start}, end: ${a.end}, id: ${a.id}\n"
+                  (" " * (b.start.toInt / 50)) + AnsiColor.RED_B + s"name: ${b.name}, cost: ${b.cost.toInt}, start: ${b.start}, end: ${b.end}, id: ${b.id}" + AnsiColor.RESET + "\n" +
+                    (" " * (b.start.toInt / 50)) + AnsiColor.BLUE_B + (">" * ((a.start - b.start).toInt / 50)) + AnsiColor.GREEN_B + s"name: ${a.name}, cost: ${a.cost.toInt}, start: ${a.start}, end: ${a.end}, id: ${a.id}" + AnsiColor.RESET + "\n"
+                } else
+                  (" " * (a.start.toInt / 50)) + s"name: ${a.name}, cost: ${a.cost.toInt}, start: ${a.start}, end: ${a.end}, id: ${a.id}\n"
 
-              thisInfo + a.children.toNel.map(showDiff(indent + 1, _, b.children.toNel.get)).mkString_("")
+              thisInfo + a.children.toNel.map(showDiff_(_, b.children.toNel.get)).mkString_("")
             }
             .mkString_("")
         }
+
+        def showDiff(fa: NonEmptyList[Optimizer.Node], fb: NonEmptyList[Optimizer.Node]) =
+          AnsiColor.RED_B + "old field schedule" + AnsiColor.RESET + "\n" +
+            AnsiColor.GREEN_B + "new field schedule" + AnsiColor.RESET + "\n" +
+            AnsiColor.BLUE_B + "new field offset (deferral of execution)" + AnsiColor.RESET + "\n" +
+            showDiff_(fa, fb)
 
         def planCost(nodes: NonEmptyList[Optimizer.Node]): Double = {
           val fnt = Optimizer.flattenNodeTree(nodes)
@@ -490,7 +496,7 @@ fragment F2 on Data {
         val p = Optimizer.plan(costTree)
         // println(showTree(0, costTree))
         // println(showTree(0, p))
-        println(showDiff(0, p, costTree))
+        println(showDiff(p, costTree))
         println(s"inital plan cost: ${planCost(costTree)}")
         println(s"optimized plan cost: ${planCost(p)}")
         println(Interpreter.interpret[IO]((), x).unsafeRunSync())

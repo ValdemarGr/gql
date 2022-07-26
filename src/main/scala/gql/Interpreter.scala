@@ -8,6 +8,7 @@ import cats.effect.implicits._
 import io.circe._
 import io.circe.syntax._
 import cats.Eval
+import cats.Monad
 
 object Interpreter {
   def interpretPrep[F[_]](input: Any, prep: Prepared[F, Any])(implicit F: Async[F]): F[Json] = {
@@ -45,4 +46,8 @@ object Interpreter {
 
   def interpret[F[_]](input: Any, s: NonEmptyList[PreparedField[F, Any]])(implicit F: Async[F]) =
     s.traverse(pf => interpretField[F](input, pf))
+
+  def runWithPlan[F[_]](input: Any, s: NonEmptyList[PreparedField[F, Any]], plan: NonEmptyList[Optimizer.Node])(implicit F: Monad[F]) = {
+    
+  }
 }
