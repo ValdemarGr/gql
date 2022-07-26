@@ -10,6 +10,7 @@ import io.circe.syntax._
 import cats.Eval
 import cats.Monad
 import cats.effect.std.Supervisor
+import scala.collection.immutable.SortedMap
 
 object Interpreter {
   object Naive {
@@ -56,7 +57,7 @@ object Interpreter {
      *
      * Let the following digraph be the plan where [N] is a batch of nodes of type N:
      *
-     *            A   B 
+     *            A   B
      *            |   |\
      *            C   | |
      *             \ /  \
@@ -76,14 +77,27 @@ object Interpreter {
      *  When a node is finished, save the result with the cursor and begin the next node:
      *    * If the child not a batch node, start it immidiately in the background (spawn a fiber).
      *
-     *    * If the child is a batch node, 
+     *    * If the child is a batch node,
      *      is has an atomic reference allocated to it to keep track of what parent cursors to await.
      *      Modify the reference to add the cursor result,
      *      if the added cursor result is the final one, start the child in a new fiber.
      *
      */
-    def runWithPlan[F[_]](input: Any, s: NonEmptyList[PreparedField[F, Any]], plan: NonEmptyList[Optimizer.Node])(implicit F: Concurrent[F]) = {
-      Supervisor[F].use{ sup =>
+    def runWithPlan[F[_]](input: Any, s: NonEmptyList[PreparedField[F, Any]], plan: NonEmptyList[Optimizer.Node])(implicit
+        F: Concurrent[F]
+    ) = {
+      Supervisor[F].use { sup =>
+        val flat = Optimizer.flattenNodeTree(plan)
+        val batchGroups =
+          flat
+            .groupBy(_.name)
+            .map { case (k, nodes) => k -> nodes.groupBy(_.start) }
+
+        val batches: List[NonEmptyList[Int]] =
+          batchGroups.values.toList
+            .flatMap(_.values.toList)
+            .filter(_.size > 1)
+            .map(_.map(_.id))
         ???
       }
     }

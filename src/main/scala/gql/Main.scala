@@ -499,7 +499,7 @@ fragment F2 on Data {
         println(showDiff(p, costTree))
         println(s"inital plan cost: ${planCost(costTree)}")
         println(s"optimized plan cost: ${planCost(p)}")
-        println(Interpreter.interpret[IO]((), x).unsafeRunSync())
+        println(Interpreter.Naive.interpret[IO]((), x).unsafeRunSync())
     }
 
   go
