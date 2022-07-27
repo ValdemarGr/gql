@@ -116,6 +116,7 @@ object Optimizer {
 
     prepared.flatTraverse {
       case PreparedDataField(name, resolve, selection, meta) =>
+        // TODO, use the typename, not the field name
         val bn = meta.batchName.getOrElse(name)
         stats
           .getStatsOpt(bn)

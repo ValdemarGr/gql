@@ -55,7 +55,16 @@ object Interpreter {
     /*
      * Following a plan is not entirely trivial compared to the naive interpreter.
      *
-     * Let the following digraph be the plan where [N] is a batch of nodes of type N:
+     * query Q:
+     *            A   B
+     *            |  / \
+     *            C D   E
+     *            |     |
+     *            D     F 
+     *            |     | 
+     *            G     G 
+     *
+     * Let the following digraph be the plan of Q, where [N] is a batch of nodes of type N:
      *
      *            A   B
      *            |   |\
@@ -81,6 +90,32 @@ object Interpreter {
      *      is has an atomic reference allocated to it to keep track of what parent cursors to await.
      *      Modify the reference to add the cursor result,
      *      if the added cursor result is the final one, start the child in a new fiber.
+     *
+     * This algorithm does, however, not handle lists or options well, that is, nodes where the actual number of
+     * values is either 0 or larger than 1.
+     * If we only let a cursor be "done" when all of it's results are done (that is, it has produced an output for every input).
+     * Furthermore we must also handle the task of re-associating the results.
+     * For instance, maybe the first three inputs and results of [D], come from C, but the remaining four come from B.
+     * The three inputs from C need to be associated with their results and cursors (A -> C).
+     *
+     * When C is done:
+     * DState.submit(dInputFromC.map(i => (i, CCursor)))
+     * When B is done:
+     * DState.submit(dInputFromB.map(i => (i, BCursor)))
+     * Since both C and B are the parent cursors, and they are done, we can start D.
+     *
+     * Unfortunately some abmiguity occurs when having nodes that emit lists under nodes that emit lists,
+     * since reassociation becames impossible; in the sublist, what element is associated with what parent list element?
+     *
+     * Let an example cursor be:
+     * (A -> C -> D -> G)
+     * Now let there be three children D to C and two children G to D.
+     * Which of the three children D should the two G's be allocated to?
+     * We must track what list indices causes what children to occur.
+     *
+     * Let cursors be fields (edges) in practice.
+     * We now track the traversed fields.
+     * On lists, cursors will be list indices.
      *
      */
     def runWithPlan[F[_]](input: Any, s: NonEmptyList[PreparedField[F, Any]], plan: NonEmptyList[Optimizer.Node])(implicit
