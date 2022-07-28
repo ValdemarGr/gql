@@ -70,7 +70,7 @@ object PreparedQuery {
       name: String,
       resolve: I => Output.Fields.Resolution[F, T],
       selection: Prepared[F, T],
-      meta: FieldMetadata[F, I]
+      batchName: String
   ) extends PreparedField[F, I]
 
   final case class PreparedFragField[F[_], A](
@@ -92,6 +92,16 @@ object PreparedQuery {
   final case class PreparedLeaf[F[_], A](name: String, encode: A => Either[String, Json]) extends Prepared[F, A]
 
   final case class AnalysisState[F[_]](cycleSet: Set[String])
+
+  def underlyingOutputTypename[G[_]](ot: Output[G, Any]): String = ot match {
+    case Output.Enum(name, _)  => name
+    case Union(name, _)        => name
+    case Interface(name, _, _) => name
+    case Obj(name, _)          => name
+    case Scalar(name, _)       => name
+    case Opt(of)               => underlyingOutputTypename(of)
+    case Arr(of)               => underlyingOutputTypename(of)
+  }
 
   def friendlyName[G[_], A](ot: Output[G, A]): String = ot match {
     case Scalar(name, _)       => name
@@ -228,7 +238,7 @@ object PreparedQuery {
           case (o, None)    => F.raiseError(s"object like type ${friendlyName[G, Any](o)} must have a selection")
         }
 
-      prepF.map(p => PreparedDataField(gqlField.name, resolve, p, FieldMetadata()))
+      prepF.map(p => PreparedDataField(gqlField.name, resolve, p, underlyingOutputTypename(field.output.value)))
     }
   }
 

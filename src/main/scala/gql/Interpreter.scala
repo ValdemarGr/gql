@@ -60,9 +60,9 @@ object Interpreter {
      *            |  / \
      *            C D   E
      *            |     |
-     *            D     F 
-     *            |     | 
-     *            G     G 
+     *            D     F
+     *            |     |
+     *            G     G
      *
      * Let the following digraph be the plan of Q, where [N] is a batch of nodes of type N:
      *
@@ -118,7 +118,23 @@ object Interpreter {
      * On lists, cursors will be list indices.
      *
      */
-    def runWithPlan[F[_]](input: Any, s: NonEmptyList[PreparedField[F, Any]], plan: NonEmptyList[Optimizer.Node])(implicit
+    final case class NodeInput(
+        cursor: List[String],
+        input: Any
+    )
+
+    final case class NodeState(
+        remainingParents: Int,
+        accumulatedInput: List[NodeInput]
+    )
+
+    final case class PlanNode[F[_]](
+        children: List[PlanNode[F]],
+        state: Option[Ref[F, NodeState]],
+        eval: Any => F[Any]
+    )
+
+    def runWithPlan[F[_]](rootInput: Any, rootSel: NonEmptyList[PreparedField[F, Any]], plan: NonEmptyList[Optimizer.Node])(implicit
         F: Concurrent[F]
     ) = {
       Supervisor[F].use { sup =>
@@ -133,6 +149,22 @@ object Interpreter {
             .flatMap(_.values.toList)
             .filter(_.size > 1)
             .map(_.map(_.id))
+
+        def convert(sel: NonEmptyList[PreparedField[F, Any]]) =
+          ???
+          // sel.map{ pf =>
+          //   pf match {
+          //     case PreparedDataField(name, resolve, selection, batchName) =>
+          //     case PreparedFragField(specify, selection) =>
+          //   }
+          // }
+        // s.traverse{ pf =>
+        //   pf match {
+        //     case PreparedDataField(name, resolve, selection, batchName) =>
+        //     case PreparedFragField(specify, selection) =>
+        //   }
+        // }
+
         ???
       }
     }
