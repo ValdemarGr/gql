@@ -30,7 +30,7 @@ object Interpreter {
 
     def interpretField[F[_]](input: Any, pf: PreparedField[F, Any])(implicit F: Async[F]): F[JsonObject] = {
       pf match {
-        case PreparedDataField(name, resolve, selection, _) =>
+        case PreparedDataField(_, name, resolve, selection, _) =>
           val fa = resolve(input) match {
             case Output.Fields.PureResolution(value)  => F.pure(value)
             case Output.Fields.DeferredResolution(fa) => fa
@@ -39,7 +39,7 @@ object Interpreter {
           fa
             .flatMap(i => interpretPrep[F](i, selection))
             .map(x => JsonObject(name -> x))
-        case PreparedFragField(specify, Selection(fields)) =>
+        case PreparedFragField(_, specify, Selection(fields)) =>
           specify(input) match {
             case None    => F.pure(JsonObject.empty)
             case Some(i) => interpret(i, fields).map(_.reduceLeft(_ deepMerge _))
@@ -130,42 +130,115 @@ object Interpreter {
 
     final case class PlanNode[F[_]](
         children: List[PlanNode[F]],
-        state: Option[Ref[F, NodeState]],
+        state: Ref[F, NodeState],
         eval: Any => F[Any]
     )
 
+    final case class A(
+        children: List[A]
+    )
+
+    // no children, has c and i as parents
+    val d = A(List(A(Nil)))
+
+    // d as child, has i as parents
+    val c = A(List(A(Nil), d))
+
+    // branch out to c and d, has no parents
+    val i = A(List(A(Nil), c, d))
+
+    /*
+     *               A__
+     *              / \ \
+     *             A  A  A
+     *                 \/ \
+     *                [A]  A
+     */
+
+    final case class Converted(idsContained: Map[Int, List[Converted]])
+
     def runWithPlan[F[_]](rootInput: Any, rootSel: NonEmptyList[PreparedField[F, Any]], plan: NonEmptyList[Optimizer.Node])(implicit
         F: Concurrent[F]
-    ) = {
+    ): F[Map[Int, Any]] = {
       Supervisor[F].use { sup =>
         val flat = Optimizer.flattenNodeTree(plan)
-        val batchGroups =
+
+        val nodeMap = flat.map(n => n.id -> n).toList.toMap
+
+        val executionPlanMapping: Map[Int, PreparedField[F, Any]] = ???
+
+        // the algorithm starts from the bottom of the tree and works it way up merging adjacent nodes
+        // of same batch name
+        //
+        // the child batch is saved as a mapping from id to converted child
+        //
+        // the parent can then use this id to re-associate itself with it's child implementations
+
+        // we start in the bottom of the tree and work our way up to construct the batch tree
+        // first we group by same end, and sort by end decreasing such that every group of same end can
+        // be batched, given that they have the same batch name also
+        val batchMap: Map[Int, Converted] =
           flat
-            .groupBy(_.name)
-            .map { case (k, nodes) => k -> nodes.groupBy(_.start) }
+            .groupBy(_.end)
+            .toList
+            .sortBy { case (k, _) => k }
+            .reverse
+            // now we fold over the ordered tree, accumulationg a mapping from node id to a converted node structure
+            // the converted node structure will only contain a mapping from batch id to children
+            .foldLeft(Map.empty[Int, Converted]) { case (accum, (_, grp)) =>
+              accum ++
+                grp
+                  .groupBy(_.name)
+                  .flatMap { case (nodeType, nodes) =>
+                    val batch = Converted(nodes.map(n => n.id -> n.children.map(child => accum(child.id))).toList.toMap)
+                    nodes.map(n => n.id -> batch).toList.toMap
+                  }
 
-        val batches: List[NonEmptyList[Int]] =
-          batchGroups.values.toList
-            .flatMap(_.values.toList)
-            .filter(_.size > 1)
-            .map(_.map(_.id))
+            }
 
-        def convert(sel: NonEmptyList[PreparedField[F, Any]]) =
-          ???
-          // sel.map{ pf =>
-          //   pf match {
-          //     case PreparedDataField(name, resolve, selection, batchName) =>
-          //     case PreparedFragField(specify, selection) =>
-          //   }
-          // }
-        // s.traverse{ pf =>
-        //   pf match {
-        //     case PreparedDataField(name, resolve, selection, batchName) =>
-        //     case PreparedFragField(specify, selection) =>
-        //   }
-        // }
+        val out =
+          flat
+            .traverse(n => F.deferred[Any].map(n.id -> _))
+            .map(_.toList.toMap)
+            .flatMap { inputs =>
+              def completeNodeResult(node: Optimizer.Node, result: Any): F[Unit] =
+                node.children.traverse(child => inputs(child.id).complete(result)).void
 
-        ???
+              def run(id: Int, input: Any): F[Any] =
+                executionPlanMapping(id) match {
+                  case PreparedDataField(_, _, resolve, selection, _) =>
+                    val fa = resolve(input) match {
+                      case Output.Fields.PureResolution(value)  => F.pure(value)
+                      case Output.Fields.DeferredResolution(fb) => fb
+                    }
+
+                    selection match {
+                      case PreparedLeaf(_, _)                          => fa
+                      case Selection(_)                                => fa
+                      case pl if pl.isInstanceOf[PreparedList[F, Any]] =>
+                        // do list stuff
+                        fa.map(_.asInstanceOf[Vector[Any]])
+                    }
+                  case PreparedFragField(_, specify, selection) => F.pure(specify(input))
+                }
+
+              def awaitBatch(c: Converted): F[Unit] =
+                c.idsContained.keySet.toList
+                  .parTraverse(id => inputs(id).get.flatMap(input => run(id, input)).map(result => id -> result))
+                  .flatMap(_.parTraverse { case (id, result) => completeNodeResult(nodeMap(id), result) })
+                  .void
+
+              val awaitGraphDone = inputs.values.toList.traverse_(_.get)
+
+              val executeAllNodes = batchMap.values.toList.traverse_(awaitBatch)
+
+              val startRoot = plan.parTraverse_(n => inputs(n.id).complete(rootInput)).void
+
+              (awaitGraphDone, executeAllNodes, startRoot).parTupled.void >>
+                inputs.toList.parTraverse { case (k, v) => v.get.map(k -> _) }.map(_.toMap)
+            }
+
+        out
       }
     }
   }

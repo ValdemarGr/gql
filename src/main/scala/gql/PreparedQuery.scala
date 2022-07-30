@@ -64,9 +64,13 @@ object PreparedQuery {
    */
   sealed trait Prepared[F[_], A]
 
-  sealed trait PreparedField[F[_], A]
+  sealed trait PreparedField[F[_], A] {
+    // An id that is unique within the query
+    def id: Int
+  }
 
   final case class PreparedDataField[F[_], I, T](
+      id: Int,
       name: String,
       resolve: I => Output.Fields.Resolution[F, T],
       selection: Prepared[F, T],
@@ -74,6 +78,7 @@ object PreparedQuery {
   ) extends PreparedField[F, I]
 
   final case class PreparedFragField[F[_], A](
+      id: Int,
       specify: Any => Option[A],
       selection: Selection[F, A]
   ) extends PreparedField[F, A]
@@ -91,7 +96,7 @@ object PreparedQuery {
 
   final case class PreparedLeaf[F[_], A](name: String, encode: A => Either[String, Json]) extends Prepared[F, A]
 
-  final case class AnalysisState[F[_]](cycleSet: Set[String])
+  final case class AnalysisState(cycleSet: Set[String], nextId: Int)
 
   def underlyingOutputTypename[G[_]](ot: Output[G, Any]): String = ot match {
     case Output.Enum(name, _)  => name
@@ -140,12 +145,15 @@ object PreparedQuery {
     go[EitherT[Eval, String, *]](value).value.value
   }
 
+  def nextId[F[_]: Monad](implicit S: Stateful[F, AnalysisState]) =
+    S.inspect(_.nextId) <* S.modify(x => x.copy(nextId = x.nextId + 1))
+
   def prepareSelections[F[_], G[_]](
       ol: ObjectLike[G, Any],
       s: GQLParser.SelectionSet,
       variableMap: Map[String, Json],
       fragments: Map[String, GQLParser.FragmentDefinition]
-  )(implicit S: Stateful[F, AnalysisState[G]], F: MonadError[F, String], D: Defer[F]): F[NonEmptyList[PreparedField[G, Any]]] = D.defer {
+  )(implicit S: Stateful[F, AnalysisState], F: MonadError[F, String], D: Defer[F]): F[NonEmptyList[PreparedField[G, Any]]] = D.defer {
     val schemaMap = ol.fieldMap
     s.selections.traverse[F, PreparedField[G, Any]] {
       case GQLParser.Selection.FieldSelection(field) =>
@@ -160,7 +168,7 @@ object PreparedQuery {
             matchType[F, G](typeCnd, ol).flatMap { case (ol, specialize) =>
               prepareSelections[F, G](ol, f.selectionSet, variableMap, fragments)
                 .map(Selection(_))
-                .map[PreparedField[G, Any]](s => PreparedFragField(specialize, s))
+                .flatMap[PreparedField[G, Any]](s => nextId[F].map(id => PreparedFragField(id, specialize, s)))
                 .adaptError(e => s"in inline fragment with condition $typeCnd: $e")
             }
         }
@@ -169,7 +177,7 @@ object PreparedQuery {
           case None => F.raiseError(s"unknown fragment name ${f.fragmentName}")
           case Some(fd) =>
             prepareFragment[F, G](ol, fd, variableMap, fragments)
-              .map[PreparedField[G, Any]](fd => PreparedFragField(fd.specify, Selection(fd.fields)))
+              .flatMap[PreparedField[G, Any]](fd => nextId[F].map(id => PreparedFragField(id, fd.specify, Selection(fd.fields))))
               .adaptError(e => s"in fragment ${fd.name}: $e")
         }
     }
@@ -180,7 +188,7 @@ object PreparedQuery {
       field: Output.Fields.Field[G, Any, Any],
       variableMap: Map[String, Json]
   )(implicit
-      S: Stateful[F, AnalysisState[G]],
+      S: Stateful[F, AnalysisState],
       F: MonadError[F, String],
       D: Defer[F]
   ): F[(Any => Output.Fields.Resolution[G, Any], Output[G, Any])] =
@@ -216,7 +224,7 @@ object PreparedQuery {
       variableMap: Map[String, Json],
       fragments: Map[String, GQLParser.FragmentDefinition]
   )(implicit
-      S: Stateful[F, AnalysisState[G]],
+      S: Stateful[F, AnalysisState],
       F: MonadError[F, String],
       D: Defer[F]
   ): F[PreparedField[G, Any]] = {
@@ -238,7 +246,9 @@ object PreparedQuery {
           case (o, None)    => F.raiseError(s"object like type ${friendlyName[G, Any](o)} must have a selection")
         }
 
-      prepF.map(p => PreparedDataField(gqlField.name, resolve, p, underlyingOutputTypename(field.output.value)))
+      prepF.flatMap(p =>
+        nextId[F].map(id => PreparedDataField(id, gqlField.name, resolve, p, underlyingOutputTypename(field.output.value)))
+      )
     }
   }
 
@@ -314,7 +324,7 @@ object PreparedQuery {
       variableMap: Map[String, Json],
       fragments: Map[String, GQLParser.FragmentDefinition]
   )(implicit
-      S: Stateful[F, AnalysisState[G]],
+      S: Stateful[F, AnalysisState],
       F: MonadError[F, String],
       D: Defer[F]
   ): F[FragmentDefinition[G, Any]] =
@@ -344,7 +354,7 @@ object PreparedQuery {
       schema: Schema[G, Q],
       variableMap: Map[String, Json]
   )(implicit
-      S: Stateful[F, AnalysisState[G]],
+      S: Stateful[F, AnalysisState],
       F: MonadError[F, String],
       D: Defer[F]
   ) = {
@@ -383,12 +393,12 @@ object PreparedQuery {
     //   case Detailed(tpe, name, Some(variableDefinitions), _, _) => ???
     // }
 
-    type G[A] = StateT[EitherT[Eval, String, *], AnalysisState[F], A]
+    type G[A] = StateT[EitherT[Eval, String, *], AnalysisState, A]
 
     val o = prepareParts[G, F, Q](ops, frags, schema, variableMap)
 
     o
-      .runA(AnalysisState(Set.empty))
+      .runA(AnalysisState(Set.empty, 1))
       .value
       .value
   }

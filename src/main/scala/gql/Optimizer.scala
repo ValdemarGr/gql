@@ -107,15 +107,12 @@ object Optimizer {
     lazy val start = end - cost
   }
 
-  def constructCostTree[F[_], G[_]](currentCost: Double, prepared: NonEmptyList[PreparedQuery.PreparedField[G, Any]])(implicit
+  def constructCostTree[F[_]](currentCost: Double, prepared: NonEmptyList[PreparedQuery.PreparedField[F, Any]])(implicit
       F: Monad[F],
-      S: Stateful[F, Int],
       stats: Statistics[F]
   ): F[NonEmptyList[Node]] = {
-    val nextId = S.get <* S.modify(_ + 1)
-
     prepared.flatTraverse {
-      case PreparedDataField(name, resolve, selection, bn) =>
+      case PreparedDataField(id, name, resolve, selection, bn) =>
         // // TODO, use the typename, not the field name
         // val bn = meta.batchName.getOrElse(name)
         stats
@@ -127,31 +124,28 @@ object Optimizer {
           .flatMap { s =>
             val end = currentCost + s.initialCost
 
-            def handleSelection(p: PreparedQuery.Prepared[G, Any]): F[Node] =
+            def handleSelection(p: PreparedQuery.Prepared[F, Any]): F[Node] =
               p match {
                 case PreparedLeaf(_, _) =>
-                  nextId.map(id => Node(id, bn, s.initialCost, end, Nil, s.extraElementCost))
+                  F.pure(Node(id, bn, s.initialCost, end, Nil, s.extraElementCost))
                 case Selection(fields) =>
-                  constructCostTree[F, G](end, fields)
-                    .flatMap(nel => nextId.map(id => Node(id, bn, s.initialCost, end, nel.toList, s.extraElementCost)))
-                case pl if pl.isInstanceOf[PreparedList[G, Any]] =>
-                  val pl2 = pl.asInstanceOf[PreparedList[G, Any]]
+                  constructCostTree[F](end, fields)
+                    .map(nel => Node(id, bn, s.initialCost, end, nel.toList, s.extraElementCost))
+                case pl if pl.isInstanceOf[PreparedList[F, Any]] =>
+                  val pl2 = pl.asInstanceOf[PreparedList[F, Any]]
                   handleSelection(pl2.of)
               }
 
             handleSelection(selection).map(NonEmptyList.one(_))
           }
-      case PreparedFragField(_, selection) => constructCostTree[F, G](currentCost, selection.fields)
+      case PreparedFragField(_, _, selection) => constructCostTree[F](currentCost, selection.fields)
     }
   }
 
   def costTree[F[_]: Monad](
       prepared: NonEmptyList[PreparedQuery.PreparedField[F, Any]]
-  )(implicit stats: Statistics[F]): F[NonEmptyList[Node]] = {
-    type G[A] = StateT[F, Int, A]
-    implicit val statsK = stats.mapK(StateT.liftK[F, Int])
-    constructCostTree[G, F](0d, prepared).runA(0)
-  }
+  )(implicit stats: Statistics[F]): F[NonEmptyList[Node]] =
+    constructCostTree[F](0d, prepared)
 
   def flattenNodeTree(xs: NonEmptyList[Node]): NonEmptyList[Node] =
     xs.flatMap {
