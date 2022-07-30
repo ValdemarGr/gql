@@ -64,10 +64,7 @@ object PreparedQuery {
    */
   sealed trait Prepared[F[_], A]
 
-  sealed trait PreparedField[F[_], A] {
-    // An id that is unique within the query
-    def id: Int
-  }
+  sealed trait PreparedField[F[_], A]
 
   final case class PreparedDataField[F[_], I, T](
       id: Int,
@@ -78,7 +75,6 @@ object PreparedQuery {
   ) extends PreparedField[F, I]
 
   final case class PreparedFragField[F[_], A](
-      id: Int,
       specify: Any => Option[A],
       selection: Selection[F, A]
   ) extends PreparedField[F, A]
@@ -168,7 +164,7 @@ object PreparedQuery {
             matchType[F, G](typeCnd, ol).flatMap { case (ol, specialize) =>
               prepareSelections[F, G](ol, f.selectionSet, variableMap, fragments)
                 .map(Selection(_))
-                .flatMap[PreparedField[G, Any]](s => nextId[F].map(id => PreparedFragField(id, specialize, s)))
+                .map[PreparedField[G, Any]](s => PreparedFragField(specialize, s))
                 .adaptError(e => s"in inline fragment with condition $typeCnd: $e")
             }
         }
@@ -177,7 +173,7 @@ object PreparedQuery {
           case None => F.raiseError(s"unknown fragment name ${f.fragmentName}")
           case Some(fd) =>
             prepareFragment[F, G](ol, fd, variableMap, fragments)
-              .flatMap[PreparedField[G, Any]](fd => nextId[F].map(id => PreparedFragField(id, fd.specify, Selection(fd.fields))))
+              .map[PreparedField[G, Any]](fd => PreparedFragField(fd.specify, Selection(fd.fields)))
               .adaptError(e => s"in fragment ${fd.name}: $e")
         }
     }
