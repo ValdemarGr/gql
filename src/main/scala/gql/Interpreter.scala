@@ -165,7 +165,27 @@ object Interpreter {
 
         val nodeMap = flat.map(n => n.id -> n).toList.toMap
 
-        val executionPlanMapping: Map[Int, PreparedField[F, Any]] = ???
+        def unpackPrep(p: Prepared[F, Any]): List[(Int, PreparedField[F, Any])] = {
+          p match {
+            case PreparedLeaf(_, _) => Nil
+            case Selection(fields)  => unpackSel(fields).toList
+            case pl if pl.isInstanceOf[PreparedList[F, Any]] =>
+              unpackPrep(pl.asInstanceOf[PreparedList[F, Any]].of)
+          }
+        }
+
+        def unpackSel(sel: NonEmptyList[PreparedField[F, Any]]): NonEmptyList[(Int, PreparedField[F, Any])] =
+          sel.flatMap { s =>
+            NonEmptyList(
+              s.id -> s,
+              s match {
+                case PreparedDataField(_, _, _, selection, _) => unpackPrep(selection)
+                case PreparedFragField(_, _, selection)       => unpackSel(selection.fields).toList
+              }
+            )
+          }
+
+        val executionPlanMapping: Map[Int, PreparedField[F, Any]] = unpackSel(rootSel).toList.toMap
 
         // the algorithm starts from the bottom of the tree and works it way up merging adjacent nodes
         // of same batch name
