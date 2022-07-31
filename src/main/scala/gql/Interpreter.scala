@@ -179,33 +179,31 @@ object Interpreter {
 
           def go(sel: NonEmptyList[PreparedField[F, Any]], input: List[NodeValue]): F[List[NodeValue]] =
             // fork each field
-            sel.toList.parFlatTraverse { pf =>
-              pf match {
-                case PreparedFragField(id, specify, selection) =>
-                  go(selection.fields, input.flatMap(x => specify(x.value).toList.map(res => x.ided(id, res))))
-                case df @ PreparedDataField(id, name, resolve, selection, batchName) =>
-                  // maybe join
-                  submitAndMaybeStart(id, input).flatMap {
-                    // No batching state, so just start
-                    case NoState => collapseInputs(df, input).flatMap(out => startNext(df, out))
-                    // join
-                    // There is a batch state, but we didn't add the final input
-                    // Stop here, someone else will start the batch
-                    case NotFinalSubmission => F.pure(Nil)
-                    // join
-                    // We are the final submitter, start the computation
-                    case FinalSubmission(inputs) =>
-                      // outer list are seperate node ids, inner is is the list of results for that node
-                      val outputsF: F[List[(PreparedDataField[F, Any, Any], List[NodeValue])]] =
-                        inputs.toList
-                          .map { case (k, v) => dataFieldMap(k) -> v }
-                          .traverse { case (df, v) => collapseInputs(df, v).map(df -> _) }
+            sel.toList.parFlatTraverse {
+              case PreparedFragField(id, specify, selection) =>
+                go(selection.fields, input.flatMap(x => specify(x.value).toList.map(res => x.ided(id, res))))
+              case df @ PreparedDataField(id, name, resolve, selection, batchName) =>
+                // maybe join
+                submitAndMaybeStart(id, input).flatMap {
+                  // No batching state, so just start
+                  case NoState => collapseInputs(df, input).flatMap(out => startNext(df, out))
+                  // join
+                  // There is a batch state, but we didn't add the final input
+                  // Stop here, someone else will start the batch
+                  case NotFinalSubmission => F.pure(Nil)
+                  // join
+                  // We are the final submitter, start the computation
+                  case FinalSubmission(inputs) =>
+                    // outer list are seperate node ids, inner is is the list of results for that node
+                    val outputsF: F[List[(PreparedDataField[F, Any, Any], List[NodeValue])]] =
+                      inputs.toList
+                        .map { case (k, v) => dataFieldMap(k) -> v }
+                        .traverse { case (df, v) => collapseInputs(df, v).map(df -> _) }
 
-                      // fork each node's continuation
-                      // in parallel, start every node's computation
-                      outputsF.flatMap(_.parFlatTraverse { case (df, outputs) => startNext(df, outputs) })
-                  }
-              }
+                    // fork each node's continuation
+                    // in parallel, start every node's computation
+                    outputsF.flatMap(_.parFlatTraverse { case (df, outputs) => startNext(df, outputs) })
+                }
             }
 
           go(rootSel, List(NodeValue(Cursor(Vector.empty), rootInput)))
