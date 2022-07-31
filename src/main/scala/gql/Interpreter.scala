@@ -129,12 +129,7 @@ object Interpreter {
         batches.values.toList
           .distinctBy { case (k, _) => k }
           .traverse { case (k, nodes) =>
-            F.ref(
-              BatchExecutionState(
-                nodes.map(_.id).toList.toSet,
-                Map.empty[Int, List[NodeValue]]
-              )
-            ).map(k -> _)
+            F.ref(BatchExecutionState(nodes.map(_.id).toList.toSet, Map.empty[Int, List[NodeValue]])).map(k -> _)
           }
           .map(_.toMap)
 
