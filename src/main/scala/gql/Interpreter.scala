@@ -61,16 +61,19 @@ object Interpreter {
     sealed trait GraphPath
     final case class Field(id: Int) extends GraphPath
     final case class Index(index: Int) extends GraphPath
-    final case class Leaf(result: Any) extends GraphPath
 
-    final case class Cursor(path: List[GraphPath]) {
-      def add(next: GraphPath): Cursor = Cursor(next :: path)
+    final case class Cursor(path: Vector[GraphPath]) {
+      def add(next: GraphPath): Cursor = Cursor(path :+ next)
+      def index(idx: Int) = add(Index(idx))
+      def field(id: Int) = add(Field(id))
     }
 
-    final case class NodeValue(
-        cursor: Cursor,
-        value: Any
-    )
+    final case class NodeValue(cursor: Cursor, value: Any) {
+      def index(xs: List[Any]): List[NodeValue] =
+        xs.zipWithIndex.map { case (x, i) => NodeValue(cursor.index(i), x) }
+      def field(id: Int, value: Any): NodeValue =
+        NodeValue(cursor.field(id), value)
+    }
 
     sealed trait StateSubmissionOutcome
     final case class FinalSubmission(accumulatedInputs: Map[Int, List[NodeValue]]) extends StateSubmissionOutcome
@@ -159,7 +162,7 @@ object Interpreter {
                     case PureResolution(value)  => F.pure(value)
                   }
 
-                fb.map(b => NodeValue(nv.cursor.add(Field(df.id)), b))
+                fb.map(b => nv.field(df.id, b))
               }
 
           def startNext(df: PreparedDataField[F, Any, Any], outputs: List[NodeValue]): F[List[NodeValue]] = {
@@ -172,8 +175,7 @@ object Interpreter {
                     in.flatMap { nv =>
                       val inner = nv.value.asInstanceOf[Vector[Any]].toList
 
-                      inner.zipWithIndex
-                        .map { case (v, idx) => NodeValue(nv.cursor.add(Index(idx)), v) }
+                      nv.index(inner)
                     }
                   evalSel(of, partitioned)
               }
@@ -186,7 +188,7 @@ object Interpreter {
             sel.toList.parFlatTraverse { pf =>
               pf match {
                 case PreparedFragField(specify, selection) =>
-                  go(selection.fields, input.flatMap(x => specify(x.value).map(r => NodeValue(x.cursor.add(Index(0)), r)).toList))
+                  go(selection.fields, input.flatMap(x => x.index(specify(x.value).toList)))
                 case df @ PreparedDataField(id, name, resolve, selection, batchName) =>
                   // maybe join
                   submitAndMaybeStart(id, input).flatMap {
@@ -207,17 +209,36 @@ object Interpreter {
                           .traverse { case (df, v) => collapseInputs(df, v).map(df -> _) }
 
                       // fork each node's continuation
-                      // in parallel, start ever node's computation
+                      // in parallel, start every node's computation
                       outputsF.flatMap(_.parFlatTraverse { case (df, outputs) => startNext(df, outputs) })
                   }
               }
             }
 
-          go(rootSel, List(NodeValue(Cursor(Nil), rootInput)))
+          go(rootSel, List(NodeValue(Cursor(Vector.empty), rootInput)))
         }
 
-      forkJoinResultF.map{ res =>
-        res
+      forkJoinResultF.map { res =>
+        def unpackCursor(levelCursors: List[(Cursor, Any)], sel: NonEmptyList[PreparedField[F, Any]]) = {
+          val m = levelCursors
+            .groupMap { case (c, _) => c.path.head } { case (c, v) => (c.path.tail, v) }
+          println(m)
+          // levelCursors.map { c =>
+          //   c.path match {
+          //     case x +: xs =>
+          //       x match {
+          //         case Field(id) =>
+          //           val df = dataFieldMap(id)
+          //         // df.selection match {
+          //         // }
+          //         case Index(index) => ???
+          //       }
+          //     case _ => ???
+          //   }
+          // }
+        }
+
+        unpackCursor(res.map(nv => nv.cursor -> nv.value), rootSel)
       }
     }
   }
