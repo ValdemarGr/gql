@@ -229,22 +229,21 @@ object Interpreter {
                   case (hd, _)        => F.raiseError[Json](new Exception(s"expected index at list in ${df.name} (${df.id}), but got $hd"))
                 }
                 .map(Json.fromValues)
-            case Selection(fields) =>
-              val xs = cursors.map { case (c, v) => Cursor(c) -> v }
-              unpackCursor(xs, fields).map(_.reduceLeft(_ deepMerge _).asJson)
+            case Selection(fields) => unpackCursor(cursors, fields).map(_.reduceLeft(_ deepMerge _).asJson)
           }
 
-        def unpackCursor(levelCursors: List[(Cursor, Any)], sel: NonEmptyList[PreparedField[F, Any]]): F[NonEmptyList[JsonObject]] = {
+        def unpackCursor(
+            levelCursors: List[(Vector[GraphPath], Any)],
+            sel: NonEmptyList[PreparedField[F, Any]]
+        ): F[NonEmptyList[JsonObject]] = {
           val m: Map[GraphPath, List[(Vector[GraphPath], Any)]] = levelCursors
-            .groupMap { case (c, _) => c.path.head } { case (c, v) => (c.path.tail, v) }
+            .groupMap { case (c, _) => c.head } { case (c, v) => (c.tail, v) }
           sel.traverse { pf =>
             pf match {
               case PreparedFragField(id, specify, selection) =>
                 m.get(Ided(id)) match {
-                  case None => F.pure(JsonObject.empty)
-                  case Some(frag) =>
-                    unpackCursor(frag.map { case (tl, v) => Cursor(tl) -> v }, selection.fields)
-                      .map(_.reduceLeft(_ deepMerge _))
+                  case None       => F.pure(JsonObject.empty)
+                  case Some(frag) => unpackCursor(frag, selection.fields).map(_.reduceLeft(_ deepMerge _))
                 }
               case df @ PreparedDataField(id, name, resolve, selection, batchName) =>
                 unpackPrep(df, m(Ided(id)), selection).map(x => JsonObject(name -> x))
@@ -252,7 +251,7 @@ object Interpreter {
           }
         }
 
-        unpackCursor(res.map(nv => nv.cursor -> nv.value), rootSel)
+        unpackCursor(res.map(nv => nv.cursor.path -> nv.value), rootSel)
       }
     }
   }
