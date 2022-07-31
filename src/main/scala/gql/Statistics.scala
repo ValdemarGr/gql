@@ -233,7 +233,7 @@ object Statistics {
       extraElementCost: Double
   )
 
-  def apply[F[_]](implicit F: Concurrent[F]): F[Statistics[F]] =
+  def apply[F[_]](implicit F: Async[F]): F[Statistics[F]] =
     F.ref(Map.empty[String, Ref[F, Either[NonEmptyList[Point], CovVarRegression]]])
       .map { state =>
         new Statistics[F] {
@@ -263,7 +263,7 @@ object Statistics {
                         s.update {
                           case Left(xs) =>
                             val newPoints = xs.append(asPoint)
-                            if (newPoints.size > 5) {
+                            if (newPoints.size > 3) {
                               Right {
                                 xs.foldLeft(CovVarRegression(0L, 0d, 0d, 0d, 0d)) { case (reg, point) =>
                                   reg.add(point.x, point.y)

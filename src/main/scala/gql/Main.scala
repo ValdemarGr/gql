@@ -443,6 +443,7 @@ fragment F2 on Data {
       case Right(Left(x)) => println(x)
       case Right(Right(x)) =>
         implicit lazy val stats = Statistics[IO].unsafeRunSync()
+
         def showTree(indent: Int, nodes: NonEmptyList[Optimizer.Node]): String = {
           val pad = "  " * indent
           nodes
@@ -494,13 +495,17 @@ fragment F2 on Data {
 
         val costTree = Optimizer.costTree[IO](x).unsafeRunSync()
         val p = Optimizer.plan(costTree)
-        // println(showTree(0, costTree))
-        // println(showTree(0, p))
         println(showDiff(p, costTree))
         println(s"inital plan cost: ${planCost(costTree)}")
         println(s"optimized plan cost: ${planCost(p)}")
         println(Interpreter.Planned.run[IO]((), x, p).unsafeRunSync())
         println(Interpreter.Naive.interpret[IO]((), x).unsafeRunSync())
+
+        val costTree2 = Optimizer.costTree[IO](x).unsafeRunSync()
+        val p2 = Optimizer.plan(costTree2)
+        println(showDiff(p2, costTree2))
+        println(s"optimized plan 2 cost: ${planCost(p2)}")
+        println(Interpreter.Planned.run[IO]((), x, p2).unsafeRunSync())
     }
 
   go

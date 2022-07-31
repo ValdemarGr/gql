@@ -84,172 +84,186 @@ object Interpreter {
         rootInput: Any,
         rootSel: NonEmptyList[PreparedField[F, Any]],
         plan: NonEmptyList[Optimizer.Node]
-    )(implicit F: Concurrent[F]) = {
-      val flat = Optimizer.flattenNodeTree(plan)
+    )(implicit F: Async[F], stats: Statistics[F]) =
+      Supervisor[F].use { sup =>
+        val flat = Optimizer.flattenNodeTree(plan)
 
-      def unpackPrep(prep: Prepared[F, Any]): List[(Int, PreparedDataField[F, Any, Any])] =
-        prep match {
-          case PreparedLeaf(_, _) => Nil
-          case PreparedList(of)   => unpackPrep(of)
-          case Selection(fields)  => flattenDataFieldMap(fields).toList
-        }
-
-      def flattenDataFieldMap(sel: NonEmptyList[PreparedField[F, Any]]): NonEmptyList[(Int, PreparedDataField[F, Any, Any])] =
-        sel.flatMap { pf =>
-          pf match {
-            case df @ PreparedDataField(id, name, resolve, selection, batchName) =>
-              val hd = id -> df
-              val tl = unpackPrep(selection)
-              NonEmptyList(hd, tl)
-            case PreparedFragField(_, _, selection) => flattenDataFieldMap(selection.fields)
-          }
-        }
-
-      val dataFieldMap = flattenDataFieldMap(rootSel).toList.toMap
-
-      val batches: Map[Int, (String, NonEmptyList[Optimizer.Node])] =
-        flat
-          .groupBy(_.end)
-          .toList
-          .zipWithIndex
-          .flatMap { case ((_, group), idx) =>
-            group
-              .groupBy(_.name)
-              .filter { case (_, nodes) => nodes.size > 1 }
-              .toList
-              .flatMap { case (nodeType, nodes) =>
-                val thisBatch = (s"$nodeType-$idx", nodes)
-                nodes.map(n => n.id -> thisBatch).toList
-              }
-          }
-          .toMap
-
-      val batchStateMapF: F[Map[String, Ref[F, BatchExecutionState]]] =
-        batches.values.toList
-          .distinctBy { case (k, _) => k }
-          .traverse { case (k, nodes) =>
-            F.ref(BatchExecutionState(nodes.map(_.id).toList.toSet, Map.empty[Int, List[NodeValue]])).map(k -> _)
-          }
-          .map(_.toMap)
-
-      val forkJoinResultF: F[List[NodeValue]] =
-        batchStateMapF.flatMap { batchStateMap =>
-          def getBatchState(nodeId: Int): Option[Ref[F, BatchExecutionState]] =
-            batches.get(nodeId).flatMap { case (k, _) => batchStateMap.get(k) }
-
-          def submitAndMaybeStart(nodeId: Int, input: List[NodeValue]): F[StateSubmissionOutcome] =
-            getBatchState(nodeId)
-              .traverse(_.modify { s =>
-                val newSet = s.remainingInputs - nodeId
-                val newMap = s.inputMap + (nodeId -> input)
-                val newState = BatchExecutionState(newSet, newMap)
-                (newState, if (newSet.isEmpty && s.remainingInputs.nonEmpty) FinalSubmission(newMap) else NotFinalSubmission)
-              })
-              .map(_.getOrElse(NoState))
-
-          def collapseInputs(df: PreparedDataField[F, Any, Any], inputs: List[NodeValue]): F[List[NodeValue]] =
-            inputs
-              .traverse { nv =>
-                val fb =
-                  df.resolve(nv.value) match {
-                    case DeferredResolution(fa) => fa
-                    case PureResolution(value)  => F.pure(value)
-                  }
-
-                fb.map(b => nv.ided(df.id, b))
-              }
-
-          def startNext(df: PreparedDataField[F, Any, Any], outputs: List[NodeValue]): F[List[NodeValue]] = {
-            def evalSel(s: Prepared[F, Any], in: List[NodeValue]): F[List[NodeValue]] =
-              s match {
-                case PreparedLeaf(_, _) => F.pure(in)
-                case Selection(fields)  => go(fields, in)
-                case PreparedList(of) =>
-                  val partitioned =
-                    in.flatMap { nv =>
-                      val inner = nv.value.asInstanceOf[Vector[Any]].toList
-
-                      nv.index(inner)
-                    }
-                  evalSel(of, partitioned)
-              }
-
-            evalSel(df.selection, outputs)
+        def unpackPrep(prep: Prepared[F, Any]): List[(Int, PreparedDataField[F, Any, Any])] =
+          prep match {
+            case PreparedLeaf(_, _) => Nil
+            case PreparedList(of)   => unpackPrep(of)
+            case Selection(fields)  => flattenDataFieldMap(fields).toList
           }
 
-          def go(sel: NonEmptyList[PreparedField[F, Any]], input: List[NodeValue]): F[List[NodeValue]] =
-            // fork each field
-            sel.toList.parFlatTraverse {
-              case PreparedFragField(id, specify, selection) =>
-                go(selection.fields, input.flatMap(x => specify(x.value).toList.map(res => x.ided(id, res))))
-              case df @ PreparedDataField(id, name, resolve, selection, batchName) =>
-                // maybe join
-                submitAndMaybeStart(id, input).flatMap {
-                  // No batching state, so just start
-                  case NoState => collapseInputs(df, input).flatMap(out => startNext(df, out))
-                  // join
-                  // There is a batch state, but we didn't add the final input
-                  // Stop here, someone else will start the batch
-                  case NotFinalSubmission => F.pure(Nil)
-                  // join
-                  // We are the final submitter, start the computation
-                  case FinalSubmission(inputs) =>
-                    // outer list are seperate node ids, inner is is the list of results for that node
-                    val outputsF: F[List[(PreparedDataField[F, Any, Any], List[NodeValue])]] =
-                      inputs.toList
-                        .map { case (k, v) => dataFieldMap(k) -> v }
-                        .traverse { case (df, v) => collapseInputs(df, v).map(df -> _) }
-
-                    // fork each node's continuation
-                    // in parallel, start every node's computation
-                    outputsF.flatMap(_.parFlatTraverse { case (df, outputs) => startNext(df, outputs) })
-                }
-            }
-
-          go(rootSel, List(NodeValue(Cursor(Vector.empty), rootInput)))
-        }
-
-      forkJoinResultF.flatMap { res =>
-        def unpackPrep(df: PreparedDataField[F, Any, Any], cursors: List[(Vector[GraphPath], Any)], p: Prepared[F, Any]): F[Json] =
-          p match {
-            case PreparedLeaf(name, encode) =>
-              cursors match {
-                case (_, x) :: Nil => F.fromEither(encode(x).leftMap(x => new Exception(x)))
-                case _ => F.raiseError(new Exception(s"expected a single value at at ${df.name} (${df.id}), but got ${cursors.size}"))
-              }
-            case PreparedList(of) =>
-              cursors
-                .groupMap { case (k, _) => k.head } { case (k, v) => k.tail -> v }
-                .toList
-                .traverse {
-                  case (Index(_), tl) => unpackPrep(df, tl, of)
-                  case (hd, _)        => F.raiseError[Json](new Exception(s"expected index at list in ${df.name} (${df.id}), but got $hd"))
-                }
-                .map(Json.fromValues)
-            case Selection(fields) => unpackCursor(cursors, fields).map(_.reduceLeft(_ deepMerge _).asJson)
-          }
-
-        def unpackCursor(
-            levelCursors: List[(Vector[GraphPath], Any)],
-            sel: NonEmptyList[PreparedField[F, Any]]
-        ): F[NonEmptyList[JsonObject]] = {
-          val m: Map[GraphPath, List[(Vector[GraphPath], Any)]] = levelCursors
-            .groupMap { case (c, _) => c.head } { case (c, v) => (c.tail, v) }
-          sel.traverse { pf =>
+        def flattenDataFieldMap(sel: NonEmptyList[PreparedField[F, Any]]): NonEmptyList[(Int, PreparedDataField[F, Any, Any])] =
+          sel.flatMap { pf =>
             pf match {
-              case PreparedFragField(id, specify, selection) =>
-                m.get(Ided(id)) match {
-                  case None       => F.pure(JsonObject.empty)
-                  case Some(frag) => unpackCursor(frag, selection.fields).map(_.reduceLeft(_ deepMerge _))
-                }
               case df @ PreparedDataField(id, name, resolve, selection, batchName) =>
-                unpackPrep(df, m(Ided(id)), selection).map(x => JsonObject(name -> x))
+                val hd = id -> df
+                val tl = unpackPrep(selection)
+                NonEmptyList(hd, tl)
+              case PreparedFragField(_, _, selection) => flattenDataFieldMap(selection.fields)
             }
           }
-        }
 
-        unpackCursor(res.map(nv => nv.cursor.path -> nv.value), rootSel)
+        val dataFieldMap = flattenDataFieldMap(rootSel).toList.toMap
+
+        val batches: Map[Int, (String, NonEmptyList[Optimizer.Node])] =
+          flat
+            .groupBy(_.end)
+            .toList
+            .zipWithIndex
+            .flatMap { case ((_, group), idx) =>
+              group
+                .groupBy(_.name)
+                .filter { case (_, nodes) => nodes.size > 1 }
+                .toList
+                .flatMap { case (nodeType, nodes) =>
+                  val thisBatch = (s"$nodeType-$idx", nodes)
+                  nodes.map(n => n.id -> thisBatch).toList
+                }
+            }
+            .toMap
+
+        val batchStateMapF: F[Map[String, Ref[F, BatchExecutionState]]] =
+          batches.values.toList
+            .distinctBy { case (k, _) => k }
+            .traverse { case (k, nodes) =>
+              F.ref(BatchExecutionState(nodes.map(_.id).toList.toSet, Map.empty[Int, List[NodeValue]])).map(k -> _)
+            }
+            .map(_.toMap)
+
+        val forkJoinResultF: F[List[NodeValue]] =
+          batchStateMapF.flatMap { batchStateMap =>
+            def getBatchState(nodeId: Int): Option[Ref[F, BatchExecutionState]] =
+              batches.get(nodeId).flatMap { case (k, _) => batchStateMap.get(k) }
+
+            def submitAndMaybeStart(nodeId: Int, input: List[NodeValue]): F[StateSubmissionOutcome] =
+              getBatchState(nodeId)
+                .traverse(_.modify { s =>
+                  val newSet = s.remainingInputs - nodeId
+                  val newMap = s.inputMap + (nodeId -> input)
+                  val newState = BatchExecutionState(newSet, newMap)
+                  (newState, if (newSet.isEmpty && s.remainingInputs.nonEmpty) FinalSubmission(newMap) else NotFinalSubmission)
+                })
+                .map(_.getOrElse(NoState))
+
+            def collapseInputs(df: PreparedDataField[F, Any, Any], inputs: List[NodeValue]): F[List[NodeValue]] =
+              inputs
+                .traverse { nv =>
+                  val fb =
+                    df.resolve(nv.value) match {
+                      case DeferredResolution(fa) => fa
+                      case PureResolution(value)  => F.pure(value)
+                    }
+
+                  fb.map(b => nv.ided(df.id, b))
+                }
+
+            def startNext(df: PreparedDataField[F, Any, Any], outputs: List[NodeValue]): F[List[NodeValue]] = {
+              def evalSel(s: Prepared[F, Any], in: List[NodeValue]): F[List[NodeValue]] =
+                s match {
+                  case PreparedLeaf(_, _) => F.pure(in)
+                  case Selection(fields)  => go(fields, in)
+                  case PreparedList(of) =>
+                    val partitioned =
+                      in.flatMap { nv =>
+                        val inner = nv.value.asInstanceOf[Vector[Any]].toList
+
+                        nv.index(inner)
+                      }
+                    evalSel(of, partitioned)
+                }
+
+              evalSel(df.selection, outputs)
+            }
+
+            def go(sel: NonEmptyList[PreparedField[F, Any]], input: List[NodeValue]): F[List[NodeValue]] =
+              // fork each field
+              sel.toList.parFlatTraverse {
+                case PreparedFragField(id, specify, selection) =>
+                  go(selection.fields, input.flatMap(x => specify(x.value).toList.map(res => x.ided(id, res))))
+                case df @ PreparedDataField(id, name, resolve, selection, batchName) =>
+                  // maybe join
+                  submitAndMaybeStart(id, input).flatMap {
+                    // No batching state, so just start
+                    case NoState =>
+                      val batchSize = input.size
+                      collapseInputs(df, input).timed
+                        .flatMap { case (dur, out) =>
+                          sup.supervise(stats.updateStats(batchName, dur, batchSize)) >>
+                            startNext(df, out)
+                        }
+                    // join
+                    // There is a batch state, but we didn't add the final input
+                    // Stop here, someone else will start the batch
+                    case NotFinalSubmission => F.pure(Nil)
+                    // join
+                    // We are the final submitter, start the computation
+                    case FinalSubmission(inputs) =>
+                      val inputLst = inputs.toList
+                      // outer list are seperate node ids, inner is is the list of results for that node
+                      val outputsF: F[List[(PreparedDataField[F, Any, Any], List[NodeValue])]] =
+                        inputLst
+                          .map { case (k, v) => dataFieldMap(k) -> v }
+                          .traverse { case (df, v) => collapseInputs(df, v).map(df -> _) }
+
+                      val batchSize = inputLst.map { case (_, xs) => xs.size }.sum
+
+                      // fork each node's continuation
+                      // in parallel, start every node's computation
+                      outputsF.timed
+                        .flatMap { case (dur, res) =>
+                          sup.supervise(stats.updateStats(batchName, dur, batchSize)) >>
+                            res.parFlatTraverse { case (df, outputs) => startNext(df, outputs) }
+                        }
+                  }
+              }
+
+            go(rootSel, List(NodeValue(Cursor(Vector.empty), rootInput)))
+          }
+
+        forkJoinResultF.flatMap { res =>
+          def unpackPrep(df: PreparedDataField[F, Any, Any], cursors: List[(Vector[GraphPath], Any)], p: Prepared[F, Any]): F[Json] =
+            p match {
+              case PreparedLeaf(name, encode) =>
+                cursors match {
+                  case (_, x) :: Nil => F.fromEither(encode(x).leftMap(x => new Exception(x)))
+                  case _ => F.raiseError(new Exception(s"expected a single value at at ${df.name} (${df.id}), but got ${cursors.size}"))
+                }
+              case PreparedList(of) =>
+                cursors
+                  .groupMap { case (k, _) => k.head } { case (k, v) => k.tail -> v }
+                  .toList
+                  .traverse {
+                    case (Index(_), tl) => unpackPrep(df, tl, of)
+                    case (hd, _) => F.raiseError[Json](new Exception(s"expected index at list in ${df.name} (${df.id}), but got $hd"))
+                  }
+                  .map(Json.fromValues)
+              case Selection(fields) => unpackCursor(cursors, fields).map(_.reduceLeft(_ deepMerge _).asJson)
+            }
+
+          def unpackCursor(
+              levelCursors: List[(Vector[GraphPath], Any)],
+              sel: NonEmptyList[PreparedField[F, Any]]
+          ): F[NonEmptyList[JsonObject]] = {
+            val m: Map[GraphPath, List[(Vector[GraphPath], Any)]] = levelCursors
+              .groupMap { case (c, _) => c.head } { case (c, v) => (c.tail, v) }
+            sel.traverse { pf =>
+              pf match {
+                case PreparedFragField(id, specify, selection) =>
+                  m.get(Ided(id)) match {
+                    case None       => F.pure(JsonObject.empty)
+                    case Some(frag) => unpackCursor(frag, selection.fields).map(_.reduceLeft(_ deepMerge _))
+                  }
+                case df @ PreparedDataField(id, name, resolve, selection, batchName) =>
+                  unpackPrep(df, m(Ided(id)), selection).map(x => JsonObject(name -> x))
+              }
+            }
+          }
+
+          unpackCursor(res.map(nv => nv.cursor.path -> nv.value), rootSel)
+        }
       }
-    }
   }
 }

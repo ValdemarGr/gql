@@ -177,8 +177,6 @@ object Optimizer {
 
           val newEnd = compatible.map(_.end).getOrElse(maxEnd)
 
-          // println(s"minimum end for ${r.id} is $maxEnd and compatible is ${compatible.map(_.id)} such that end is $newEnd")
-
           go(rs, r.copy(end = newEnd) :: handled)
       }
 
