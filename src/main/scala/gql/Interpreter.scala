@@ -111,7 +111,6 @@ object Interpreter {
         flat
           .groupBy(_.end)
           .toList
-          .sortBy { case (k, _) => k }
           .zipWithIndex
           .flatMap { case ((_, group), idx) =>
             group
