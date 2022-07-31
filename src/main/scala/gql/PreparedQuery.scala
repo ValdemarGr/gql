@@ -88,7 +88,7 @@ object PreparedQuery {
 
   final case class Selection[F[_], A](fields: NonEmptyList[PreparedField[F, A]]) extends Prepared[F, A]
 
-  final case class PreparedList[F[_], A](of: Prepared[F, A]) extends Prepared[F, List[A]]
+  final case class PreparedList[F[_], A](of: Prepared[F, A]) extends Prepared[F, A]
 
   final case class PreparedLeaf[F[_], A](name: String, encode: A => Either[String, Json]) extends Prepared[F, A]
 

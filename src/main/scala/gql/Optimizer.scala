@@ -131,17 +131,15 @@ object Optimizer {
                 case Selection(fields) =>
                   constructCostTree[F](end, fields)
                     .map(nel => Node(id, bn, s.initialCost, end, nel.toList, s.extraElementCost))
-                case pl if pl.isInstanceOf[PreparedList[F, Any]] =>
-                  val pl2 = pl.asInstanceOf[PreparedList[F, Any]]
-                  handleSelection(pl2.of)
+                case PreparedList(of) => handleSelection(of)
               }
 
             handleSelection(selection).map(NonEmptyList.one(_))
           }
       case PreparedFragField(_, selection) =>
-        constructCostTree[F](currentCost, selection.fields)//.map(c =>
-          // NonEmptyList.one(Node(id, s"frag-${id.toString()}", 1, 1, c.toList, 1))
-        // )
+        constructCostTree[F](currentCost, selection.fields) //.map(c =>
+      // NonEmptyList.one(Node(id, s"frag-${id.toString()}", 1, 1, c.toList, 1))
+      // )
     }
   }
 
