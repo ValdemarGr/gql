@@ -54,118 +54,26 @@ object Interpreter {
   }
 
   object Planned {
-    /*
-     * Following a plan is not entirely trivial compared to the naive interpreter.
-     *
-     * query Q:
-     *            A   B
-     *            |  / \
-     *            C D   E
-     *            |     |
-     *            D     F
-     *            |     |
-     *            G     G
-     *
-     * Let the following digraph be the plan of Q, where [N] is a batch of nodes of type N:
-     *
-     *            A   B
-     *            |   |\
-     *            C   | |
-     *             \ /  \
-     *             [D]   E
-     *              |    |
-     *              |   _F
-     *              | /
-     *             [G]
-     *
-     * Now consider the following different strategies.
-     * 1. Consumer based joining.
-     * In this strategy the consumer (child) is responsible for joining the results together.
-     * One could define a cursor such that the resulting data could be re-associated in a future emission phase.
-     * The inital strategy is relatively straightforward:
-     *  Give all nodes a set of ids they must await.
-     *  Begin running from the root nodes.
-     *  When a node is finished, save the result with the cursor and begin the next node:
-     *    * If the child not a batch node, start it immidiately in the background (spawn a fiber).
-     *
-     *    * If the child is a batch node,
-     *      is has an atomic reference allocated to it to keep track of what parent cursors to await.
-     *      Modify the reference to add the cursor result,
-     *      if the added cursor result is the final one, start the child in a new fiber.
-     *
-     * This algorithm does, however, not handle lists or options well, that is, nodes where the actual number of
-     * values is either 0 or larger than 1.
-     * If we only let a cursor be "done" when all of it's results are done (that is, it has produced an output for every input).
-     * Furthermore we must also handle the task of re-associating the results.
-     * For instance, maybe the first three inputs and results of [D], come from C, but the remaining four come from B.
-     * The three inputs from C need to be associated with their results and cursors (A -> C).
-     *
-     * When C is done:
-     * DState.submit(dInputFromC.map(i => (i, CCursor)))
-     * When B is done:
-     * DState.submit(dInputFromB.map(i => (i, BCursor)))
-     * Since both C and B are the parent cursors, and they are done, we can start D.
-     *
-     * Unfortunately some abmiguity occurs when having nodes that emit lists under nodes that emit lists,
-     * since reassociation becames impossible; in the sublist, what element is associated with what parent list element?
-     *
-     * Let an example cursor be:
-     * (A -> C -> D -> G)
-     * Now let there be three children D to C and two children G to D.
-     * Which of the three children D should the two G's be allocated to?
-     * We must track what list indices causes what children to occur.
-     *
-     * Let cursors be fields (edges) in practice.
-     * We now track the traversed fields.
-     * On lists, cursors will be list indices.
-     *
-     */
-    final case class NodeInput(
-        cursor: List[String],
-        input: Any
-    )
-
-    final case class NodeState(
-        remainingParents: Int,
-        accumulatedInput: List[NodeInput]
-    )
-
-    final case class PlanNode[F[_]](
-        children: List[PlanNode[F]],
-        state: Ref[F, NodeState],
-        eval: Any => F[Any]
-    )
-
-    final case class A(
-        children: List[A]
-    )
-
-    // no children, has c and i as parents
-    val d = A(List(A(Nil)))
-
-    // d as child, has i as parents
-    val c = A(List(A(Nil), d))
-
-    // branch out to c and d, has no parents
-    val i = A(List(A(Nil), c, d))
-
-    /*
-     *               A__
-     *              / \ \
-     *             A  A  A
-     *                 \/ \
-     *                [A]  A
-     */
-
     final case class Converted(batchId: String, idsContained: Map[Int, List[Converted]])
 
-    final case class BatchExecutionState(
-        remainingInputs: Set[Int],
-        inputMap: Map[Int, List[Any]]
+    final case class BatchExecutionState(remainingInputs: Set[Int], inputMap: Map[Int, List[NodeValue]])
+
+    sealed trait GraphPath
+    final case class Field(id: Int) extends GraphPath
+    final case class Index(index: Int) extends GraphPath
+    final case class Leaf(result: Any) extends GraphPath
+
+    final case class Cursor(path: List[GraphPath]) {
+      def add(next: GraphPath): Cursor = Cursor(next :: path)
+    }
+
+    final case class NodeValue(
+        cursor: Cursor,
+        value: Any
     )
 
     sealed trait StateSubmissionOutcome
-    final case class FinalSubmission(accumulatedInputs: Map[Int, List[Any]]) extends StateSubmissionOutcome
+    final case class FinalSubmission(accumulatedInputs: Map[Int, List[NodeValue]]) extends StateSubmissionOutcome
     case object NoState extends StateSubmissionOutcome
     case object NotFinalSubmission extends StateSubmissionOutcome
 
@@ -221,79 +129,95 @@ object Interpreter {
             F.ref(
               BatchExecutionState(
                 nodes.map(_.id).toList.toSet,
-                Map.empty[Int, List[Any]]
+                Map.empty[Int, List[NodeValue]]
               )
             ).map(k -> _)
           }
           .map(_.toMap)
 
-      batchStateMapF.flatMap { batchStateMap =>
-        def getBatchState(nodeId: Int): Option[Ref[F, BatchExecutionState]] =
-          batches.get(nodeId).flatMap { case (k, _) => batchStateMap.get(k) }
+      val forkJoinResultF: F[List[NodeValue]] =
+        batchStateMapF.flatMap { batchStateMap =>
+          def getBatchState(nodeId: Int): Option[Ref[F, BatchExecutionState]] =
+            batches.get(nodeId).flatMap { case (k, _) => batchStateMap.get(k) }
 
-        def submitAndMaybeStart(nodeId: Int, input: List[Any]): F[StateSubmissionOutcome] =
-          getBatchState(nodeId)
-            .traverse(_.modify { s =>
-              val newSet = s.remainingInputs - nodeId
-              val newMap = s.inputMap + (nodeId -> input)
-              val newState = BatchExecutionState(newSet, newMap)
-              (newState, if (newSet.isEmpty) FinalSubmission(newMap) else NotFinalSubmission)
-            })
-            .map(_.getOrElse(NoState))
+          def submitAndMaybeStart(nodeId: Int, input: List[NodeValue]): F[StateSubmissionOutcome] =
+            getBatchState(nodeId)
+              .traverse(_.modify { s =>
+                val newSet = s.remainingInputs - nodeId
+                val newMap = s.inputMap + (nodeId -> input)
+                val newState = BatchExecutionState(newSet, newMap)
+                (newState, if (newSet.isEmpty) FinalSubmission(newMap) else NotFinalSubmission)
+              })
+              .map(_.getOrElse(NoState))
 
-        def collapseInputs(df: PreparedDataField[F, Any, Any], inputs: List[Any]): F[List[Any]] =
-          inputs
-            .map(df.resolve)
-            .traverse {
-              case DeferredResolution(fa) => fa
-              case PureResolution(value)  => F.pure(value)
+          def collapseInputs(df: PreparedDataField[F, Any, Any], inputs: List[NodeValue]): F[List[NodeValue]] =
+            inputs
+              .traverse { nv =>
+                val fb =
+                  df.resolve(nv.value) match {
+                    case DeferredResolution(fa) => fa
+                    case PureResolution(value)  => F.pure(value)
+                  }
+
+                fb.map(b => NodeValue(nv.cursor.add(Field(df.id)), b))
+              }
+
+          def startNext(df: PreparedDataField[F, Any, Any], outputs: List[NodeValue]): F[List[NodeValue]] = {
+            def evalSel(s: Prepared[F, Any], in: List[NodeValue]): F[List[NodeValue]] =
+              s match {
+                case PreparedLeaf(_, _) => F.pure(in)
+                case Selection(fields)  => go(fields, in)
+                case PreparedList(of) =>
+                  val partitioned =
+                    in.flatMap { nv =>
+                      val inner = nv.value.asInstanceOf[Vector[Any]].toList
+
+                      inner.zipWithIndex
+                        .map { case (v, idx) => NodeValue(nv.cursor.add(Index(idx)), v) }
+                    }
+                  evalSel(of, partitioned)
+              }
+
+            evalSel(df.selection, outputs)
+          }
+
+          def go(sel: NonEmptyList[PreparedField[F, Any]], input: List[NodeValue]): F[List[NodeValue]] =
+            // fork each field
+            sel.toList.parFlatTraverse { pf =>
+              pf match {
+                case PreparedFragField(specify, selection) =>
+                  go(selection.fields, input.flatMap(x => specify(x.value).map(r => NodeValue(x.cursor.add(Index(0)), r)).toList))
+                case df @ PreparedDataField(id, name, resolve, selection, batchName) =>
+                  // maybe join
+                  submitAndMaybeStart(id, input).flatMap {
+                    // No batching state, so just start
+                    // TODO return the results with a cursor
+                    case NoState => collapseInputs(df, input).flatMap(out => startNext(df, out))
+                    // join
+                    // There is a batch state, but we didn't add the final input
+                    // Stop here, someone else will start the batch
+                    case NotFinalSubmission => F.pure(Nil)
+                    // join
+                    // We are the final submitter, start the computation
+                    case FinalSubmission(inputs) =>
+                      // outer list are seperate node ids, inner is is the list of results for that node
+                      val outputsF: F[List[(PreparedDataField[F, Any, Any], List[NodeValue])]] =
+                        inputs.toList
+                          .map { case (k, v) => dataFieldMap(k) -> v }
+                          .traverse { case (df, v) => collapseInputs(df, v).map(df -> _) }
+
+                      // fork each node's continuation
+                      // in parallel, start ever node's computation
+                      outputsF.flatMap(_.parFlatTraverse { case (df, outputs) => startNext(df, outputs) })
+                  }
+              }
             }
 
-        def startNext(df: PreparedDataField[F, Any, Any], outputs: List[Any]): F[Unit] = {
-          def evalSel(s: Prepared[F, Any], in: List[Any]): F[Unit] =
-            s match {
-              case PreparedLeaf(_, _) => F.unit
-              case Selection(fields)  => go(fields, in)
-              case PreparedList(of) =>
-                evalSel(of, in.flatMap(_.asInstanceOf[Vector[Any]].toList))
-            }
-
-          evalSel(df.selection, outputs)
+          go(rootSel, List(NodeValue(Cursor(Nil), rootInput)))
         }
 
-        def go(sel: NonEmptyList[PreparedField[F, Any]], input: List[Any]): F[Unit] =
-          // fork each field
-          sel.parTraverse { pf =>
-            pf match {
-              case PreparedFragField(specify, selection) =>
-                go(selection.fields, input.flatMap(x => specify(x).toList))
-              case df @ PreparedDataField(id, name, resolve, selection, batchName) =>
-                // maybe join
-                submitAndMaybeStart(id, input).flatMap {
-                  // No batching state, so just start
-                  // TODO return the results with a cursor
-                  case NoState => collapseInputs(df, input).flatMap(out => startNext(df, out))
-                  // join
-                  // There is a batch state, but we didn't add the final input
-                  // Stop here, someone else will start the batch
-                  case NotFinalSubmission => F.unit
-                  // join
-                  // We are the final submitter, start the computation
-                  case FinalSubmission(inputs) =>
-                    // outer list are seperate node ids, inner is is the list of results for that node
-                    val outputsF: F[List[(PreparedDataField[F, Any, Any], List[Any])]] =
-                      inputs.toList
-                        .map { case (k, v) => dataFieldMap(k) -> v }
-                        .traverse { case (df, v) => collapseInputs(df, v).map(df -> _) }
-
-                    // fork each node's continuation
-                    // in parallel, start ever node's computation
-                    outputsF.flatMap(_.parTraverse { case (df, outputs) => startNext(df, outputs) }).void
-                }
-            }
-          }.void
-
-        go(rootSel, List(rootInput))
+      forkJoinResultF.map{ res =>
+        res
       }
     }
   }
