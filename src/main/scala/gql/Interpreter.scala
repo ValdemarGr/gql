@@ -164,11 +164,36 @@ object Interpreter {
         inputMap: Map[Int, List[Any]]
     )
 
+    sealed trait StateSubmissionOutcome
+    final case class FinalSubmission(accumulatedInputs: Map[Int, List[Any]]) extends StateSubmissionOutcome
+    case object NoState extends StateSubmissionOutcome
+    case object NotFinalSubmission extends StateSubmissionOutcome
+
     def run[F[_]](rootInput: Any, rootSel: NonEmptyList[PreparedField[F, Any]], plan: NonEmptyList[Optimizer.Node])(implicit
         F: Concurrent[F]
     ) = {
       Supervisor[F].use { sup =>
         val flat = Optimizer.flattenNodeTree(plan)
+
+        def unpackPrep(prep: Prepared[F, Any]): List[(Int, PreparedDataField[F, Any, Any])] =
+          prep match {
+            case PreparedLeaf(_, _) => Nil
+            case PreparedList(of)   => unpackPrep(of)
+            case Selection(fields)  => flattenDataFieldMap(fields).toList
+          }
+
+        def flattenDataFieldMap(sel: NonEmptyList[PreparedField[F, Any]]): NonEmptyList[(Int, PreparedDataField[F, Any, Any])] =
+          sel.flatMap { pf =>
+            pf match {
+              case df @ PreparedDataField(id, name, resolve, selection, batchName) =>
+                val hd = id -> df
+                val tl = unpackPrep(selection)
+                NonEmptyList(hd, tl)
+              case PreparedFragField(_, selection) => flattenDataFieldMap(selection.fields)
+            }
+          }
+
+        val dataFieldMap = flattenDataFieldMap(rootSel).toList.toMap
 
         // val nodeMap = flat.map(n => n.id -> n).toList.toMap
 
@@ -256,14 +281,15 @@ object Interpreter {
           def getBatchState(nodeId: Int): Option[Ref[F, BatchExecutionState]] =
             batches.get(nodeId).flatMap { case (k, _) => batchStateMap.get(k) }
 
-          def submitAndMaybeStart(nodeId: Int, input: List[Any]): F[Option[Option[Map[Int, List[Any]]]]] =
+          def submitAndMaybeStart(nodeId: Int, input: List[Any]): F[StateSubmissionOutcome] =
             getBatchState(nodeId)
               .traverse(_.modify { s =>
                 val newSet = s.remainingInputs - nodeId
                 val newMap = s.inputMap + (nodeId -> input)
                 val newState = BatchExecutionState(newSet, newMap)
-                (newState, if (newSet.isEmpty) Some(newMap) else None)
+                (newState, if (newSet.isEmpty) FinalSubmission(newMap) else NotFinalSubmission)
               })
+              .map(_.getOrElse(NoState))
 
           def go(sel: NonEmptyList[PreparedField[F, Any]], input: List[Any]): F[Unit] =
             sel.parTraverse { pf =>
@@ -273,7 +299,7 @@ object Interpreter {
                 case PreparedDataField(id, name, resolve, selection, batchName) =>
                   submitAndMaybeStart(id, input).flatMap {
                     // No batching state, so just start
-                    case None =>
+                    case NoState =>
                       // TODO return the results with a cursor
                       val results =
                         input
@@ -284,23 +310,46 @@ object Interpreter {
                           }
 
                       results.flatMap { xs =>
-                        def evalSel(s: Prepared[F, Any]): F[Unit] =
+                        def evalSel(s: Prepared[F, Any], in: List[Any]): F[Unit] =
                           s match {
                             case PreparedLeaf(_, _) => F.unit
-                            case Selection(fields)  => go(fields, xs)
-                            case PreparedList(of)   => evalSel(of)
+                            case Selection(fields)  => go(fields, in)
+                            case PreparedList(of) =>
+                              evalSel(of, in.flatMap(_.asInstanceOf[Vector[Any]].toList))
                           }
 
-                        evalSel(selection)
+                        evalSel(selection, xs)
                       }
                     // There is a batch state, but we didn't add the final input
                     // Stop here, someone else will start the batch
-                    case Some(None) => F.unit
+                    case NotFinalSubmission => F.unit
                     // We are the final submitter, start the computation
-                    case Some(Some(inputs)) =>
-                      // TODO get all input resolvers and do more or less the same as the no batching state,
-                      // except with an extra list layer
-                      F.unit
+                    case FinalSubmission(inputs) =>
+                      inputs.toList
+                        .traverse { case (k, v) =>
+                          val df = dataFieldMap(k)
+                          v
+                            .map(df.resolve)
+                            .traverse {
+                              case DeferredResolution(fa) => fa
+                              case PureResolution(value)  => F.pure(value)
+                            }
+                            .map(df -> _)
+                        }
+                        .flatMap(
+                          _.parTraverse { case (df, outputs) =>
+                            def evalSel(s: Prepared[F, Any], in: List[Any]): F[Unit] =
+                              s match {
+                                case PreparedLeaf(_, _) => F.unit
+                                case Selection(fields)  => go(fields, in)
+                                case PreparedList(of) =>
+                                  evalSel(of, in.flatMap(_.asInstanceOf[Vector[Any]].toList))
+                              }
+
+                            evalSel(df.selection, outputs)
+                          }
+                        )
+                        .void
                   }
               }
             }.void
