@@ -143,7 +143,7 @@ object Interpreter {
                 val newSet = s.remainingInputs - nodeId
                 val newMap = s.inputMap + (nodeId -> input)
                 val newState = BatchExecutionState(newSet, newMap)
-                (newState, if (newSet.isEmpty) FinalSubmission(newMap) else NotFinalSubmission)
+                (newState, if (newSet.isEmpty && s.remainingInputs.nonEmpty) FinalSubmission(newMap) else NotFinalSubmission)
               })
               .map(_.getOrElse(NoState))
 
