@@ -41,7 +41,7 @@ object Interpreter {
           fa
             .flatMap(i => interpretPrep[F](i, selection))
             .map(x => JsonObject(name -> x))
-        case PreparedFragField(specify, Selection(fields)) =>
+        case PreparedFragField(_, specify, Selection(fields)) =>
           specify(input) match {
             case None    => F.pure(JsonObject.empty)
             case Some(i) => interpret(i, fields).map(_.reduceLeft(_ deepMerge _))
@@ -59,20 +59,20 @@ object Interpreter {
     final case class BatchExecutionState(remainingInputs: Set[Int], inputMap: Map[Int, List[NodeValue]])
 
     sealed trait GraphPath
-    final case class Field(id: Int) extends GraphPath
+    final case class Ided(id: Int) extends GraphPath
     final case class Index(index: Int) extends GraphPath
 
     final case class Cursor(path: Vector[GraphPath]) {
       def add(next: GraphPath): Cursor = Cursor(path :+ next)
       def index(idx: Int) = add(Index(idx))
-      def field(id: Int) = add(Field(id))
+      def ided(id: Int) = add(Ided(id))
     }
 
     final case class NodeValue(cursor: Cursor, value: Any) {
       def index(xs: List[Any]): List[NodeValue] =
         xs.zipWithIndex.map { case (x, i) => NodeValue(cursor.index(i), x) }
-      def field(id: Int, value: Any): NodeValue =
-        NodeValue(cursor.field(id), value)
+      def ided(id: Int, value: Any): NodeValue =
+        NodeValue(cursor.ided(id), value)
     }
 
     sealed trait StateSubmissionOutcome
@@ -101,7 +101,7 @@ object Interpreter {
               val hd = id -> df
               val tl = unpackPrep(selection)
               NonEmptyList(hd, tl)
-            case PreparedFragField(_, selection) => flattenDataFieldMap(selection.fields)
+            case PreparedFragField(_, _, selection) => flattenDataFieldMap(selection.fields)
           }
         }
 
@@ -162,7 +162,7 @@ object Interpreter {
                     case PureResolution(value)  => F.pure(value)
                   }
 
-                fb.map(b => nv.field(df.id, b))
+                fb.map(b => nv.ided(df.id, b))
               }
 
           def startNext(df: PreparedDataField[F, Any, Any], outputs: List[NodeValue]): F[List[NodeValue]] = {
@@ -187,8 +187,8 @@ object Interpreter {
             // fork each field
             sel.toList.parFlatTraverse { pf =>
               pf match {
-                case PreparedFragField(specify, selection) =>
-                  go(selection.fields, input.flatMap(x => x.index(specify(x.value).toList)))
+                case PreparedFragField(id, specify, selection) =>
+                  go(selection.fields, input.flatMap(x => specify(x.value).toList.map(res => x.ided(id, res))))
                 case df @ PreparedDataField(id, name, resolve, selection, batchName) =>
                   // maybe join
                   submitAndMaybeStart(id, input).flatMap {
@@ -218,24 +218,44 @@ object Interpreter {
           go(rootSel, List(NodeValue(Cursor(Vector.empty), rootInput)))
         }
 
-      forkJoinResultF.map { res =>
-        def unpackCursor(levelCursors: List[(Cursor, Any)], sel: NonEmptyList[PreparedField[F, Any]]) = {
-          val m = levelCursors
+      forkJoinResultF.flatMap { res =>
+        def unpackPrep(df: PreparedDataField[F, Any, Any], cursors: List[(Vector[GraphPath], Any)], p: Prepared[F, Any]): F[Json] =
+          p match {
+            case PreparedLeaf(name, encode) =>
+              cursors match {
+                case (_, x) :: Nil => F.fromEither(encode(x).leftMap(x => new Exception(x)))
+                case _ => F.raiseError(new Exception(s"expected a single value at at ${df.name} (${df.id}), but got ${cursors.size}"))
+              }
+            case PreparedList(of) =>
+              cursors
+                .groupMap { case (k, _) => k.head } { case (k, v) => k.tail -> v }
+                .toList
+                .traverse {
+                  case (Index(_), tl) => unpackPrep(df, tl, of)
+                  case (hd, _)        => F.raiseError[Json](new Exception(s"expected index at list in ${df.name} (${df.id}), but got $hd"))
+                }
+                .map(Json.fromValues)
+            case Selection(fields) =>
+              val xs = cursors.map { case (c, v) => Cursor(c) -> v }
+              unpackCursor(xs, fields).map(_.reduceLeft(_ deepMerge _).asJson)
+          }
+
+        def unpackCursor(levelCursors: List[(Cursor, Any)], sel: NonEmptyList[PreparedField[F, Any]]): F[NonEmptyList[JsonObject]] = {
+          val m: Map[GraphPath, List[(Vector[GraphPath], Any)]] = levelCursors
             .groupMap { case (c, _) => c.path.head } { case (c, v) => (c.path.tail, v) }
-          println(m)
-          // levelCursors.map { c =>
-          //   c.path match {
-          //     case x +: xs =>
-          //       x match {
-          //         case Field(id) =>
-          //           val df = dataFieldMap(id)
-          //         // df.selection match {
-          //         // }
-          //         case Index(index) => ???
-          //       }
-          //     case _ => ???
-          //   }
-          // }
+          sel.traverse { pf =>
+            pf match {
+              case PreparedFragField(id, specify, selection) =>
+                m.get(Ided(id)) match {
+                  case None => F.pure(JsonObject.empty)
+                  case Some(frag) =>
+                    unpackCursor(frag.map { case (tl, v) => Cursor(tl) -> v }, selection.fields)
+                      .map(_.reduceLeft(_ deepMerge _))
+                }
+              case df @ PreparedDataField(id, name, resolve, selection, batchName) =>
+                unpackPrep(df, m(Ided(id)), selection).map(x => JsonObject(name -> x))
+            }
+          }
         }
 
         unpackCursor(res.map(nv => nv.cursor -> nv.value), rootSel)

@@ -136,7 +136,7 @@ object Optimizer {
 
             handleSelection(selection).map(NonEmptyList.one(_))
           }
-      case PreparedFragField(_, selection) =>
+      case PreparedFragField(_, _, selection) =>
         constructCostTree[F](currentCost, selection.fields) //.map(c =>
       // NonEmptyList.one(Node(id, s"frag-${id.toString()}", 1, 1, c.toList, 1))
       // )
