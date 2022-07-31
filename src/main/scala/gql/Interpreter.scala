@@ -193,7 +193,6 @@ object Interpreter {
                   // maybe join
                   submitAndMaybeStart(id, input).flatMap {
                     // No batching state, so just start
-                    // TODO return the results with a cursor
                     case NoState => collapseInputs(df, input).flatMap(out => startNext(df, out))
                     // join
                     // There is a batch state, but we didn't add the final input
