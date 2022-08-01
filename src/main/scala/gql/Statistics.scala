@@ -29,7 +29,6 @@ trait Statistics[F[_]] { self =>
 }
 
 object Statistics {
-
   final case class CovVarRegression(
       count: Long,
       meanX: Double,
@@ -234,12 +233,15 @@ object Statistics {
   )
 
   def apply[F[_]](implicit F: Async[F]): F[Statistics[F]] =
-    F.ref(Map.empty[String, Ref[F, Either[NonEmptyList[Point], CovVarRegression]]])
+    F.ref(Map.empty[String, Ref[F, Either[NonEmptyList[Point], (Double, CovVarRegression)]]])
       .map { state =>
         new Statistics[F] {
           override def getStatsOpt(name: String): F[Option[Stats]] =
             state.get.flatMap(
-              _.get(name).flatTraverse(_.get.map(_.toOption.map(reg => Stats(initialCost = reg.intercept, extraElementCost = reg.slope))))
+              _.get(name).flatTraverse(_.get.map(_.toOption.map { case (ratio, reg) =>
+                if (reg.varX == 0d || reg.covXY == 0d) Stats(initialCost = ratio, extraElementCost = 0d)
+                else Stats(initialCost = reg.intercept, extraElementCost = reg.slope)
+              }))
             )
 
           override def getStats(name: String): F[Stats] =
@@ -250,10 +252,10 @@ object Statistics {
               }
 
           override def updateStats(name: String, elapsed: FiniteDuration, batchElems: Int): F[Unit] = {
-            val elapsedNorm = elapsed.toMillis
+            val elapsedNorm = math.max(1L, elapsed.toMicros)
             val asPoint = Point(batchElems - 1, elapsedNorm)
 
-            F.ref[Either[NonEmptyList[Point], CovVarRegression]](Left(NonEmptyList.of(asPoint)))
+            F.ref[Either[NonEmptyList[Point], (Double, CovVarRegression)]](Left(NonEmptyList.of(asPoint)))
               .flatMap { fallbackState =>
                 state.modify { m =>
                   m.get(name) match {
@@ -265,12 +267,14 @@ object Statistics {
                             val newPoints = xs.append(asPoint)
                             if (newPoints.size > 3) {
                               Right {
-                                xs.foldLeft(CovVarRegression(0L, 0d, 0d, 0d, 0d)) { case (reg, point) =>
+                                val ratio = (asPoint.x / asPoint.y)
+                                val r = xs.foldLeft(CovVarRegression(0L, 0d, 0d, 0d, 0d)) { case (reg, point) =>
                                   reg.add(point.x, point.y)
                                 }
+                                ratio -> r
                               }
                             } else Left(newPoints)
-                          case Right(reg) => Right(reg.add(asPoint.x, asPoint.y))
+                          case Right((ratio, reg)) => Right(ratio -> reg.add(asPoint.x, asPoint.y))
                         }
 
                       (m, subroutine)

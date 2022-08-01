@@ -497,7 +497,7 @@ object GQLParser {
   lazy val floatValue: P[JsonNumber] = w(Numbers.jsonNumber).map(JsonNumber.fromString).collect { case Some(x) => x }
 
   lazy val stringValue: P[String] = w {
-    val d = P.char('"').map(_ => println("string value"))
+    val d = P.char('"')
     val tripple = d.rep(3, 3)
 
     blockStringCharacter.map(_.toString()).rep.surroundedBy(P.backtrack(tripple)) |

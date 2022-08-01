@@ -1,5 +1,6 @@
 package gql
 
+import cats.effect.implicits._
 import scala.concurrent.duration._
 import cats.data._
 import cats.implicits._
@@ -295,8 +296,8 @@ query withNestedFragments {
     outputObject[F, Data[F]](
       "Data",
       "a" -> pure(_.a),
-      "b" -> effect(_.b),
-      "c" -> effect(_.c.map(_.toVector))
+      "b" -> effect(_.b.delayBy(50.millis)),
+      "c" -> effect(_.c.map(_.toVector).delayBy(250.millis))
     )
 
   implicit def otherDataType[F[_]: Async]: Output.Obj[F, OtherData[F]] =
@@ -454,27 +455,31 @@ fragment F2 on Data {
             .mkString_("")
         }
 
-        def showDiff_(fa: NonEmptyList[Optimizer.Node], fb: NonEmptyList[Optimizer.Node]): String = {
+        def showDiff_(fa: NonEmptyList[Optimizer.Node], fb: NonEmptyList[Optimizer.Node], maxEnd: Double): String = {
           fa.sortBy(_.id)
             .zip(fb.sortBy(_.id))
             .map { case (a, b) =>
+              val per = (maxEnd / 40d).toInt
+              println(s"for $maxEnd ${b.name}: ${a.start.toInt}/$per")
               val thisInfo =
                 if (a.end.toInt != b.end.toInt) {
-                  (" " * (b.start.toInt / 50)) + AnsiColor.RED_B + s"name: ${b.name}, cost: ${b.cost.toInt}, start: ${b.start}, end: ${b.end}, id: ${b.id}" + AnsiColor.RESET + "\n" +
-                    (" " * (b.start.toInt / 50)) + AnsiColor.BLUE_B + (">" * ((a.start - b.start).toInt / 50)) + AnsiColor.GREEN_B + s"name: ${a.name}, cost: ${a.cost.toInt}, start: ${a.start}, end: ${a.end}, id: ${a.id}" + AnsiColor.RESET + "\n"
+                  (" " * (b.start.toInt / per)) + AnsiColor.RED_B + s"name: ${b.name}, cost: ${b.cost.toInt}, start: ${b.start}, end: ${b.end}, id: ${b.id}" + AnsiColor.RESET + "\n" +
+                    (" " * (b.start.toInt / per)) + AnsiColor.BLUE_B + (">" * ((a.start - b.start).toInt / per)) + AnsiColor.GREEN_B + s"name: ${a.name}, cost: ${a.cost.toInt}, start: ${a.start}, end: ${a.end}, id: ${a.id}" + AnsiColor.RESET + "\n"
                 } else
-                  (" " * (a.start.toInt / 50)) + s"name: ${a.name}, cost: ${a.cost.toInt}, start: ${a.start}, end: ${a.end}, id: ${a.id}\n"
+                  (" " * (a.start.toInt / per)) + s"name: ${a.name}, cost: ${a.cost.toInt}, start: ${a.start}, end: ${a.end}, id: ${a.id}\n"
 
-              thisInfo + a.children.toNel.map(showDiff_(_, b.children.toNel.get)).mkString_("")
+              thisInfo + a.children.toNel.map(showDiff_(_, b.children.toNel.get, maxEnd)).mkString_("")
             }
             .mkString_("")
         }
 
-        def showDiff(fa: NonEmptyList[Optimizer.Node], fb: NonEmptyList[Optimizer.Node]) =
+        def showDiff(fa: NonEmptyList[Optimizer.Node], fb: NonEmptyList[Optimizer.Node]) = {
+          val me = Optimizer.flattenNodeTree(fa).maximumBy(_.end).end
           AnsiColor.RED_B + "old field schedule" + AnsiColor.RESET + "\n" +
             AnsiColor.GREEN_B + "new field schedule" + AnsiColor.RESET + "\n" +
             AnsiColor.BLUE_B + "new field offset (deferral of execution)" + AnsiColor.RESET + "\n" +
-            showDiff_(fa, fb)
+            showDiff_(fa, fb, me)
+        }
 
         def planCost(nodes: NonEmptyList[Optimizer.Node]): Double = {
           val fnt = Optimizer.flattenNodeTree(nodes)
@@ -493,19 +498,25 @@ fragment F2 on Data {
             .sumAll
         }
 
-        val costTree = Optimizer.costTree[IO](x).unsafeRunSync()
-        val p = Optimizer.plan(costTree)
-        println(showDiff(p, costTree))
-        println(s"inital plan cost: ${planCost(costTree)}")
-        println(s"optimized plan cost: ${planCost(p)}")
-        println(Interpreter.Planned.run[IO]((), x, p).unsafeRunSync())
-        println(Interpreter.Naive.interpret[IO]((), x).unsafeRunSync())
+        def planAndRun = {
+          val costTree = Optimizer.costTree[IO](x).unsafeRunSync()
+          val p = Optimizer.plan(costTree)
+          println(showDiff(p, costTree))
+          println(s"inital plan cost: ${planCost(costTree)}")
+          println(s"optimized plan cost: ${planCost(p)}")
+          println(Interpreter.Planned.run[IO]((), x, p).unsafeRunSync())
+        }
 
-        val costTree2 = Optimizer.costTree[IO](x).unsafeRunSync()
-        val p2 = Optimizer.plan(costTree2)
-        println(showDiff(p2, costTree2))
-        println(s"optimized plan 2 cost: ${planCost(p2)}")
-        println(Interpreter.Planned.run[IO]((), x, p2).unsafeRunSync())
+        planAndRun
+        planAndRun
+        planAndRun
+        planAndRun
+        planAndRun
+        planAndRun
+        planAndRun
+        planAndRun
+        planAndRun
+        planAndRun
     }
 
   go
