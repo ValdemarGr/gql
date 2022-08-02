@@ -97,6 +97,59 @@ object Main extends App {
       s"failed with char $c at offset ${e.failedAtOffset} on line $ln with code ${c.toInt}: \n${niceError}\nfor data:\n$msg"
   }
 
+  def showTree(indent: Int, nodes: NonEmptyList[Optimizer.Node]): String = {
+    val pad = "  " * indent
+    nodes
+      .map { n =>
+        val thisInfo = pad + s"name: ${n.name}, cost: ${n.cost.toInt}, start: ${n.start}, end: ${n.end}, id: ${n.id}\n"
+        thisInfo + n.children.toNel.map(showTree(indent + 1, _)).mkString_("")
+      }
+      .mkString_("")
+  }
+
+  def showDiff_(fa: NonEmptyList[Optimizer.Node], fb: NonEmptyList[Optimizer.Node], maxEnd: Double): String = {
+    fa.sortBy(_.id)
+      .zip(fb.sortBy(_.id))
+      .map { case (a, b) =>
+        val per = (maxEnd / 40d).toInt
+        println(s"for $maxEnd ${b.name}: ${a.start.toInt}/$per")
+        val thisInfo =
+          if (a.end.toInt != b.end.toInt) {
+            (" " * (b.start.toInt / per)) + AnsiColor.RED_B + s"name: ${b.name}, cost: ${b.cost.toInt}, start: ${b.start}, end: ${b.end}, id: ${b.id}" + AnsiColor.RESET + "\n" +
+              (" " * (b.start.toInt / per)) + AnsiColor.BLUE_B + (">" * ((a.start - b.start).toInt / per)) + AnsiColor.GREEN_B + s"name: ${a.name}, cost: ${a.cost.toInt}, start: ${a.start}, end: ${a.end}, id: ${a.id}" + AnsiColor.RESET + "\n"
+          } else
+            (" " * (a.start.toInt / per)) + s"name: ${a.name}, cost: ${a.cost.toInt}, start: ${a.start}, end: ${a.end}, id: ${a.id}\n"
+
+        thisInfo + a.children.toNel.map(showDiff_(_, b.children.toNel.get, maxEnd)).mkString_("")
+      }
+      .mkString_("")
+  }
+
+  def showDiff(fa: NonEmptyList[Optimizer.Node], fb: NonEmptyList[Optimizer.Node]) = {
+    val me = Optimizer.flattenNodeTree(fa).maximumBy(_.end).end
+    AnsiColor.RED_B + "old field schedule" + AnsiColor.RESET + "\n" +
+      AnsiColor.GREEN_B + "new field schedule" + AnsiColor.RESET + "\n" +
+      AnsiColor.BLUE_B + "new field offset (deferral of execution)" + AnsiColor.RESET + "\n" +
+      showDiff_(fa, fb, me)
+  }
+
+  def planCost(nodes: NonEmptyList[Optimizer.Node]): Double = {
+    val fnt = Optimizer.flattenNodeTree(nodes)
+
+    fnt
+      .groupBy(_.name)
+      .toList
+      .map { case (_, nodes) =>
+        val c = nodes.head.cost
+        val e = nodes.head.elemCost
+        val costCnt = nodes.groupBy(_.start.toInt)
+        val groups = costCnt.size
+        val batched = nodes.size - groups
+        groups * c + batched * e
+      }
+      .sumAll
+  }
+
   val q = """
 query FragmentTyping {
   profiles(handles: ["zuck", "cocacola"]) {
@@ -292,6 +345,21 @@ query withNestedFragments {
 
   implicit def optTypeForSome[F[_], A](implicit of: Output[F, A]): Output[F, Option[A]] = Output.Opt(of)
 
+  implicit val intInput: Input.Scalar[Int] = Input.Scalar("Int", Decoder.decodeInt)
+
+  implicit val stringInput: Input.Scalar[String] = Input.Scalar("String", Decoder.decodeString)
+
+  final case class IdentityData(value: Int, value2: String)
+
+  val valueArgs: Output.Fields.Arg[(Int, String)] = (arg[Int]("num"), arg[String]("text")).tupled
+  implicit def identityDataType[F[_]](implicit F: Async[F]): Output.Obj[F, IdentityData] =
+    outputObject[F, IdentityData](
+      "IdentityData",
+      "value" -> effectArg(valueArgs) { case (x, (y, z)) =>
+        F.pure(s"${x.value2} + $z - ${(x.value + y).toString()}")
+      }
+    )
+
   implicit def dataType[F[_]: Async]: Output.Obj[F, Data[F]] =
     outputObject[F, Data[F]](
       "Data",
@@ -421,213 +489,60 @@ fragment F2 on Data {
       "getData" -> pure(_ => root[IO]),
       "getDatas" -> pure(_ => datasRoot[IO]),
       "getInterface" -> pure(_ => (C("hey", "tun"): A)),
-      "getOther" -> pure(_ => (C("hey", "tun"): D))
+      "getOther" -> pure(_ => (C("hey", "tun"): D)),
+      "doIdentity" -> pure(_ => IdentityData(2, "hello"))
     ),
     Map.empty
   )
 
-  def parse = {
-    val b1 = System.currentTimeMillis()
-    val result =
-      p.parseAll(qn).map { xs =>
-        PreparedQuery.prepare(xs, schema, Map.empty)
-      }
-    println(System.currentTimeMillis() - b1)
-    result
-  }
-
-  val result = parse
+  def parseAndPrep(q: String): Option[NonEmptyList[PreparedQuery.PreparedField[IO, Any]]] =
+    p.parseAll(q).map(PreparedQuery.prepare(_, schema, Map.empty)) match {
+      case Left(e) =>
+        println(errorMessage(q, e))
+        None
+      case Right(Left(x)) =>
+        println(x)
+        None
+      case Right(Right(x)) => Some(x)
+    }
 
   def go =
-    result match {
-      case Left(e)        => println(errorMessage(qn, e))
-      case Right(Left(x)) => println(x)
-      case Right(Right(x)) =>
-        implicit lazy val stats = Statistics[IO].unsafeRunSync()
+    parseAndPrep(qn).map { x =>
+      implicit lazy val stats = Statistics[IO].unsafeRunSync()
 
-        def showTree(indent: Int, nodes: NonEmptyList[Optimizer.Node]): String = {
-          val pad = "  " * indent
-          nodes
-            .map { n =>
-              val thisInfo = pad + s"name: ${n.name}, cost: ${n.cost.toInt}, start: ${n.start}, end: ${n.end}, id: ${n.id}\n"
-              thisInfo + n.children.toNel.map(showTree(indent + 1, _)).mkString_("")
-            }
-            .mkString_("")
-        }
+      def planAndRun = {
+        val costTree = Optimizer.costTree[IO](x).unsafeRunSync()
+        val p = Optimizer.plan(costTree)
+        println(showDiff(p, costTree))
+        println(s"inital plan cost: ${planCost(costTree)}")
+        println(s"optimized plan cost: ${planCost(p)}")
+        println(Interpreter.Planned.run[IO]((), x, p).unsafeRunSync())
+      }
 
-        def showDiff_(fa: NonEmptyList[Optimizer.Node], fb: NonEmptyList[Optimizer.Node], maxEnd: Double): String = {
-          fa.sortBy(_.id)
-            .zip(fb.sortBy(_.id))
-            .map { case (a, b) =>
-              val per = (maxEnd / 40d).toInt
-              println(s"for $maxEnd ${b.name}: ${a.start.toInt}/$per")
-              val thisInfo =
-                if (a.end.toInt != b.end.toInt) {
-                  (" " * (b.start.toInt / per)) + AnsiColor.RED_B + s"name: ${b.name}, cost: ${b.cost.toInt}, start: ${b.start}, end: ${b.end}, id: ${b.id}" + AnsiColor.RESET + "\n" +
-                    (" " * (b.start.toInt / per)) + AnsiColor.BLUE_B + (">" * ((a.start - b.start).toInt / per)) + AnsiColor.GREEN_B + s"name: ${a.name}, cost: ${a.cost.toInt}, start: ${a.start}, end: ${a.end}, id: ${a.id}" + AnsiColor.RESET + "\n"
-                } else
-                  (" " * (a.start.toInt / per)) + s"name: ${a.name}, cost: ${a.cost.toInt}, start: ${a.start}, end: ${a.end}, id: ${a.id}\n"
-
-              thisInfo + a.children.toNel.map(showDiff_(_, b.children.toNel.get, maxEnd)).mkString_("")
-            }
-            .mkString_("")
-        }
-
-        def showDiff(fa: NonEmptyList[Optimizer.Node], fb: NonEmptyList[Optimizer.Node]) = {
-          val me = Optimizer.flattenNodeTree(fa).maximumBy(_.end).end
-          AnsiColor.RED_B + "old field schedule" + AnsiColor.RESET + "\n" +
-            AnsiColor.GREEN_B + "new field schedule" + AnsiColor.RESET + "\n" +
-            AnsiColor.BLUE_B + "new field offset (deferral of execution)" + AnsiColor.RESET + "\n" +
-            showDiff_(fa, fb, me)
-        }
-
-        def planCost(nodes: NonEmptyList[Optimizer.Node]): Double = {
-          val fnt = Optimizer.flattenNodeTree(nodes)
-
-          fnt
-            .groupBy(_.name)
-            .toList
-            .map { case (_, nodes) =>
-              val c = nodes.head.cost
-              val e = nodes.head.elemCost
-              val costCnt = nodes.groupBy(_.start.toInt)
-              val groups = costCnt.size
-              val batched = nodes.size - groups
-              groups * c + batched * e
-            }
-            .sumAll
-        }
-
-        def planAndRun = {
-          val costTree = Optimizer.costTree[IO](x).unsafeRunSync()
-          val p = Optimizer.plan(costTree)
-          println(showDiff(p, costTree))
-          println(s"inital plan cost: ${planCost(costTree)}")
-          println(s"optimized plan cost: ${planCost(p)}")
-          println(Interpreter.Planned.run[IO]((), x, p).unsafeRunSync())
-        }
-
-        planAndRun
-        planAndRun
-        planAndRun
-        planAndRun
-        planAndRun
-        planAndRun
-        planAndRun
-        planAndRun
-        planAndRun
-        planAndRun
+      planAndRun
+      planAndRun
     }
 
   go
 
   println(Render.renderSchema(schema))
 
-  // {
-  //   println("apache")
-  //   val n =
-  //     Statistics.NodeTypeRegression(
-  //       sumx = 0d,
-  //       sumxx = 0d,
-  //       sumy = 0d,
-  //       sumxy = 0d,
-  //       n = 0,
-  //       // averages
-  //       xbar = 0d,
-  //       ybar = 0d
-  //     )
+  val inputQuery = """
+query withNestedFragments {
+  doIdentity {
+    value(num: 6, text: "world")
+  }
+}
+  """
 
-  //   val res = n
-  //     .add(2 - 1, 2)
-  //     .add(4 - 1, 3)
-  //     .add(16 - 1, 10)
-  //   println(s"${res.slope} * x + ${res.intercept}")
+  parseAndPrep(inputQuery).map { x =>
+    implicit lazy val stats = Statistics[IO].unsafeRunSync()
 
-  //   // val res1 = res
-  //   //   .remove(16 - 1, 10)
-  //   // println(s"${res1.slope} * x + ${res1.intercept}")
-
-  //   val res2 = n
-  //     .add(2 - 1, 2)
-  //     .add(4 - 1, 3)
-  //   println(s"${res2.slope} * x + ${res2.intercept}")
-
-  //   val res3 = res
-  //     .add(10 - 1, 10)
-  //   println(s"${res3.slope} * x + ${res3.intercept}")
-  // }
-
-  // {
-  //   println("covariance variance")
-  //   val n =
-  //     Statistics.CovVarRegression(
-  //       0,
-  //       0d,
-  //       0d,
-  //       0d,
-  //       0d
-  //     )
-
-  //   val res = n
-  //     .add(2 - 1, 2)
-  //     .add(4 - 1, 3)
-  //     .add(16 - 1, 10)
-  //   println("original")
-  //   println(s"${res.slope} * x + ${res.intercept}")
-
-  //   val res2 = n
-  //     .add(2 - 1, 2)
-  //     .add(4 - 1, 3)
-  //   println(s"${res2.slope} * x + ${res2.intercept}")
-
-  //   val res3 = res
-  //     .add(10 - 1, 10)
-  //   println(s"${res3.slope} * x + ${res3.intercept}")
-
-  //   val res4 = res
-  //     .scale(3)
-  //     .add(10 - 1, 10)
-  //     .scale(328)
-  //   println("scaled 3")
-  //   println(s"${res4.slope} * x + ${res4.intercept}")
-
-  //   val res5 = res
-  //     .scale(1000)
-  //     .add(10 - 1, 10)
-  //   println("scaled 10000")
-  //   println(s"${res5.slope} * x + ${res5.intercept}")
-  // }
-
-  // {
-  //   println("gradient")
-  //   val b0 =
-  //     NonEmptyList.of(
-  //       Statistics.Point(2 - 1, 2),
-  //       Statistics.Point(4 - 1, 3),
-  //       Statistics.Point(16 - 1, 10)
-  //     )
-  //   val b1 = b0 concatNel b0
-  //   val b2 = b1 concatNel b1
-  //   val b3 = b2 concatNel b2
-  //   val b4 = b3 concatNel b3
-  //   val b5 = b4 concatNel b4
-  //   val b6 = b5 concatNel b5
-  //   val b7 = b6 concatNel b6
-  //   val b8 = b7 concatNel b7
-  //   val b9 = b8 concatNel b8
-  //   val b10 = b9 concatNel b9
-  //   val b11 = b10 concatNel b10
-  //   val b12 = b11 concatNel b11
-  //   val b13 = b12 concatNel b12
-  //   val b14 = b13 concatNel b13
-  //   val b15 = b14 concatNel b14
-  //   val b16 = b15 concatNel b15
-  //   println(b10.size)
-
-  //   val n = Statistics.GradientDecentRegression.fit(b10)
-  //   println(s"${n.slope} * x + ${n.intercept}")
-
-  //   val n1 = n.add(10 - 1, 10)
-  //   println(s"${n1.slope} * x + ${n1.intercept}")
-  // }
+    val costTree = Optimizer.costTree[IO](x).unsafeRunSync()
+    val p = Optimizer.plan(costTree)
+    println(showDiff(p, costTree))
+    println(s"inital plan cost: ${planCost(costTree)}")
+    println(s"optimized plan cost: ${planCost(p)}")
+    println(Interpreter.Planned.run[IO]((), x, p).unsafeRunSync())
+  }
 }

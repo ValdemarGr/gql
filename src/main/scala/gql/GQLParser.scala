@@ -185,7 +185,7 @@ object GQLParser {
 
   final case class Arguments(nel: NonEmptyList[Argument])
   lazy val arguments =
-    argument.rep.between(t('('), t(')')).map(Arguments)
+    argument.repSep(w(P.char(','))).between(t('('), t(')')).map(Arguments)
 
   final case class Argument(name: String, value: Value)
   lazy val argument =

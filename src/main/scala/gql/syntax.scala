@@ -37,13 +37,6 @@ object syntax {
   def contraInstance[F[_], A, B <: A: ClassTag, C](ol: ObjectLike[F, C], f: B => C): Output.Unification.Instance[F, A, C] =
     Output.Unification.Instance[F, A, C](ol)(Output.Unification.Specify.specifyForSubtype[A, B].map(f))
 
-  // case class PartiallyAppliedContra[F[_], C](val closure: ObjectLike[F, C]) extends AnyVal {
-  //   def apply[A](f: PartialFunction[A, C]): Output.Unification.Instance[F, A, C] =
-  //     Output.Unification.Instance[F, A, C](closure)(Output.Unification.Specify.make(f.lift))
-  // }
-
-  // def contra[F[_], C](ol: ObjectLike[F, C]) = PartiallyAppliedContra(ol)
-
   case class PartiallyAppliedContra[B](val dummy: Boolean = false) extends AnyVal {
     def apply[F[_], A](pf: PartialFunction[A, B])(implicit ol: ObjectLike[F, B]): Output.Unification.Instance[F, A, B] =
       Output.Unification.Instance[F, A, B](ol)(Output.Unification.Specify.make(pf.lift))
@@ -57,9 +50,21 @@ object syntax {
       Eval.later(tpe)
     )
 
+  def effectArg[F[_], I, T, A](arg: Output.Fields.Arg[A])(resolver: (I, A) => F[T])(implicit
+      tpe: => Output[F, T]
+  ): Output.Fields.Field[F, I, T] =
+    Output.Fields.ArgField[F, I, T, A](
+      arg,
+      (i, a) => Output.Fields.DeferredResolution(resolver(i, a)),
+      Eval.later(tpe)
+    )
+
   def pure[F[_], I, T](resolver: I => T)(implicit tpe: => Output[F, T]): Output.Fields.Field[F, I, T] =
     Output.Fields.SimpleField[F, I, T](
       i => Output.Fields.PureResolution(resolver(i)),
       Eval.later(tpe)
     )
+
+  def arg[A](name: String, default: Option[A] = None)(implicit tpe: Input[A]): Output.Fields.Arg[A] =
+    Output.Fields.Arg.initial[A](Output.Fields.ArgParam(name, tpe, default))
 }

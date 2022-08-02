@@ -161,38 +161,38 @@ object Output {
       }
     }
 
-    final case class Arg[A](
+    final case class ArgParam[A](
         name: String,
         input: Input[A],
         default: Option[A] = None
     )
 
-    final case class Args[A](
-        entries: NonEmptyVector[Arg[_]],
+    final case class Arg[A](
+        entries: NonEmptyVector[ArgParam[_]],
         decode: List[_] => (List[_], A)
     )
-    object Args {
-      def apply[A](entry: Arg[A]): Args[A] =
-        Args(NonEmptyVector.one(entry), { s => (s.tail, s.head.asInstanceOf[A]) })
-    }
+    object Arg {
+      def initial[A](entry: ArgParam[A]): Arg[A] =
+        Arg(NonEmptyVector.one(entry), { s => (s.tail, s.head.asInstanceOf[A]) })
 
-    implicit lazy val applyForArgs = new Apply[Args] {
-      override def map[A, B](fa: Args[A])(f: A => B): Args[B] =
-        fa.copy(decode = fa.decode andThen { case (s, a) => (s, f(a)) })
+      implicit lazy val applyForArgs = new Apply[Arg] {
+        override def map[A, B](fa: Arg[A])(f: A => B): Arg[B] =
+          fa.copy(decode = fa.decode andThen { case (s, a) => (s, f(a)) })
 
-      override def ap[A, B](ff: Args[A => B])(fa: Args[A]): Args[B] =
-        Args(
-          ff.entries ++: fa.entries,
-          { s1 =>
-            val (s2, f) = ff.decode(s1)
-            val (s3, a) = fa.decode(s2)
-            (s3, f(a))
-          }
-        )
+        override def ap[A, B](ff: Arg[A => B])(fa: Arg[A]): Arg[B] =
+          Arg(
+            ff.entries ++: fa.entries,
+            { s1 =>
+              val (s2, f) = ff.decode(s1)
+              val (s3, a) = fa.decode(s2)
+              (s3, f(a))
+            }
+          )
+      }
     }
 
     final case class ArgField[F[_], I, T, A](
-        args: Args[A],
+        args: Arg[A],
         resolve: (I, A) => Resolution[F, T],
         output: Eval[Output[F, T]]
     ) extends Field[F, I, T] {
