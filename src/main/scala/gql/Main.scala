@@ -351,7 +351,7 @@ query withNestedFragments {
 
   final case class IdentityData(value: Int, value2: String)
 
-  val valueArgs: Output.Fields.Arg[(Int, String)] = (arg[Int]("num"), arg[String]("text")).tupled
+  val valueArgs: Output.Fields.Arg[(Int, String)] = (arg[Int]("num", Some(42)), arg[String]("text")).tupled
   implicit def identityDataType[F[_]](implicit F: Async[F]): Output.Obj[F, IdentityData] =
     outputObject[F, IdentityData](
       "IdentityData",
