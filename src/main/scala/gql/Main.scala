@@ -349,14 +349,25 @@ query withNestedFragments {
 
   implicit val stringInput: Input.Scalar[String] = Input.Scalar("String", Decoder.decodeString)
 
+  implicit def listInputType[A](implicit tpe: Input[A]): Input[Vector[A]] =
+    Input.Arr(tpe)
+
   final case class IdentityData(value: Int, value2: String)
 
-  val valueArgs: Output.Fields.Arg[(Int, String)] = (arg[Int]("num", Some(42)), arg[String]("text")).tupled
+  val valueArgs: Output.Fields.Arg[(Int, String, Vector[String])] =
+    (
+      (
+        arg[Int]("num", Some(42)),
+        arg[Int]("num2", Some(9))
+      ).mapN(_ + _),
+      arg[String]("text"),
+      arg[Vector[String]]("xs", Vector.empty.some)
+    ).tupled
   implicit def identityDataType[F[_]](implicit F: Async[F]): Output.Obj[F, IdentityData] =
     outputObject[F, IdentityData](
       "IdentityData",
-      "value" -> effectArg(valueArgs) { case (x, (y, z)) =>
-        F.pure(s"${x.value2} + $z - ${(x.value + y).toString()}")
+      "value" -> effectArg(valueArgs) { case (x, (y, z, hs)) =>
+        F.pure(s"${x.value2} + $z - ${(x.value + y).toString()} - (${hs.mkString(",")})")
       }
     )
 
@@ -530,7 +541,7 @@ fragment F2 on Data {
   val inputQuery = """
 query withNestedFragments {
   doIdentity {
-    value(num: 6, text: "world")
+    value(num: 6, text: "world", xs: ["world", "hello"])
   }
 }
   """
