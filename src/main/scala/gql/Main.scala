@@ -296,8 +296,8 @@ query withNestedFragments {
     outputObject[F, Data[F]](
       "Data",
       "a" -> pure(_.a),
-      "b" -> effect(_.b.delayBy(50.millis)),
-      "c" -> effect(_.c.map(_.toVector).delayBy(250.millis))
+      "b" -> effect(_.b /*.delayBy(50.millis)*/ ),
+      "c" -> effect(_.c.map(_.toVector) /*.delayBy(250.millis)*/ )
     )
 
   implicit def otherDataType[F[_]: Async]: Output.Obj[F, OtherData[F]] =
