@@ -560,9 +560,29 @@ query withNestedFragments {
     println(Interpreter.Planned.run[IO]((), x, p).unsafeRunSync())
   }
 
+  type H[A] = Fetch[IO, A]
   implicit def asyncForFetch[F[_]](implicit F: Async[F]): Async[Fetch[F, *]] = {
     type G[A] = Fetch[F, A]
     new Async[G] {
+      override def map[A, B](fa: G[A])(f: A => B): G[B] =
+        fetch.fetchM[F].map(fa)(f)
+
+      override def map2[A, B, Z](fa: G[A], fb: G[B])(f: (A, B) => Z): G[Z] =
+        fetch.fetchM[F].map2(fa, fb)(f)
+
+      override def map2Eval[A, B, Z](fa: G[A], fb: Eval[G[B]])(
+          f: (A, B) => Z
+      ): Eval[G[Z]] = fetch.fetchM[F].map2Eval(fa, fb)(f)
+
+      override def product[A, B](fa: G[A], fb: G[B]): G[(A, B)] =
+        fetch.fetchM[F].product(fa, fb)
+
+      override def productR[A, B](fa: G[A])(fb: G[B]): G[B] =
+        fetch.fetchM[F].productR(fa)(fb)
+
+      override def flatMap[A, B](fa: G[A])(f: A => G[B]): G[B] =
+        fetch.fetchM[F].flatMap(fa)(f)
+
       override def pure[A](x: A): G[A] = Fetch.pure(x)
 
       override def raiseError[A](e: Throwable): G[A] = Fetch.error(e)
@@ -578,9 +598,6 @@ query withNestedFragments {
           case Right(x) => x
         }
       }
-
-      override def flatMap[A, B](fa: G[A])(f: A => G[B]): G[B] =
-        fa.flatMap(f)
 
       override def tailRecM[A, B](a: A)(f: A => G[Either[A, B]]): G[B] =
         Monad[G].tailRecM[A, B](a)(f)
@@ -666,5 +683,41 @@ query withNestedFragments {
       override def cont[K, R](body: cats.effect.kernel.Cont[G, K, R]): G[R] =
         Async.defaultCont[G, K, R](body)
     }
+  }
+
+  val schema2 = Schema[H, Unit](
+    outputObject[H, Unit](
+      "Query",
+      "getData" -> pure(_ => root[H]),
+      "getDatas" -> pure(_ => datasRoot[H]),
+      "getInterface" -> pure(_ => (C("hey", "tun"): A)),
+      "getOther" -> pure(_ => (C("hey", "tun"): D)),
+      "doIdentity" -> pure(_ => IdentityData(2, "hello"))
+    ),
+    Map.empty
+  )
+
+  def parseAndPrepFetch(q: String): Option[NonEmptyList[PreparedQuery.PreparedField[H, Any]]] =
+    p.parseAll(q).map(PreparedQuery.prepare(_, schema2, Map.empty)) match {
+      case Left(e) =>
+        println(errorMessage(q, e))
+        None
+      case Right(Left(x)) =>
+        println(x)
+        None
+      case Right(Right(x)) => Some(x)
+    }
+
+  println("running with fetch")
+
+  parseAndPrepFetch(qn).map { x =>
+    implicit lazy val stats = Fetch.run(Statistics[H]).unsafeRunSync()
+
+    val costTree = Fetch.run(Optimizer.costTree[H](x)).unsafeRunSync()
+    val p = Optimizer.plan(costTree)
+    println(showDiff(p, costTree))
+    println(s"inital plan cost: ${planCost(costTree)}")
+    println(s"optimized plan cost: ${planCost(p)}")
+    println(Fetch.run(Interpreter.Planned.run[H]((), x, p)).unsafeRunSync())
   }
 }
