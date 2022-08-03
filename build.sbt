@@ -26,7 +26,8 @@ lazy val sharedSettings = Seq(
     "org.typelevel" %% "log4cats-core" % "2.2.0",
     "org.typelevel" %% "log4cats-slf4j" % "2.2.0",
     "org.http4s" %% "http4s-jdk-http-client" % "1.0.0-M1",
-    "org.typelevel" %% "spire" % "0.18.0-M3"
+    "org.typelevel" %% "spire" % "0.18.0-M3",
+    "com.47deg" %% "fetch" % "3.1.0"
   ),
   addCompilerPlugin("org.typelevel" % "kind-projector" % "0.13.2" cross CrossVersion.full),
   addCompilerPlugin("com.olegpy" %% "better-monadic-for" % "0.3.1")

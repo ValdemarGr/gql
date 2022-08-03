@@ -23,6 +23,9 @@ import cats.effect.std.Random
 import cats.parse.Parser
 import cats.parse.Parser.Expectation._
 import scala.io.AnsiColor
+import fetch.Fetch
+import scala.concurrent.ExecutionContext
+import fetch.Unfetch
 
 object Main extends App {
   def showExpectation(e: Parser.Expectation): Eval[String] =
@@ -555,5 +558,113 @@ query withNestedFragments {
     println(s"inital plan cost: ${planCost(costTree)}")
     println(s"optimized plan cost: ${planCost(p)}")
     println(Interpreter.Planned.run[IO]((), x, p).unsafeRunSync())
+  }
+
+  implicit def asyncForFetch[F[_]](implicit F: Async[F]): Async[Fetch[F, *]] = {
+    type G[A] = Fetch[F, A]
+    new Async[G] {
+      override def pure[A](x: A): G[A] = Fetch.pure(x)
+
+      override def raiseError[A](e: Throwable): G[A] = Fetch.error(e)
+
+      override def handleErrorWith[A](fa: G[A])(f: Throwable => G[A]): G[A] = {
+        val o =
+          Fetch
+            .run(fa.map[Either[A, G[A]]](Left(_)))
+            .handleError(x => Right(f(x)))
+
+        Fetch.liftF(o).flatMap {
+          case Left(x)  => Fetch.pure(x)
+          case Right(x) => x
+        }
+      }
+
+      override def flatMap[A, B](fa: G[A])(f: A => G[B]): G[B] =
+        fa.flatMap(f)
+
+      override def tailRecM[A, B](a: A)(f: A => G[Either[A, B]]): G[B] =
+        Monad[G].tailRecM[A, B](a)(f)
+
+      override def forceR[A, B](fa: G[A])(fb: G[B]): G[B] = {
+        val a = Fetch.run(fa)
+        val b = Fetch.run(fb)
+        Fetch.liftF(F.forceR(a)(b))
+      }
+
+      override def uncancelable[A](body: Poll[G] => G[A]): G[A] = {
+        val fa = F.uncancelable { poll =>
+          val poll2 =
+            new Poll[G] {
+              override def apply[A](fa: G[A]): G[A] =
+                Fetch.liftF(poll(Fetch.run(fa)))
+            }
+          Fetch.run(body(poll2))
+        }
+        Fetch.liftF(fa)
+      }
+
+      override def canceled: G[Unit] =
+        Fetch.liftF(F.canceled)
+
+      override def onCancel[A](fa: G[A], fin: G[Unit]): G[A] =
+        Fetch.liftF(Fetch.run(fa).onCancel(Fetch.run(fin)))
+
+      override def monotonic: G[FiniteDuration] =
+        Fetch.liftF(F.monotonic)
+
+      override def realTime: G[FiniteDuration] =
+        Fetch.liftF(F.realTime)
+
+      override def suspend[A](hint: cats.effect.kernel.Sync.Type)(thunk: => A): G[A] =
+        Fetch.liftF(F.suspend(hint)(thunk))
+
+      override def start[A](fa: G[A]): G[Fiber[G, Throwable, A]] = {
+        val fib: F[Fiber[F, Throwable, A]] = Fetch.run(fa).start
+        Fetch.liftF {
+          fib.map { x =>
+            new Fiber[G, Throwable, A] {
+              override def cancel: G[Unit] = Fetch.liftF(x.cancel)
+              override def join: G[Outcome[G, Throwable, A]] =
+                Fetch.liftF(x.join.map(_.mapK(new FunctionK[F, G] {
+                  override def apply[A](fa: F[A]): G[A] = Fetch.liftF(fa)
+                })))
+            }
+          }
+        }
+      }
+
+      override def cede: G[Unit] =
+        Fetch.liftF(F.cede)
+
+      override def ref[A](a: A): G[Ref[G, A]] =
+        Fetch.liftF(
+          F
+            .ref(a)
+            .map(_.mapK(new FunctionK[F, G] {
+              override def apply[A](fa: F[A]): G[A] = Fetch.liftF(fa)
+            }))
+        )
+
+      override def deferred[A]: G[Deferred[G, A]] =
+        Fetch.liftF(
+          F
+            .deferred[A]
+            .map(_.mapK(new FunctionK[F, G] {
+              override def apply[A](fa: F[A]): G[A] = Fetch.liftF(fa)
+            }))
+        )
+
+      override def sleep(time: FiniteDuration): G[Unit] =
+        Fetch.liftF(F.sleep(time))
+
+      override def evalOn[A](fa: G[A], ec: ExecutionContext): G[A] =
+        Fetch.liftF(F.evalOn(Fetch.run(fa), ec))
+
+      override def executionContext: G[ExecutionContext] =
+        Fetch.liftF(F.executionContext)
+
+      override def cont[K, R](body: cats.effect.kernel.Cont[G, K, R]): G[R] =
+        Async.defaultCont[G, K, R](body)
+    }
   }
 }
