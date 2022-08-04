@@ -13,6 +13,11 @@ import cats.effect.std.Supervisor
 import scala.collection.immutable.SortedMap
 import gql.Output.Fields.DeferredResolution
 import gql.Output.Fields.PureResolution
+import gql.Output.Fields.BatchedResolution
+import cats.Apply
+import cats.Applicative
+import cats.SemigroupK
+import cats.kernel.Semigroup
 
 object Interpreter {
   object Naive {
@@ -79,6 +84,30 @@ object Interpreter {
     final case class FinalSubmission(accumulatedInputs: Map[Int, List[NodeValue]]) extends StateSubmissionOutcome
     case object NoState extends StateSubmissionOutcome
     case object NotFinalSubmission extends StateSubmissionOutcome
+
+    // sealed trait FetchM[F[_], A] {
+    //   def run: F[A] = ???
+    // }
+    // final case class Batch[F[_], I, O](keys: Map[String, Set[I]], resolve: Set[I] => F[O]) extends FetchM[F, O]
+    // object FetchM {
+    //   def g[F[_]](implicit F: Applicative[F]) = {
+    //     type H[A] = FetchM[F, A]
+    //     new Applicative[FetchM[F, *]] {
+    //       override def ap[A, B](ff: FetchM[F, A => B])(fa: FetchM[F, A]): FetchM[F, B] =
+    //         (ff, fa) match {
+    //           case (Batch(fkeys, fresolve), Batch(akeys, aresolve)) =>
+    //             val comb = Semigroup[Map[String, Set[Any]]].combine(fkeys, akeys)
+
+    //             comb
+    //         }
+    //       // Batch(ff.keys ++ fa.keys, )
+    //       ???
+
+    //       override def pure[A](x: A): FetchM[F, A] =
+    //         Batch[F, Any, A](Set.empty, _ => F.pure(x))
+    //     }
+    //   }
+    // }
 
     def run[F[_]](
         rootInput: Any,
@@ -148,13 +177,24 @@ object Interpreter {
                 })
                 .map(_.getOrElse(NoState))
 
+            def collapseInputs2(df: PreparedDataField[F, Any, Any], inputs: List[NodeValue]) = {
+              val (batches, individuals) = inputs
+                .map(nv => (nv.cursor.ided(df.id), df.resolve(nv.value)))
+                .partitionEither {
+                  case (c, PureResolution(value))           => Left(F.pure(NodeValue(c, value)))
+                  case (c, DeferredResolution(fa))          => Left(fa.map(a => NodeValue(c, a)))
+                  case (c, BatchedResolution(key, resolve)) => Right((key, resolve))
+                }
+            }
+
             def collapseInputs(df: PreparedDataField[F, Any, Any], inputs: List[NodeValue]): F[List[NodeValue]] =
               inputs
                 .traverse { nv =>
                   val fb =
                     df.resolve(nv.value) match {
-                      case DeferredResolution(fa) => fa
-                      case PureResolution(value)  => F.pure(value)
+                      case DeferredResolution(fa)          => fa
+                      case PureResolution(value)           => F.pure(value)
+                      case BatchedResolution(key, resolve) => resolve(Set(key)).map(_.values.head)
                     }
 
                   fb.map(b => nv.ided(df.id, b))

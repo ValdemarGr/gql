@@ -137,6 +137,10 @@ object Output {
       override def mapK[G[_]](fk: F ~> G): Resolution[G, A] =
         DeferredResolution(fk(fa))
     }
+    final case class BatchedResolution[F[_], I, A](key: I, resolve: Set[I] => F[Map[I, A]]) extends Resolution[F, A] {
+      override def mapK[G[_]](fk: F ~> G): Resolution[G, A] =
+        BatchedResolution(key, resolve.andThen(fk.apply))
+    }
 
     sealed trait Field[F[_], I, T] {
       def output: Eval[Output[F, T]]
