@@ -17,6 +17,7 @@ import cats.Apply
 import cats.Applicative
 import cats.SemigroupK
 import cats.kernel.Semigroup
+import gql.Output.Fields.BatchedResolution
 
 object Interpreter {
   object Naive {
@@ -176,15 +177,30 @@ object Interpreter {
                 })
                 .map(_.getOrElse(NoState))
 
-            // def collapseInputs2(df: PreparedDataField[F, Any, Any], inputs: List[NodeValue]) = {
-            //   val (batches, individuals) = inputs
-            //     .map(nv => (nv.cursor.ided(df.id), df.resolve(nv.value)))
-            //     .partitionEither {
-            //       case (c, PureResolution(value))           => Left(F.pure(NodeValue(c, value)))
-            //       case (c, DeferredResolution(fa))          => Left(fa.map(a => NodeValue(c, a)))
-            //       case (c, BatchedResolution(key, resolve)) => Right((key, resolve))
-            //     }
-            // }
+            final case class BatchKey(k: Any)
+
+            final case class Batch(
+                inputs: List[(Cursor, BatchKey)],
+                resolve: Set[BatchKey] => F[Map[BatchKey, Any]]
+            )
+
+            def collapseInputs2(
+                df: PreparedDataField[F, Any, Any],
+                inputs: List[NodeValue]
+            ): Either[F[List[NodeValue]], Batch] =
+              df.resolve match {
+                case PureResolution(resolve) =>
+                  Left(F.pure(inputs.map(in => in.ided(df.id, resolve(in.value)))))
+                case DeferredResolution(resolve) =>
+                  Left(inputs.parTraverse(in => resolve(in.value).map(b => in.ided(df.id, b))))
+                case BatchedResolution(key, resolve) =>
+                  Right(
+                    Batch(
+                      inputs.map(in => (in.cursor.ided(df.id), BatchKey(key(in.value)))),
+                      xs => resolve(xs.map(_.k)).map(_.map { case (k, v) => BatchKey(k) -> v })
+                    )
+                  )
+              }
 
             def collapseInputs(df: PreparedDataField[F, Any, Any], inputs: List[NodeValue]): F[List[NodeValue]] =
               inputs
@@ -228,11 +244,25 @@ object Interpreter {
                     // No batching state, so just start
                     case NoState =>
                       val batchSize = input.size
-                      collapseInputs(df, input).timed
-                        .flatMap { case (dur, out) =>
-                          sup.supervise(stats.updateStats(batchName, dur, batchSize)) >>
-                            startNext(df, out)
-                        }
+                      collapseInputs2(df, input) match {
+                        case Left(value) =>
+                          value.timed
+                            .flatMap { case (dur, out) =>
+                              sup.supervise(stats.updateStats(batchName, dur, batchSize)) >>
+                                startNext(df, out)
+                            }
+
+                        case Right(value) =>
+                          val keys = value.inputs
+
+                          value
+                            .resolve(keys.map { case (_, k) => k }.toSet)
+                            .timed
+                            .flatMap { case (dur, outM) =>
+                              sup.supervise(stats.updateStats(batchName, dur, batchSize)) >>
+                                startNext(df, keys.map { case (c, k) => NodeValue(c, outM(k)) })
+                            }
+                      }
                     // join
                     // There is a batch state, but we didn't add the final input
                     // Stop here, someone else will start the batch
@@ -246,6 +276,16 @@ object Interpreter {
                         inputLst
                           .map { case (k, v) => dataFieldMap(k) -> v }
                           .traverse { case (df, v) => collapseInputs(df, v).map(df -> _) }
+
+                      val (trivial, batched) =
+                        inputLst
+                          .map { case (k, v) => dataFieldMap(k) -> v }
+                          .partitionEither { case (df, v) =>
+                            collapseInputs2(df, v) match {
+                              case Left(value)  => Left(df -> value)
+                              case Right(value) => Right(df -> value)
+                            }
+                          }
 
                       val batchSize = inputLst.map { case (_, xs) => xs.size }.sum
 

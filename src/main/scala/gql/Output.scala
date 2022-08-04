@@ -145,13 +145,13 @@ object Output {
       override def contramap[B](g: B => I): Resolution[F, B, A] =
         DeferredResolution(g andThen resolve)
     }
-    // final case class BatchedResolution[F[_], I, A](key: I, resolve: Set[I] => F[Map[I, A]]) extends Resolution[F, I, A] {
-    //   override def mapK[G[_]](fk: F ~> G): Resolution[G, I, A] =
-    //     BatchedResolution(key, resolve.andThen(fk.apply))
+    final case class BatchedResolution[F[_], I, A, K](key: I => K, resolve: Set[K] => F[Map[K, A]]) extends Resolution[F, I, A] {
+      override def mapK[G[_]](fk: F ~> G): Resolution[G, I, A] =
+        BatchedResolution(key, resolve.andThen(fk.apply))
 
-    //   override def contramap[B](g: B => I): Resolution[F, B, A] =
-    //     BatchedResolution(g(key), resolve.andThen(fk.apply))
-    // }
+      override def contramap[B](g: B => I): Resolution[F, B, A] =
+        BatchedResolution(g andThen key, resolve)
+    }
 
     sealed trait Field[F[_], I, T] {
       def output: Eval[Output[F, T]]
@@ -222,8 +222,9 @@ object Output {
         ArgField(
           args,
           resolve match {
-            case PureResolution(r)     => PureResolution { case (b, a) => r(g(b), a) }
-            case DeferredResolution(r) => DeferredResolution { case (b, a) => r(g(b), a) }
+            case PureResolution(r)       => PureResolution { case (b, a) => r(g(b), a) }
+            case DeferredResolution(r)   => DeferredResolution { case (b, a) => r(g(b), a) }
+            case BatchedResolution(k, r) => BatchedResolution({ case (b, a) => k(g(b), a) }, r)
           },
           output
         )

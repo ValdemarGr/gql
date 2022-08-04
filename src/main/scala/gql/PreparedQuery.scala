@@ -27,6 +27,7 @@ import gql.Output.Opt
 import gql.Output.Arr
 import gql.Output.Fields.PureResolution
 import gql.Output.Fields.DeferredResolution
+import gql.Output.Fields.BatchedResolution
 
 object PreparedQuery {
   /*
@@ -217,8 +218,9 @@ object PreparedQuery {
           .map { case (_, resolvedArg) =>
             val closed: Output.Fields.Resolution[G, Any, Any] =
               resolve match {
-                case PureResolution(r)     => PureResolution(i => r(i, resolvedArg))
-                case DeferredResolution(r) => DeferredResolution(i => r(i, resolvedArg))
+                case PureResolution(r)       => PureResolution(i => r(i, resolvedArg))
+                case DeferredResolution(r)   => DeferredResolution(i => r(i, resolvedArg))
+                case BatchedResolution(k, r) => BatchedResolution(i => k(i, resolvedArg), r)
               }
             (closed, graphqlType.value)
           }
