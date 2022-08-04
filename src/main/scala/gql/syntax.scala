@@ -46,7 +46,7 @@ object syntax {
 
   def effect[F[_], I, T](resolver: I => F[T])(implicit tpe: => Output[F, T]): Output.Fields.Field[F, I, T] =
     Output.Fields.SimpleField[F, I, T](
-      i => Output.Fields.DeferredResolution(resolver(i)),
+      Output.Fields.DeferredResolution(resolver),
       Eval.later(tpe)
     )
 
@@ -55,13 +55,13 @@ object syntax {
   ): Output.Fields.Field[F, I, T] =
     Output.Fields.ArgField[F, I, T, A](
       arg,
-      (i, a) => Output.Fields.DeferredResolution(resolver(i, a)),
+      Output.Fields.DeferredResolution { case (i, a) => resolver(i, a) },
       Eval.later(tpe)
     )
 
   def pure[F[_], I, T](resolver: I => T)(implicit tpe: => Output[F, T]): Output.Fields.Field[F, I, T] =
     Output.Fields.SimpleField[F, I, T](
-      i => Output.Fields.PureResolution(resolver(i)),
+      Output.Fields.PureResolution(resolver),
       Eval.later(tpe)
     )
 

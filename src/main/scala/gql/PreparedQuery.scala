@@ -25,6 +25,8 @@ import gql.Output.Union
 import gql.Output.Scalar
 import gql.Output.Opt
 import gql.Output.Arr
+import gql.Output.Fields.PureResolution
+import gql.Output.Fields.DeferredResolution
 
 object PreparedQuery {
   /*
@@ -69,7 +71,7 @@ object PreparedQuery {
   final case class PreparedDataField[F[_], I, T](
       id: Int,
       name: String,
-      resolve: I => Output.Fields.Resolution[F, T],
+      resolve: Output.Fields.Resolution[F, I, T],
       selection: Prepared[F, T],
       batchName: String
   ) extends PreparedField[F, I]
@@ -188,13 +190,13 @@ object PreparedQuery {
       S: Stateful[F, AnalysisState],
       F: MonadError[F, String],
       D: Defer[F]
-  ): F[(Any => Output.Fields.Resolution[G, Any], Output[G, Any])] =
+  ): F[(Output.Fields.Resolution[G, Any, Any], Output[G, Any])] =
     (field, gqlField.arguments) match {
       case (Output.Fields.SimpleField(_, _), Some(_)) =>
         F.raiseError(s"field ${gqlField.name} has arguments, but none were expected")
       case (Output.Fields.SimpleField(resolve, graphqlType), None) =>
-        val nr = resolve.asInstanceOf[Any => Output.Fields.Resolution[G, Any]]
-        F.pure((nr, graphqlType.value))
+        // val nr = resolve.asInstanceOf[Any => Output.Fields.Resolution[G, Any]]
+        F.pure((resolve, graphqlType.value))
       case (Output.Fields.ArgField(args, _, _), None) =>
         F.raiseError(s"no arguments provided for ${gqlField.name}, expected ${args.entries.size}")
       case (Output.Fields.ArgField(args, resolve, graphqlType), Some(provided)) =>
@@ -212,7 +214,14 @@ object PreparedQuery {
 
         F.fromEither(argResolution)
           .map(args.decode)
-          .map { case (_, resolvedArg) => (resolve(_, resolvedArg), graphqlType.value) }
+          .map { case (_, resolvedArg) =>
+            val closed: Output.Fields.Resolution[G, Any, Any] =
+              resolve match {
+                case PureResolution(r)     => PureResolution(i => r(i, resolvedArg))
+                case DeferredResolution(r) => DeferredResolution(i => r(i, resolvedArg))
+              }
+            (closed, graphqlType.value)
+          }
     }
 
   def prepareField[F[_], G[_]](
