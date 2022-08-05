@@ -18,6 +18,7 @@ import cats.Applicative
 import cats.SemigroupK
 import cats.kernel.Semigroup
 import gql.Output.Fields.BatchedResolution
+import scala.concurrent.duration.FiniteDuration
 
 object Interpreter {
   object Naive {
@@ -184,6 +185,9 @@ object Interpreter {
                 resolve: Set[BatchKey] => F[Map[BatchKey, Any]]
             )
 
+            def submit(name: String, duration: FiniteDuration, size: Int): F[Unit] =
+              sup.supervise(stats.updateStats(name, duration, size)).void
+
             def collapseInputs2(
                 df: PreparedDataField[F, Any, Any],
                 inputs: List[NodeValue]
@@ -192,12 +196,22 @@ object Interpreter {
                 case PureResolution(resolve) =>
                   Left(F.pure(inputs.map(in => in.ided(df.id, resolve(in.value)))))
                 case DeferredResolution(resolve) =>
-                  Left(inputs.parTraverse(in => resolve(in.value).map(b => in.ided(df.id, b))))
+                  Left(inputs.parTraverse { in =>
+                    resolve(in.value).timed
+                      .flatMap { case (dur, value) =>
+                        submit(df.batchName, dur, 1).as(in.ided(df.id, value))
+                      }
+                  })
                 case BatchedResolution(key, resolve) =>
                   Right(
                     Batch(
                       inputs.map(in => (in.cursor.ided(df.id), BatchKey(key(in.value)))),
-                      xs => resolve(xs.map(_.k)).map(_.map { case (k, v) => BatchKey(k) -> v })
+                      xs =>
+                        resolve(xs.map(_.k)).timed
+                          .flatMap { case (dur, value) =>
+                            val ys = value.map { case (k, v) => BatchKey(k) -> v }
+                            submit(df.batchName, dur, ys.size).as(ys)
+                          }
                     )
                   )
               }
@@ -245,23 +259,13 @@ object Interpreter {
                     case NoState =>
                       val batchSize = input.size
                       collapseInputs2(df, input) match {
-                        case Left(value) =>
-                          value.timed
-                            .flatMap { case (dur, out) =>
-                              sup.supervise(stats.updateStats(batchName, dur, batchSize)) >>
-                                startNext(df, out)
-                            }
-
+                        case Left(value) => value.flatMap(startNext(df, _))
                         case Right(value) =>
                           val keys = value.inputs
 
                           value
                             .resolve(keys.map { case (_, k) => k }.toSet)
-                            .timed
-                            .flatMap { case (dur, outM) =>
-                              sup.supervise(stats.updateStats(batchName, dur, batchSize)) >>
-                                startNext(df, keys.map { case (c, k) => NodeValue(c, outM(k)) })
-                            }
+                            .flatMap(outM => startNext(df, keys.map { case (c, k) => NodeValue(c, outM(k)) }))
                       }
                     // join
                     // There is a batch state, but we didn't add the final input
@@ -271,11 +275,6 @@ object Interpreter {
                     // We are the final submitter, start the computation
                     case FinalSubmission(inputs) =>
                       val inputLst = inputs.toList
-                      // outer list are seperate node ids, inner is is the list of results for that node
-                      val outputsF: F[List[(PreparedDataField[F, Any, Any], List[NodeValue])]] =
-                        inputLst
-                          .map { case (k, v) => dataFieldMap(k) -> v }
-                          .traverse { case (df, v) => collapseInputs(df, v).map(df -> _) }
 
                       val (trivial, batched) =
                         inputLst
@@ -287,15 +286,28 @@ object Interpreter {
                             }
                           }
 
-                      val batchSize = inputLst.map { case (_, xs) => xs.size }.sum
+                      val trivialF =
+                        trivial.parFlatTraverse { case (df, fas) => fas.flatMap(outputs => startNext(df, outputs)) }
+
+                      val batchedF =
+                        batched.toNel
+                          .traverse { nel =>
+                            val (_, b) = nel.head
+
+                            val keys = nel.toList.flatMap { case (_, b) => b.inputs.map { case (_, k) => k } }.toSet
+
+                            b.resolve(keys).flatMap { resultLookup =>
+                              nel.toList.parFlatTraverse { case (df, b) =>
+                                val mappedValues = b.inputs.map { case (c, k) => NodeValue(c, resultLookup(k)) }
+                                startNext(df, mappedValues)
+                              }
+                            }
+                          }
+                          .map(_.toList.flatten)
 
                       // fork each node's continuation
                       // in parallel, start every node's computation
-                      outputsF.timed
-                        .flatMap { case (dur, res) =>
-                          sup.supervise(stats.updateStats(batchName, dur, batchSize)) >>
-                            res.parFlatTraverse { case (df, outputs) => startNext(df, outputs) }
-                        }
+                      (trivialF, batchedF).mapN(_ ++ _)
                   }
               }
 
