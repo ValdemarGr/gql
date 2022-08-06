@@ -9,14 +9,19 @@ import cats.data.NonEmptyList
 import scala.annotation.tailrec
 
 trait Statistics[F[_]] { self =>
+  def getSnapshot: F[String => F[Option[Statistics.Stats]]]
+
   def getStatsOpt(name: String): F[Option[Statistics.Stats]]
 
   def getStats(name: String): F[Statistics.Stats]
 
   def updateStats(name: String, elapsed: FiniteDuration, batchElems: Int): F[Unit]
 
-  def mapK[G[_]](f: F ~> G): Statistics[G] =
+  def mapK[G[_]](f: F ~> G)(implicit F: Functor[F]): Statistics[G] =
     new Statistics[G] {
+      def getSnapshot: G[String => G[Option[Statistics.Stats]]] =
+        f(self.getSnapshot.map(_.andThen(f.apply)))
+
       def getStatsOpt(name: String): G[Option[Statistics.Stats]] =
         f(self.getStatsOpt(name))
 
@@ -236,13 +241,18 @@ object Statistics {
     F.ref(Map.empty[String, Ref[F, Either[NonEmptyList[Point], CovVarRegression]]])
       .map { state =>
         new Statistics[F] {
-          override def getStatsOpt(name: String): F[Option[Stats]] =
-            state.get.flatMap(
-              _.get(name).flatTraverse(_.get.map(_.toOption.map { reg =>
-                if (reg.varX == 0d || reg.covXY == 0d) Stats(initialCost = reg.meanY, extraElementCost = 0d)
-                else Stats(initialCost = reg.intercept, extraElementCost = reg.slope)
-              }))
+          override def getSnapshot: F[String => F[Option[Stats]]] =
+            state.get.map(m =>
+              s =>
+                m.get(s)
+                  .flatTraverse(_.get.map(_.toOption.map { reg =>
+                    if (reg.varX == 0d || reg.covXY == 0d) Stats(initialCost = reg.meanY, extraElementCost = 0d)
+                    else Stats(initialCost = reg.intercept, extraElementCost = reg.slope)
+                  }))
             )
+
+          override def getStatsOpt(name: String): F[Option[Stats]] =
+            getSnapshot.flatMap(_(name))
 
           override def getStats(name: String): F[Stats] =
             getStatsOpt(name)

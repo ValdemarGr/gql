@@ -138,6 +138,7 @@ object Interpreter {
 
         val dataFieldMap = flattenDataFieldMap(rootSel).toList.toMap
 
+        // TODO merge the two batch lookups into one: Map[Int, Ref[F, BatchExecutionState]]
         val batches: Map[Int, (String, NonEmptyList[Optimizer.Node])] =
           flat
             .groupBy(_.end)
@@ -145,7 +146,7 @@ object Interpreter {
             .zipWithIndex
             .flatMap { case ((_, group), idx) =>
               group
-                .groupBy(_.meta.map(_.name))
+                .groupBy(_.batchName)
                 .filter { case (o, nodes) => nodes.size > 1 && o.isDefined }
                 .toList
                 .flatMap { case (nodeType, nodes) =>
@@ -199,7 +200,8 @@ object Interpreter {
                   Left(inputs.parTraverse { in =>
                     resolve(in.value).timed
                       .flatMap { case (dur, value) =>
-                        submit(df.batchName, dur, 1).as(in.ided(df.id, value))
+                        // TODO get batch name with df.id from nodes (they shared id)
+                        submit("", dur, 1).as(in.ided(df.id, value))
                       }
                   })
                 case BatchedResolution(_, key, resolve) =>
@@ -210,7 +212,8 @@ object Interpreter {
                         resolve(xs.map(_.k)).timed
                           .flatMap { case (dur, value) =>
                             val ys = value.map { case (k, v) => BatchKey(k) -> v }
-                            submit(df.batchName, dur, ys.size).as(ys)
+                            // TODO get batch name with df.id from nodes (they shared id)
+                            submit("", dur, ys.size).as(ys)
                           }
                     )
                   )

@@ -17,60 +17,82 @@ import gql.Output.Fields.DeferredResolution
 import gql.Output.Fields.PureResolution
 
 object Optimizer {
-  final case class BatchMeta(
+  final case class Node(
+      id: Int,
       name: String,
+      batchName: Option[String],
+      end: Double,
       cost: Double,
-      elemCost: Double
-  )
-
-  final case class Node(id: Int, end: Double, meta: Option[BatchMeta], children: List[Node]) {
-    lazy val start = meta.map(m => end - m.cost).getOrElse(end)
+      elemCost: Double,
+      children: List[Node]
+  ) {
+    lazy val start = end - cost
   }
 
-  def constructCostTree[F[_]](currentCost: Double, prepared: NonEmptyList[PreparedQuery.PreparedField[F, Any]])(implicit
+  // TODO get stats for all occuring batch names in the graph before running the algorithm,
+  // such that mutation during the algorithm is be avoided
+  def constructCostTree[F[_]](
+      currentCost: Double,
+      prepared: NonEmptyList[PreparedQuery.PreparedField[F, Any]],
+      parentTypename: Option[String]
+  )(implicit
       F: Monad[F],
       stats: Statistics[F]
   ): F[NonEmptyList[Node]] = {
     prepared.flatTraverse {
-      case PreparedDataField(id, name, resolve, selection, _) =>
-        val bmF: F[Option[BatchMeta]] = resolve match {
-          case BatchedResolution(batchName, _, _) =>
-            stats
-              .getStatsOpt(batchName)
-              .map {
-                case None    => Statistics.Stats(1000d, 5d)
-                case Some(x) => x
+      case PreparedDataField(id, name, resolve, selection, tn) =>
+        val batchName = resolve match {
+          case BatchedResolution(bn, _, _) => Some(bn)
+          case _                           => None
+        }
+        // Use parent typename + field as fallback name since this will be unique
+        // it is of utmost importance that different resolvers don't get mixed into the same statistic
+        // since this will destroy the prediction precision
+        val nodeName = s"${parentTypename.getOrElse("_root")}_$name"
+
+        /*
+         * We try to get by batch name first since this unifies a set of nodes that would otherwise have different names
+         *
+         * A_value with type V
+         * and
+         * B_value with type V
+         *
+         * Would not be considered the same statistic unless expilictly stated via a batch resolver with the same name
+         */
+        stats
+          .getStatsOpt(batchName.getOrElse(nodeName))
+          .map {
+            case None    => Statistics.Stats(1000d, 5d)
+            case Some(x) => x
+          }
+          .flatMap { s =>
+            val end = currentCost + s.initialCost
+            def handleSelection(p: PreparedQuery.Prepared[F, Any]): F[Node] =
+              p match {
+                case PreparedLeaf(_, _) =>
+                  F.pure(Node(id, nodeName, batchName, end, s.initialCost, s.extraElementCost, Nil))
+                case Selection(fields) =>
+                  constructCostTree[F](end, fields, Some(tn)).map { nel =>
+                    Node(id, nodeName, batchName, end, s.initialCost, s.extraElementCost, nel.toList)
+                  }
+                case PreparedList(of) => handleSelection(of)
               }
-              .map(s => Some(BatchMeta(batchName, s.initialCost, s.extraElementCost)))
-          case _ => F.pure(None)
-        }
 
-        bmF.flatMap { bm =>
-          val end = currentCost + bm.map(_.cost).getOrElse(currentCost)
-          def handleSelection(p: PreparedQuery.Prepared[F, Any]): F[Node] =
-            p match {
-              case PreparedLeaf(_, _) =>
-                F.pure(Node(id, end, bm, Nil))
-              case Selection(fields) =>
-                constructCostTree[F](end, fields).map(nel => Node(id, end, bm, nel.toList))
-              case PreparedList(of) => handleSelection(of)
-            }
-
-          handleSelection(selection).map(NonEmptyList.one(_))
-        }
-      case PreparedFragField(_, _, selection) => constructCostTree[F](currentCost, selection.fields)
+            handleSelection(selection).map(NonEmptyList.one(_))
+          }
+      case PreparedFragField(_, _, selection) => constructCostTree[F](currentCost, selection.fields, parentTypename)
     }
   }
 
   def costTree[F[_]: Monad](
       prepared: NonEmptyList[PreparedQuery.PreparedField[F, Any]]
   )(implicit stats: Statistics[F]): F[NonEmptyList[Node]] =
-    constructCostTree[F](0d, prepared)
+    constructCostTree[F](0d, prepared, None)
 
   def flattenNodeTree(xs: NonEmptyList[Node]): NonEmptyList[Node] =
     xs.flatMap {
-      case n @ Node(_, _, _, Nil)     => NonEmptyList.one(n)
-      case n @ Node(_, _, _, x :: xs) => NonEmptyList.one(n) ++ flattenNodeTree(NonEmptyList(x, xs)).toList
+      case n @ Node(_, _, _, _, _, _, Nil)     => NonEmptyList.one(n)
+      case n @ Node(_, _, _, _, _, _, x :: xs) => NonEmptyList.one(n) ++ flattenNodeTree(NonEmptyList(x, xs)).toList
     }
 
   def plan(nodes: NonEmptyList[Node]): NonEmptyList[Node] = {
@@ -80,27 +102,34 @@ object Optimizer {
 
     val m = orderedFlatNodes.head.end
 
+    // go through every node sorted by end decending
+    // if the node has a batching name, move node to lastest possible batch (frees up most space for parents to move)
     def go(remaining: List[Node], handled: List[Node]): List[Node] =
       remaining match {
-        case Nil => handled
+        case Nil     => handled
         case r :: rs =>
+          // the maximum amount we can move down is the child with smallest start
           val maxEnd: Double = r.children match {
             case Nil     => m
             case x :: xs => NonEmptyList(x, xs).map(_.start).minimum
           }
 
-          val compatible =
-            handled
-              .filter { h =>
-                h.meta.exists(h2 =>
-                  r.meta.exists { r2 =>
-                    h2.name == r2.name && r.end <= h.end && h.end <= maxEnd
-                  }
-                )
-              }
-              .maximumByOption(_.end)
+          val newEnd =
+            r.batchName match {
+              // No batching, free up as much space as possible for parents to move
+              case None     => maxEnd
+              case Some(bn) =>
+                // TODO use a grouped map or something to make this an order or so asymptotically faster
 
-          val newEnd = compatible.map(_.end).getOrElse(maxEnd)
+                // Find nodes that we may move to:
+                // All nodes that end no later than the earliest of our children but end later than us
+                val compatible =
+                  handled
+                    .filter(h => h.batchName.contains(bn) && r.end <= h.end && h.end <= maxEnd)
+                    .maximumByOption(_.end)
+
+                compatible.map(_.end).getOrElse(maxEnd)
+            }
 
           go(rs, r.copy(end = newEnd) :: handled)
       }

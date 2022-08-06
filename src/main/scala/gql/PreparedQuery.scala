@@ -74,7 +74,7 @@ object PreparedQuery {
       name: String,
       resolve: Output.Fields.Resolution[F, I, T],
       selection: Prepared[F, T],
-      batchName: String
+      typename: String
   ) extends PreparedField[F, I]
 
   final case class PreparedFragField[F[_], A](
