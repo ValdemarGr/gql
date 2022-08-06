@@ -12,10 +12,19 @@ import gql.PreparedQuery.PreparedList
 import gql.PreparedQuery.Selection
 import cats.Monad
 import cats.mtl.Stateful
+import gql.Output.Fields.BatchedResolution
+import gql.Output.Fields.DeferredResolution
+import gql.Output.Fields.PureResolution
 
 object Optimizer {
-  final case class Node(id: Int, name: String, cost: Double, end: Double, children: List[Node], elemCost: Double) {
-    lazy val start = end - cost
+  final case class BatchMeta(
+      name: String,
+      cost: Double,
+      elemCost: Double
+  )
+
+  final case class Node(id: Int, end: Double, meta: Option[BatchMeta], children: List[Node]) {
+    lazy val start = meta.map(m => end - m.cost).getOrElse(end)
   }
 
   def constructCostTree[F[_]](currentCost: Double, prepared: NonEmptyList[PreparedQuery.PreparedField[F, Any]])(implicit
@@ -23,28 +32,32 @@ object Optimizer {
       stats: Statistics[F]
   ): F[NonEmptyList[Node]] = {
     prepared.flatTraverse {
-      case PreparedDataField(id, name, resolve, selection, bn) =>
-        stats
-          .getStatsOpt(bn)
-          .map {
-            case None    => Statistics.Stats(1000d, 5d)
-            case Some(x) => x
-          }
-          .flatMap { s =>
-            val end = currentCost + s.initialCost
-
-            def handleSelection(p: PreparedQuery.Prepared[F, Any]): F[Node] =
-              p match {
-                case PreparedLeaf(_, _) =>
-                  F.pure(Node(id, bn, s.initialCost, end, Nil, s.extraElementCost))
-                case Selection(fields) =>
-                  constructCostTree[F](end, fields)
-                    .map(nel => Node(id, bn, s.initialCost, end, nel.toList, s.extraElementCost))
-                case PreparedList(of) => handleSelection(of)
+      case PreparedDataField(id, name, resolve, selection, _) =>
+        val bmF: F[Option[BatchMeta]] = resolve match {
+          case BatchedResolution(batchName, _, _) =>
+            stats
+              .getStatsOpt(batchName)
+              .map {
+                case None    => Statistics.Stats(1000d, 5d)
+                case Some(x) => x
               }
+              .map(s => Some(BatchMeta(batchName, s.initialCost, s.extraElementCost)))
+          case _ => F.pure(None)
+        }
 
-            handleSelection(selection).map(NonEmptyList.one(_))
-          }
+        bmF.flatMap { bm =>
+          val end = currentCost + bm.map(_.cost).getOrElse(currentCost)
+          def handleSelection(p: PreparedQuery.Prepared[F, Any]): F[Node] =
+            p match {
+              case PreparedLeaf(_, _) =>
+                F.pure(Node(id, end, bm, Nil))
+              case Selection(fields) =>
+                constructCostTree[F](end, fields).map(nel => Node(id, end, bm, nel.toList))
+              case PreparedList(of) => handleSelection(of)
+            }
+
+          handleSelection(selection).map(NonEmptyList.one(_))
+        }
       case PreparedFragField(_, _, selection) => constructCostTree[F](currentCost, selection.fields)
     }
   }
@@ -56,8 +69,8 @@ object Optimizer {
 
   def flattenNodeTree(xs: NonEmptyList[Node]): NonEmptyList[Node] =
     xs.flatMap {
-      case n @ Node(_, _, _, _, Nil, _)     => NonEmptyList.one(n)
-      case n @ Node(_, _, _, _, x :: xs, _) => NonEmptyList.one(n) ++ flattenNodeTree(NonEmptyList(x, xs)).toList
+      case n @ Node(_, _, _, Nil)     => NonEmptyList.one(n)
+      case n @ Node(_, _, _, x :: xs) => NonEmptyList.one(n) ++ flattenNodeTree(NonEmptyList(x, xs)).toList
     }
 
   def plan(nodes: NonEmptyList[Node]): NonEmptyList[Node] = {
@@ -78,7 +91,13 @@ object Optimizer {
 
           val compatible =
             handled
-              .filter(h => h.name == r.name && r.end <= h.end && h.end <= maxEnd)
+              .filter { h =>
+                h.meta.exists(h2 =>
+                  r.meta.exists { r2 =>
+                    h2.name == r2.name && r.end <= h.end && h.end <= maxEnd
+                  }
+                )
+              }
               .maximumByOption(_.end)
 
           val newEnd = compatible.map(_.end).getOrElse(maxEnd)

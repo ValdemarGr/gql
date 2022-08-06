@@ -218,9 +218,9 @@ object PreparedQuery {
           .map { case (_, resolvedArg) =>
             val closed: Output.Fields.Resolution[G, Any, Any] =
               resolve match {
-                case PureResolution(r)       => PureResolution(i => r(i, resolvedArg))
-                case DeferredResolution(r)   => DeferredResolution(i => r(i, resolvedArg))
-                case BatchedResolution(k, r) => BatchedResolution(i => k(i, resolvedArg), r)
+                case PureResolution(r)             => PureResolution(i => r(i, resolvedArg))
+                case DeferredResolution(r)         => DeferredResolution(i => r(i, resolvedArg))
+                case BatchedResolution(name, k, r) => BatchedResolution(name, i => k(i, resolvedArg), r)
               }
             (closed, graphqlType.value)
           }

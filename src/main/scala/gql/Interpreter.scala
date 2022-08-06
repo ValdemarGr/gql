@@ -145,8 +145,8 @@ object Interpreter {
             .zipWithIndex
             .flatMap { case ((_, group), idx) =>
               group
-                .groupBy(_.name)
-                .filter { case (_, nodes) => nodes.size > 1 }
+                .groupBy(_.meta.map(_.name))
+                .filter { case (o, nodes) => nodes.size > 1 && o.isDefined }
                 .toList
                 .flatMap { case (nodeType, nodes) =>
                   val thisBatch = (s"$nodeType-$idx", nodes)
@@ -188,7 +188,7 @@ object Interpreter {
             def submit(name: String, duration: FiniteDuration, size: Int): F[Unit] =
               sup.supervise(stats.updateStats(name, duration, size)).void
 
-            def collapseInputs2(
+            def collapseInputs(
                 df: PreparedDataField[F, Any, Any],
                 inputs: List[NodeValue]
             ): Either[F[List[NodeValue]], Batch] =
@@ -202,7 +202,7 @@ object Interpreter {
                         submit(df.batchName, dur, 1).as(in.ided(df.id, value))
                       }
                   })
-                case BatchedResolution(key, resolve) =>
+                case BatchedResolution(_, key, resolve) =>
                   Right(
                     Batch(
                       inputs.map(in => (in.cursor.ided(df.id), BatchKey(key(in.value)))),
@@ -215,19 +215,6 @@ object Interpreter {
                     )
                   )
               }
-
-            def collapseInputs(df: PreparedDataField[F, Any, Any], inputs: List[NodeValue]): F[List[NodeValue]] =
-              inputs
-                .traverse { nv =>
-                  val fb: F[Any] =
-                    df.resolve match {
-                      case DeferredResolution(r) => r(nv.value)
-                      case PureResolution(r)     => F.pure(r(nv.value))
-                      // case BatchedResolution(key, resolve) => resolve(Set(key)).map(_.values.head)
-                    }
-
-                  fb.map(b => nv.ided(df.id, b))
-                }
 
             def startNext(df: PreparedDataField[F, Any, Any], outputs: List[NodeValue]): F[List[NodeValue]] = {
               def evalSel(s: Prepared[F, Any], in: List[NodeValue]): F[List[NodeValue]] =
@@ -258,7 +245,7 @@ object Interpreter {
                     // No batching state, so just start
                     case NoState =>
                       val batchSize = input.size
-                      collapseInputs2(df, input) match {
+                      collapseInputs(df, input) match {
                         case Left(value) => value.flatMap(startNext(df, _))
                         case Right(value) =>
                           val keys = value.inputs
@@ -280,7 +267,7 @@ object Interpreter {
                         inputLst
                           .map { case (k, v) => dataFieldMap(k) -> v }
                           .partitionEither { case (df, v) =>
-                            collapseInputs2(df, v) match {
+                            collapseInputs(df, v) match {
                               case Left(value)  => Left(df -> value)
                               case Right(value) => Right(df -> value)
                             }

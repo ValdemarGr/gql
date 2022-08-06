@@ -104,7 +104,8 @@ object Main extends App {
     val pad = "  " * indent
     nodes
       .map { n =>
-        val thisInfo = pad + s"name: ${n.name}, cost: ${n.cost.toInt}, start: ${n.start}, end: ${n.end}, id: ${n.id}\n"
+        val thisInfo =
+          pad + s"name: ${n.meta.map(_.name)}, cost: ${n.meta.map(_.cost.toInt)}), start: ${n.start}, end: ${n.end}, id: ${n.id}\n"
         thisInfo + n.children.toNel.map(showTree(indent + 1, _)).mkString_("")
       }
       .mkString_("")
@@ -114,14 +115,18 @@ object Main extends App {
     fa.sortBy(_.id)
       .zip(fb.sortBy(_.id))
       .map { case (a, b) =>
-        val per = (maxEnd / 40d).toInt
-        println(s"for $maxEnd ${b.name}: ${a.start.toInt}/$per")
+        val per = math.max((maxEnd / 40d).toInt, 1)
+        println(s"for $maxEnd ${b.meta.map(_.name)}: ${a.start.toInt}/$per")
         val thisInfo =
           if (a.end.toInt != b.end.toInt) {
-            (" " * (b.start.toInt / per)) + AnsiColor.RED_B + s"name: ${b.name}, cost: ${b.cost.toInt}, start: ${b.start}, end: ${b.end}, id: ${b.id}" + AnsiColor.RESET + "\n" +
-              (" " * (b.start.toInt / per)) + AnsiColor.BLUE_B + (">" * ((a.start - b.start).toInt / per)) + AnsiColor.GREEN_B + s"name: ${a.name}, cost: ${a.cost.toInt}, start: ${a.start}, end: ${a.end}, id: ${a.id}" + AnsiColor.RESET + "\n"
+            (" " * (b.start.toInt / per)) + AnsiColor.RED_B + s"name: ${b.meta.map(
+              _.name
+            )}, cost: ${b.meta.map(_.cost.toInt)}, start: ${b.start}, end: ${b.end}, id: ${b.id}" + AnsiColor.RESET + "\n" +
+              (" " * (b.start.toInt / per)) + AnsiColor.BLUE_B + (">" * ((a.start - b.start).toInt / per)) + AnsiColor.GREEN_B + s"name: ${a.meta
+                .map(_.name)}, cost: ${a.meta.map(_.cost.toInt)}, start: ${a.start}, end: ${a.end}, id: ${a.id}" + AnsiColor.RESET + "\n"
           } else
-            (" " * (a.start.toInt / per)) + s"name: ${a.name}, cost: ${a.cost.toInt}, start: ${a.start}, end: ${a.end}, id: ${a.id}\n"
+            (" " * (a.start.toInt / per)) + s"name: ${a.meta
+              .map(_.name)}, cost: ${a.meta.map(_.cost.toInt)}, start: ${a.start}, end: ${a.end}, id: ${a.id}\n"
 
         thisInfo + a.children.toNel.map(showDiff_(_, b.children.toNel.get, maxEnd)).mkString_("")
       }
@@ -137,20 +142,21 @@ object Main extends App {
   }
 
   def planCost(nodes: NonEmptyList[Optimizer.Node]): Double = {
-    val fnt = Optimizer.flattenNodeTree(nodes)
+    // val fnt = Optimizer.flattenNodeTree(nodes)
 
-    fnt
-      .groupBy(_.name)
-      .toList
-      .map { case (_, nodes) =>
-        val c = nodes.head.cost
-        val e = nodes.head.elemCost
-        val costCnt = nodes.groupBy(_.start.toInt)
-        val groups = costCnt.size
-        val batched = nodes.size - groups
-        groups * c + batched * e
-      }
-      .sumAll
+    // fnt
+    //   .groupBy(_.meta.map(_.name))
+    //   .toList
+    //   .collect { case (_, nodes) =>
+    //     val c = nodes.head.meta.get.cost
+    //     val e = nodes.head.meta.get.elemCost
+    //     val costCnt = nodes.groupBy(_.start.toInt)
+    //     val groups = costCnt.size
+    //     val batched = nodes.size - groups
+    //     groups * c + batched * e
+    //   }
+    //   .sumAll
+    0d
   }
 
   val q = """
