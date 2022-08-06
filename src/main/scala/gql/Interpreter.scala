@@ -118,6 +118,8 @@ object Interpreter {
       Supervisor[F].use { sup =>
         val flat = Optimizer.flattenNodeTree(plan)
 
+        val nodeMap = flat.toList.map(x => x.id -> x).toMap
+
         def unpackPrep(prep: Prepared[F, Any]): List[(Int, PreparedDataField[F, Any, Any])] =
           prep match {
             case PreparedLeaf(_, _) => Nil
@@ -138,39 +140,29 @@ object Interpreter {
 
         val dataFieldMap = flattenDataFieldMap(rootSel).toList.toMap
 
-        // TODO merge the two batch lookups into one: Map[Int, Ref[F, BatchExecutionState]]
-        val batches: Map[Int, (String, NonEmptyList[Optimizer.Node])] =
+        val batchStateMapF: F[Map[Int, Ref[F, BatchExecutionState]]] =
           flat
             .groupBy(_.end)
             .toList
             .zipWithIndex
-            .flatMap { case ((_, group), idx) =>
+            .flatTraverse { case ((_, group), idx) =>
               group
                 .groupBy(_.batchName)
                 .filter { case (o, nodes) => nodes.size > 1 && o.isDefined }
                 .toList
-                .flatMap { case (nodeType, nodes) =>
-                  val thisBatch = (s"$nodeType-$idx", nodes)
-                  nodes.map(n => n.id -> thisBatch).toList
+                .flatTraverse { case (nodeType, nodes) =>
+                  F.ref(BatchExecutionState(nodes.map(_.id).toList.toSet, Map.empty[Int, List[NodeValue]])).map { s =>
+                    nodes.map(_.id).toList.map(_ -> s)
+                  }
                 }
-            }
-            .toMap
-
-        val batchStateMapF: F[Map[String, Ref[F, BatchExecutionState]]] =
-          batches.values.toList
-            .distinctBy { case (k, _) => k }
-            .traverse { case (k, nodes) =>
-              F.ref(BatchExecutionState(nodes.map(_.id).toList.toSet, Map.empty[Int, List[NodeValue]])).map(k -> _)
             }
             .map(_.toMap)
 
         val forkJoinResultF: F[List[NodeValue]] =
           batchStateMapF.flatMap { batchStateMap =>
-            def getBatchState(nodeId: Int): Option[Ref[F, BatchExecutionState]] =
-              batches.get(nodeId).flatMap { case (k, _) => batchStateMap.get(k) }
-
             def submitAndMaybeStart(nodeId: Int, input: List[NodeValue]): F[StateSubmissionOutcome] =
-              getBatchState(nodeId)
+              batchStateMap
+                .get(nodeId)
                 .traverse(_.modify { s =>
                   val newSet = s.remainingInputs - nodeId
                   val newMap = s.inputMap + (nodeId -> input)
@@ -192,7 +184,9 @@ object Interpreter {
             def collapseInputs(
                 df: PreparedDataField[F, Any, Any],
                 inputs: List[NodeValue]
-            ): Either[F[List[NodeValue]], Batch] =
+            ): Either[F[List[NodeValue]], Batch] = {
+              val n = nodeMap(df.id)
+
               df.resolve match {
                 case PureResolution(resolve) =>
                   Left(F.pure(inputs.map(in => in.ided(df.id, resolve(in.value)))))
@@ -200,11 +194,10 @@ object Interpreter {
                   Left(inputs.parTraverse { in =>
                     resolve(in.value).timed
                       .flatMap { case (dur, value) =>
-                        // TODO get batch name with df.id from nodes (they shared id)
-                        submit("", dur, 1).as(in.ided(df.id, value))
+                        submit(n.name, dur, 1).as(in.ided(df.id, value))
                       }
                   })
-                case BatchedResolution(_, key, resolve) =>
+                case BatchedResolution(batchName, key, resolve) =>
                   Right(
                     Batch(
                       inputs.map(in => (in.cursor.ided(df.id), BatchKey(key(in.value)))),
@@ -213,11 +206,13 @@ object Interpreter {
                           .flatMap { case (dur, value) =>
                             val ys = value.map { case (k, v) => BatchKey(k) -> v }
                             // TODO get batch name with df.id from nodes (they shared id)
-                            submit("", dur, ys.size).as(ys)
+                            submit(batchName, dur, ys.size) >>
+                              submit(n.name, dur, ys.size).as(ys)
                           }
                     )
                   )
               }
+            }
 
             def startNext(df: PreparedDataField[F, Any, Any], outputs: List[NodeValue]): F[List[NodeValue]] = {
               def evalSel(s: Prepared[F, Any], in: List[NodeValue]): F[List[NodeValue]] =

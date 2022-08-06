@@ -48,7 +48,7 @@ object Optimizer {
         // Use parent typename + field as fallback name since this will be unique
         // it is of utmost importance that different resolvers don't get mixed into the same statistic
         // since this will destroy the prediction precision
-        val nodeName = s"${parentTypename.getOrElse("_root")}_$name"
+        val nodeName = s"${parentTypename.getOrElse("Query")}_$name"
 
         /*
          * We try to get by batch name first since this unifies a set of nodes that would otherwise have different names
@@ -59,8 +59,10 @@ object Optimizer {
          *
          * Would not be considered the same statistic unless expilictly stated via a batch resolver with the same name
          */
+        val bn = batchName.getOrElse(nodeName)
+
         stats
-          .getStatsOpt(batchName.getOrElse(nodeName))
+          .getStatsOpt(bn)
           .map {
             case None    => Statistics.Stats(1000d, 5d)
             case Some(x) => x

@@ -116,7 +116,6 @@ object Main extends App {
       .zip(fb.sortBy(_.id))
       .map { case (a, b) =>
         val per = math.max((maxEnd / 40d).toInt, 1)
-        println(s"for $maxEnd ${b.name}: ${a.start.toInt}/$per")
         val thisInfo =
           if (a.end.toInt != b.end.toInt) {
             (" " * (b.start.toInt / per)) + AnsiColor.RED_B + s"name: ${b.name}, cost: ${b.cost.toInt}, start: ${b.start}, end: ${b.end}, id: ${b.id}" + AnsiColor.RESET + "\n" +
@@ -138,21 +137,20 @@ object Main extends App {
   }
 
   def planCost(nodes: NonEmptyList[Optimizer.Node]): Double = {
-    // val fnt = Optimizer.flattenNodeTree(nodes)
+    val fnt = Optimizer.flattenNodeTree(nodes)
 
-    // fnt
-    //   .groupBy(_.meta.map(_.name))
-    //   .toList
-    //   .collect { case (_, nodes) =>
-    //     val c = nodes.head.meta.get.cost
-    //     val e = nodes.head.meta.get.elemCost
-    //     val costCnt = nodes.groupBy(_.start.toInt)
-    //     val groups = costCnt.size
-    //     val batched = nodes.size - groups
-    //     groups * c + batched * e
-    //   }
-    //   .sumAll
-    0d
+    fnt
+      .groupBy(_.name)
+      .toList
+      .collect { case (_, nodes) =>
+        val c = nodes.head.cost
+        val e = nodes.head.elemCost
+        val costCnt = nodes.groupBy(_.start.toInt)
+        val groups = costCnt.size
+        val batched = nodes.size - groups
+        groups * c + batched * e
+      }
+      .sumAll
   }
 
   val q = """
@@ -522,24 +520,27 @@ fragment F2 on Data {
       case Right(Right(x)) => Some(x)
     }
 
-  def go =
-    parseAndPrep(qn).map { x =>
-      implicit lazy val stats = Statistics[IO].unsafeRunSync()
+  {
+    def go =
+      parseAndPrep(qn).map { x =>
+        implicit lazy val stats = Statistics[IO].unsafeRunSync()
 
-      def planAndRun = {
-        val costTree = Optimizer.costTree[IO](x).unsafeRunSync()
-        val p = Optimizer.plan(costTree)
-        println(showDiff(p, costTree))
-        println(s"inital plan cost: ${planCost(costTree)}")
-        println(s"optimized plan cost: ${planCost(p)}")
-        println(Interpreter.Planned.run[IO]((), x, p).unsafeRunSync())
+        def planAndRun = {
+          val costTree = Optimizer.costTree[IO](x).unsafeRunSync()
+          val p = Optimizer.plan(costTree)
+          println(showDiff(p, costTree))
+          println(s"inital plan cost: ${planCost(costTree)}")
+          println(s"optimized plan cost: ${planCost(p)}")
+          println(Interpreter.Planned.run[IO]((), x, p).unsafeRunSync())
+        }
+
+        planAndRun
+        planAndRun
+        planAndRun
       }
 
-      planAndRun
-      planAndRun
-    }
-
-  go
+    go
+  }
 
   println(Render.renderSchema(schema))
 
@@ -562,164 +563,164 @@ query withNestedFragments {
     println(Interpreter.Planned.run[IO]((), x, p).unsafeRunSync())
   }
 
-  type H[A] = Fetch[IO, A]
-  implicit def asyncForFetch[F[_]](implicit F: Async[F]): Async[Fetch[F, *]] = {
-    type G[A] = Fetch[F, A]
-    new Async[G] {
-      override def map[A, B](fa: G[A])(f: A => B): G[B] =
-        fetch.fetchM[F].map(fa)(f)
+  // type H[A] = Fetch[IO, A]
+  // implicit def asyncForFetch[F[_]](implicit F: Async[F]): Async[Fetch[F, *]] = {
+  //   type G[A] = Fetch[F, A]
+  //   new Async[G] {
+  //     override def map[A, B](fa: G[A])(f: A => B): G[B] =
+  //       fetch.fetchM[F].map(fa)(f)
 
-      override def map2[A, B, Z](fa: G[A], fb: G[B])(f: (A, B) => Z): G[Z] =
-        fetch.fetchM[F].map2(fa, fb)(f)
+  //     override def map2[A, B, Z](fa: G[A], fb: G[B])(f: (A, B) => Z): G[Z] =
+  //       fetch.fetchM[F].map2(fa, fb)(f)
 
-      override def map2Eval[A, B, Z](fa: G[A], fb: Eval[G[B]])(
-          f: (A, B) => Z
-      ): Eval[G[Z]] = fetch.fetchM[F].map2Eval(fa, fb)(f)
+  //     override def map2Eval[A, B, Z](fa: G[A], fb: Eval[G[B]])(
+  //         f: (A, B) => Z
+  //     ): Eval[G[Z]] = fetch.fetchM[F].map2Eval(fa, fb)(f)
 
-      override def product[A, B](fa: G[A], fb: G[B]): G[(A, B)] =
-        fetch.fetchM[F].product(fa, fb)
+  //     override def product[A, B](fa: G[A], fb: G[B]): G[(A, B)] =
+  //       fetch.fetchM[F].product(fa, fb)
 
-      override def productR[A, B](fa: G[A])(fb: G[B]): G[B] =
-        fetch.fetchM[F].productR(fa)(fb)
+  //     override def productR[A, B](fa: G[A])(fb: G[B]): G[B] =
+  //       fetch.fetchM[F].productR(fa)(fb)
 
-      override def flatMap[A, B](fa: G[A])(f: A => G[B]): G[B] =
-        fetch.fetchM[F].flatMap(fa)(f)
+  //     override def flatMap[A, B](fa: G[A])(f: A => G[B]): G[B] =
+  //       fetch.fetchM[F].flatMap(fa)(f)
 
-      override def pure[A](x: A): G[A] = Fetch.pure(x)
+  //     override def pure[A](x: A): G[A] = Fetch.pure(x)
 
-      override def raiseError[A](e: Throwable): G[A] = Fetch.error(e)
+  //     override def raiseError[A](e: Throwable): G[A] = Fetch.error(e)
 
-      override def handleErrorWith[A](fa: G[A])(f: Throwable => G[A]): G[A] = {
-        val o =
-          Fetch
-            .run(fa.map[Either[A, G[A]]](Left(_)))
-            .handleError(x => Right(f(x)))
+  //     override def handleErrorWith[A](fa: G[A])(f: Throwable => G[A]): G[A] = {
+  //       val o =
+  //         Fetch
+  //           .run(fa.map[Either[A, G[A]]](Left(_)))
+  //           .handleError(x => Right(f(x)))
 
-        Fetch.liftF(o).flatMap {
-          case Left(x)  => Fetch.pure(x)
-          case Right(x) => x
-        }
-      }
+  //       Fetch.liftF(o).flatMap {
+  //         case Left(x)  => Fetch.pure(x)
+  //         case Right(x) => x
+  //       }
+  //     }
 
-      override def tailRecM[A, B](a: A)(f: A => G[Either[A, B]]): G[B] =
-        Monad[G].tailRecM[A, B](a)(f)
+  //     override def tailRecM[A, B](a: A)(f: A => G[Either[A, B]]): G[B] =
+  //       Monad[G].tailRecM[A, B](a)(f)
 
-      override def forceR[A, B](fa: G[A])(fb: G[B]): G[B] = {
-        val a = Fetch.run(fa)
-        val b = Fetch.run(fb)
-        Fetch.liftF(F.forceR(a)(b))
-      }
+  //     override def forceR[A, B](fa: G[A])(fb: G[B]): G[B] = {
+  //       val a = Fetch.run(fa)
+  //       val b = Fetch.run(fb)
+  //       Fetch.liftF(F.forceR(a)(b))
+  //     }
 
-      override def uncancelable[A](body: Poll[G] => G[A]): G[A] = {
-        val fa = F.uncancelable { poll =>
-          val poll2 =
-            new Poll[G] {
-              override def apply[A](fa: G[A]): G[A] =
-                Fetch.liftF(poll(Fetch.run(fa)))
-            }
-          Fetch.run(body(poll2))
-        }
-        Fetch.liftF(fa)
-      }
+  //     override def uncancelable[A](body: Poll[G] => G[A]): G[A] = {
+  //       val fa = F.uncancelable { poll =>
+  //         val poll2 =
+  //           new Poll[G] {
+  //             override def apply[A](fa: G[A]): G[A] =
+  //               Fetch.liftF(poll(Fetch.run(fa)))
+  //           }
+  //         Fetch.run(body(poll2))
+  //       }
+  //       Fetch.liftF(fa)
+  //     }
 
-      override def canceled: G[Unit] =
-        Fetch.liftF(F.canceled)
+  //     override def canceled: G[Unit] =
+  //       Fetch.liftF(F.canceled)
 
-      override def onCancel[A](fa: G[A], fin: G[Unit]): G[A] =
-        Fetch.liftF(Fetch.run(fa).onCancel(Fetch.run(fin)))
+  //     override def onCancel[A](fa: G[A], fin: G[Unit]): G[A] =
+  //       Fetch.liftF(Fetch.run(fa).onCancel(Fetch.run(fin)))
 
-      override def monotonic: G[FiniteDuration] =
-        Fetch.liftF(F.monotonic)
+  //     override def monotonic: G[FiniteDuration] =
+  //       Fetch.liftF(F.monotonic)
 
-      override def realTime: G[FiniteDuration] =
-        Fetch.liftF(F.realTime)
+  //     override def realTime: G[FiniteDuration] =
+  //       Fetch.liftF(F.realTime)
 
-      override def suspend[A](hint: cats.effect.kernel.Sync.Type)(thunk: => A): G[A] =
-        Fetch.liftF(F.suspend(hint)(thunk))
+  //     override def suspend[A](hint: cats.effect.kernel.Sync.Type)(thunk: => A): G[A] =
+  //       Fetch.liftF(F.suspend(hint)(thunk))
 
-      override def start[A](fa: G[A]): G[Fiber[G, Throwable, A]] = {
-        val fib: F[Fiber[F, Throwable, A]] = Fetch.run(fa).start
-        Fetch.liftF {
-          fib.map { x =>
-            new Fiber[G, Throwable, A] {
-              override def cancel: G[Unit] = Fetch.liftF(x.cancel)
-              override def join: G[Outcome[G, Throwable, A]] =
-                Fetch.liftF(x.join.map(_.mapK(new FunctionK[F, G] {
-                  override def apply[A](fa: F[A]): G[A] = Fetch.liftF(fa)
-                })))
-            }
-          }
-        }
-      }
+  //     override def start[A](fa: G[A]): G[Fiber[G, Throwable, A]] = {
+  //       val fib: F[Fiber[F, Throwable, A]] = Fetch.run(fa).start
+  //       Fetch.liftF {
+  //         fib.map { x =>
+  //           new Fiber[G, Throwable, A] {
+  //             override def cancel: G[Unit] = Fetch.liftF(x.cancel)
+  //             override def join: G[Outcome[G, Throwable, A]] =
+  //               Fetch.liftF(x.join.map(_.mapK(new FunctionK[F, G] {
+  //                 override def apply[A](fa: F[A]): G[A] = Fetch.liftF(fa)
+  //               })))
+  //           }
+  //         }
+  //       }
+  //     }
 
-      override def cede: G[Unit] =
-        Fetch.liftF(F.cede)
+  //     override def cede: G[Unit] =
+  //       Fetch.liftF(F.cede)
 
-      override def ref[A](a: A): G[Ref[G, A]] =
-        Fetch.liftF(
-          F
-            .ref(a)
-            .map(_.mapK(new FunctionK[F, G] {
-              override def apply[A](fa: F[A]): G[A] = Fetch.liftF(fa)
-            }))
-        )
+  //     override def ref[A](a: A): G[Ref[G, A]] =
+  //       Fetch.liftF(
+  //         F
+  //           .ref(a)
+  //           .map(_.mapK(new FunctionK[F, G] {
+  //             override def apply[A](fa: F[A]): G[A] = Fetch.liftF(fa)
+  //           }))
+  //       )
 
-      override def deferred[A]: G[Deferred[G, A]] =
-        Fetch.liftF(
-          F
-            .deferred[A]
-            .map(_.mapK(new FunctionK[F, G] {
-              override def apply[A](fa: F[A]): G[A] = Fetch.liftF(fa)
-            }))
-        )
+  //     override def deferred[A]: G[Deferred[G, A]] =
+  //       Fetch.liftF(
+  //         F
+  //           .deferred[A]
+  //           .map(_.mapK(new FunctionK[F, G] {
+  //             override def apply[A](fa: F[A]): G[A] = Fetch.liftF(fa)
+  //           }))
+  //       )
 
-      override def sleep(time: FiniteDuration): G[Unit] =
-        Fetch.liftF(F.sleep(time))
+  //     override def sleep(time: FiniteDuration): G[Unit] =
+  //       Fetch.liftF(F.sleep(time))
 
-      override def evalOn[A](fa: G[A], ec: ExecutionContext): G[A] =
-        Fetch.liftF(F.evalOn(Fetch.run(fa), ec))
+  //     override def evalOn[A](fa: G[A], ec: ExecutionContext): G[A] =
+  //       Fetch.liftF(F.evalOn(Fetch.run(fa), ec))
 
-      override def executionContext: G[ExecutionContext] =
-        Fetch.liftF(F.executionContext)
+  //     override def executionContext: G[ExecutionContext] =
+  //       Fetch.liftF(F.executionContext)
 
-      override def cont[K, R](body: cats.effect.kernel.Cont[G, K, R]): G[R] =
-        Async.defaultCont[G, K, R](body)
-    }
-  }
+  //     override def cont[K, R](body: cats.effect.kernel.Cont[G, K, R]): G[R] =
+  //       Async.defaultCont[G, K, R](body)
+  //   }
+  // }
 
-  val schema2 = Schema[H, Unit](
-    outputObject[H, Unit](
-      "Query",
-      "getData" -> pure(_ => root[H]),
-      "getDatas" -> pure(_ => datasRoot[H]),
-      "getInterface" -> pure(_ => (C("hey", "tun"): A)),
-      "getOther" -> pure(_ => (C("hey", "tun"): D)),
-      "doIdentity" -> pure(_ => IdentityData(2, "hello"))
-    ),
-    Map.empty
-  )
+  // val schema2 = Schema[H, Unit](
+  //   outputObject[H, Unit](
+  //     "Query",
+  //     "getData" -> pure(_ => root[H]),
+  //     "getDatas" -> pure(_ => datasRoot[H]),
+  //     "getInterface" -> pure(_ => (C("hey", "tun"): A)),
+  //     "getOther" -> pure(_ => (C("hey", "tun"): D)),
+  //     "doIdentity" -> pure(_ => IdentityData(2, "hello"))
+  //   ),
+  //   Map.empty
+  // )
 
-  def parseAndPrepFetch(q: String): Option[NonEmptyList[PreparedQuery.PreparedField[H, Any]]] =
-    p.parseAll(q).map(PreparedQuery.prepare(_, schema2, Map.empty)) match {
-      case Left(e) =>
-        println(errorMessage(q, e))
-        None
-      case Right(Left(x)) =>
-        println(x)
-        None
-      case Right(Right(x)) => Some(x)
-    }
+  // def parseAndPrepFetch(q: String): Option[NonEmptyList[PreparedQuery.PreparedField[H, Any]]] =
+  //   p.parseAll(q).map(PreparedQuery.prepare(_, schema2, Map.empty)) match {
+  //     case Left(e) =>
+  //       println(errorMessage(q, e))
+  //       None
+  //     case Right(Left(x)) =>
+  //       println(x)
+  //       None
+  //     case Right(Right(x)) => Some(x)
+  //   }
 
-  println("running with fetch")
+  // println("running with fetch")
 
-  parseAndPrepFetch(qn).map { x =>
-    implicit lazy val stats = Fetch.run(Statistics[H]).unsafeRunSync()
+  // parseAndPrepFetch(qn).map { x =>
+  //   implicit lazy val stats = Fetch.run(Statistics[H]).unsafeRunSync()
 
-    val costTree = Fetch.run(Optimizer.costTree[H](x)).unsafeRunSync()
-    val p = Optimizer.plan(costTree)
-    println(showDiff(p, costTree))
-    println(s"inital plan cost: ${planCost(costTree)}")
-    println(s"optimized plan cost: ${planCost(p)}")
-    println(Fetch.run(Interpreter.Planned.run[H]((), x, p)).unsafeRunSync())
-  }
+  //   val costTree = Fetch.run(Optimizer.costTree[H](x)).unsafeRunSync()
+  //   val p = Optimizer.plan(costTree)
+  //   println(showDiff(p, costTree))
+  //   println(s"inital plan cost: ${planCost(costTree)}")
+  //   println(s"optimized plan cost: ${planCost(p)}")
+  //   println(Fetch.run(Interpreter.Planned.run[H]((), x, p)).unsafeRunSync())
+  // }
 }
