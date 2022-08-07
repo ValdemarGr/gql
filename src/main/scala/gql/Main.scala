@@ -330,6 +330,7 @@ query withNestedFragments {
       F.delay(if (name == "John") 22 else 20),
       F.defer(getFriends[F](name))
     )
+
   import gql.syntax.out._
   import gql.syntax._
   implicit def intType[F[_]]: Output.Scalar[F, Int] = Output.Scalar("Int", Encoder.encodeInt)
@@ -357,7 +358,7 @@ query withNestedFragments {
     "InputData",
     (
       arg[Int]("value", Some(42)),
-      arg[String]("val2", Some("Hello"))
+      arg[String]("val2")
     ).mapN(InputData.apply)
   )
 
@@ -571,7 +572,7 @@ fragment F2 on Data {
 query withNestedFragments {
   doIdentity {
     value(num: 6, text: "world", xs: ["world", "hello"], input: {
-      val2: "world"
+      value: 42
     })
   }
 }
