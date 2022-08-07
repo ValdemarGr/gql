@@ -330,7 +330,7 @@ query withNestedFragments {
       F.delay(if (name == "John") 22 else 20),
       F.defer(getFriends[F](name))
     )
-  import gql.syntax._
+  import gql.syntax.out._
   implicit def intType[F[_]]: Output.Scalar[F, Int] = Output.Scalar("Int", Encoder.encodeInt)
 
   implicit def stringType[F[_]]: Output.Scalar[F, String] = Output.Scalar("String", Encoder.encodeString)
@@ -358,7 +358,7 @@ query withNestedFragments {
     ).tupled
 
   implicit def identityDataType[F[_]](implicit F: Async[F]): Output.Obj[F, IdentityData] =
-    outputObject[F, IdentityData](
+    obj[F, IdentityData](
       "IdentityData",
       "value" -> effectArg(valueArgs) { case (x, (y, z, hs)) =>
         F.pure(s"${x.value2} + $z - ${(x.value + y).toString()} - (${hs.mkString(",")})")
@@ -368,19 +368,16 @@ query withNestedFragments {
   final case class ServerData(value: Int)
 
   implicit def serverData[F[_]: Async]: Output.Obj[F, ServerData] =
-    outputObject[F, ServerData](
+    obj[F, ServerData](
       "ServerData",
       "value" -> pure(_.value)
     )
-
-  def getFromServer[F[_]](xs: Set[Int])(implicit F: Applicative[F]): F[Map[Int, ServerData]] =
-    F.pure(xs.map(i => i -> ServerData(i)).toMap)
 
   def serverBatch[F[_]](implicit F: Applicative[F]) =
     batchResolver[F, Int, ServerData]("sd-batch", xs => F.pure(xs.map(i => i -> ServerData(i)).toMap))
 
   implicit def dataType[F[_]: Async]: Output.Obj[F, Data[F]] =
-    outputObject[F, Data[F]](
+    obj[F, Data[F]](
       "Data",
       "a" -> pure(_.a),
       "b" -> effect(_.b),
@@ -391,15 +388,11 @@ query withNestedFragments {
     )
 
   implicit def otherDataType[F[_]: Async]: Output.Obj[F, OtherData[F]] =
-    outputObject[F, OtherData[F]](
+    obj[F, OtherData[F]](
       "OtherData",
       "value" -> pure(_.value),
       "d1" -> effect(_.d1)
     )
-
-  def satnh[F[_]: Async]: Output.Unification.Instance[F, Datas.Dat[F], Data[F]] = {
-    instance(dataType[F]).contramap[Datas.Dat[F]](_.value)
-  }
 
   implicit def datasType[F[_]: Async]: Output.Union[F, Datas[F]] =
     union[F, Datas[F]](
@@ -414,7 +407,7 @@ query withNestedFragments {
   object A {
     implicit def t[F[_]]: Output.Interface[F, A] =
       interface[F, A](
-        outputObject(
+        obj(
           "A",
           "a" -> pure(_ => "A")
         ),
@@ -429,7 +422,7 @@ query withNestedFragments {
   object D {
     implicit def t[F[_]]: Output.Interface[F, D] =
       interface[F, D](
-        outputObject(
+        obj(
           "D",
           "d" -> pure(_ => "D")
         ),
@@ -439,11 +432,11 @@ query withNestedFragments {
 
   final case class B(a: String) extends A
   object B {
-    implicit def t[F[_]]: Output.Obj[F, B] = outputObject[F, B]("B", "a" -> pure(_ => "B"), "b" -> pure(_ => Option("BO")))
+    implicit def t[F[_]]: Output.Obj[F, B] = obj[F, B]("B", "a" -> pure(_ => "B"), "b" -> pure(_ => Option("BO")))
   }
   final case class C(a: String, d: String) extends A with D
   object C {
-    implicit def t[F[_]]: Output.Obj[F, C] = outputObject[F, C]("C", "a" -> pure(_ => "C"), "d" -> pure(_ => "D"))
+    implicit def t[F[_]]: Output.Obj[F, C] = obj[F, C]("C", "a" -> pure(_ => "C"), "d" -> pure(_ => "D"))
   }
 
   def root[F[_]: Sync]: Data[F] = getData[F]("John")
@@ -512,7 +505,7 @@ fragment F2 on Data {
   """
 
   val schema = Schema[IO, Unit](
-    outputObject[IO, Unit](
+    obj[IO, Unit](
       "Query",
       "getData" -> pure(_ => root[IO]),
       "getDatas" -> pure(_ => datasRoot[IO]),

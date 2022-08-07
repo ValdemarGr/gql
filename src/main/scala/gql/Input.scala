@@ -28,14 +28,14 @@ object Input {
       else of.decode(value).map(Some(_))
   }
 
-  // optimization, use a stack instead of a map since we know the order of decoders
-  final case class Object[A](
+  // optimization, use a stack instead of a map since we know the order of decoders (look at args)
+  final case class Obj[A](
       name: String,
-      fields: NonEmptyList[Object.Field[_]],
+      fields: NonEmptyList[Obj.Field[_]],
       decoder: Map[String, _] => A
   ) extends Input[A] {
-    def addField[B](newField: Object.Field[B]): Object[(A, B)] =
-      Object(name, newField :: fields, m => (decoder(m), m(newField.name).asInstanceOf[B]))
+    def addField[B](newField: Obj.Field[B]): Obj[(A, B)] =
+      Obj(name, newField :: fields, m => (decoder(m), m(newField.name).asInstanceOf[B]))
 
     def decode(value: Value): Either[String, A] = {
       value match {
@@ -76,9 +76,9 @@ object Input {
       }
     }
   }
-  object Object {
+  object Obj {
     final case class Fields[A](
-        fields: NonEmptyVector[Object.Field[_]],
+        fields: NonEmptyVector[Field[_]],
         decoder: List[_] => (List[_], A)
     )
     object Fields {
