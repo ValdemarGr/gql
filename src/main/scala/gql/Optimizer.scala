@@ -15,6 +15,7 @@ import cats.mtl.Stateful
 import gql.Output.Fields.BatchedResolution
 import gql.Output.Fields.DeferredResolution
 import gql.Output.Fields.PureResolution
+import cats.Eval
 
 object Optimizer {
   final case class Node(
@@ -91,11 +92,16 @@ object Optimizer {
   )(implicit stats: Statistics[F]): F[NonEmptyList[Node]] =
     constructCostTree[F](0d, prepared, None)
 
-  def flattenNodeTree(xs: NonEmptyList[Node]): NonEmptyList[Node] =
-    xs.flatMap {
-      case n @ Node(_, _, _, _, _, _, Nil)     => NonEmptyList.one(n)
-      case n @ Node(_, _, _, _, _, _, x :: xs) => NonEmptyList.one(n) ++ flattenNodeTree(NonEmptyList(x, xs)).toList
+  def flattenNodeTree(root: NonEmptyList[Node]): NonEmptyList[Node] = {
+    def go(xs: NonEmptyList[Node]): Eval[NonEmptyList[Node]] = Eval.defer {
+      xs.flatTraverse {
+        case n @ Node(_, _, _, _, _, _, Nil)     => Eval.now(NonEmptyList.one(n))
+        case n @ Node(_, _, _, _, _, _, x :: xs) => go(NonEmptyList(x, xs)).map(ns => NonEmptyList.one(n).concatNel(ns))
+      }
     }
+
+    go(root).value
+  }
 
   def plan(nodes: NonEmptyList[Node]): NonEmptyList[Node] = {
     val flatNodes = flattenNodeTree(nodes)
