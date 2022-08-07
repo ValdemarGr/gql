@@ -65,14 +65,37 @@ object syntax {
       Eval.later(tpe)
     )
 
+  def pureArg[F[_], I, T, A](
+      arg: Output.Fields.Arg[A]
+  )(resolver: (I, A) => T)(implicit tpe: => Output[F, T]): Output.Fields.Field[F, I, T] =
+    Output.Fields.ArgField[F, I, T, A](
+      arg,
+      Output.Fields.PureResolution { case (i, a) => resolver(i, a) },
+      Eval.later(tpe)
+    )
+
   def arg[A](name: String, default: Option[A] = None)(implicit tpe: Input[A]): Output.Fields.Arg[A] =
     Output.Fields.Arg.initial[A](Output.Fields.ArgParam(name, tpe, default))
 
-  def batch[F[_], I, T, K](batchName: String, key: I => F[K], resolve: Set[K] => F[Map[K, T]])(implicit
+  final case class BatchResolver[F[_], K, T](
+      batchName: String,
+      resolver: Set[K] => F[Map[K, T]]
+  )
+
+  def batchResolver[F[_], K, T](batchName: String, resolver: Set[K] => F[Map[K, T]]): BatchResolver[F, K, T] =
+    BatchResolver(batchName, resolver)
+
+  def batchPure[F[_], I, T, K](batchRes: BatchResolver[F, K, T])(key: I => K)(implicit
+      tpe: => Output[F, T],
+      F: Applicative[F]
+  ): Output.Fields.Field[F, I, T] =
+    batchEffect[F, I, T, K](batchRes)(key.andThen(F.pure))(tpe)
+
+  def batchEffect[F[_], I, T, K](batchRes: BatchResolver[F, K, T])(key: I => F[K])(implicit
       tpe: => Output[F, T]
   ): Output.Fields.Field[F, I, T] =
     Output.Fields.SimpleField[F, I, T](
-      Output.Fields.BatchedResolution(batchName, key, resolve),
+      Output.Fields.BatchedResolution(batchRes.batchName, key, batchRes.resolver),
       Eval.later(tpe)
     )
 }

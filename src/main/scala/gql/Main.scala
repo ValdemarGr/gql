@@ -376,12 +376,17 @@ query withNestedFragments {
   def getFromServer[F[_]](xs: Set[Int])(implicit F: Applicative[F]): F[Map[Int, ServerData]] =
     F.pure(xs.map(i => i -> ServerData(i)).toMap)
 
+  def serverBatch[F[_]](implicit F: Applicative[F]) =
+    batchResolver[F, Int, ServerData]("sd-batch", xs => F.pure(xs.map(i => i -> ServerData(i)).toMap))
+
   implicit def dataType[F[_]: Async]: Output.Obj[F, Data[F]] =
     outputObject[F, Data[F]](
       "Data",
       "a" -> pure(_.a),
       "b" -> effect(_.b),
-      "sd" -> batch("sd-batch", _.b, getFromServer[F]),
+      "sd" -> batchEffect(serverBatch[F]) { x =>
+        x.b.map(_ * 2)
+      },
       "c" -> effect(_.c.map(_.toVector))
     )
 

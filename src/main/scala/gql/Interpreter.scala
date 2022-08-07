@@ -209,7 +209,6 @@ object Interpreter {
                           xs =>
                             resolve(xs.map(_.k)).timed
                               .flatMap { case (dur, value) =>
-                                println(s"resolved $xs to $value with $zs")
                                 val ys = value.map { case (k, v) => BatchKey(k) -> v }
                                 submit(batchName, dur, ys.size) >>
                                   submit(n.name, dur, ys.size).as(ys)

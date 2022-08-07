@@ -17,14 +17,6 @@ sealed trait ToplevelOutput[F[_], +A] extends Output[F, A] {
   def name: String
 }
 
-sealed trait Unifyable[F[_], A] extends ToplevelOutput[F, A] {
-  def instances: Map[String, Output.Unification.Instance[F, A, _]]
-}
-
-sealed trait Selectable[F[_], A] extends Output[F, A] {
-  def fieldMap: Map[String, Output.Fields.Field[F, A, _]]
-}
-
 sealed trait ObjectLike[F[_], A] extends ToplevelOutput[F, A] {
   def fieldsList: List[(String, Output.Fields.Field[F, A, _])]
 
@@ -52,8 +44,6 @@ object Output {
       fields: NonEmptyList[(String, Fields.Field[F, A, _])]
   ) extends Output[F, A]
       with ToplevelOutput[F, A]
-      with Selectable[F, A]
-      with Unifyable[F, A]
       with ObjectLike[F, A] {
 
     override def mapK[G[_]](fk: F ~> G): Interface[G, A] =
@@ -112,7 +102,6 @@ object Output {
       fields: NonEmptyList[(String, Fields.Field[F, A, _])]
   ) extends Output[F, A]
       with ToplevelOutput[F, A]
-      with Selectable[F, A]
       with ObjectLike[F, A] {
     lazy val fieldsList: List[(String, gql.Output.Fields.Field[F, A, _])] = fields.toList
 
@@ -236,9 +225,7 @@ object Output {
       name: String,
       types: NonEmptyMap[String, Unification.Instance[F, A, Any]]
   ) extends Output[F, A]
-      with Unifyable[F, A]
       with ObjectLike[F, A]
-      with Selectable[F, A]
       with ToplevelOutput[F, A] {
 
     override def contramap[B](f: B => A): Union[F, B] =
