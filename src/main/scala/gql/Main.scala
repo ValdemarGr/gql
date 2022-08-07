@@ -555,7 +555,7 @@ fragment F2 on Data {
           println(showDiff(p, costTree))
           println(s"inital plan cost: ${planCost(costTree)}")
           println(s"optimized plan cost: ${planCost(p)}")
-          println(Interpreter.Planned.run[IO]((), x, p).unsafeRunSync())
+          println(Interpreter.run[IO]((), x, p).unsafeRunSync())
         }
 
         planAndRun
@@ -573,6 +573,7 @@ query withNestedFragments {
   doIdentity {
     value(num: 6, text: "world", xs: ["world", "hello"], input: {
       value: 42
+      val2: "holla"
     })
   }
 }
@@ -586,6 +587,6 @@ query withNestedFragments {
     println(showDiff(p, costTree))
     println(s"inital plan cost: ${planCost(costTree)}")
     println(s"optimized plan cost: ${planCost(p)}")
-    println(Interpreter.Planned.run[IO]((), x, p).unsafeRunSync())
+    println(Interpreter.run[IO]((), x, p).unsafeRunSync())
   }
 }
