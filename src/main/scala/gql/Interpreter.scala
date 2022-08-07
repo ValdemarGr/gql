@@ -184,33 +184,39 @@ object Interpreter {
             def collapseInputs(
                 df: PreparedDataField[F, Any, Any],
                 inputs: List[NodeValue]
-            ): Either[F[List[NodeValue]], Batch] = {
+            ): F[Either[List[NodeValue], Batch]] = {
               val n = nodeMap(df.id)
 
               df.resolve match {
                 case PureResolution(resolve) =>
-                  Left(F.pure(inputs.map(in => in.ided(df.id, resolve(in.value)))))
+                  F.pure(Left(inputs.map(in => in.ided(df.id, resolve(in.value)))))
                 case DeferredResolution(resolve) =>
-                  Left(inputs.parTraverse { in =>
-                    resolve(in.value).timed
-                      .flatMap { case (dur, value) =>
-                        submit(n.name, dur, 1).as(in.ided(df.id, value))
-                      }
-                  })
+                  inputs
+                    .parTraverse { in =>
+                      resolve(in.value).timed
+                        .flatMap { case (dur, value) =>
+                          submit(n.name, dur, 1).as(in.ided(df.id, value))
+                        }
+                    }
+                    .map(Left(_))
                 case BatchedResolution(batchName, key, resolve) =>
-                  Right(
-                    Batch(
-                      inputs.map(in => (in.cursor.ided(df.id), BatchKey(key(in.value)))),
-                      xs =>
-                        resolve(xs.map(_.k)).timed
-                          .flatMap { case (dur, value) =>
-                            val ys = value.map { case (k, v) => BatchKey(k) -> v }
-                            // TODO get batch name with df.id from nodes (they shared id)
-                            submit(batchName, dur, ys.size) >>
-                              submit(n.name, dur, ys.size).as(ys)
-                          }
-                    )
-                  )
+                  inputs
+                    .parTraverse(in => key(in.value).map(x => (in.cursor.ided(df.id), BatchKey(x))))
+                    .map { zs =>
+                      Right(
+                        Batch(
+                          zs,
+                          xs =>
+                            resolve(xs.map(_.k)).timed
+                              .flatMap { case (dur, value) =>
+                                println(s"resolved $xs to $value with $zs")
+                                val ys = value.map { case (k, v) => BatchKey(k) -> v }
+                                submit(batchName, dur, ys.size) >>
+                                  submit(n.name, dur, ys.size).as(ys)
+                              }
+                        )
+                      )
+                    }
               }
             }
 
@@ -243,8 +249,8 @@ object Interpreter {
                     // No batching state, so just start
                     case NoState =>
                       val batchSize = input.size
-                      collapseInputs(df, input) match {
-                        case Left(value) => value.flatMap(startNext(df, _))
+                      collapseInputs(df, input).flatMap {
+                        case Left(value) => startNext(df, value)
                         case Right(value) =>
                           val keys = value.inputs
 
@@ -261,38 +267,33 @@ object Interpreter {
                     case FinalSubmission(inputs) =>
                       val inputLst = inputs.toList
 
-                      val (trivial, batched) =
-                        inputLst
-                          .map { case (k, v) => dataFieldMap(k) -> v }
-                          .partitionEither { case (df, v) =>
-                            collapseInputs(df, v) match {
-                              case Left(value)  => Left(df -> value)
-                              case Right(value) => Right(df -> value)
-                            }
-                          }
+                      inputLst
+                        .map { case (k, v) => dataFieldMap(k) -> v }
+                        .parTraverse { case (df, v) => collapseInputs(df, v).map(df -> _) }
+                        .map(_.partitionEither { case (df, e) => e.bimap((df, _), (df, _)) })
+                        .flatMap { case (trivial, batched) =>
+                          val trivialF = trivial.parFlatTraverse { case (df, fas) => startNext(df, fas) }
 
-                      val trivialF =
-                        trivial.parFlatTraverse { case (df, fas) => fas.flatMap(outputs => startNext(df, outputs)) }
+                          val batchedF =
+                            batched.toNel
+                              .traverse { nel =>
+                                val (_, b) = nel.head
 
-                      val batchedF =
-                        batched.toNel
-                          .traverse { nel =>
-                            val (_, b) = nel.head
+                                val keys = nel.toList.flatMap { case (_, b) => b.inputs.map { case (_, k) => k } }.toSet
 
-                            val keys = nel.toList.flatMap { case (_, b) => b.inputs.map { case (_, k) => k } }.toSet
-
-                            b.resolve(keys).flatMap { resultLookup =>
-                              nel.toList.parFlatTraverse { case (df, b) =>
-                                val mappedValues = b.inputs.map { case (c, k) => NodeValue(c, resultLookup(k)) }
-                                startNext(df, mappedValues)
+                                b.resolve(keys).flatMap { resultLookup =>
+                                  nel.toList.parFlatTraverse { case (df, b) =>
+                                    val mappedValues = b.inputs.map { case (c, k) => NodeValue(c, resultLookup(k)) }
+                                    startNext(df, mappedValues)
+                                  }
+                                }
                               }
-                            }
-                          }
-                          .map(_.toList.flatten)
+                              .map(_.toList.flatten)
 
-                      // fork each node's continuation
-                      // in parallel, start every node's computation
-                      (trivialF, batchedF).mapN(_ ++ _)
+                          // fork each node's continuation
+                          // in parallel, start every node's computation
+                          (trivialF, batchedF).mapN(_ ++ _)
+                        }
                   }
               }
 

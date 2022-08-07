@@ -67,4 +67,12 @@ object syntax {
 
   def arg[A](name: String, default: Option[A] = None)(implicit tpe: Input[A]): Output.Fields.Arg[A] =
     Output.Fields.Arg.initial[A](Output.Fields.ArgParam(name, tpe, default))
+
+  def batch[F[_], I, T, K](batchName: String, key: I => F[K], resolve: Set[K] => F[Map[K, T]])(implicit
+      tpe: => Output[F, T]
+  ): Output.Fields.Field[F, I, T] =
+    Output.Fields.SimpleField[F, I, T](
+      Output.Fields.BatchedResolution(batchName, key, resolve),
+      Eval.later(tpe)
+    )
 }

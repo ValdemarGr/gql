@@ -118,10 +118,10 @@ object Main extends App {
         val per = math.max((maxEnd / 40d).toInt, 1)
         val thisInfo =
           if (a.end.toInt != b.end.toInt) {
-            (" " * (b.start.toInt / per)) + AnsiColor.RED_B + s"name: ${b.name}, cost: ${b.cost.toInt}, start: ${b.start}, end: ${b.end}, id: ${b.id}" + AnsiColor.RESET + "\n" +
-              (" " * (b.start.toInt / per)) + AnsiColor.BLUE_B + (">" * ((a.start - b.start).toInt / per)) + AnsiColor.GREEN_B + s"name: ${a.name}, cost: ${a.cost.toInt}, start: ${a.start}, end: ${a.end}, id: ${a.id}" + AnsiColor.RESET + "\n"
+            (" " * (b.start.toInt / per)) + AnsiColor.RED_B + s"name: ${b.name}, batchName: ${b.batchName}, cost: ${b.cost.toInt}, start: ${b.start}, end: ${b.end}, id: ${b.id}" + AnsiColor.RESET + "\n" +
+              (" " * (b.start.toInt / per)) + AnsiColor.BLUE_B + (">" * ((a.start - b.start).toInt / per)) + AnsiColor.GREEN_B + s"name: ${a.name}, batchName: ${b.batchName}, cost: ${a.cost.toInt}, start: ${a.start}, end: ${a.end}, id: ${a.id}" + AnsiColor.RESET + "\n"
           } else
-            (" " * (a.start.toInt / per)) + s"name: ${a.name}, cost: ${a.cost.toInt}, start: ${a.start}, end: ${a.end}, id: ${a.id}\n"
+            (" " * (a.start.toInt / per)) + s"name: ${a.name}, batchName: ${b.batchName}, cost: ${a.cost.toInt}, start: ${a.start}, end: ${a.end}, id: ${a.id}\n"
 
         thisInfo + a.children.toNel.map(showDiff_(_, b.children.toNel.get, maxEnd)).mkString_("")
       }
@@ -296,20 +296,11 @@ query withNestedFragments {
         val (left, right) = q.splitAt(e.failedAtOffset)
         val conflict = s"<<${q(e.failedAtOffset)}>>"
         val chunk = s"${left.takeRight(40)}$conflict${right.drop(1).take(40)}"
-        // val chunk = q.drop(math.min(e.failedAtOffset - 10, 0)).take(20)
         val c = q(e.failedAtOffset)
         println(s"failed with char $c at offset ${e.failedAtOffset} with code ${c.toInt}: ${e.expected}")
         println(chunk)
       case Right(x) => println(x)
     }
-
-  // p.parseAll(q2).map { ed => }
-  // tryParse(p, q)
-  // tryParse(p, q2)
-  // tryParse(p, q3)
-  // tryParse(p, q4)
-  // tryParse(p, q5)
-  // tryParse(p, q6)
 
   final case class Data[F[_]](
       a: String,
@@ -352,8 +343,7 @@ query withNestedFragments {
 
   implicit val stringInput: Input.Scalar[String] = Input.Scalar("String", Decoder.decodeString)
 
-  implicit def listInputType[A](implicit tpe: Input[A]): Input[Vector[A]] =
-    Input.Arr(tpe)
+  implicit def listInputType[A](implicit tpe: Input[A]): Input[Vector[A]] = Input.Arr(tpe)
 
   final case class IdentityData(value: Int, value2: String)
 
@@ -366,6 +356,7 @@ query withNestedFragments {
       arg[String]("text"),
       arg[Vector[String]]("xs", Vector.empty.some)
     ).tupled
+
   implicit def identityDataType[F[_]](implicit F: Async[F]): Output.Obj[F, IdentityData] =
     outputObject[F, IdentityData](
       "IdentityData",
@@ -374,12 +365,24 @@ query withNestedFragments {
       }
     )
 
+  final case class ServerData(value: Int)
+
+  implicit def serverData[F[_]: Async]: Output.Obj[F, ServerData] =
+    outputObject[F, ServerData](
+      "ServerData",
+      "value" -> pure(_.value)
+    )
+
+  def getFromServer[F[_]](xs: Set[Int])(implicit F: Applicative[F]): F[Map[Int, ServerData]] =
+    F.pure(xs.map(i => i -> ServerData(i)).toMap)
+
   implicit def dataType[F[_]: Async]: Output.Obj[F, Data[F]] =
     outputObject[F, Data[F]](
       "Data",
       "a" -> pure(_.a),
-      "b" -> effect(_.b /*.delayBy(50.millis)*/ ),
-      "c" -> effect(_.c.map(_.toVector) /*.delayBy(250.millis)*/ )
+      "b" -> effect(_.b),
+      "sd" -> batch("sd-batch", _.b, getFromServer[F]),
+      "c" -> effect(_.c.map(_.toVector))
     )
 
   implicit def otherDataType[F[_]: Async]: Output.Obj[F, OtherData[F]] =
@@ -477,6 +480,9 @@ fragment F3 on A {
 fragment F2 on Data {
   a
   b
+  sd {
+    value
+  }
   c {
     a
     b
@@ -489,6 +495,9 @@ fragment F2 on Data {
       d1 {
         a
         b
+        sd {
+          value
+        }
         c {
           ... F2
         }
@@ -562,165 +571,4 @@ query withNestedFragments {
     println(s"optimized plan cost: ${planCost(p)}")
     println(Interpreter.Planned.run[IO]((), x, p).unsafeRunSync())
   }
-
-  // type H[A] = Fetch[IO, A]
-  // implicit def asyncForFetch[F[_]](implicit F: Async[F]): Async[Fetch[F, *]] = {
-  //   type G[A] = Fetch[F, A]
-  //   new Async[G] {
-  //     override def map[A, B](fa: G[A])(f: A => B): G[B] =
-  //       fetch.fetchM[F].map(fa)(f)
-
-  //     override def map2[A, B, Z](fa: G[A], fb: G[B])(f: (A, B) => Z): G[Z] =
-  //       fetch.fetchM[F].map2(fa, fb)(f)
-
-  //     override def map2Eval[A, B, Z](fa: G[A], fb: Eval[G[B]])(
-  //         f: (A, B) => Z
-  //     ): Eval[G[Z]] = fetch.fetchM[F].map2Eval(fa, fb)(f)
-
-  //     override def product[A, B](fa: G[A], fb: G[B]): G[(A, B)] =
-  //       fetch.fetchM[F].product(fa, fb)
-
-  //     override def productR[A, B](fa: G[A])(fb: G[B]): G[B] =
-  //       fetch.fetchM[F].productR(fa)(fb)
-
-  //     override def flatMap[A, B](fa: G[A])(f: A => G[B]): G[B] =
-  //       fetch.fetchM[F].flatMap(fa)(f)
-
-  //     override def pure[A](x: A): G[A] = Fetch.pure(x)
-
-  //     override def raiseError[A](e: Throwable): G[A] = Fetch.error(e)
-
-  //     override def handleErrorWith[A](fa: G[A])(f: Throwable => G[A]): G[A] = {
-  //       val o =
-  //         Fetch
-  //           .run(fa.map[Either[A, G[A]]](Left(_)))
-  //           .handleError(x => Right(f(x)))
-
-  //       Fetch.liftF(o).flatMap {
-  //         case Left(x)  => Fetch.pure(x)
-  //         case Right(x) => x
-  //       }
-  //     }
-
-  //     override def tailRecM[A, B](a: A)(f: A => G[Either[A, B]]): G[B] =
-  //       Monad[G].tailRecM[A, B](a)(f)
-
-  //     override def forceR[A, B](fa: G[A])(fb: G[B]): G[B] = {
-  //       val a = Fetch.run(fa)
-  //       val b = Fetch.run(fb)
-  //       Fetch.liftF(F.forceR(a)(b))
-  //     }
-
-  //     override def uncancelable[A](body: Poll[G] => G[A]): G[A] = {
-  //       val fa = F.uncancelable { poll =>
-  //         val poll2 =
-  //           new Poll[G] {
-  //             override def apply[A](fa: G[A]): G[A] =
-  //               Fetch.liftF(poll(Fetch.run(fa)))
-  //           }
-  //         Fetch.run(body(poll2))
-  //       }
-  //       Fetch.liftF(fa)
-  //     }
-
-  //     override def canceled: G[Unit] =
-  //       Fetch.liftF(F.canceled)
-
-  //     override def onCancel[A](fa: G[A], fin: G[Unit]): G[A] =
-  //       Fetch.liftF(Fetch.run(fa).onCancel(Fetch.run(fin)))
-
-  //     override def monotonic: G[FiniteDuration] =
-  //       Fetch.liftF(F.monotonic)
-
-  //     override def realTime: G[FiniteDuration] =
-  //       Fetch.liftF(F.realTime)
-
-  //     override def suspend[A](hint: cats.effect.kernel.Sync.Type)(thunk: => A): G[A] =
-  //       Fetch.liftF(F.suspend(hint)(thunk))
-
-  //     override def start[A](fa: G[A]): G[Fiber[G, Throwable, A]] = {
-  //       val fib: F[Fiber[F, Throwable, A]] = Fetch.run(fa).start
-  //       Fetch.liftF {
-  //         fib.map { x =>
-  //           new Fiber[G, Throwable, A] {
-  //             override def cancel: G[Unit] = Fetch.liftF(x.cancel)
-  //             override def join: G[Outcome[G, Throwable, A]] =
-  //               Fetch.liftF(x.join.map(_.mapK(new FunctionK[F, G] {
-  //                 override def apply[A](fa: F[A]): G[A] = Fetch.liftF(fa)
-  //               })))
-  //           }
-  //         }
-  //       }
-  //     }
-
-  //     override def cede: G[Unit] =
-  //       Fetch.liftF(F.cede)
-
-  //     override def ref[A](a: A): G[Ref[G, A]] =
-  //       Fetch.liftF(
-  //         F
-  //           .ref(a)
-  //           .map(_.mapK(new FunctionK[F, G] {
-  //             override def apply[A](fa: F[A]): G[A] = Fetch.liftF(fa)
-  //           }))
-  //       )
-
-  //     override def deferred[A]: G[Deferred[G, A]] =
-  //       Fetch.liftF(
-  //         F
-  //           .deferred[A]
-  //           .map(_.mapK(new FunctionK[F, G] {
-  //             override def apply[A](fa: F[A]): G[A] = Fetch.liftF(fa)
-  //           }))
-  //       )
-
-  //     override def sleep(time: FiniteDuration): G[Unit] =
-  //       Fetch.liftF(F.sleep(time))
-
-  //     override def evalOn[A](fa: G[A], ec: ExecutionContext): G[A] =
-  //       Fetch.liftF(F.evalOn(Fetch.run(fa), ec))
-
-  //     override def executionContext: G[ExecutionContext] =
-  //       Fetch.liftF(F.executionContext)
-
-  //     override def cont[K, R](body: cats.effect.kernel.Cont[G, K, R]): G[R] =
-  //       Async.defaultCont[G, K, R](body)
-  //   }
-  // }
-
-  // val schema2 = Schema[H, Unit](
-  //   outputObject[H, Unit](
-  //     "Query",
-  //     "getData" -> pure(_ => root[H]),
-  //     "getDatas" -> pure(_ => datasRoot[H]),
-  //     "getInterface" -> pure(_ => (C("hey", "tun"): A)),
-  //     "getOther" -> pure(_ => (C("hey", "tun"): D)),
-  //     "doIdentity" -> pure(_ => IdentityData(2, "hello"))
-  //   ),
-  //   Map.empty
-  // )
-
-  // def parseAndPrepFetch(q: String): Option[NonEmptyList[PreparedQuery.PreparedField[H, Any]]] =
-  //   p.parseAll(q).map(PreparedQuery.prepare(_, schema2, Map.empty)) match {
-  //     case Left(e) =>
-  //       println(errorMessage(q, e))
-  //       None
-  //     case Right(Left(x)) =>
-  //       println(x)
-  //       None
-  //     case Right(Right(x)) => Some(x)
-  //   }
-
-  // println("running with fetch")
-
-  // parseAndPrepFetch(qn).map { x =>
-  //   implicit lazy val stats = Fetch.run(Statistics[H]).unsafeRunSync()
-
-  //   val costTree = Fetch.run(Optimizer.costTree[H](x)).unsafeRunSync()
-  //   val p = Optimizer.plan(costTree)
-  //   println(showDiff(p, costTree))
-  //   println(s"inital plan cost: ${planCost(costTree)}")
-  //   println(s"optimized plan cost: ${planCost(p)}")
-  //   println(Fetch.run(Interpreter.Planned.run[H]((), x, p)).unsafeRunSync())
-  // }
 }

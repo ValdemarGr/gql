@@ -113,7 +113,14 @@ object Optimizer {
           // the maximum amount we can move down is the child with smallest start
           val maxEnd: Double = r.children match {
             case Nil     => m
-            case x :: xs => NonEmptyList(x, xs).map(_.start).minimum
+            case x :: xs =>
+              // use the already resolved if possible
+              val children = NonEmptyList(x, xs)
+
+              // TODO this is very inefficient
+              children
+                .map(c => handled.find(_.id == c.id).getOrElse(c).start)
+                .minimum
           }
 
           val newEnd =

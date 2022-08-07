@@ -145,10 +145,10 @@ object Output {
       override def contramap[B](g: B => I): Resolution[F, B, A] =
         DeferredResolution(g andThen resolve)
     }
-    final case class BatchedResolution[F[_], I, A, K](batchName: String, key: I => K, resolve: Set[K] => F[Map[K, A]])
+    final case class BatchedResolution[F[_], I, A, K](batchName: String, key: I => F[K], resolve: Set[K] => F[Map[K, A]])
         extends Resolution[F, I, A] {
       override def mapK[G[_]](fk: F ~> G): Resolution[G, I, A] =
-        BatchedResolution(batchName, key, resolve.andThen(fk.apply))
+        BatchedResolution(batchName, key.andThen(fk.apply), resolve.andThen(fk.apply))
 
       override def contramap[B](g: B => I): Resolution[F, B, A] =
         BatchedResolution(batchName, g andThen key, resolve)
