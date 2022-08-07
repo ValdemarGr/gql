@@ -331,6 +331,7 @@ query withNestedFragments {
       F.defer(getFriends[F](name))
     )
   import gql.syntax.out._
+  import gql.syntax._
   implicit def intType[F[_]]: Output.Scalar[F, Int] = Output.Scalar("Int", Encoder.encodeInt)
 
   implicit def stringType[F[_]]: Output.Scalar[F, String] = Output.Scalar("String", Encoder.encodeString)
@@ -347,6 +348,19 @@ query withNestedFragments {
 
   final case class IdentityData(value: Int, value2: String)
 
+  final case class InputData(
+      value: Int,
+      val2: String
+  )
+
+  implicit val inputDataType: Input[InputData] = in.obj[InputData](
+    "InputData",
+    (
+      arg[Int]("value", Some(42)),
+      arg[String]("val2", Some("Hello"))
+    ).mapN(InputData.apply)
+  )
+
   val valueArgs: Output.Fields.Arg[(Int, String, Vector[String])] =
     (
       (
@@ -357,11 +371,13 @@ query withNestedFragments {
       arg[Vector[String]]("xs", Vector.empty.some)
     ).tupled
 
+  val inputDataArg = arg[InputData]("input")
+
   implicit def identityDataType[F[_]](implicit F: Async[F]): Output.Obj[F, IdentityData] =
     obj[F, IdentityData](
       "IdentityData",
-      "value" -> effectArg(valueArgs) { case (x, (y, z, hs)) =>
-        F.pure(s"${x.value2} + $z - ${(x.value + y).toString()} - (${hs.mkString(",")})")
+      "value" -> effectArg((valueArgs, inputDataArg).tupled) { case (x, ((y, z, hs), i)) =>
+        F.pure(s"${x.value2} + $z - ${(x.value + y).toString()} - (${hs.mkString(",")}) - $i")
       }
     )
 
@@ -554,7 +570,9 @@ fragment F2 on Data {
   val inputQuery = """
 query withNestedFragments {
   doIdentity {
-    value(num: 6, text: "world", xs: ["world", "hello"])
+    value(num: 6, text: "world", xs: ["world", "hello"], input: {
+      val2: "world"
+    })
   }
 }
   """

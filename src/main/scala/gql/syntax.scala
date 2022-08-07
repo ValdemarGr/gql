@@ -5,6 +5,9 @@ import cats._
 import shapeless.Lazy
 import scala.reflect.ClassTag
 
-object syntax {
+object syntax extends syntax
+
+trait syntax {
   object out extends OutputSyntax
+  object in extends InputSyntax
 }

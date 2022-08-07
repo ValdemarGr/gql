@@ -5,7 +5,7 @@ import cats._
 import shapeless.Lazy
 import scala.reflect.ClassTag
 
-trait OutputSyntax {
+abstract class OutputSyntax {
   def obj[F[_], A](
       name: String,
       hd: (String, Output.Fields.Field[F, A, _]),
@@ -72,21 +72,16 @@ trait OutputSyntax {
   def arg[A](name: String, default: Option[A] = None)(implicit tpe: Input[A]): Output.Fields.Arg[A] =
     Output.Fields.Arg.initial[A](Output.Fields.ArgParam(name, tpe, default))
 
-  final case class BatchResolver[F[_], K, T](
-      batchName: String,
-      resolver: Set[K] => F[Map[K, T]]
-  )
+  def batchResolver[F[_], K, T](batchName: String, resolver: Set[K] => F[Map[K, T]]): OutputSyntax.BatchResolver[F, K, T] =
+    OutputSyntax.BatchResolver(batchName, resolver)
 
-  def batchResolver[F[_], K, T](batchName: String, resolver: Set[K] => F[Map[K, T]]): BatchResolver[F, K, T] =
-    BatchResolver(batchName, resolver)
-
-  def batchPure[F[_], I, T, K](batchRes: BatchResolver[F, K, T])(key: I => K)(implicit
+  def batchPure[F[_], I, T, K](batchRes: OutputSyntax.BatchResolver[F, K, T])(key: I => K)(implicit
       tpe: => Output[F, T],
       F: Applicative[F]
   ): Output.Fields.Field[F, I, T] =
     batchEffect[F, I, T, K](batchRes)(key.andThen(F.pure))(tpe)
 
-  def batchEffect[F[_], I, T, K](batchRes: BatchResolver[F, K, T])(key: I => F[K])(implicit
+  def batchEffect[F[_], I, T, K](batchRes: OutputSyntax.BatchResolver[F, K, T])(key: I => F[K])(implicit
       tpe: => Output[F, T]
   ): Output.Fields.Field[F, I, T] =
     Output.Fields.SimpleField[F, I, T](
@@ -96,6 +91,11 @@ trait OutputSyntax {
 }
 
 object OutputSyntax {
+  final case class BatchResolver[F[_], K, T](
+      batchName: String,
+      resolver: Set[K] => F[Map[K, T]]
+  )
+
   case class PartiallyAppliedContra[B](val dummy: Boolean = false) extends AnyVal {
     def apply[F[_], A](pf: PartialFunction[A, B])(implicit ol: ObjectLike[F, B]): Output.Unification.Instance[F, A, B] =
       Output.Unification.Instance[F, A, B](ol)(Output.Unification.Specify.make(pf.lift))

@@ -31,47 +31,62 @@ object Input {
   // optimization, use a stack instead of a map since we know the order of decoders (look at args)
   final case class Obj[A](
       name: String,
-      fields: NonEmptyList[Obj.Field[_]],
-      decoder: Map[String, _] => A
+      fields: Output.Fields.Arg[A]
+      // fields: NonEmptyList[Obj.Field[_]],
+      // decoder: Map[String, _] => A
   ) extends Input[A] {
-    def addField[B](newField: Obj.Field[B]): Obj[(A, B)] =
-      Obj(name, newField :: fields, m => (decoder(m), m(newField.name).asInstanceOf[B]))
+    // def addField[B](newField: Obj.Field[B]): Obj[(A, B)] =
+    //   Obj(name, newField :: fields, m => (decoder(m), m(newField.name).asInstanceOf[B]))
 
     def decode(value: Value): Either[String, A] = {
       value match {
         case JsonValue(jo) if jo.isObject =>
           val m = jo.asObject.get.toMap
 
-          fields
-            .traverse { field =>
-              val res =
-                m
-                  .get(field.name)
-                  .map(x => field.tpe.decode(JsonValue(x))) match {
-                  case Some(outcome) => outcome
-                  case None          => field.default.toRight(s"missing field ${field.name} in input object $name")
-                }
-
-              res.map(field.name -> _)
+          fields.entries
+            .traverse { a =>
+              m
+                .get(a.name)
+                .map(x => a.input.decode(JsonValue(x))) match {
+                case Some(outcome) => outcome
+                case None          => a.default.toRight(s"missing field ${a.name} in input object $name")
+              }
             }
-            .map(_.toList.toMap)
-            .map(decoder)
-
+            .map(_.toList)
+            .map { xs =>
+              val (_, o) = fields.decode(xs.asInstanceOf[List[Any]])
+              o
+            }
         case ObjectValue(xs) =>
-          fields
-            .traverse { field =>
-              val res =
-                xs
-                  .get(field.name)
-                  .map(field.tpe.decode) match {
-                  case Some(outcome) => outcome
-                  case None          => field.default.toRight(s"missing field ${field.name} in input object $name")
-                }
-
-              res.map(field.name -> _)
+          fields.entries
+            .traverse { a =>
+              xs
+                .get(a.name)
+                .map(x => a.input.decode(x)) match {
+                case Some(outcome) => outcome
+                case None          => a.default.toRight(s"missing field ${a.name} in input object $name")
+              }
             }
-            .map(_.toList.toMap)
-            .map(decoder)
+            .map(_.toList)
+            .map { xs =>
+              val (_, o) = fields.decode(xs.asInstanceOf[List[Any]])
+              o
+            }
+
+        // fields
+        //   .traverse { field =>
+        //     val res =
+        //       xs
+        //         .get(field.name)
+        //         .map(field.tpe.decode) match {
+        //         case Some(outcome) => outcome
+        //         case None          => field.default.toRight(s"missing field ${field.name} in input object $name")
+        //       }
+
+        //     res.map(field.name -> _)
+        //   }
+        //   .map(_.toList.toMap)
+        //   .map(decoder)
         case _ => Left(s"expected object for $name, got ${value.name}")
       }
     }
