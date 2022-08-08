@@ -52,7 +52,7 @@ object Render {
     }
   }
 
-  def renderFields[F[_], G[_]](xs: NonEmptyList[(String, Fields.Field[G, _, _])])(implicit
+  def renderFields[F[_], G[_]](xs: NonEmptyList[(String, Output.Field[G, _, _, _])])(implicit
       F: Monad[F],
       D: Defer[F],
       S: Stateful[F, RenderState[G]]

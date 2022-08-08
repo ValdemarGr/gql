@@ -31,7 +31,7 @@ object Input {
   // optimization, use a stack instead of a map since we know the order of decoders (look at args)
   final case class Obj[A](
       name: String,
-      fields: Output.Fields.Arg[A]
+      fields: Arg[A]
       // fields: NonEmptyList[Obj.Field[_]],
       // decoder: Map[String, _] => A
   ) extends Input[A] {

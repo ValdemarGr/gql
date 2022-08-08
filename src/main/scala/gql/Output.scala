@@ -18,9 +18,9 @@ sealed trait ToplevelOutput[F[_], +A] extends Output[F, A] {
 }
 
 sealed trait ObjectLike[F[_], A] extends ToplevelOutput[F, A] {
-  def fieldsList: List[(String, Output.Fields.Field[F, A, _])]
+  def fieldsList: List[(String, Output.Field[F, A, _, _])]
 
-  def fieldMap: Map[String, Output.Fields.Field[F, A, _]]
+  def fieldMap: Map[String, Output.Field[F, A, _, _]]
 
   override def mapK[G[_]: Functor](fk: F ~> G): ObjectLike[G, A]
 
@@ -41,7 +41,7 @@ object Output {
   final case class Interface[F[_], A](
       name: String,
       instances: Map[String, Unification.Instance[F, A, Any]],
-      fields: NonEmptyList[(String, Fields.Field[F, A, _])]
+      fields: NonEmptyList[(String, Field[F, A, _, _])]
   ) extends Output[F, A]
       with ToplevelOutput[F, A]
       with ObjectLike[F, A] {
@@ -99,11 +99,11 @@ object Output {
 
   final case class Obj[F[_], A](
       name: String,
-      fields: NonEmptyList[(String, Fields.Field[F, A, _])]
+      fields: NonEmptyList[(String, Field[F, A, _, _])]
   ) extends Output[F, A]
       with ToplevelOutput[F, A]
       with ObjectLike[F, A] {
-    lazy val fieldsList: List[(String, gql.Output.Fields.Field[F, A, _])] = fields.toList
+    lazy val fieldsList: List[(String, Field[F, A, _, _])] = fields.toList
 
     override def contramap[B](f: B => A): Obj[F, B] =
       Obj(name, fields.map { case (k, v) => k -> v.contramap(f) })
@@ -114,79 +114,24 @@ object Output {
       Obj(name, fields.map { case (k, v) => k -> v.mapK(fk) })
   }
 
-  object Fields {
-    sealed trait Field[F[_], I, T] {
-      def output: Eval[Output[F, T]]
+  final case class Field[F[_], I, T, A](
+      args: Arg[A],
+      resolve: Resolver[F, (I, A), T],
+      output: Eval[Output[F, T]]
+  ) {
+    def mapK[G[_]: Functor](fk: F ~> G): Field[G, I, T, A] =
+      Field[G, I, T, A](
+        args,
+        resolve.mapK(fk),
+        output.map(_.mapK(fk))
+      )
 
-      def mapK[G[_]: Functor](fk: F ~> G): Field[G, I, T]
-
-      def contramap[B](g: B => I): Field[F, B, T]
-    }
-
-    final case class SimpleField[F[_], I, T](
-        resolve: Resolver[F, I, T],
-        output: Eval[Output[F, T]]
-    ) extends Field[F, I, T] {
-      def mapK[G[_]: Functor](fk: F ~> G): Field[G, I, T] =
-        SimpleField(resolve.mapK(fk), output.map(_.mapK(fk)))
-
-      def contramap[B](g: B => I): SimpleField[F, B, T] = {
-        SimpleField(
-          resolve.contramap(g),
-          output
-        )
-      }
-    }
-
-    final case class ArgParam[A](
-        name: String,
-        input: Input[A],
-        default: Option[A] = None
-    )
-
-    final case class Arg[A](
-        entries: Vector[ArgParam[_]],
-        decode: List[_] => (List[_], A)
-    )
-    object Arg {
-      def initial[A](entry: ArgParam[A]): Arg[A] =
-        Arg(Vector(entry), { s => (s.tail, s.head.asInstanceOf[A]) })
-
-      implicit lazy val applyForArgs = new Apply[Arg] {
-        override def map[A, B](fa: Arg[A])(f: A => B): Arg[B] =
-          fa.copy(decode = fa.decode andThen { case (s, a) => (s, f(a)) })
-
-        override def ap[A, B](ff: Arg[A => B])(fa: Arg[A]): Arg[B] =
-          Arg(
-            ff.entries ++ fa.entries,
-            { s1 =>
-              val (s2, f) = ff.decode(s1)
-              val (s3, a) = fa.decode(s2)
-              (s3, f(a))
-            }
-          )
-      }
-    }
-
-    final case class ArgField[F[_], I, T, A](
-        args: Arg[A],
-        resolve: Resolver[F, (I, A), T],
-        output: Eval[Output[F, T]]
-    ) extends Field[F, I, T] {
-      def mapK[G[_]: Functor](fk: F ~> G): Field[G, I, T] =
-        ArgField[G, I, T, A](
-          args,
-          resolve.mapK(fk),
-          output.map(_.mapK(fk))
-        )
-
-      def contramap[B](g: B => I): ArgField[F, B, T, A] =
-        ArgField(
-          args,
-          resolve.contramap[(B, A)] { case (b, a) => (g(b), a) },
-          output
-        )
-    }
+    def contramap[B](g: B => I): Field[F, B, T, A] =
+      Field(
+        args,
+        resolve.contramap[(B, A)] { case (b, a) => (g(b), a) },
+        output
+      )
   }
 
   final case class Union[F[_], A](
@@ -203,7 +148,7 @@ object Output {
 
     lazy val fieldMap = Map.empty
 
-    lazy val fieldsList: List[(String, gql.Output.Fields.Field[F, A, _])] = Nil
+    lazy val fieldsList: List[(String, Field[F, A, _, _])] = Nil
 
     def mapK[G[_]: Functor](fk: F ~> G): Union[G, A] =
       Union(

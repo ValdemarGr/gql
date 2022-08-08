@@ -363,7 +363,7 @@ query withNestedFragments {
     ).mapN(InputData.apply)
   )
 
-  val valueArgs: Output.Fields.Arg[(Int, String, Vector[String])] =
+  val valueArgs: Arg[(Int, String, Vector[String])] =
     (
       (
         arg[Int]("num", Some(42)),

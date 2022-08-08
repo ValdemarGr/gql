@@ -155,8 +155,8 @@ object PreparedQuery {
     s.selections.traverse[F, PreparedField[G, Any]] {
       case GQLParser.Selection.FieldSelection(field) =>
         schemaMap.get(field.name) match {
-          case None                                      => F.raiseError(s"unknown field name ${field.name}")
-          case Some(f: Output.Fields.Field[G, Any, Any]) => prepareField[F, G](field, f, variableMap, fragments)
+          case None                                    => F.raiseError(s"unknown field name ${field.name}")
+          case Some(f: Output.Field[G, Any, Any, Any]) => prepareField[F, G](field, f, variableMap, fragments)
         }
       case GQLParser.Selection.InlineFragmentSelection(f) =>
         f.typeCondition match {
@@ -182,23 +182,23 @@ object PreparedQuery {
 
   def closeFieldParameters[F[_], G[_]](
       gqlField: GQLParser.Field,
-      field: Output.Fields.Field[G, Any, Any],
+      field: Output.Field[G, Any, Any, Any],
       variableMap: Map[String, Json]
   )(implicit
       S: Stateful[F, AnalysisState],
       F: MonadError[F, String],
       D: Defer[F]
   ): F[(Resolver[G, Any, Any], Output[G, Any])] =
-    (field, gqlField.arguments) match {
-      case (Output.Fields.SimpleField(_, _), Some(_)) =>
-        F.raiseError(s"field ${gqlField.name} has arguments, but none were expected")
-      case (Output.Fields.SimpleField(resolve, graphqlType), None) =>
-        // val nr = resolve.asInstanceOf[Any => Output.Fields.Resolution[G, Any]]
-        F.pure((resolve, graphqlType.value))
-      case (Output.Fields.ArgField(args, _, _), None) =>
-        F.raiseError(s"no arguments provided for ${gqlField.name}, expected ${args.entries.size}")
-      case (Output.Fields.ArgField(args, resolve, graphqlType), Some(provided)) =>
-        val providedMap = provided.nel.toList.map(x => x.name -> x.value).toMap
+    (field, gqlField.arguments.toList.flatMap(_.nel.toList)) match {
+      // case (Output.Fields.SimpleField(_, _), Some(_)) =>
+      //   F.raiseError(s"field ${gqlField.name} has arguments, but none were expected")
+      // case (Output.Fields.SimpleField(resolve, graphqlType), None) =>
+      //   // val nr = resolve.asInstanceOf[Any => Output.Fields.Resolution[G, Any]]
+      //   F.pure((resolve, graphqlType.value))
+      // case (Output.Fields.ArgField(args, _, _), None) =>
+      //   F.raiseError(s"no arguments provided for ${gqlField.name}, expected ${args.entries.size}")
+      case (Output.Field(args, resolve, graphqlType), provided) =>
+        val providedMap = provided.map(x => x.name -> x.value).toMap
         val argResolution =
           args.entries
             .traverse { arg =>
@@ -220,7 +220,7 @@ object PreparedQuery {
 
   def prepareField[F[_], G[_]](
       gqlField: GQLParser.Field,
-      field: Output.Fields.Field[G, Any, Any],
+      field: Output.Field[G, Any, Any, Any],
       variableMap: Map[String, Json],
       fragments: Map[String, GQLParser.FragmentDefinition]
   )(implicit
