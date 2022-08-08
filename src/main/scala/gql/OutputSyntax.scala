@@ -46,7 +46,7 @@ abstract class OutputSyntax {
       Eval.later(tpe)
     )
 
-  def effectArg[F[_], I, T, A](arg: Output.Fields.Arg[A])(resolver: (I, A) => F[T])(implicit
+  def effect[F[_], I, T, A](arg: Output.Fields.Arg[A])(resolver: (I, A) => F[T])(implicit
       tpe: => Output[F, T]
   ): Output.Fields.Field[F, I, T] =
     Output.Fields.ArgField[F, I, T, A](
@@ -76,6 +76,44 @@ abstract class OutputSyntax {
   def batchResolver[F[_], K, T](batchName: String, resolver: Set[K] => F[Map[K, T]]): Resolver.Batcher[F, K, T] =
     Resolver.Batcher(batchName, resolver)
 
+  def batch[F[_]: Functor, I, K, A, T](batchRes: Resolver.Batcher[F, K, T])(execute: I => F[(List[K], List[(K, T)] => F[A])])(implicit
+      tpe: => Output[F, A],
+      F: Applicative[F]
+  ): Output.Fields.Field[F, I, A] =
+    Output.Fields.SimpleField[F, I, A](
+      Resolver.Batched[F, I, K, A, T](
+        execute
+          .andThen(_.map { case (ks, post) =>
+            Resolver.Batch(ks, post)
+          }),
+        batchRes
+      ),
+      Eval.later(tpe)
+    )
+
+  def batchTraverse[F[_]: Functor, G[_]: Traverse, I, T, K](batchRes: Resolver.Batcher[F, K, T])(keys: I => F[G[K]])(implicit
+      tpe: => Output[F, G[T]],
+      F: Applicative[F]
+  ): Output.Fields.Field[F, I, G[T]] = {
+    implicit lazy val tpe2 = tpe
+    batch[F, I, K, G[T], T](batchRes) { i =>
+      keys(i).map { gk =>
+        (
+          gk.toList,
+          { xs =>
+            val arr = xs.toVector
+            F.pure {
+              gk.mapWithIndex { case (_, i) =>
+                val (_, v) = xs(i)
+                v
+              }
+            }
+          }
+        )
+      }
+    }
+  }
+
   def batchPure[F[_], I, T, K](batchRes: Resolver.Batcher[F, K, T])(key: I => K)(implicit
       tpe: => Output[F, T],
       F: Applicative[F]
@@ -90,7 +128,7 @@ abstract class OutputSyntax {
   ): Output.Fields.Field[F, I, T] =
     Output.Fields.SimpleField[F, I, T](
       Resolver.Batched[F, I, K, T, T](
-        key.andThen(fk => fk.map(k => Resolver.Batch(List(k), xs => F.pure(xs.map { case (_, v) => v }.head)))),
+        key.andThen(_.map(k => Resolver.Batch(List(k), xs => F.pure(xs.map { case (_, v) => v }.head)))),
         batchRes
       ),
       Eval.later(tpe)

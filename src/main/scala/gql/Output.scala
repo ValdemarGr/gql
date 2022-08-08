@@ -145,12 +145,12 @@ object Output {
     )
 
     final case class Arg[A](
-        entries: NonEmptyVector[ArgParam[_]],
+        entries: Vector[ArgParam[_]],
         decode: List[_] => (List[_], A)
     )
     object Arg {
       def initial[A](entry: ArgParam[A]): Arg[A] =
-        Arg(NonEmptyVector.one(entry), { s => (s.tail, s.head.asInstanceOf[A]) })
+        Arg(Vector(entry), { s => (s.tail, s.head.asInstanceOf[A]) })
 
       implicit lazy val applyForArgs = new Apply[Arg] {
         override def map[A, B](fa: Arg[A])(f: A => B): Arg[B] =
@@ -158,7 +158,7 @@ object Output {
 
         override def ap[A, B](ff: Arg[A => B])(fa: Arg[A]): Arg[B] =
           Arg(
-            ff.entries ++: fa.entries,
+            ff.entries ++ fa.entries,
             { s1 =>
               val (s2, f) = ff.decode(s1)
               val (s3, a) = fa.decode(s2)

@@ -378,7 +378,7 @@ query withNestedFragments {
   implicit def identityDataType[F[_]](implicit F: Async[F]): Output.Obj[F, IdentityData] =
     obj[F, IdentityData](
       "IdentityData",
-      "value" -> effectArg((valueArgs, inputDataArg).tupled) { case (x, ((y, z, hs), i)) =>
+      "value" -> effect((valueArgs, inputDataArg).tupled) { case (x, ((y, z, hs), i)) =>
         F.pure(s"${x.value2} + $z - ${(x.value + y).toString()} - (${hs.mkString(",")}) - $i")
       }
     )
@@ -394,14 +394,14 @@ query withNestedFragments {
   final case class DataIds(ids: List[Int])
 
   def serverBatch[F[_]](implicit F: Applicative[F]) =
-    batchResolver[F, DataIds, Seq[ServerData]]("sd-batch", x => F.pure(x.map(ys => ys -> ys.ids.map(ServerData(_))).toMap))
+    batchResolver[F, Int, ServerData]("sd-batch", xs => F.pure(xs.map(x => x -> ServerData(x)).toMap))
 
   implicit def dataType[F[_]: Async]: Output.Obj[F, Data[F]] =
     obj[F, Data[F]](
       "Data",
       "a" -> pure(_.a),
       "b" -> effect(_.b),
-      "sd" -> batchEffect(serverBatch[F])(_.b.map(i => DataIds(List(i, i + 1, i * 2)))),
+      "sd" -> batchTraverse(serverBatch[F])(_.b.map(i => Seq(i, i + 1, i * 2))),
       "c" -> effect(_.c.map(_.toSeq))
     )
 
