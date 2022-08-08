@@ -337,7 +337,8 @@ query withNestedFragments {
 
   implicit def stringType[F[_]]: Output.Scalar[F, String] = Output.Scalar("String", Encoder.encodeString)
 
-  implicit def listTypeForSome[F[_], A](implicit of: Output[F, A]): Output[F, Vector[A]] = Output.Arr(of)
+  // implicit def listTypeForSome[F[_], A](implicit of: Output[F, A]): Output[F, Vector[A]] = Output.Arr(of)
+  implicit def seqTypeForAny[F[_], A](implicit of: Output[F, A]): Output[F, Seq[A]] = Output.Arr(of)
 
   implicit def optTypeForSome[F[_], A](implicit of: Output[F, A]): Output[F, Option[A]] = Output.Opt(of)
 
@@ -390,18 +391,18 @@ query withNestedFragments {
       "value" -> pure(_.value)
     )
 
+  final case class DataIds(ids: List[Int])
+
   def serverBatch[F[_]](implicit F: Applicative[F]) =
-    batchResolver[F, Int, ServerData]("sd-batch", xs => F.pure(xs.map(i => i -> ServerData(i)).toMap))
+    batchResolver[F, DataIds, Seq[ServerData]]("sd-batch", x => F.pure(x.map(ys => ys -> ys.ids.map(ServerData(_))).toMap))
 
   implicit def dataType[F[_]: Async]: Output.Obj[F, Data[F]] =
     obj[F, Data[F]](
       "Data",
       "a" -> pure(_.a),
       "b" -> effect(_.b),
-      "sd" -> batchEffect(serverBatch[F]) { x =>
-        x.b.map(_ * 2)
-      },
-      "c" -> effect(_.c.map(_.toVector))
+      "sd" -> batchEffect(serverBatch[F])(_.b.map(i => DataIds(List(i, i + 1, i * 2)))),
+      "c" -> effect(_.c.map(_.toSeq))
     )
 
   implicit def otherDataType[F[_]: Async]: Output.Obj[F, OtherData[F]] =

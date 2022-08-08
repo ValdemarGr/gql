@@ -104,10 +104,64 @@ abstract class OutputSyntax {
 }
 
 object OutputSyntax {
+  final case class BatchNode[F[_], I, K, A, T](
+      batch: I => F[Batch[F, K, A, T]],
+      resolver: BatchResolver[F, K, T]
+  )
+
   final case class BatchResolver[F[_], K, T](
       batchName: String,
       resolver: Set[K] => F[Map[K, T]]
   )
+
+  final case class Batch[F[_], K, A, T](
+      keys: List[K],
+      post: List[(K, T)] => F[A]
+  )
+
+  final case class Key(key: String)
+
+  final case class InputData(data: String)
+
+  final case class OutputData(data: String)
+
+  final case class TestOutput(data: List[OutputData])
+
+  final case class TestInput(data: List[InputData])
+
+  def keysFromInputData[F[_]](id: InputData)(implicit F: Applicative[F]): F[List[Key]] =
+    F.pure(id.data.split(" | ").toList.map(Key(_)))
+
+  def getDataFromApi[F[_]](keys: Set[Key]): F[Map[Key, OutputData]] = ???
+
+  def batchResolver[F[_]] = BatchResolver("mock", getDataFromApi[F])
+
+  def mockBatchNode[F[_]](implicit F: Applicative[F]) =
+    BatchNode[F, TestInput, Key, TestOutput, OutputData](
+      _.data
+        .flatTraverse(keysFromInputData[F])
+        .map(keys => Batch(keys, xs => F.pure(TestOutput(xs.map { case (_, v) => v })))),
+      batchResolver[F]
+    )
+
+  object Batch {
+    implicit def applyForBatch[F[_]: Applicative, K, T] = {
+      type G[A] = Batch[F, K, A, T]
+      new Applicative[G] {
+        override def pure[A](x: A): G[A] = Batch(List.empty, _ => x.pure[F])
+
+        override def ap[A, B](ff: G[A => B])(fa: G[A]): G[B] =
+          Batch(
+            ff.keys ++ fa.keys,
+            { m =>
+              val f = ff.post(m.take(ff.keys.size))
+              val a = fa.post(m.drop(ff.keys.size))
+              f.ap(a)
+            }
+          )
+      }
+    }
+  }
 
   case class PartiallyAppliedContra[B](val dummy: Boolean = false) extends AnyVal {
     def apply[F[_], A](pf: PartialFunction[A, B])(implicit ol: ObjectLike[F, B]): Output.Unification.Instance[F, A, B] =
