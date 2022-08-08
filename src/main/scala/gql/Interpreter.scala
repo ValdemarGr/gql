@@ -170,11 +170,12 @@ object Interpreter {
                 .map(Left(_))
             case BatchedResolution(batchName, key, resolve) =>
               inputs
-                .parTraverse(in => key(in.value).map(x => (in.cursor.ided(df.id), BatchKey(x))))
+                .parTraverse(in => key(in.value).map(xs => (in.cursor.ided(df.id), xs.map(BatchKey(_)))))
                 .map { zs =>
                   Right(
                     Batch(
-                      zs,
+                      // zs,
+                      null,
                       xs =>
                         resolve(xs.map(_.k)).timed
                           .flatMap { case (dur, value) =>
