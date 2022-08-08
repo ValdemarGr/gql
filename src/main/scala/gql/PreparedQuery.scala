@@ -25,9 +25,6 @@ import gql.Output.Union
 import gql.Output.Scalar
 import gql.Output.Opt
 import gql.Output.Arr
-import gql.Output.Fields.PureResolution
-import gql.Output.Fields.DeferredResolution
-import gql.Output.Fields.BatchedResolution
 
 object PreparedQuery {
   /*
@@ -72,7 +69,7 @@ object PreparedQuery {
   final case class PreparedDataField[F[_], I, T](
       id: Int,
       name: String,
-      resolve: Output.Fields.Resolution[F, I, T],
+      resolve: Resolver[F, I, T],
       selection: Prepared[F, T],
       typename: String
   ) extends PreparedField[F, I]
@@ -191,7 +188,7 @@ object PreparedQuery {
       S: Stateful[F, AnalysisState],
       F: MonadError[F, String],
       D: Defer[F]
-  ): F[(Output.Fields.Resolution[G, Any, Any], Output[G, Any])] =
+  ): F[(Resolver[G, Any, Any], Output[G, Any])] =
     (field, gqlField.arguments) match {
       case (Output.Fields.SimpleField(_, _), Some(_)) =>
         F.raiseError(s"field ${gqlField.name} has arguments, but none were expected")
@@ -216,12 +213,7 @@ object PreparedQuery {
         F.fromEither(argResolution)
           .map(args.decode)
           .map { case (_, resolvedArg) =>
-            val closed: Output.Fields.Resolution[G, Any, Any] =
-              resolve match {
-                case PureResolution(r)             => PureResolution(i => r(i, resolvedArg))
-                case DeferredResolution(r)         => DeferredResolution(i => r(i, resolvedArg))
-                case BatchedResolution(name, k, r) => BatchedResolution(name, i => k(i, resolvedArg), r)
-              }
+            val closed = resolve.contramap[Any]((_, resolvedArg))
             (closed, graphqlType.value)
           }
     }

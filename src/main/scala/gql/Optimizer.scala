@@ -12,9 +12,6 @@ import gql.PreparedQuery.PreparedList
 import gql.PreparedQuery.Selection
 import cats.Monad
 import cats.mtl.Stateful
-import gql.Output.Fields.BatchedResolution
-import gql.Output.Fields.DeferredResolution
-import gql.Output.Fields.PureResolution
 import cats.Eval
 
 object Optimizer {
@@ -43,8 +40,8 @@ object Optimizer {
     prepared.flatTraverse {
       case PreparedDataField(id, name, resolve, selection, tn) =>
         val batchName = resolve match {
-          case BatchedResolution(bn, _, _) => Some(bn)
-          case _                           => None
+          case Resolver.Batched(_, batcher) => Some(batcher.batchName)
+          case _                            => None
         }
         // Use parent typename + field as fallback name since this will be unique
         // it is of utmost importance that different resolvers don't get mixed into the same statistic

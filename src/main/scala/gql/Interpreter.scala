@@ -11,13 +11,10 @@ import cats.Eval
 import cats.Monad
 import cats.effect.std.Supervisor
 import scala.collection.immutable.SortedMap
-import gql.Output.Fields.DeferredResolution
-import gql.Output.Fields.PureResolution
 import cats.Apply
 import cats.Applicative
 import cats.SemigroupK
 import cats.kernel.Semigroup
-import gql.Output.Fields.BatchedResolution
 import scala.concurrent.duration.FiniteDuration
 import cats.MonadThrow
 
@@ -140,10 +137,10 @@ object Interpreter {
             })
             .map(_.getOrElse(NoState))
 
-        final case class BatchKey(k: Any)
+        type BatchKey = Any
 
-        final case class Batch(
-            inputs: List[(Cursor, BatchKey)],
+        final case class NodeBatch(
+            inputs: List[(Cursor, Resolver.Batch[F, BatchKey, Any, Any])],
             resolve: Set[BatchKey] => F[Map[BatchKey, Any]]
         )
 
@@ -153,13 +150,13 @@ object Interpreter {
         def collapseInputs(
             df: PreparedDataField[F, Any, Any],
             inputs: List[NodeValue]
-        ): F[Either[List[NodeValue], Batch]] = {
+        ): F[Either[List[NodeValue], NodeBatch]] = {
           val n = executionDeps.nodeMap(df.id)
 
           df.resolve match {
-            case PureResolution(resolve) =>
+            case Resolver.Pure(resolve) =>
               F.pure(Left(inputs.map(in => in.ided(df.id, resolve(in.value)))))
-            case DeferredResolution(resolve) =>
+            case Resolver.Effect(resolve) =>
               inputs
                 .parTraverse { in =>
                   resolve(in.value).timed
@@ -168,20 +165,20 @@ object Interpreter {
                     }
                 }
                 .map(Left(_))
-            case BatchedResolution(batchName, key, resolve) =>
+            case Resolver.Batched(batch, batcher) =>
               inputs
-                .parTraverse(in => key(in.value).map(xs => (in.cursor.ided(df.id), xs.map(BatchKey(_)))))
+                .parTraverse(in => batch(in.value).map(b => (in.cursor.ided(df.id), b)))
                 .map { zs =>
                   Right(
-                    Batch(
-                      // zs,
-                      null,
+                    NodeBatch(
+                      zs,
                       xs =>
-                        resolve(xs.map(_.k)).timed
+                        batcher
+                          .resolver(xs)
+                          .timed
                           .flatMap { case (dur, value) =>
-                            val ys = value.map { case (k, v) => BatchKey(k) -> v }
-                            submit(batchName, dur, ys.size) >>
-                              submit(n.name, dur, ys.size).as(ys)
+                            submit(batcher.batchName, dur, value.size) >>
+                              submit(n.name, dur, value.size).as(value)
                           }
                     )
                   )
@@ -249,12 +246,16 @@ object Interpreter {
                           .traverse { nel =>
                             val (_, b) = nel.head
 
-                            val keys = nel.toList.flatMap { case (_, b) => b.inputs.map { case (_, k) => k } }.toSet
+                            val keys = nel.toList.flatMap { case (_, bn) => bn.inputs.flatMap { case (_, b) => b.keys } }.toSet
 
                             b.resolve(keys).flatMap { resultLookup =>
-                              nel.toList.parFlatTraverse { case (df, b) =>
-                                val mappedValues = b.inputs.map { case (c, k) => NodeValue(c, resultLookup(k)) }
-                                startNext(df, mappedValues)
+                              nel.toList.parFlatTraverse { case (df, bn) =>
+                                val mappedValuesF = bn.inputs.parTraverse { case (c, b) =>
+                                  b.post(b.keys.map(k => k -> resultLookup(k)))
+                                    .map(res => NodeValue(c, res))
+                                }
+
+                                mappedValuesF.flatMap(startNext(df, _))
                               }
                             }
                           }

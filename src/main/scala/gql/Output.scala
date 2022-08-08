@@ -10,7 +10,7 @@ import gql.Output.Interface
 import gql.Output.Obj
 
 sealed trait Output[F[_], +A] {
-  def mapK[G[_]](fk: F ~> G): Output[G, A]
+  def mapK[G[_]: Functor](fk: F ~> G): Output[G, A]
 }
 
 sealed trait ToplevelOutput[F[_], +A] extends Output[F, A] {
@@ -22,7 +22,7 @@ sealed trait ObjectLike[F[_], A] extends ToplevelOutput[F, A] {
 
   def fieldMap: Map[String, Output.Fields.Field[F, A, _]]
 
-  override def mapK[G[_]](fk: F ~> G): ObjectLike[G, A]
+  override def mapK[G[_]: Functor](fk: F ~> G): ObjectLike[G, A]
 
   def contramap[B](f: B => A): Output[F, B]
 }
@@ -31,11 +31,11 @@ final case class Schema[F[_], Q](query: Output.Obj[F, Q], types: Map[String, Top
 
 object Output {
   final case class Arr[F[_], A](of: Output[F, A]) extends Output[F, Vector[A]] {
-    def mapK[G[_]](fk: F ~> G): Output[G, Vector[A]] = Arr(of.mapK(fk))
+    def mapK[G[_]: Functor](fk: F ~> G): Output[G, Vector[A]] = Arr(of.mapK(fk))
   }
 
   final case class Opt[F[_], A](of: Output[F, A]) extends Output[F, Option[A]] {
-    def mapK[G[_]](fk: F ~> G): Output[G, Option[A]] = Opt(of.mapK(fk))
+    def mapK[G[_]: Functor](fk: F ~> G): Output[G, Option[A]] = Opt(of.mapK(fk))
   }
 
   final case class Interface[F[_], A](
@@ -46,7 +46,7 @@ object Output {
       with ToplevelOutput[F, A]
       with ObjectLike[F, A] {
 
-    override def mapK[G[_]](fk: F ~> G): Interface[G, A] =
+    override def mapK[G[_]: Functor](fk: F ~> G): Interface[G, A] =
       copy[G, A](
         instances = instances.map { case (k, v) => k -> v.mapK(fk) },
         fields = fields.map { case (k, v) => k -> v.mapK(fk) }
@@ -89,7 +89,7 @@ object Output {
     final case class Instance[F[_], A, B](
         ol: ObjectLike[F, B]
     )(implicit val specify: Specify[A, B]) {
-      def mapK[G[_]](fk: F ~> G): Instance[G, A, B] =
+      def mapK[G[_]: Functor](fk: F ~> G): Instance[G, A, B] =
         Instance(ol.mapK(fk))
 
       def contramap[C](g: C => A): Instance[F, C, B] =
@@ -110,52 +110,24 @@ object Output {
 
     lazy val fieldMap = fields.toNem.toSortedMap.toMap
 
-    def mapK[G[_]](fk: F ~> G): Obj[G, A] =
+    def mapK[G[_]: Functor](fk: F ~> G): Obj[G, A] =
       Obj(name, fields.map { case (k, v) => k -> v.mapK(fk) })
   }
 
   object Fields {
-    sealed trait Resolution[F[_], I, A] {
-      def mapK[G[_]](fk: F ~> G): Resolution[G, I, A]
-
-      def contramap[B](g: B => I): Resolution[F, B, A]
-    }
-    final case class PureResolution[F[_], I, A](resolve: I => A) extends Resolution[F, I, A] {
-      override def mapK[G[_]](fk: F ~> G): Resolution[G, I, A] =
-        PureResolution(resolve)
-
-      override def contramap[B](g: B => I): Resolution[F, B, A] =
-        PureResolution(g andThen resolve)
-    }
-    final case class DeferredResolution[F[_], I, A](resolve: I => F[A]) extends Resolution[F, I, A] {
-      override def mapK[G[_]](fk: F ~> G): Resolution[G, I, A] =
-        DeferredResolution(resolve.andThen(fk.apply))
-
-      override def contramap[B](g: B => I): Resolution[F, B, A] =
-        DeferredResolution(g andThen resolve)
-    }
-    final case class BatchedResolution[F[_], I, A, K](batchName: String, key: I => F[List[K]], resolve: Set[K] => F[Map[K, A]])
-        extends Resolution[F, I, A] {
-      override def mapK[H[_]](fk: F ~> H): Resolution[H, I, A] =
-        BatchedResolution(batchName, key.andThen(fk.apply), resolve.andThen(fk.apply))
-
-      override def contramap[B](g: B => I): Resolution[F, B, A] =
-        BatchedResolution(batchName, g andThen key, resolve)
-    }
-
     sealed trait Field[F[_], I, T] {
       def output: Eval[Output[F, T]]
 
-      def mapK[G[_]](fk: F ~> G): Field[G, I, T]
+      def mapK[G[_]: Functor](fk: F ~> G): Field[G, I, T]
 
       def contramap[B](g: B => I): Field[F, B, T]
     }
 
     final case class SimpleField[F[_], I, T](
-        resolve: Resolution[F, I, T],
+        resolve: Resolver[F, I, T],
         output: Eval[Output[F, T]]
     ) extends Field[F, I, T] {
-      def mapK[G[_]](fk: F ~> G): Field[G, I, T] =
+      def mapK[G[_]: Functor](fk: F ~> G): Field[G, I, T] =
         SimpleField(resolve.mapK(fk), output.map(_.mapK(fk)))
 
       def contramap[B](g: B => I): SimpleField[F, B, T] = {
@@ -198,10 +170,10 @@ object Output {
 
     final case class ArgField[F[_], I, T, A](
         args: Arg[A],
-        resolve: Resolution[F, (I, A), T],
+        resolve: Resolver[F, (I, A), T],
         output: Eval[Output[F, T]]
     ) extends Field[F, I, T] {
-      def mapK[G[_]](fk: F ~> G): Field[G, I, T] =
+      def mapK[G[_]: Functor](fk: F ~> G): Field[G, I, T] =
         ArgField[G, I, T, A](
           args,
           resolve.mapK(fk),
@@ -211,11 +183,7 @@ object Output {
       def contramap[B](g: B => I): ArgField[F, B, T, A] =
         ArgField(
           args,
-          resolve match {
-            case PureResolution(r)                => PureResolution { case (b, a) => r(g(b), a) }
-            case DeferredResolution(r)            => DeferredResolution { case (b, a) => r(g(b), a) }
-            case br @ BatchedResolution(bn, k, r) => BatchedResolution(bn, { case (b, a) => k(g(b), a) }, r)
-          },
+          resolve.contramap[(B, A)] { case (b, a) => (g(b), a) },
           output
         )
     }
@@ -237,7 +205,7 @@ object Output {
 
     lazy val fieldsList: List[(String, gql.Output.Fields.Field[F, A, _])] = Nil
 
-    def mapK[G[_]](fk: F ~> G): Union[G, A] =
+    def mapK[G[_]: Functor](fk: F ~> G): Union[G, A] =
       Union(
         name,
         types.map(_.mapK(fk))
@@ -245,12 +213,12 @@ object Output {
   }
 
   final case class Scalar[F[_], A](name: String, encoder: Encoder[A]) extends Output[F, A] with ToplevelOutput[F, A] {
-    override def mapK[G[_]](fk: F ~> G): Scalar[G, A] =
+    override def mapK[G[_]: Functor](fk: F ~> G): Scalar[G, A] =
       Scalar(name, encoder)
   }
 
   final case class Enum[F[_], A](name: String, encoder: NonEmptyMap[A, String]) extends Output[F, A] with ToplevelOutput[F, A] {
-    override def mapK[G[_]](fk: F ~> G): Output[G, A] =
+    override def mapK[G[_]: Functor](fk: F ~> G): Output[G, A] =
       Enum(name, encoder)
   }
 }
