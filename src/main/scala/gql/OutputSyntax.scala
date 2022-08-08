@@ -32,20 +32,10 @@ abstract class OutputSyntax {
     o.fields
   )
 
-  // def instance[F[_], A, B <: A: ClassTag](ol: ObjectLike[F, B]): Output.Unification.Instance[F, A, B] =
-  //   Output.Unification.Instance(ol)(Output.Unification.Specify.specifyForSubtype[A, B])
-
-  // def contraInstance[F[_], A, B <: A: ClassTag, C](ol: ObjectLike[F, C], f: B => C): Output.Unification.Instance[F, A, C] =
-  //   Output.Unification.Instance[F, A, C](ol)(Output.Unification.Specify.specifyForSubtype[A, B].map(f))
-
   def contra[B] = OutputSyntax.PartiallyAppliedContra[B]()
 
   def effect[F[_], I, T](resolver: I => F[T])(implicit tpe: => Output[F, T]): Output.Field[F, I, T, Unit] =
-    Output.Field[F, I, T, Unit](
-      Applicative[Arg].unit,
-      Resolver.Effect { case (i, _) => resolver(i) },
-      Eval.later(tpe)
-    )
+    effect[F, I, T, Unit](Applicative[Arg].unit) { case (i, _) => resolver(i) }(tpe)
 
   def effect[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => F[T])(implicit
       tpe: => Output[F, T]
@@ -57,11 +47,7 @@ abstract class OutputSyntax {
     )
 
   def pure[F[_], I, T](resolver: I => T)(implicit tpe: => Output[F, T]): Output.Field[F, I, T, Unit] =
-    Output.Field[F, I, T, Unit](
-      Applicative[Arg].unit,
-      Resolver.Pure { case (i, _) => resolver(i) },
-      Eval.later(tpe)
-    )
+    pure[F, I, T, Unit](Applicative[Arg].unit) { case (i, _) => resolver(i) }(tpe)
 
   def pure[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => T)(implicit tpe: => Output[F, T]): Output.Field[F, I, T, A] =
     Output.Field[F, I, T, A](
@@ -76,28 +62,22 @@ abstract class OutputSyntax {
   def batchResolver[F[_], K, T](batchName: String, resolver: Set[K] => F[Map[K, T]]): Resolver.Batcher[F, K, T] =
     Resolver.Batcher(batchName, resolver)
 
-  // def batch[F[_]: Functor, I, K, A, T](batchRes: Resolver.Batcher[F, K, T])(execute: I => F[(List[K], List[(K, T)] => F[A])])(implicit
-  //     tpe: => Output[F, A],
-  //     F: Applicative[F]
-  // ): Output.Fields.Field[F, I, A] =
-  //   Output.Fields.SimpleField[F, I, A](
-  //     Resolver.Batched[F, I, K, A, T](
-  //       execute
-  //         .andThen(_.map { case (ks, post) =>
-  //           Resolver.Batch(ks, post)
-  //         }),
-  //       batchRes
-  //     ),
-  //     Eval.later(tpe)
-  //   )
-
   def batchTraverse[F[_]: Functor, G[_]: Traverse, I, T, K](batchRes: Resolver.Batcher[F, K, T])(keys: I => F[G[K]])(implicit
       tpe: => Output[F, G[T]],
       F: Applicative[F]
-  ): Output.Field[F, I, G[T], Unit] =
-    Output.Field[F, I, G[T], Unit](
-      Applicative[Arg].unit,
-      Resolver.Batched[F, (I, Unit), K, G[T], T](
+  ): Output.Field[F, I, G[T], Unit] = {
+    implicit lazy val tpe2 = tpe
+    batchTraverse[F, G, I, T, K, Unit](Applicative[Arg].unit)(batchRes)(keys)
+  }
+
+  def batchTraverse[F[_]: Functor, G[_]: Traverse, I, T, K, A](arg: Arg[A])(batchRes: Resolver.Batcher[F, K, T])(keys: I => F[G[K]])(
+      implicit
+      tpe: => Output[F, G[T]],
+      F: Applicative[F]
+  ): Output.Field[F, I, G[T], A] =
+    Output.Field[F, I, G[T], A](
+      arg,
+      Resolver.Batched[F, (I, A), K, G[T], T](
         { case (i, _) =>
           keys(i).map { gk =>
             Resolver.Batch(
