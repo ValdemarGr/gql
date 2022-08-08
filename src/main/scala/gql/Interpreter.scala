@@ -59,7 +59,7 @@ object Interpreter {
       rootSel: NonEmptyList[PreparedField[F, Any]],
       plan: NonEmptyList[Optimizer.Node]
   ): F[NonEmptyList[JsonObject]] =
-    interpret[F](rootSel, rootSel, planExecutionDeps[F](rootSel, plan))
+    interpret[F](rootInput, rootSel, planExecutionDeps[F](rootSel, plan))
       .flatMap(reconstruct[F](rootSel, _))
 
   final case class ExecutionDeps[F[_]](
@@ -194,7 +194,7 @@ object Interpreter {
               case PreparedList(of) =>
                 val partitioned =
                   in.flatMap { nv =>
-                    val inner = nv.value.asInstanceOf[Vector[Any]].toList
+                    val inner = nv.value.asInstanceOf[Seq[Any]].toList
 
                     nv.index(inner)
                   }
