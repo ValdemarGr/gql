@@ -1,5 +1,6 @@
 package gql
 
+import cats.effect._
 import cats.implicits._
 import cats.data._
 import io.circe._
@@ -10,7 +11,7 @@ import gql.Output.Interface
 import gql.Output.Obj
 
 sealed trait Output[F[_], +A] {
-  def mapK[G[_]: Functor](fk: F ~> G): Output[G, A]
+  def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Output[G, A]
 }
 
 sealed trait ToplevelOutput[F[_], +A] extends Output[F, A] {
@@ -22,7 +23,7 @@ sealed trait ObjectLike[F[_], A] extends ToplevelOutput[F, A] {
 
   def fieldMap: Map[String, Output.Field[F, A, _, _]]
 
-  override def mapK[G[_]: Functor](fk: F ~> G): ObjectLike[G, A]
+  override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): ObjectLike[G, A]
 
   def contramap[B](f: B => A): Output[F, B]
 }
@@ -31,11 +32,11 @@ final case class Schema[F[_], Q](query: Output.Obj[F, Q], types: Map[String, Top
 
 object Output {
   final case class Arr[F[_], A](of: Output[F, A]) extends Output[F, Vector[A]] {
-    def mapK[G[_]: Functor](fk: F ~> G): Output[G, Vector[A]] = Arr(of.mapK(fk))
+    def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Output[G, Vector[A]] = Arr(of.mapK(fk))
   }
 
   final case class Opt[F[_], A](of: Output[F, A]) extends Output[F, Option[A]] {
-    def mapK[G[_]: Functor](fk: F ~> G): Output[G, Option[A]] = Opt(of.mapK(fk))
+    def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Output[G, Option[A]] = Opt(of.mapK(fk))
   }
 
   final case class Interface[F[_], A](
@@ -46,7 +47,7 @@ object Output {
       with ToplevelOutput[F, A]
       with ObjectLike[F, A] {
 
-    override def mapK[G[_]: Functor](fk: F ~> G): Interface[G, A] =
+    override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Interface[G, A] =
       copy[G, A](
         instances = instances.map { case (k, v) => k -> v.mapK(fk) },
         fields = fields.map { case (k, v) => k -> v.mapK(fk) }
@@ -89,7 +90,7 @@ object Output {
     final case class Instance[F[_], A, B](
         ol: ObjectLike[F, B]
     )(implicit val specify: Specify[A, B]) {
-      def mapK[G[_]: Functor](fk: F ~> G): Instance[G, A, B] =
+      def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Instance[G, A, B] =
         Instance(ol.mapK(fk))
 
       def contramap[C](g: C => A): Instance[F, C, B] =
@@ -110,7 +111,7 @@ object Output {
 
     lazy val fieldMap = fields.toNem.toSortedMap.toMap
 
-    def mapK[G[_]: Functor](fk: F ~> G): Obj[G, A] =
+    def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Obj[G, A] =
       Obj(name, fields.map { case (k, v) => k -> v.mapK(fk) })
   }
 
@@ -119,7 +120,7 @@ object Output {
       resolve: Resolver[F, (I, A), T],
       output: Eval[Output[F, T]]
   ) {
-    def mapK[G[_]: Functor](fk: F ~> G): Field[G, I, T, A] =
+    def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Field[G, I, T, A] =
       Field[G, I, T, A](
         args,
         resolve.mapK(fk),
@@ -150,7 +151,7 @@ object Output {
 
     lazy val fieldsList: List[(String, Field[F, A, _, _])] = Nil
 
-    def mapK[G[_]: Functor](fk: F ~> G): Union[G, A] =
+    def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Union[G, A] =
       Union(
         name,
         types.map(_.mapK(fk))
@@ -158,12 +159,12 @@ object Output {
   }
 
   final case class Scalar[F[_], A](name: String, encoder: Encoder[A]) extends Output[F, A] with ToplevelOutput[F, A] {
-    override def mapK[G[_]: Functor](fk: F ~> G): Scalar[G, A] =
+    override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Scalar[G, A] =
       Scalar(name, encoder)
   }
 
   final case class Enum[F[_], A](name: String, encoder: NonEmptyMap[A, String]) extends Output[F, A] with ToplevelOutput[F, A] {
-    override def mapK[G[_]: Functor](fk: F ~> G): Output[G, A] =
+    override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Output[G, A] =
       Enum(name, encoder)
   }
 }

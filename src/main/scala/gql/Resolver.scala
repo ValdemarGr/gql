@@ -2,16 +2,28 @@ package gql
 
 import cats._
 import cats.implicits._
+import cats.effect._
 
 sealed trait Resolver[F[_], I, A] {
-  def mapK[G[_]: Functor](fk: F ~> G): Resolver[G, I, A]
+  def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Resolver[G, I, A]
 
   def contramap[B](g: B => I): Resolver[F, B, A]
 }
 
 object Resolver {
+  final case class Signal[F[_]: MonadCancelThrow, I, A](
+      head: Resolver[F, I, A],
+      tail: Resource[F, (A, I) => fs2.Stream[F, A]]
+  ) extends Resolver[F, I, A] {
+    override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Resolver[G, I, A] =
+      Signal(head.mapK(fk), tail.mapK(fk).map(f => (a, i) => f(a, i).translate(fk)))
+
+    override def contramap[B](g: B => I): Resolver[F, B, A] =
+      Signal(head.contramap(g), tail.map(f => (a, i) => f(a, g(i))))
+  }
+
   final case class Pure[F[_], I, A](resolve: I => A) extends Resolver[F, I, A] {
-    override def mapK[G[_]: Functor](fk: F ~> G): Resolver[G, I, A] =
+    override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Resolver[G, I, A] =
       Pure(resolve)
 
     override def contramap[B](g: B => I): Resolver[F, B, A] =
@@ -19,7 +31,7 @@ object Resolver {
   }
 
   final case class Effect[F[_], I, A](resolve: I => F[A]) extends Resolver[F, I, A] {
-    override def mapK[G[_]: Functor](fk: F ~> G): Resolver[G, I, A] =
+    override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Resolver[G, I, A] =
       Effect(resolve.andThen(fk.apply))
 
     override def contramap[B](g: B => I): Resolver[F, B, A] =
@@ -30,7 +42,7 @@ object Resolver {
       batchName: String,
       resolver: Set[K] => F[Map[K, T]]
   ) {
-    def mapK[G[_]: Functor](fk: F ~> G): Batcher[G, K, T] =
+    def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Batcher[G, K, T] =
       Batcher(batchName, resolver.andThen(fk.apply))
   }
 
@@ -65,7 +77,7 @@ object Resolver {
       batch: I => F[Batch[F, K, A, T]],
       batcher: Batcher[F, K, T]
   ) extends Resolver[F, I, A] {
-    override def mapK[G[_]: Functor](fk: F ~> G): Resolver[G, I, A] =
+    override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Resolver[G, I, A] =
       Batched(batch.andThen(fa => fk(fa).map(_.mapK(fk))), batcher.mapK(fk))
 
     override def contramap[B](g: B => I): Resolver[F, B, A] =
