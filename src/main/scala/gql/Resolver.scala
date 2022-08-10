@@ -17,9 +17,49 @@ object Resolver {
     override def contramap[B](g: B => I): LeafResolver[F, B, A]
   }
 
+  /*
+   * Signal
+   * Simplest type would be input => stream of output value
+   *
+   * But what if we'd like to include some kind of batching? what does that even mean?
+   *
+   * Naively every output in the stream triggers a *unique* re-evaluation of the subtree
+   * Consequently this is not batchable, even though there may be multiple nodes that react to the same data.
+   * 
+   * Some choices can be made:
+   *
+   * Do we require the user to "push" the signal up to the common ancestor?
+   *
+   * Maybe we can generate a key from the input that tells the interpreter what streams are equivalent,
+   * which in turn can be used to group updates?
+   * This seems like it would be a lot of trouble to both implement and reason with.
+   *
+   * How do we track these updates? Maybe we have a map Map[K, List[StreamData]] 
+   * where StreamData is the field information and such.
+   * Then we must await the change in all List[StreamData].size elements.
+   * There is a lot of concurrency problems involved.
+   * For instance, what happens if two nodes get the same element concurrently?
+   * Maybe we have a map Map[K, Int] of generations of K? such that we can zipWithIndex and only cause updates to generations
+   * older than our index?
+   *
+   * Maybe we assume that the streams are the same, thus they share the subscription?
+   * Using this model, we must decompose the (potential) effect performed by the stream such that we can avoid 
+   * the N+1 problem (every instance of the same stream performing the same effect for every element).
+   *
+   * This might also be solvable with just a cache?
+   * One might use some data generation technique and query the cache with type Map[K, F[A]] where F[A] 
+   * is some uncompleted promise.
+   * I think this caching solution is the most feasible.
+   *
+   * Batching different keys (say, within a time period or as a debounce) can be implemented by the end-user.
+   * For instance, the end-user can provide some state shared by the whole subscription query that 
+   * uses some structure to block streams until the timeout has elapsed.
+   *
+   */
   final case class Signal[F[_]: MonadCancelThrow, I, A](
       head: LeafResolver[F, I, A],
-      tail: Resource[F, (A, I) => fs2.Stream[F, A]]
+      tail: Resource[F, (A, I) => fs2.Stream[F, A]],
+      key: (A, I) => String
   ) extends Resolver[F, I, A] {
     override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Resolver[G, I, A] =
       Signal(head.mapK(fk), tail.mapK(fk).map(f => (a, i) => f(a, i).translate(fk)))
