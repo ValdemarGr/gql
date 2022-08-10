@@ -25,7 +25,7 @@ object Resolver {
    *
    * Naively every output in the stream triggers a *unique* re-evaluation of the subtree
    * Consequently this is not batchable, even though there may be multiple nodes that react to the same data.
-   * 
+   *
    * Some choices can be made:
    *
    * Do we require the user to "push" the signal up to the common ancestor?
@@ -34,7 +34,7 @@ object Resolver {
    * which in turn can be used to group updates?
    * This seems like it would be a lot of trouble to both implement and reason with.
    *
-   * How do we track these updates? Maybe we have a map Map[K, List[StreamData]] 
+   * How do we track these updates? Maybe we have a map Map[K, List[StreamData]]
    * where StreamData is the field information and such.
    * Then we must await the change in all List[StreamData].size elements.
    * There is a lot of concurrency problems involved.
@@ -43,30 +43,37 @@ object Resolver {
    * older than our index?
    *
    * Maybe we assume that the streams are the same, thus they share the subscription?
-   * Using this model, we must decompose the (potential) effect performed by the stream such that we can avoid 
+   * Using this model, we must decompose the (potential) effect performed by the stream such that we can avoid
    * the N+1 problem (every instance of the same stream performing the same effect for every element).
    *
    * This might also be solvable with just a cache?
-   * One might use some data generation technique and query the cache with type Map[K, F[A]] where F[A] 
+   * One might use some data generation technique and query the cache with type Map[K, F[A]] where F[A]
    * is some uncompleted promise.
    * I think this caching solution is the most feasible.
    *
    * Batching different keys (say, within a time period or as a debounce) can be implemented by the end-user.
-   * For instance, the end-user can provide some state shared by the whole subscription query that 
+   * For instance, the end-user can provide some state shared by the whole subscription query that
    * uses some structure to block streams until the timeout has elapsed.
+   *
+   * After more thought:
+   * Deduplication can be solved by a cache.
+   *
+   * Current problem is:
+   * How to batch updates.
+   * Clearly we need some sort of strategy, which could be something like fs2.Pipe[F, A, A]
    *
    */
   final case class Signal[F[_]: MonadCancelThrow, I, A](
       head: LeafResolver[F, I, A],
-      tail: Resource[F, (A, I) => fs2.Stream[F, A]],
-      key: (A, I) => String
-  ) extends Resolver[F, I, A] {
-    override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Resolver[G, I, A] =
-      Signal(head.mapK(fk), tail.mapK(fk).map(f => (a, i) => f(a, i).translate(fk)))
+      tail: Resource[F, (A, I) => fs2.Stream[F, A]]
+  )
+  // ) extends Resolver[F, I, A] {
+  //   override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Resolver[G, I, A] =
+  //     Signal(head.mapK(fk), tail.mapK(fk).map(f => (a, i) => f(a, i).translate(fk)))
 
-    override def contramap[B](g: B => I): Resolver[F, B, A] =
-      Signal(head.contramap(g), tail.map(f => (a, i) => f(a, g(i))))
-  }
+  //   override def contramap[B](g: B => I): Resolver[F, B, A] =
+  //     Signal(head.contramap(g), tail.map(f => (a, i) => f(a, g(i))))
+  // }
 
   final case class Pure[F[_], I, A](resolve: I => A) extends LeafResolver[F, I, A] {
     override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Pure[G, I, A] =
