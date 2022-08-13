@@ -530,8 +530,7 @@ fragment F2 on Data {
       "getInterface" -> pure(_ => (C("hey", "tun"): A)),
       "getOther" -> pure(_ => (C("hey", "tun"): D)),
       "doIdentity" -> pure(_ => IdentityData(2, "hello"))
-    ),
-    Map.empty
+    )
   )
 
   def parseAndPrep(q: String): Option[NonEmptyList[PreparedQuery.PreparedField[IO, Any]]] =

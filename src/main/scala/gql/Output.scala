@@ -29,8 +29,6 @@ sealed trait ObjectLike[F[_], A] extends ToplevelOutput[F, A] {
   def contramap[B](f: B => A): Output[F, B]
 }
 
-final case class Schema[F[_], Q](query: Output.Obj[F, Q], types: Map[String, ToplevelOutput[F, _]])
-
 object Output {
   final case class Arr[F[_], A](of: Output[F, A]) extends Output[F, Vector[A]] {
     def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Output[G, Vector[A]] = Arr(of.mapK(fk))
