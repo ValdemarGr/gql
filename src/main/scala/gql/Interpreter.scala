@@ -155,9 +155,9 @@ object Interpreter {
           val n = executionDeps.nodeMap(df.id)
 
           df.resolve match {
-            case Pure(resolve) =>
+            case PureResolver(resolve) =>
               F.pure(Left(inputs.map(in => in.ided(df.id, resolve(in.value)))))
-            case Effect(resolve) =>
+            case EffectResolver(resolve) =>
               inputs
                 .parTraverse { in =>
                   resolve(in.value).timed

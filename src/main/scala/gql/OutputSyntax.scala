@@ -43,7 +43,7 @@ abstract class OutputSyntax {
   ): Output.Field[F, I, T, A] =
     Output.Field[F, I, T, A](
       arg,
-      Effect { case (i, a) => resolver(i, a) },
+      EffectResolver { case (i, a) => resolver(i, a) },
       Eval.later(tpe)
     )
 
@@ -53,7 +53,7 @@ abstract class OutputSyntax {
   def pure[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => T)(implicit tpe: => Output[F, T]): Output.Field[F, I, T, A] =
     Output.Field[F, I, T, A](
       arg,
-      Pure { case (i, a) => resolver(i, a) },
+      PureResolver { case (i, a) => resolver(i, a) },
       Eval.later(tpe)
     )
 
