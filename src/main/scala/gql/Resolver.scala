@@ -169,42 +169,42 @@ object Resolver {
         S.inspect(DataStream(_, f)) <* S.modify(_ + 1)
     }
 
-    final case class DataStreamReference[F[_], I, A](id: Int)
+    final case class DataStreamReference[I, A](id: Int)
 
     final case class InputValues(
         input: Any,
         head: Any
     )
 
-    final case class DataStreamTail(
-        id: Int,
+    final case class DataStreamTail[I, A](
+        ref: DataStreamReference[I, A],
         inputValues: InputValues
     )
 
-    final case class Stuff[F[_]: MonadCancelThrow, I, A, B](
+    final case class Signal[F[_]: MonadCancelThrow, I, A, B](
         // No elem
         head: LeafResolver[F, I, A],
         // I = The first initial input, A = The first output from head
-        tail: (I, A) => F[DataStreamTail],
+        tail: (I, A) => F[DataStreamTail[I, A]],
         // Post-processing of both head and tail, allows a map function
         post: (I, A) => F[B]
     ) {
-      def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Stuff[G, I, A, B] =
-        Stuff(
+      def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Signal[G, I, A, B] =
+        Signal(
           head.mapK(fk),
           (i, a) => fk(tail(i, a)),
           (i, a) => fk(post(i, a))
         )
 
-      def contraMap[C](g: C => I): Stuff[F, C, A, B] =
-        Stuff(
+      def contraMap[C](g: C => I): Signal[F, C, A, B] =
+        Signal(
           head.contramap(g),
-          (i, a) => tail(g(i), a),
+          (i, a) => tail(g(i), a).map(dst => dst.copy(ref = DataStreamReference(dst.ref.id))),
           (i, a) => post(g(i), a)
         )
 
-      def flatMapF[C](f: B => F[C])(implicit F: FlatMap[F]): Stuff[F, I, A, C] =
-        Stuff(head, tail, (i, a) => post(i, a).flatMap(f))
+      def flatMapF[C](f: B => F[C])(implicit F: FlatMap[F]): Signal[F, I, A, C] =
+        Signal(head, tail, (i, a) => post(i, a).flatMap(f))
     }
   }
 
