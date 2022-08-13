@@ -182,8 +182,11 @@ object Resolver {
     )
 
     final case class Stuff[F[_]: MonadCancelThrow, I, A, B](
+        // No elem
         head: LeafResolver[F, I, A],
+        // I = The first initial input, A = The first output from head
         tail: (I, A) => F[DataStreamTail],
+        // Post-processing of both head and tail, allows a map function
         post: (I, A) => F[B]
     ) {
       def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Stuff[G, I, A, B] =
@@ -218,22 +221,24 @@ object Resolver {
         S.inspect(Batcher(_, f)) <* S.modify(_ + 1)
     }
 
-    final case class BatchResult[F[_], K, A, T](
+    final case class BatcherReference[F[_], K, T](id: Int)
+
+    final case class BatchPartition[F[_], K, A, T](
         keys: List[K],
         post: List[(K, T)] => F[A]
     ) {
       def flatMapF[B](f: A => F[B])(implicit F: FlatMap[F]) =
-        BatchResult(keys, post.andThen(_.flatMap(f)))
+        BatchPartition(keys, post.andThen(_.flatMap(f)))
     }
 
-    object BatchResult {
-      implicit def applicativeForBatchResult[F[_]: Applicative, K, T]: Applicative[BatchResult[F, K, *, T]] = {
-        type G[A] = BatchResult[F, K, A, T]
+    object BatchPartition {
+      implicit def applicativeForBatchPartition[F[_]: Applicative, K, T]: Applicative[BatchPartition[F, K, *, T]] = {
+        type G[A] = BatchPartition[F, K, A, T]
         new Applicative[G] {
-          override def pure[A](x: A): G[A] = BatchResult(List.empty, _ => x.pure[F])
+          override def pure[A](x: A): G[A] = BatchPartition(List.empty, _ => x.pure[F])
 
           override def ap[A, B](ff: G[A => B])(fa: G[A]): G[B] =
-            BatchResult(
+            BatchPartition(
               ff.keys ++ fa.keys,
               { m =>
                 val f = ff.post(m.take(ff.keys.size))
@@ -246,14 +251,15 @@ object Resolver {
     }
 
     final case class Batch[F[_], I, K, A, T](
-        batcher: Batcher[F, K, T],
-        run: I => F[BatchResult[F, K, A, T]]
+        // Pick batch implementation based on input
+        batcher: I => BatcherReference[F, K, T],
+        partition: I => F[BatchPartition[F, K, A, T]]
     ) {
       def flatMapF[B](f: A => F[B])(implicit F: FlatMap[F]) =
-        Batch(batcher, run.andThen(_.map(_.flatMapF(f))))
+        Batch(batcher, partition.andThen(_.map(_.flatMapF(f))))
 
       def contraMap[B](g: B => I): Batch[F, B, K, A, T] =
-        Batch(batcher, g.andThen(run))
+        Batch(i => batcher(g(i)), g.andThen(partition))
     }
   }
 }
