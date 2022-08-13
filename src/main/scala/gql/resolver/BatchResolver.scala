@@ -8,7 +8,7 @@ final case class BatchResolver[F[_], I, K, A, T](
     // Pick batch implementation based on input
     batcher: I => BatcherReference[K, T],
     partition: I => F[Batch[F, K, A, T]]
-) {
+) extends LeafResolver[F, I, A] {
   def flatMapF[B](f: A => F[B])(implicit F: FlatMap[F]) =
     BatchResolver(batcher, partition.andThen(_.map(_.flatMapF(f))))
 

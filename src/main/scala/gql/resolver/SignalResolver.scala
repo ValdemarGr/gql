@@ -12,7 +12,7 @@ final case class SignalResolver[F[_]: MonadCancelThrow, I, A, B](
     tail: I => F[SignalResolver.DataStreamTail[I, A]],
     // Post-processing of both head and tail, allows a map function on the structure
     post: (I, A) => F[B]
-) {
+) extends Resolver[F, I, B] {
   def mapK[G[_]: MonadCancelThrow](fk: F ~> G): SignalResolver[G, I, A, B] =
     SignalResolver(
       head.mapK(fk),
