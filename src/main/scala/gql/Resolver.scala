@@ -169,11 +169,37 @@ object Resolver {
         S.inspect(DataStream(_, f)) <* S.modify(_ + 1)
     }
 
-    final case class Stuff[F[_], I, A, B](
+    final case class DataStreamReference[F[_], I, A](id: Int)
+
+    final case class InputValues(
+        input: Any,
+        head: Any
+    )
+
+    final case class DataStreamTail(
+        id: Int,
+        inputValues: InputValues
+    )
+
+    final case class Stuff[F[_]: MonadCancelThrow, I, A, B](
         head: LeafResolver[F, I, A],
-        tail: DataStream[F, I, A],
+        tail: (I, A) => F[DataStreamTail],
         post: (I, A) => F[B]
     ) {
+      def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Stuff[G, I, A, B] =
+        Stuff(
+          head.mapK(fk),
+          (i, a) => fk(tail(i, a)),
+          (i, a) => fk(post(i, a))
+        )
+
+      def contraMap[C](g: C => I): Stuff[F, C, A, B] =
+        Stuff(
+          head.contramap(g),
+          (i, a) => tail(g(i), a),
+          (i, a) => post(g(i), a)
+        )
+
       def flatMapF[C](f: B => F[C])(implicit F: FlatMap[F]): Stuff[F, I, A, C] =
         Stuff(head, tail, (i, a) => post(i, a).flatMap(f))
     }
