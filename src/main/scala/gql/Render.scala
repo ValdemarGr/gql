@@ -154,8 +154,8 @@ object Render {
     type G[A] = StateT[Eval, RenderState[F], A]
     type H[A] = StateT[Eval, InterfaceDiscovery, A]
 
-    val d = discoverInterfaceInstances[H, F](schema.query).runA(InterfaceDiscovery(Set.empty)).value
+    val d = discoverInterfaceInstances[H, F](schema.shape.query).runA(InterfaceDiscovery(Set.empty)).value
     val m = d.toList.groupMap { case (k, _) => k } { case (_, v) => v }
-    renderAll[G, F](m).runA(RenderState(Set.empty, List(schema.query))).value
+    renderAll[G, F](m).runA(RenderState(Set.empty, List(schema.shape.query))).value
   }
 }

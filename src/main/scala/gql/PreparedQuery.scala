@@ -368,7 +368,7 @@ object PreparedQuery {
       //case Detailed(tpe, name, Some(variableDefinitions), _, _) => ???
       case Detailed(_, _, None, _, sel) =>
         prepareSelections[F, G](
-          schema.query.asInstanceOf[ObjectLike[G, Any]],
+          schema.shape.query.asInstanceOf[ObjectLike[G, Any]],
           sel,
           variableMap,
           frags.map(f => f.name -> f).toMap

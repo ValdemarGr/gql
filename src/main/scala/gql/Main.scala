@@ -522,7 +522,7 @@ fragment F2 on Data {
   }
   """
 
-  val schema = Schema[IO, Unit](
+  val schema = Schema.simple[IO, Unit](
     obj[IO, Unit](
       "Query",
       "getData" -> pure(_ => root[IO]),
