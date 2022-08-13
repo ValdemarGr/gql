@@ -9,21 +9,21 @@ final case class SignalResolver[F[_]: MonadCancelThrow, I, A, B](
     head: LeafResolver[F, I, A],
     // The first element was gotten, the infinite tail is defined as such
     // I = The first initial input, A = The first output from head
-    tail: (I, A) => F[SignalResolver.DataStreamTail[I, A]],
+    tail: I => F[SignalResolver.DataStreamTail[I, A]],
     // Post-processing of both head and tail, allows a map function on the structure
     post: (I, A) => F[B]
 ) {
   def mapK[G[_]: MonadCancelThrow](fk: F ~> G): SignalResolver[G, I, A, B] =
     SignalResolver(
       head.mapK(fk),
-      (i, a) => fk(tail(i, a)),
+      i => fk(tail(i)),
       (i, a) => fk(post(i, a))
     )
 
   def contraMap[C](g: C => I): SignalResolver[F, C, A, B] =
     SignalResolver(
       head.contraMap(g),
-      (i, a) => tail(g(i), a).map(dst => dst.copy(ref = SignalResolver.DataStreamReference(dst.ref.id))),
+      i => tail(g(i)).map(dst => dst.copy(ref = StreamReference(dst.ref.id))),
       (i, a) => post(g(i), a)
     )
 
@@ -38,9 +38,7 @@ object SignalResolver {
   )
 
   final case class DataStreamTail[I, A](
-      ref: DataStreamReference[I, A],
+      ref: StreamReference[I, A],
       inputValues: InputValues
   )
-
-  final case class DataStreamReference[I, A](id: Int)
 }
