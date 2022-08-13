@@ -209,19 +209,21 @@ object Resolver {
   }
 
   object Batch2 {
-    final case class Batcher[F[_], K, T](
-        id: Int,
-        resolver: Set[K] => F[Map[K, T]]
+    final case class BatchingState[F[_]](
+        nextId: Int,
+        batchers: Map[Int, Set[Any] => F[Map[Any, Any]]]
     )
 
-    object Batcher {
-      val S = State.get[Int]
+    final case class BatcherReference[K, T](id: Int)
 
-      def apply[F[_], K, T](f: Set[K] => F[Map[K, T]]): State[Int, Batcher[F, K, T]] =
-        S.inspect(Batcher(_, f)) <* S.modify(_ + 1)
+    object BatcherReference {
+      def apply[F[_], K, T](f: Set[K] => F[Map[K, T]]): State[BatchingState[F], BatcherReference[K, T]] =
+        State[BatchingState[F], BatcherReference[K, T]] { s =>
+          val id = s.nextId
+          val entry: Set[Any] => F[Map[Any, Any]] = f.asInstanceOf[Set[Any] => F[Map[Any, Any]]]
+          (s.copy(nextId = s.nextId + 1, batchers = s.batchers + (id -> entry)), BatcherReference[K, T](id))
+        }
     }
-
-    final case class BatcherReference[F[_], K, T](id: Int)
 
     final case class BatchPartition[F[_], K, A, T](
         keys: List[K],
@@ -252,7 +254,7 @@ object Resolver {
 
     final case class Batch[F[_], I, K, A, T](
         // Pick batch implementation based on input
-        batcher: I => BatcherReference[F, K, T],
+        batcher: I => BatcherReference[K, T],
         partition: I => F[BatchPartition[F, K, A, T]]
     ) {
       def flatMapF[B](f: A => F[B])(implicit F: FlatMap[F]) =
@@ -260,6 +262,9 @@ object Resolver {
 
       def contraMap[B](g: B => I): Batch[F, B, K, A, T] =
         Batch(i => batcher(g(i)), g.andThen(partition))
+
+      def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Batch[G, I, K, A, T] =
+        Batch(batcher, partition.andThen(fa => fk(fa).map(bp => bp.copy(post = bp.post.andThen(fk.apply)))))
     }
   }
 }
