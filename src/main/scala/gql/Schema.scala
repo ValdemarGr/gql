@@ -4,7 +4,8 @@ import cats.data._
 import alleycats.Empty
 
 final case class SchemaShape[F[_], Q](
-    query: Output.Obj[F, Q]
+    query: Output.Obj[F, Q],
+    //query should be fields: List[(String, Field[F, Q, _, _])]
 )
 
 final case class Schema[F[_], Q](

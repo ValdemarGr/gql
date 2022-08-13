@@ -46,21 +46,26 @@ object Interpreter {
   case object NoState extends StateSubmissionOutcome
   case object NotFinalSubmission extends StateSubmissionOutcome
 
-  def planAndRun[F[_]: Async: Statistics](rootInput: Any, rootSel: NonEmptyList[PreparedField[F, Any]]): F[NonEmptyList[JsonObject]] =
+  def planAndRun[F[_]: Async: Statistics](
+      rootInput: Any,
+      rootSel: NonEmptyList[PreparedField[F, Any]],
+      schemaState: SchemaState[F]
+  ): F[NonEmptyList[JsonObject]] =
     for {
       costTree <- Optimizer.costTree[F](rootSel)
       plan = Optimizer.plan(costTree)
       executionDeps = planExecutionDeps[F](rootSel, plan)
-      result <- interpret[F](rootSel, rootSel, executionDeps)
+      result <- interpret[F](rootSel, rootSel, executionDeps, schemaState)
       output <- reconstruct[F](rootSel, result)
     } yield output
 
   def run[F[_]: Async: Statistics](
       rootInput: Any,
       rootSel: NonEmptyList[PreparedField[F, Any]],
-      plan: NonEmptyList[Optimizer.Node]
+      plan: NonEmptyList[Optimizer.Node],
+      schemaState: SchemaState[F]
   ): F[NonEmptyList[JsonObject]] =
-    interpret[F](rootInput, rootSel, planExecutionDeps[F](rootSel, plan))
+    interpret[F](rootInput, rootSel, planExecutionDeps[F](rootSel, plan), schemaState)
       .flatMap(reconstruct[F](rootSel, _))
 
   final case class ExecutionDeps[F[_]](
@@ -123,7 +128,8 @@ object Interpreter {
   def interpret[F[_]](
       rootInput: Any,
       rootSel: NonEmptyList[PreparedField[F, Any]],
-      executionDeps: ExecutionDeps[F]
+      executionDeps: ExecutionDeps[F],
+      schemaState: SchemaState[F]
   )(implicit F: Async[F], stats: Statistics[F]): F[List[NodeValue]] =
     Supervisor[F].use { sup =>
       executionDeps.batchExecutionState[F].flatMap { batchStateMap =>
@@ -166,25 +172,24 @@ object Interpreter {
                     }
                 }
                 .map(Left(_))
-            // TODO un-uncomment batch code
-            // case Batched(batch, batcher) =>
-            //   inputs
-            //     .parTraverse(in => batch(in.value).map(b => (in.cursor.ided(df.id), b)))
-            //     .map { zs =>
-            //       Right(
-            //         NodeBatch(
-            //           zs,
-            //           xs =>
-            //             batcher
-            //               .resolver(xs)
-            //               .timed
-            //               .flatMap { case (dur, value) =>
-            //                 submit(batcher.batchName, dur, value.size) >>
-            //                   submit(n.name, dur, value.size).as(value)
-            //               }
-            //         )
-            //       )
-            //     }
+            case BatchResolver(batcher, partition) =>
+              val impl = schemaState.batchers(batcher.id)
+
+              inputs
+                .parTraverse(in => partition(in.value).map(b => (in.cursor.ided(df.id), b)))
+                .map { zs =>
+                  Right(
+                    NodeBatch(
+                      zs,
+                      xs =>
+                        impl(xs).timed
+                          .flatMap { case (dur, value) =>
+                            submit(s"batch_${batcher.id}", dur, value.size) >>
+                              submit(n.name, dur, value.size).as(value)
+                          }
+                    )
+                  )
+                }
           }
         }
 

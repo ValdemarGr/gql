@@ -26,6 +26,9 @@ import scala.io.AnsiColor
 import fetch.Fetch
 import scala.concurrent.ExecutionContext
 import fetch.Unfetch
+import alleycats.Empty
+import gql.resolver.BatchResolver
+import gql.resolver.BatcherReference
 
 object Main extends App {
   def showExpectation(e: Parser.Expectation): Eval[String] =
@@ -348,113 +351,125 @@ query withNestedFragments {
 
   implicit def listInputType[A](implicit tpe: Input[A]): Input[Vector[A]] = Input.Arr(tpe)
 
-  final case class IdentityData(value: Int, value2: String)
+  def testSchemaShape[F[_]](implicit F: Async[F]) = {
+    final case class IdentityData(value: Int, value2: String)
 
-  final case class InputData(
-      value: Int,
-      val2: String
-  )
+    final case class InputData(
+        value: Int,
+        val2: String
+    )
 
-  implicit val inputDataType: Input[InputData] = in.obj[InputData](
-    "InputData",
-    (
-      arg[Int]("value", Some(42)),
-      arg[String]("val2")
-    ).mapN(InputData.apply)
-  )
+    final case class ServerData(value: Int)
 
-  val valueArgs: Arg[(Int, String, Vector[String])] =
-    (
-      (
-        arg[Int]("num", Some(42)),
-        arg[Int]("num2", Some(9))
-      ).mapN(_ + _),
-      arg[String]("text"),
-      arg[Vector[String]]("xs", Vector.empty.some)
-    ).tupled
+    final case class DataIds(ids: List[Int])
 
-  val inputDataArg = arg[InputData]("input")
+    BatcherReference[F, Int, ServerData](xs => F.pure(xs.map(x => x -> ServerData(x)).toMap)).map { serverDataBatcher =>
+      implicit val inputDataType: Input[InputData] = in.obj[InputData](
+        "InputData",
+        (
+          arg[Int]("value", Some(42)),
+          arg[String]("val2")
+        ).mapN(InputData.apply)
+      )
 
-  implicit def identityDataType[F[_]](implicit F: Async[F]): Output.Obj[F, IdentityData] =
-    obj[F, IdentityData](
-      "IdentityData",
-      "value" -> effect((valueArgs, inputDataArg).tupled) { case (x, ((y, z, hs), i)) =>
-        F.pure(s"${x.value2} + $z - ${(x.value + y).toString()} - (${hs.mkString(",")}) - $i")
+      val valueArgs: Arg[(Int, String, Vector[String])] =
+        (
+          (
+            arg[Int]("num", Some(42)),
+            arg[Int]("num2", Some(9))
+          ).mapN(_ + _),
+          arg[String]("text"),
+          arg[Vector[String]]("xs", Vector.empty.some)
+        ).tupled
+
+      val inputDataArg = arg[InputData]("input")
+
+      implicit def identityDataType: Output.Obj[F, IdentityData] =
+        obj[F, IdentityData](
+          "IdentityData",
+          "value" -> effect((valueArgs, inputDataArg).tupled) { case (x, ((y, z, hs), i)) =>
+            F.pure(s"${x.value2} + $z - ${(x.value + y).toString()} - (${hs.mkString(",")}) - $i")
+          }
+        )
+
+      implicit def serverData: Output.Obj[F, ServerData] =
+        obj[F, ServerData](
+          "ServerData",
+          "value" -> pure(_.value)
+        )
+
+      implicit def dataType: Output.Obj[F, Data[F]] =
+        obj[F, Data[F]](
+          "Data",
+          "a" -> pure(_.a),
+          "b" -> effect(_.b),
+          "sd" -> batchTraverse(serverDataBatcher)(_.b.map(i => Seq(i, i + 1, i * 2))),
+          "c" -> effect(_.c.map(_.toSeq))
+        )
+
+      implicit def otherDataType: Output.Obj[F, OtherData[F]] =
+        obj[F, OtherData[F]](
+          "OtherData",
+          "value" -> pure(_.value),
+          "d1" -> effect(_.d1)
+        )
+
+      implicit def datasType: Output.Union[F, Datas[F]] =
+        union[F, Datas[F]](
+          "Datas",
+          contra[Data[F]] { case Datas.Dat(d) => d },
+          contra[OtherData[F]] { case Datas.Other(o) => o }
+        )
+
+      trait A {
+        def a: String
       }
-    )
+      object A {
+        implicit def t: Output.Interface[F, A] =
+          interface[F, A](
+            obj(
+              "A",
+              "a" -> pure(_ => "A")
+            ),
+            contra[B] { case b: B => b },
+            contra[C] { case c: C => c }
+          )
+      }
 
-  final case class ServerData(value: Int)
+      trait D {
+        def d: String
+      }
+      object D {
+        implicit def t: Output.Interface[F, D] =
+          interface[F, D](
+            obj(
+              "D",
+              "d" -> pure(_ => "D")
+            ),
+            contra[C] { case c: C => c }
+          )
+      }
 
-  implicit def serverData[F[_]: Async]: Output.Obj[F, ServerData] =
-    obj[F, ServerData](
-      "ServerData",
-      "value" -> pure(_.value)
-    )
+      final case class B(a: String) extends A
+      object B {
+        implicit def t: Output.Obj[F, B] = obj[F, B]("B", "a" -> pure(_ => "B"), "b" -> pure(_ => Option("BO")))
+      }
+      final case class C(a: String, d: String) extends A with D
+      object C {
+        implicit def t: Output.Obj[F, C] = obj[F, C]("C", "a" -> pure(_ => "C"), "d" -> pure(_ => "D"))
+      }
 
-  final case class DataIds(ids: List[Int])
-
-  // def serverBatch[F[_]](implicit F: Applicative[F]) =
-  //   batchResolver[F, Int, ServerData]("sd-batch", xs => F.pure(xs.map(x => x -> ServerData(x)).toMap))
-
-  implicit def dataType[F[_]: Async]: Output.Obj[F, Data[F]] =
-    obj[F, Data[F]](
-      "Data",
-      "a" -> pure(_.a),
-      "b" -> effect(_.b),
-      // "sd" -> batchTraverse(serverBatch[F])(_.b.map(i => Seq(i, i + 1, i * 2))),
-      "c" -> effect(_.c.map(_.toSeq))
-    )
-
-  implicit def otherDataType[F[_]: Async]: Output.Obj[F, OtherData[F]] =
-    obj[F, OtherData[F]](
-      "OtherData",
-      "value" -> pure(_.value),
-      "d1" -> effect(_.d1)
-    )
-
-  implicit def datasType[F[_]: Async]: Output.Union[F, Datas[F]] =
-    union[F, Datas[F]](
-      "Datas",
-      contra[Data[F]] { case Datas.Dat(d) => d },
-      contra[OtherData[F]] { case Datas.Other(o) => o }
-    )
-
-  trait A {
-    def a: String
-  }
-  object A {
-    implicit def t[F[_]]: Output.Interface[F, A] =
-      interface[F, A](
-        obj(
-          "A",
-          "a" -> pure(_ => "A")
-        ),
-        contra[B] { case b: B => b },
-        contra[C] { case c: C => c }
+      SchemaShape[F, Unit](
+        obj[F, Unit](
+          "Query",
+          "getData" -> pure(_ => root[F]),
+          "getDatas" -> pure(_ => datasRoot[F]),
+          "getInterface" -> pure(_ => (C("hey", "tun"): A)),
+          "getOther" -> pure(_ => (C("hey", "tun"): D)),
+          "doIdentity" -> pure(_ => IdentityData(2, "hello"))
+        )
       )
-  }
-
-  trait D {
-    def d: String
-  }
-  object D {
-    implicit def t[F[_]]: Output.Interface[F, D] =
-      interface[F, D](
-        obj(
-          "D",
-          "d" -> pure(_ => "D")
-        ),
-        contra[C] { case c: C => c }
-      )
-  }
-
-  final case class B(a: String) extends A
-  object B {
-    implicit def t[F[_]]: Output.Obj[F, B] = obj[F, B]("B", "a" -> pure(_ => "B"), "b" -> pure(_ => Option("BO")))
-  }
-  final case class C(a: String, d: String) extends A with D
-  object C {
-    implicit def t[F[_]]: Output.Obj[F, C] = obj[F, C]("C", "a" -> pure(_ => "C"), "d" -> pure(_ => "D"))
+    }
   }
 
   def root[F[_]: Sync]: Data[F] = getData[F]("John")
@@ -522,16 +537,7 @@ fragment F2 on Data {
   }
   """
 
-  val schema = Schema.simple[IO, Unit](
-    obj[IO, Unit](
-      "Query",
-      "getData" -> pure(_ => root[IO]),
-      "getDatas" -> pure(_ => datasRoot[IO]),
-      "getInterface" -> pure(_ => (C("hey", "tun"): A)),
-      "getOther" -> pure(_ => (C("hey", "tun"): D)),
-      "doIdentity" -> pure(_ => IdentityData(2, "hello"))
-    )
-  )
+  val schema = Schema.stateful[IO, Unit](testSchemaShape[IO])
 
   def parseAndPrep(q: String): Option[NonEmptyList[PreparedQuery.PreparedField[IO, Any]]] =
     p.parseAll(q).map(PreparedQuery.prepare(_, schema, Map.empty)) match {
@@ -555,7 +561,7 @@ fragment F2 on Data {
           println(showDiff(p, costTree))
           println(s"inital plan cost: ${planCost(costTree)}")
           println(s"optimized plan cost: ${planCost(p)}")
-          println(Interpreter.run[IO]((), x, p).unsafeRunSync())
+          println(Interpreter.run[IO]((), x, p, schema.state).unsafeRunSync())
         }
 
         planAndRun
@@ -587,6 +593,6 @@ query withNestedFragments {
     println(showDiff(p, costTree))
     println(s"inital plan cost: ${planCost(costTree)}")
     println(s"optimized plan cost: ${planCost(p)}")
-    println(Interpreter.run[IO]((), x, p).unsafeRunSync())
+    println(Interpreter.run[IO]((), x, p, schema.state).unsafeRunSync())
   }
 }
