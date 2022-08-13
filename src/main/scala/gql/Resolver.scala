@@ -184,9 +184,10 @@ object Resolver {
     final case class Signal[F[_]: MonadCancelThrow, I, A, B](
         // No elem
         head: LeafResolver[F, I, A],
+        // The first element was gotten, the infinite tail is defined as such
         // I = The first initial input, A = The first output from head
         tail: (I, A) => F[DataStreamTail[I, A]],
-        // Post-processing of both head and tail, allows a map function
+        // Post-processing of both head and tail, allows a map function on the structure
         post: (I, A) => F[B]
     ) {
       def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Signal[G, I, A, B] =
