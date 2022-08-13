@@ -5,6 +5,7 @@ import cats.data._
 import cats._
 import shapeless.Lazy
 import scala.reflect.ClassTag
+import gql.resolver._
 
 abstract class OutputSyntax {
   def obj[F[_], A](
@@ -42,7 +43,7 @@ abstract class OutputSyntax {
   ): Output.Field[F, I, T, A] =
     Output.Field[F, I, T, A](
       arg,
-      Resolver.Effect { case (i, a) => resolver(i, a) },
+      Effect { case (i, a) => resolver(i, a) },
       Eval.later(tpe)
     )
 
@@ -52,35 +53,35 @@ abstract class OutputSyntax {
   def pure[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => T)(implicit tpe: => Output[F, T]): Output.Field[F, I, T, A] =
     Output.Field[F, I, T, A](
       arg,
-      Resolver.Pure { case (i, a) => resolver(i, a) },
+      Pure { case (i, a) => resolver(i, a) },
       Eval.later(tpe)
     )
 
   def arg[A](name: String, default: Option[A] = None)(implicit tpe: Input[A]): Arg[A] =
     Arg.initial[A](ArgParam(name, tpe, default))
 
-  def batchResolver[F[_], K, T](batchName: String, resolver: Set[K] => F[Map[K, T]]): Resolver.Batcher[F, K, T] =
-    Resolver.Batcher(batchName, resolver)
+  // def batchResolver[K, T](batchName: String, resolver: Set[K] => F[Map[K, T]]): BatcherReference[K, T] =
+  //   Resolver.Batcher(batchName, resolver)
 
-  def batchTraverse[F[_]: Functor, G[_]: Traverse, I, T, K](batchRes: Resolver.Batcher[F, K, T])(keys: I => F[G[K]])(implicit
+  def batchTraverse[F[_]: Functor, G[_]: Traverse, I, T, K](batchRef: BatcherReference[K, T])(keys: I => F[G[K]])(implicit
       tpe: => Output[F, G[T]],
       F: Applicative[F]
   ): Output.Field[F, I, G[T], Unit] = {
     implicit lazy val tpe2 = tpe
-    batchTraverse[F, G, I, T, K, Unit](Applicative[Arg].unit)(batchRes)(keys)
+    batchTraverse[F, G, I, T, K, Unit](Applicative[Arg].unit)(batchRef)(keys)
   }
 
-  def batchTraverse[F[_]: Functor, G[_]: Traverse, I, T, K, A](arg: Arg[A])(batchRes: Resolver.Batcher[F, K, T])(keys: I => F[G[K]])(
-      implicit
+  def batchTraverse[F[_]: Functor, G[_]: Traverse, I, T, K, A](arg: Arg[A])(batchRef: BatcherReference[K, T])(keys: I => F[G[K]])(implicit
       tpe: => Output[F, G[T]],
       F: Applicative[F]
   ): Output.Field[F, I, G[T], A] =
     Output.Field[F, I, G[T], A](
       arg,
-      Resolver.Batched[F, (I, A), K, G[T], T](
+      BatchResolver[F, (I, A), K, G[T], T](
+        batchRef,
         { case (i, _) =>
           keys(i).map { gk =>
-            Resolver.Batch(
+            Batch(
               gk.toList,
               { xs =>
                 val arr = xs.toVector
@@ -93,8 +94,7 @@ abstract class OutputSyntax {
               }
             )
           }
-        },
-        batchRes
+        }
       ),
       Eval.later(tpe)
     )

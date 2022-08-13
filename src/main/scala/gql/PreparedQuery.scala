@@ -25,6 +25,7 @@ import gql.Output.Union
 import gql.Output.Scalar
 import gql.Output.Opt
 import gql.Output.Arr
+import gql.resolver._
 
 object PreparedQuery {
   /*

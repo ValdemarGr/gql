@@ -1,5 +1,6 @@
 package gql
 
+import gql.resolver._
 import cats.effect._
 import cats.implicits._
 import scala.collection.immutable.SortedSet
@@ -40,7 +41,7 @@ object Optimizer {
     prepared.flatTraverse {
       case PreparedDataField(id, name, resolve, selection, tn) =>
         val batchName = resolve match {
-          case Resolver.Batched(_, batcher) => Some(batcher.batchName)
+          case BatchResolver(batcher, _) => Some(s"batch_${batcher.id}")
           case _                            => None
         }
         // Use parent typename + field as fallback name since this will be unique

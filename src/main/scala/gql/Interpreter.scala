@@ -1,5 +1,6 @@
 package gql
 
+import gql.resolver._
 import cats.data._
 import PreparedQuery._
 import cats.implicits._
@@ -140,7 +141,7 @@ object Interpreter {
         type BatchKey = Any
 
         final case class NodeBatch(
-            inputs: List[(Cursor, Resolver.Batch[F, BatchKey, Any, Any])],
+            inputs: List[(Cursor, Batch[F, BatchKey, Any, Any])],
             resolve: Set[BatchKey] => F[Map[BatchKey, Any]]
         )
 
@@ -154,9 +155,9 @@ object Interpreter {
           val n = executionDeps.nodeMap(df.id)
 
           df.resolve match {
-            case Resolver.Pure(resolve) =>
+            case Pure(resolve) =>
               F.pure(Left(inputs.map(in => in.ided(df.id, resolve(in.value)))))
-            case Resolver.Effect(resolve) =>
+            case Effect(resolve) =>
               inputs
                 .parTraverse { in =>
                   resolve(in.value).timed
@@ -165,24 +166,25 @@ object Interpreter {
                     }
                 }
                 .map(Left(_))
-            case Resolver.Batched(batch, batcher) =>
-              inputs
-                .parTraverse(in => batch(in.value).map(b => (in.cursor.ided(df.id), b)))
-                .map { zs =>
-                  Right(
-                    NodeBatch(
-                      zs,
-                      xs =>
-                        batcher
-                          .resolver(xs)
-                          .timed
-                          .flatMap { case (dur, value) =>
-                            submit(batcher.batchName, dur, value.size) >>
-                              submit(n.name, dur, value.size).as(value)
-                          }
-                    )
-                  )
-                }
+            // TODO un-uncomment batch code
+            // case Batched(batch, batcher) =>
+            //   inputs
+            //     .parTraverse(in => batch(in.value).map(b => (in.cursor.ided(df.id), b)))
+            //     .map { zs =>
+            //       Right(
+            //         NodeBatch(
+            //           zs,
+            //           xs =>
+            //             batcher
+            //               .resolver(xs)
+            //               .timed
+            //               .flatMap { case (dur, value) =>
+            //                 submit(batcher.batchName, dur, value.size) >>
+            //                   submit(n.name, dur, value.size).as(value)
+            //               }
+            //         )
+            //       )
+            //     }
           }
         }
 

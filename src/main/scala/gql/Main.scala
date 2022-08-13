@@ -393,15 +393,15 @@ query withNestedFragments {
 
   final case class DataIds(ids: List[Int])
 
-  def serverBatch[F[_]](implicit F: Applicative[F]) =
-    batchResolver[F, Int, ServerData]("sd-batch", xs => F.pure(xs.map(x => x -> ServerData(x)).toMap))
+  // def serverBatch[F[_]](implicit F: Applicative[F]) =
+  //   batchResolver[F, Int, ServerData]("sd-batch", xs => F.pure(xs.map(x => x -> ServerData(x)).toMap))
 
   implicit def dataType[F[_]: Async]: Output.Obj[F, Data[F]] =
     obj[F, Data[F]](
       "Data",
       "a" -> pure(_.a),
       "b" -> effect(_.b),
-      "sd" -> batchTraverse(serverBatch[F])(_.b.map(i => Seq(i, i + 1, i * 2))),
+      // "sd" -> batchTraverse(serverBatch[F])(_.b.map(i => Seq(i, i + 1, i * 2))),
       "c" -> effect(_.c.map(_.toSeq))
     )
 

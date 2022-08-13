@@ -9,6 +9,7 @@ import cats._
 import scala.reflect.ClassTag
 import gql.Output.Interface
 import gql.Output.Obj
+import gql.resolver._
 
 sealed trait Output[F[_], +A] {
   def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Output[G, A]

@@ -20,9 +20,9 @@ final case class SignalResolver[F[_]: MonadCancelThrow, I, A, B](
       (i, a) => fk(post(i, a))
     )
 
-  def contraMap[C](g: C => I): SignalResolver[F, C, A, B] =
+  def contramap[C](g: C => I): SignalResolver[F, C, A, B] =
     SignalResolver(
-      head.contraMap(g),
+      head.contramap(g),
       i => tail(g(i)).map(dst => dst.copy(ref = StreamReference(dst.ref.id))),
       (i, a) => post(g(i), a)
     )
