@@ -3,6 +3,7 @@ package gql
 import cats._
 import cats.implicits._
 import cats.effect._
+import cats.data.State
 
 sealed trait Resolver[F[_], I, A] {
   def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Resolver[G, I, A]
@@ -61,6 +62,24 @@ object Resolver {
    * Current problem is:
    * How to batch updates.
    * Clearly we need some sort of strategy, which could be something like fs2.Pipe[F, A, A]
+   *
+   */
+
+  /*
+   * Okay so there are two cases:
+   *   Same subscription:
+   *     Two nodes that over an infinite time period will contain the exact same sequence of data.
+   *     The problem here is identifying two "same" nodes, which only the user can do.
+   *
+   *     Solution 1:
+   *       Have the user provide an id for the subscription, that can be used to identify same subscriptions,
+   *       such that the interpreter can de-duplicate the streams of data.
+   *       If the subtree is pure, that is, there are no derived effects from this node's output, this optimization
+   *       seems quite complex compared to just using a cache.
+   *       However, let E be the set of side effects (the subtree of fields that require evaluation)
+   *       caused by new data arriving in the stream. Now let there be n instances of the same stream.
+   *       Either the end-user has to provide O(|E|) cache implementations to de-duplicate the updates,
+   *       or suffer the N+1 problem since if |E| = n then O(n * |E|) = O(n^2).
    *
    */
   final case class Signal[F[_]: MonadCancelThrow, I, A](
@@ -135,5 +154,80 @@ object Resolver {
 
     override def contramap[B](g: B => I): Batched[F, B, K, A, T] =
       Batched(g.andThen(batch), batcher)
+  }
+
+  object Signal2 {
+    final case class DataStream[F[_], I, A](
+        id: Int,
+        tail: Resource[F, (I, A) => fs2.Stream[F, A]]
+    )
+
+    object DataStream {
+      val S = State.get[Int]
+
+      def apply[F[_], I, A](f: Resource[F, (I, A) => fs2.Stream[F, A]]): State[Int, DataStream[F, I, A]] =
+        S.inspect(DataStream(_, f)) <* S.modify(_ + 1)
+    }
+
+    final case class Stuff[F[_], I, A, B](
+        head: LeafResolver[F, I, A],
+        tail: DataStream[F, I, A],
+        post: (I, A) => F[B]
+    ) {
+      def flatMapF[C](f: B => F[C])(implicit F: FlatMap[F]): Stuff[F, I, A, C] =
+        Stuff(head, tail, (i, a) => post(i, a).flatMap(f))
+    }
+  }
+
+  object Batch2 {
+    final case class Batcher[F[_], K, T](
+        id: Int,
+        resolver: Set[K] => F[Map[K, T]]
+    )
+
+    object Batcher {
+      val S = State.get[Int]
+
+      def apply[F[_], K, T](f: Set[K] => F[Map[K, T]]): State[Int, Batcher[F, K, T]] =
+        S.inspect(Batcher(_, f)) <* S.modify(_ + 1)
+    }
+
+    final case class BatchResult[F[_], K, A, T](
+        keys: List[K],
+        post: List[(K, T)] => F[A]
+    ) {
+      def flatMapF[B](f: A => F[B])(implicit F: FlatMap[F]) =
+        BatchResult(keys, post.andThen(_.flatMap(f)))
+    }
+
+    object BatchResult {
+      implicit def applicativeForBatchResult[F[_]: Applicative, K, T]: Applicative[BatchResult[F, K, *, T]] = {
+        type G[A] = BatchResult[F, K, A, T]
+        new Applicative[G] {
+          override def pure[A](x: A): G[A] = BatchResult(List.empty, _ => x.pure[F])
+
+          override def ap[A, B](ff: G[A => B])(fa: G[A]): G[B] =
+            BatchResult(
+              ff.keys ++ fa.keys,
+              { m =>
+                val f = ff.post(m.take(ff.keys.size))
+                val a = fa.post(m.drop(ff.keys.size))
+                f.ap(a)
+              }
+            )
+        }
+      }
+    }
+
+    final case class Batch[F[_], I, K, A, T](
+        batcher: Batcher[F, K, T],
+        run: I => F[BatchResult[F, K, A, T]]
+    ) {
+      def flatMapF[B](f: A => F[B])(implicit F: FlatMap[F]) =
+        Batch(batcher, run.andThen(_.map(_.flatMapF(f))))
+
+      def contraMap[B](g: B => I): Batch[F, B, K, A, T] =
+        Batch(batcher, g.andThen(run))
+    }
   }
 }
