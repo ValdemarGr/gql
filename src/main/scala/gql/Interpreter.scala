@@ -8,18 +8,67 @@ import cats.effect._
 import cats.effect.implicits._
 import io.circe._
 import io.circe.syntax._
-import cats.Eval
-import cats.Monad
 import cats.effect.std.Supervisor
 import scala.collection.immutable.SortedMap
-import cats.Apply
-import cats.Applicative
-import cats.SemigroupK
-import cats.kernel.Semigroup
 import scala.concurrent.duration.FiniteDuration
-import cats.MonadThrow
+import cats._
+import fs2.concurrent.Signal
 
 object Interpreter {
+  sealed trait SignalSubscriptionAlg[F[_], A] {
+    def add(initialValue: A, tail: fs2.Stream[F, A]): F[BigInt]
+
+    def currentValue(id: BigInt): F[A]
+
+    def signal(id: BigInt): F[Signal[F, A]]
+
+    def remove(id: BigInt): F[Unit]
+  }
+
+  object SignalSubscriptionAlg {
+    def apply[F[_], A](implicit F: Concurrent[F]) = {
+      final case class SubscriptionState(
+          nextId: BigInt,
+          subscriptions: Map[BigInt, (Signal[F, A], Cleanup)]
+      )
+
+      type Cleanup = F[Unit]
+
+      Resource.eval(F.ref(SubscriptionState(BigInt(1), Map.empty))).flatMap { state =>
+        val cleanupR: Resource[F, Unit] =
+          Resource.make(F.unit)(_ => state.get.flatMap(_.subscriptions.toList.traverse_ { case (_, (_, cleanup)) => cleanup }))
+
+        new SignalSubscriptionAlg[F, A] {
+          override def add(initialValue: A, tail: fs2.Stream[F, A]): F[BigInt] =
+            tail
+              .holdResource(initialValue)
+              .allocated
+              .flatMap { case (sig, release) =>
+                state.modify { s =>
+                  val nextId = s.nextId
+                  (SubscriptionState(nextId + 1, s.subscriptions + (nextId -> (sig, release))), nextId)
+                }
+              }
+
+          override def currentValue(id: BigInt): F[A] =
+            signal(id).flatMap(_.get)
+
+          override def signal(id: BigInt): F[Signal[F, A]] =
+            state.get
+              .map(_.subscriptions(id))
+              .map { case (sig, _) => sig }
+
+          override def remove(id: BigInt): F[Unit] =
+            state.modify { s =>
+              val (_, release) = s.subscriptions(id)
+              s.copy(subscriptions = s.subscriptions - id) -> release
+            }.flatten
+        }
+        Resource.unit[F]
+      }
+    }
+  }
+
   final case class Converted(batchId: String, idsContained: Map[Int, List[Converted]])
 
   final case class BatchExecutionState(remainingInputs: Set[Int], inputMap: Map[Int, List[NodeValue]])
@@ -126,10 +175,40 @@ object Interpreter {
   }
 
   /*
-   * Stream strategy
-   * Emit the values for "head"
+   * Stream strategy:
    *
+   * Emit the values for "head" as F[List[NodeValue]]
    *
+   * Emit resource of node updates as Resource[F, Stream[F, Chunk[(StreamId, Cursor, NodeValue)]]]
+   *
+   * Return them as F[(F[List[NodeValue]], Resource[F, Stream[F, Chunk[(StreamId, Cursor, NodeValue)]]])]
+   * Where the outer F allocates all evaluation dependencies, the inner F evaluates all head values and
+   * the inner resource opens all streams.
+   *
+   * For queries and mutations the resource can stay closed.
+   *
+   * For subscriptions the resource should be opened and for every chunk
+   * the smallest common signal node parent should be found, such that if two nodes N1 and N2 are updated
+   * and cursor(N1) > cursor(N2) then N2 is the maximal parent of { N1, N2 }, since an update for N2
+   * also causes N1 to re-evaluate regardless.
+   *
+   * Any updated nodes that do not occur in smallest common signal nodes must be released.
+   * (This warrents an unique identifier for each node)
+   * There exists a time window where a node is no longer relevant but is still emitting updates.
+   * The stream of updates should be filtered by "active" nodes.
+   *
+   * Next, de-duplicate all smallest common signal nodes types by id.
+   * Let this set of de-duplicated smallest common signal nodes be the new root nodes.
+   * Now create an optimized plan and re-evaluate this set of root nodes like an ordinary query.
+   *
+   * This will provide new List[NodeValue] wich must be merged with the previously emitted List[NodeValue],
+   * discarding all nodes that are no longer relevant by always picking the new List[NodeValue]'s result.
+   *
+   * The new set of signals contained in the right resource, must be merged with the previous set of signals.
+   * (Maybe perform resource closing here?)
+   *
+   * The Resource type definiton serves as a simple abstraction, but is not sufficient since release should
+   * occur on a per-signal basis.
    */
 
   def interpret[F[_]](

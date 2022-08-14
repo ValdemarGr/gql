@@ -23,6 +23,7 @@ final case class SignalResolver[F[_]: MonadCancelThrow, I, A, B](
     // any combinator in fs2; Async. Attempting to construct mapK and contraMap with fs2.Pipe is impossible
     // and one must instead constrain the implementation to a bidirectional mapping F ~> G and G ~> F for mapK
     // and C => I and I => C for contraMap.
+    // Essentially this is something like forall i,a,b. i -> a -> (forall f. Async => Stream f a -> Stream f b)
     postTail: (I, A) => ConstrainedPipe[A, B]
 ) extends Resolver[F, I, B] {
   def mapK[G[_]: MonadCancelThrow](fk: F ~> G): SignalResolver[G, I, A, B] =
