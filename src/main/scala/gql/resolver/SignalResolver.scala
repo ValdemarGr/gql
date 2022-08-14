@@ -3,9 +3,10 @@ package gql.resolver
 import cats.effect._
 import cats.implicits._
 import cats._
+import cats.arrow.FunctionK
 
 sealed trait ConstrainedPipe[A, B] {
-  def pipe[F[_]: Async]: fs2.Pipe[F, A, B]
+  def pipe[F[_]](implicit F: Async[F]): fs2.Pipe[F, A, B]
 }
 
 final case class SignalResolver[F[_]: MonadCancelThrow, I, A, B](
@@ -39,7 +40,7 @@ final case class SignalResolver[F[_]: MonadCancelThrow, I, A, B](
       (i, a) => postHead(g(i), a),
       (i, a) =>
         new ConstrainedPipe[A, B] {
-          def pipe[F[_]: Async]: fs2.Pipe[F, A, B] = postTail(g(i), a).pipe[F]
+          def pipe[F[_]](implicit F: Async[F]): fs2.Pipe[F, A, B] = postTail(g(i), a).pipe[F]
         }
     )
 
@@ -50,7 +51,7 @@ final case class SignalResolver[F[_]: MonadCancelThrow, I, A, B](
       postHead = (i, a) => postHead(i, a).flatMap(headOp),
       postTail = (i, a) =>
         new ConstrainedPipe[A, C] {
-          def pipe[F[_]: Async]: fs2.Pipe[F, A, C] =
+          def pipe[F[_]](implicit F: Async[F]): fs2.Pipe[F, A, C] =
             _.through(postTail(i, a).pipe[F]).map(b => (i, a, b)).through(tailOp.pipe[F])
         }
     )
