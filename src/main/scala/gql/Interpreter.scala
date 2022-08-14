@@ -103,7 +103,7 @@ object Interpreter {
                         (s.openResources + (compositeKey -> newEntry), open)
                     }
 
-                  val nextId = s.nextId + 1
+                  val nextId = s.nextId
 
                   (s.copy(openResources = newMap, nextId = nextId + 1), openF.map(_.as(nextId)))
                 }
