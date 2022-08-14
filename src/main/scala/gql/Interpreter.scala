@@ -125,6 +125,13 @@ object Interpreter {
     ExecutionDeps(nodeMap, dataFieldMap, batches)
   }
 
+  /*
+   * Stream strategy
+   * Emit the values for "head"
+   *
+   *
+   */
+
   def interpret[F[_]](
       rootInput: Any,
       rootSel: NonEmptyList[PreparedField[F, Any]],
