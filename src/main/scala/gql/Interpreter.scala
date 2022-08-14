@@ -26,7 +26,7 @@ object Interpreter {
   }
 
   object SignalSubscriptionAlg {
-    def apply[F[_], A](implicit F: Concurrent[F]) = {
+    def apply[F[_], A](implicit F: Concurrent[F]): Resource[F, SignalSubscriptionAlg[F, A]] = {
       final case class SubscriptionState(
           nextId: BigInt,
           subscriptions: Map[BigInt, (Signal[F, A], Cleanup)]
@@ -38,33 +38,35 @@ object Interpreter {
         val cleanupR: Resource[F, Unit] =
           Resource.make(F.unit)(_ => state.get.flatMap(_.subscriptions.toList.traverse_ { case (_, (_, cleanup)) => cleanup }))
 
-        new SignalSubscriptionAlg[F, A] {
-          override def add(initialValue: A, tail: fs2.Stream[F, A]): F[BigInt] =
-            tail
-              .holdResource(initialValue)
-              .allocated
-              .flatMap { case (sig, release) =>
-                state.modify { s =>
-                  val nextId = s.nextId
-                  (SubscriptionState(nextId + 1, s.subscriptions + (nextId -> (sig, release))), nextId)
+        val alg =
+          new SignalSubscriptionAlg[F, A] {
+            override def add(initialValue: A, tail: fs2.Stream[F, A]): F[BigInt] =
+              tail
+                .holdResource(initialValue)
+                .allocated
+                .flatMap { case (sig, release) =>
+                  state.modify { s =>
+                    val nextId = s.nextId
+                    (SubscriptionState(nextId + 1, s.subscriptions + (nextId -> (sig, release))), nextId)
+                  }
                 }
-              }
 
-          override def currentValue(id: BigInt): F[A] =
-            signal(id).flatMap(_.get)
+            override def currentValue(id: BigInt): F[A] =
+              signal(id).flatMap(_.get)
 
-          override def signal(id: BigInt): F[Signal[F, A]] =
-            state.get
-              .map(_.subscriptions(id))
-              .map { case (sig, _) => sig }
+            override def signal(id: BigInt): F[Signal[F, A]] =
+              state.get
+                .map(_.subscriptions(id))
+                .map { case (sig, _) => sig }
 
-          override def remove(id: BigInt): F[Unit] =
-            state.modify { s =>
-              val (_, release) = s.subscriptions(id)
-              s.copy(subscriptions = s.subscriptions - id) -> release
-            }.flatten
-        }
-        Resource.unit[F]
+            override def remove(id: BigInt): F[Unit] =
+              state.modify { s =>
+                val (_, release) = s.subscriptions(id)
+                s.copy(subscriptions = s.subscriptions - id) -> release
+              }.flatten
+          }
+
+        cleanupR.as(alg)
       }
     }
   }
