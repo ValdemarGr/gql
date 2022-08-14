@@ -351,7 +351,7 @@ query withNestedFragments {
 
   implicit def listInputType[A](implicit tpe: Input[A]): Input[Vector[A]] = Input.Arr(tpe)
 
-  def testSchemaShape[F[_]](implicit F: Async[F]) = {
+  def testSchemaShape[F[_]](implicit F: Async[F]): State[SchemaState[F], SchemaShape[F, Unit]] = {
     final case class IdentityData(value: Int, value2: String)
 
     final case class InputData(
