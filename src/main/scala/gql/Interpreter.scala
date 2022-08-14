@@ -15,6 +15,7 @@ import cats._
 import fs2.concurrent.Signal
 
 object Interpreter {
+  // Subscription type -> 
   sealed trait SignalSubscriptionAlg[F[_]] {
     def subscribe(ref: StreamReference[Any, Any], params: F[(Any, Any, Any)]): F[BigInt]
 

@@ -363,6 +363,18 @@ query withNestedFragments {
 
     final case class DataIds(ids: List[Int])
 
+    /*
+     * BatchReference[F, UUID, Case](getCaseEffeciently).flatMap{ caseBatchReference =>
+     *   StreamReference[F, UUID, UUID](subscribeToCaseKafkaTopic).flatMap{ caseStreamReference =>
+     *     ...
+     *     "caseData" -> signal(_.caseId: T Intermediate, batch(caseBatchReference)(identity: Batch Key from T)){ c =>
+     *       (caseStreamReference, c.caseId: Key)
+     *     }
+     *     ...
+     *   }
+     * }
+     *
+     */
     BatcherReference[F, Int, ServerData](xs => F.pure(xs.map(x => x -> ServerData(x)).toMap)).map { serverDataBatcher =>
       implicit val inputDataType: Input[InputData] = in.obj[InputData](
         "InputData",

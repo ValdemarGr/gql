@@ -4,7 +4,12 @@ import cats.implicits._
 import cats._
 import cats.effect._
 
-
+/*
+ * I input type
+ * K the batching key
+ * A the output type
+ * T the intermediate type which is converted to A
+ */
 final case class BatchResolver[F[_], I, K, A, T](
     batcher: BatcherReference[K, T],
     partition: I => F[Batch[F, K, A, T]]
