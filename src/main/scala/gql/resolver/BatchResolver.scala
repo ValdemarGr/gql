@@ -4,8 +4,8 @@ import cats.implicits._
 import cats._
 import cats.effect._
 
+
 final case class BatchResolver[F[_], I, K, A, T](
-    // Pick batch implementation based on input
     batcher: BatcherReference[K, T],
     partition: I => F[Batch[F, K, A, T]]
 ) extends LeafResolver[F, I, A] {

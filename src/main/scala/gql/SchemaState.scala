@@ -5,7 +5,7 @@ import alleycats.Empty
 
 final case class SchemaState[F[_]](
     nextId: Int,
-    streams: Map[Int, Resource[F, (Any, Any) => fs2.Stream[F, Any]]],
+    streams: Map[Int, Any => Resource[F, fs2.Stream[F, Any]]],
     batchers: Map[Int, Set[Any] => F[Map[Any, Any]]]
 )
 
