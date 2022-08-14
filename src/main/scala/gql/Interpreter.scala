@@ -13,107 +13,165 @@ import scala.collection.immutable.SortedMap
 import scala.concurrent.duration.FiniteDuration
 import cats._
 import fs2.concurrent.Signal
+import cats.effect.std.Queue
+import fs2.Chunk
 
 object Interpreter {
-  // Subscription type -> 
+  // Subscription type ->
   sealed trait SignalSubscriptionAlg[F[_]] {
-    def subscribe(ref: StreamReference[Any, Any], params: F[(Any, Any, Any)]): F[BigInt]
-
-    // def currentValue(id: BigInt): F[Any]
-
-    // def signal(id: BigInt): F[Signal[F, Any]]
+    def subscribe(ref: StreamReference[Any, Any], key: Any): F[BigInt]
 
     def remove(id: BigInt): F[Unit]
 
     def changeLog: fs2.Stream[F, NonEmptyList[(BigInt, Any)]]
   }
 
-  // object SignalSubscriptionAlg {
-  //   def apply[F[_]](ss: SchemaState[F])(implicit F: Concurrent[F]): Resource[F, SignalSubscriptionAlg[F]] = {
-  //     type ResourceId = Int
-  //     type Cleanup = F[Unit]
-  //     type Listeners = Int
+  object SignalSubscriptionAlg {
+    def apply[F[_]](ss: SchemaState[F])(implicit F: Concurrent[F]): Resource[F, SignalSubscriptionAlg[F]] = {
+      type ResourceGroupId = Int
+      type ResourceKey = Any
+      type Cleanup = F[Unit]
+      type Listeners = Int
 
-  //     final case class OpenResource(
-  //         stream: (Any, Any) => fs2.Stream[F, Any],
-  //         cleanup: Cleanup
-  //     )
+      final case class SubscriptionState(
+          nextId: BigInt,
+          subscriptions: Map[BigInt, (ResourceGroupId, ResourceKey)],
+          openResources: Map[(ResourceGroupId, ResourceKey), (Listeners, F[Either[Throwable, Cleanup]])]
+      )
 
-  //     final case class SubscriptionState(
-  //         nextId: BigInt,
-  //         subscriptions: Map[BigInt, (ResourceId, Cleanup)],
-  //         openResources: Map[ResourceId, (Listeners, F[Either[Throwable, OpenResource]])]
-  //     )
+      val refR =
+        Resource.make(F.ref(SubscriptionState(BigInt(1), Map.empty, Map.empty)))(
+          _.get.flatMap(_.openResources.toList.parTraverse { case (_, (_, e)) => e.flatMap(_.sequence_) }.void)
+        )
 
-  //     val refR =
-  //       Resource.make(F.ref(SubscriptionState(BigInt(1), Map.empty, Map.empty))) { state =>
-  //         state.get.flatMap { s =>
-  //           val subsF = s.subscriptions.toList.parTraverse_ { case (_, (_, cleanup)) => cleanup }
-  //           val resF = s.openResources.toList.parTraverse { case (_, x) => x.cleanup }
+      Resource
+        .eval(Queue.bounded[F, Chunk[NonEmptyList[(BigInt, Any)]]](1024))
+        .flatMap { q =>
+          refR.flatMap { state =>
+            def broadcastChanges(stream: fs2.Stream[F, NonEmptyList[(BigInt, Any)]]) =
+              stream
+                .enqueueUnterminatedChunks(q)
+                .compile
+                .drain
+                .start
 
-  //           (subsF, resF).parTupled.void
-  //         }
-  //       }
+            def addStreamData(rgi: ResourceGroupId, k: ResourceKey, stream: fs2.Stream[F, Any])
+                : fs2.Stream[F, NonEmptyList[(BigInt, Any)]] =
+              stream
+                .evalMap { x =>
+                  state.get
+                    .map(_.subscriptions.toList.collect { case (bd, (rgi2, k2)) if rgi2 == rgi && k2 == k => bd }.toNel)
+                    .map(_.map((x, _)))
+                }
+                .unNone
+                .map { case (x, nel) => nel.map((_, x)) }
 
-  //     Resource.eval(F.ref(SubscriptionState(BigInt(1), Map.empty, Map.empty))).flatMap { state =>
-  //       def subscribeF(r: ResourceId): F[OpenResource] =
-  //         for {
-  //           d <- F.deferred[Either[Throwable, OpenResource]]
-  //           tryAlloc <- state.modify { s =>
-  //             val (newMap, openF) =
-  //               s.openResources.get(r) match {
-  //                 case None =>
-  //                   val res = ss.streams(r)
-  //                   val open = res.allocated.attempt
-  //                     .map {
-  //                       case Left(err)            => Left(err)
-  //                       case Right((go, cleanup)) => Right(OpenResource(go, cleanup))
-  //                     }
-  //                     .flatTap(d.complete)
-  //                   val newEntry = (1, d.get)
-  //                   (s.openResources + (r -> newEntry), open)
-  //                 case Some((listeners, fa)) =>
-  //                   val newEntry = (listeners + 1, fa)
-  //                   (s.openResources + (r -> newEntry), fa)
-  //               }
+            def backgroundStreamBroadcast(rgi: ResourceGroupId, k: ResourceKey, stream: fs2.Stream[F, Any]) =
+              broadcastChanges(addStreamData(rgi, k, stream))
 
-  //             (s.copy(openResources = newMap), openF)
-  //           }
-  //           result <- tryAlloc.rethrow
-  //         } yield result
+            def openStream(rgi: ResourceGroupId, k: ResourceKey): F[Either[Throwable, Cleanup]] = {
+              val res = ss.streams(rgi)(k)
 
-  //       val alg =
-  //         new SignalSubscriptionAlg[F] {
-  //           // override def add(initialValue: A, tail: fs2.Stream[F, A]): F[BigInt] =
-  //           //   tail
-  //           //     .holdResource(initialValue)
-  //           //     .allocated
-  //           //     .flatMap { case (sig, release) =>
-  //           //       state.modify { s =>
-  //           //         val nextId = s.nextId
-  //           //         (SubscriptionState(nextId + 1, s.subscriptions + (nextId -> (sig, release))), nextId)
-  //           //       }
-  //           //     }
+              res.allocated
+                .flatMap { case (stream, cleanup) =>
+                  backgroundStreamBroadcast(rgi, k, stream)
+                    .map(_.cancel >> cleanup)
+                }
+                .attempt
+                .flatTap {
+                  case Left(_) => state.update(s2 => s2.copy(openResources = s2.openResources - ((rgi, k))))
+                  case _       => F.unit
+                }
+            }
 
-  //           // override def currentValue(id: BigInt): F[A] =
-  //           //   signal(id).flatMap(_.get)
+            // Maybe there is already a resource open for this type of stream?
+            // Also, this is pretty volatile and unsafe, so no cancellation here
+            def reserveResourceF(rgi: ResourceGroupId, k: ResourceKey): F[Unit] = F.uncancelable { _ =>
+              for {
+                d <- F.deferred[Either[Throwable, Cleanup]]
+                tryAlloc <- state.modify { s =>
+                  val compositeKey = (rgi, k)
+                  val (newMap, openF) =
+                    s.openResources.get(compositeKey) match {
+                      case Some((listeners, fa)) =>
+                        val newEntry = (listeners + 1, fa)
+                        (s.openResources + (compositeKey -> newEntry), fa)
+                      case None =>
+                        val open: F[Either[Throwable, Cleanup]] = openStream(rgi, k).flatTap(d.complete)
 
-  //           // override def signal(id: BigInt): F[Signal[F, A]] =
-  //           //   state.get
-  //           //     .map(_.subscriptions(id))
-  //           //     .map { case (sig, _) => sig }
+                        val newEntry = (1, d.get)
 
-  //           // override def remove(id: BigInt): F[Unit] =
-  //           //   state.modify { s =>
-  //           //     val (_, release) = s.subscriptions(id)
-  //           //     s.copy(subscriptions = s.subscriptions - id) -> release
-  //           //   }.flatten
-  //         }
+                        (s.openResources + (compositeKey -> newEntry), open)
+                    }
 
-  //       ???
-  //     }
-  //   }
-  // }
+                  (s.copy(openResources = newMap), openF)
+                }
+                _ <- tryAlloc.rethrow
+              } yield ()
+            }
+
+            def releaseSubscriptionF(id: BigInt): F[Unit] =
+              state.modify { s =>
+                s.subscriptions.get(id) match {
+                  case None => (s, F.unit)
+                  case Some(ck) =>
+                    s.openResources.get(ck) match {
+                      case Some((listeners, result)) =>
+                        if (listeners > 1) {
+                          val newEntry = (listeners - 1, result)
+                          (
+                            s.copy(
+                              openResources = s.openResources + (ck -> newEntry),
+                              subscriptions = s.subscriptions - id
+                            ),
+                            F.unit
+                          )
+                        } else {
+                          (
+                            s.copy(
+                              openResources = s.openResources - ck,
+                              subscriptions = s.subscriptions - id
+                            ),
+                            result.flatMap(_.sequence_).void
+                          )
+                        }
+                    }
+                }
+              }.flatten
+
+            val alg =
+              new SignalSubscriptionAlg[F] {
+                // override def add(initialValue: A, tail: fs2.Stream[F, A]): F[BigInt] =
+                //   tail
+                //     .holdResource(initialValue)
+                //     .allocated
+                //     .flatMap { case (sig, release) =>
+                //       state.modify { s =>
+                //         val nextId = s.nextId
+                //         (SubscriptionState(nextId + 1, s.subscriptions + (nextId -> (sig, release))), nextId)
+                //       }
+                //     }
+
+                // override def currentValue(id: BigInt): F[A] =
+                //   signal(id).flatMap(_.get)
+
+                // override def signal(id: BigInt): F[Signal[F, A]] =
+                //   state.get
+                //     .map(_.subscriptions(id))
+                //     .map { case (sig, _) => sig }
+
+                // override def remove(id: BigInt): F[Unit] =
+                //   state.modify { s =>
+                //     val (_, release) = s.subscriptions(id)
+                //     s.copy(subscriptions = s.subscriptions - id) -> release
+                //   }.flatten
+              }
+
+            ???
+          }
+        }
+    }
+  }
 
   final case class Converted(batchId: String, idsContained: Map[Int, List[Converted]])
 
