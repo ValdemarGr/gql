@@ -17,7 +17,6 @@ import cats.effect.std.Queue
 import fs2.Chunk
 
 object Interpreter {
-  // Subscription type ->
   sealed trait SignalSubscriptionAlg[F[_]] {
     def subscribe(ref: StreamReference[Any, Any], key: Any): F[BigInt]
 
@@ -47,7 +46,7 @@ object Interpreter {
       Resource
         .eval(Queue.bounded[F, Chunk[NonEmptyList[(BigInt, Any)]]](1024))
         .flatMap { q =>
-          refR.flatMap { state =>
+          refR.map { state =>
             def broadcastChanges(stream: fs2.Stream[F, NonEmptyList[(BigInt, Any)]]) =
               stream
                 .enqueueUnterminatedChunks(q)
@@ -86,7 +85,7 @@ object Interpreter {
 
             // Maybe there is already a resource open for this type of stream?
             // Also, this is pretty volatile and unsafe, so no cancellation here
-            def reserveResourceF(rgi: ResourceGroupId, k: ResourceKey): F[Unit] = F.uncancelable { _ =>
+            def reserveResourceF(rgi: ResourceGroupId, k: ResourceKey): F[BigInt] = F.uncancelable { _ =>
               for {
                 d <- F.deferred[Either[Throwable, Cleanup]]
                 tryAlloc <- state.modify { s =>
@@ -104,10 +103,12 @@ object Interpreter {
                         (s.openResources + (compositeKey -> newEntry), open)
                     }
 
-                  (s.copy(openResources = newMap), openF)
+                  val nextId = s.nextId + 1
+
+                  (s.copy(openResources = newMap, nextId = nextId + 1), openF.map(_.as(nextId)))
                 }
-                _ <- tryAlloc.rethrow
-              } yield ()
+                o <- tryAlloc.rethrow
+              } yield o
             }
 
             def releaseSubscriptionF(id: BigInt): F[Unit] =
@@ -116,6 +117,7 @@ object Interpreter {
                   case None => (s, F.unit)
                   case Some(ck) =>
                     s.openResources.get(ck) match {
+                      case None => (s, F.unit)
                       case Some((listeners, result)) =>
                         if (listeners > 1) {
                           val newEntry = (listeners - 1, result)
@@ -139,35 +141,16 @@ object Interpreter {
                 }
               }.flatten
 
-            val alg =
-              new SignalSubscriptionAlg[F] {
-                // override def add(initialValue: A, tail: fs2.Stream[F, A]): F[BigInt] =
-                //   tail
-                //     .holdResource(initialValue)
-                //     .allocated
-                //     .flatMap { case (sig, release) =>
-                //       state.modify { s =>
-                //         val nextId = s.nextId
-                //         (SubscriptionState(nextId + 1, s.subscriptions + (nextId -> (sig, release))), nextId)
-                //       }
-                //     }
+            new SignalSubscriptionAlg[F] {
+              override def subscribe(ref: StreamReference[Any, Any], key: Any): F[BigInt] =
+                reserveResourceF(ref.id, key)
 
-                // override def currentValue(id: BigInt): F[A] =
-                //   signal(id).flatMap(_.get)
+              override def remove(id: BigInt): F[Unit] =
+                releaseSubscriptionF(id)
 
-                // override def signal(id: BigInt): F[Signal[F, A]] =
-                //   state.get
-                //     .map(_.subscriptions(id))
-                //     .map { case (sig, _) => sig }
-
-                // override def remove(id: BigInt): F[Unit] =
-                //   state.modify { s =>
-                //     val (_, release) = s.subscriptions(id)
-                //     s.copy(subscriptions = s.subscriptions - id) -> release
-                //   }.flatten
-              }
-
-            ???
+              override def changeLog: fs2.Stream[F, NonEmptyList[(BigInt, Any)]] =
+                fs2.Stream.fromQueueUnterminatedChunk(q)
+            }
           }
         }
     }
