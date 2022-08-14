@@ -17,7 +17,7 @@ import cats.effect.std.Queue
 import fs2.Chunk
 
 object Interpreter {
-  sealed trait SignalSubscriptionAlg[F[_]] {
+  trait SignalSubscriptionAlg[F[_]] {
     def subscribe(ref: StreamReference[Any, Any], key: Any): F[BigInt]
 
     def remove(id: BigInt): F[Unit]
@@ -296,6 +296,37 @@ object Interpreter {
    *
    * The Resource type definiton serves as a simple abstraction, but is not sufficient since release should
    * occur on a per-signal basis.
+   */
+
+  /*
+   * Strategy 2:
+   * Subscribe to the changeLog in the signal alg.
+   *
+   * Evaluate the initial plan, which results in List[NodeValue]
+   * Emit the initial plan's result.
+   *
+   * For every changeLog chunk:
+   *   Find the highest common signal ancestor of all changed nodes by:
+   *     Find all nodes parents, let this be P(id): Set[NodeId]:
+   *       Start from the root with S = {}.
+   *       If node is a signal node, add the node's id to S and save the mapping id -> S.
+   *       Recurse into children with the parameter S.
+   *     The highest common signal ancestor set of the changed nodes is
+   *     HCSA = { x | x \in S \land P(x) \not\in S }
+   *
+   *     Algo 2:
+   *       For every changed node N, let this be IC: List[Set[NodeId]]:
+   *         For every child, find the first node that occurs in the changed nodes.
+   *       The changed nodes - IC are the highest common signal ancestor nodes,
+   *       since every node that occurs as a child is found and eliminated.
+   *
+   *   Remove the subscription for all children of the highest common signal ancestor nodes.
+   *   
+   *   Now, let the highest common signal ancestors be the new root nodes.
+   *   Plan and evaluate the new root nodes.
+   *
+   *   Merge the new List[NodeValue] with the old List[NodeValue] by always picking the newest result.
+   *   Emit this new result and save it for next iteration.
    */
 
   def interpret[F[_]](
