@@ -312,7 +312,7 @@ object Interpreter {
    *       If node is a signal node, add the node's id to S and save the mapping id -> S.
    *       Recurse into children with the parameter S.
    *     The highest common signal ancestor set of the changed nodes is
-   *     HCSA = { x | x \in S \land P(x) \not\in S }
+   *     HCSA = { x | x \in S \land (P(x) \cap S = \emptyset) }
    *
    *     Algo 2:
    *       For every changed node N, let this be IC: List[Set[NodeId]]:
