@@ -26,7 +26,7 @@ object Interpreter {
   }
 
   object SignalSubscriptionAlg {
-    def apply[F[_]](ss: SchemaState[F])(implicit F: Concurrent[F]): Resource[F, SignalSubscriptionAlg[F]] = {
+    def apply[F[_]](ss: SchemaState[F])(implicit F: Concurrent[F]): fs2.Stream[F, SignalSubscriptionAlg[F]] = {
       type ResourceGroupId = Int
       type ResourceKey = Any
       type Cleanup = F[Unit]
@@ -35,79 +35,85 @@ object Interpreter {
       final case class SubscriptionState(
           nextId: BigInt,
           subscriptions: Map[BigInt, (ResourceGroupId, ResourceKey)],
-          openResources: Map[(ResourceGroupId, ResourceKey), (Listeners, F[Either[Throwable, Cleanup]])]
+          openResources: Map[(ResourceGroupId, ResourceKey), (Listeners, Cleanup)]
       )
 
-      val refR =
-        Resource.make(F.ref(SubscriptionState(BigInt(1), Map.empty, Map.empty)))(
-          _.get.flatMap(_.openResources.toList.parTraverse { case (_, (_, e)) => e.flatMap(_.sequence_) }.void)
-        )
+      val stateS =
+        fs2.Stream
+          .bracket(F.ref(SubscriptionState(BigInt(1), Map.empty, Map.empty)))(
+            _.get.flatMap(_.openResources.toList.parTraverse { case (_, (_, fa)) => fa }.void)
+          )
 
-      Resource
-        .eval(Queue.bounded[F, Chunk[NonEmptyList[(BigInt, Any)]]](1024))
-        .flatMap { q =>
-          refR.map { state =>
-            def broadcastChanges(stream: fs2.Stream[F, NonEmptyList[(BigInt, Any)]]) =
-              stream
-                .enqueueUnterminatedChunks(q)
-                .compile
-                .drain
-                .start
+      val killableStream: fs2.Stream[F, Throwable => F[Unit]] =
+        fs2.Stream
+          .eval(F.deferred[Throwable])
+          .flatMap { d =>
+            fs2
+              .Stream(d)
+              .interruptWhen(d.get.map(_.asLeft[Unit]))
+              .map(d => (t: Throwable) => d.complete(t).void)
+          }
 
-            def addStreamData(rgi: ResourceGroupId, k: ResourceKey, stream: fs2.Stream[F, Any])
-                : fs2.Stream[F, NonEmptyList[(BigInt, Any)]] =
+      val qS =
+        fs2.Stream.eval(Queue.bounded[F, Chunk[NonEmptyList[(BigInt, Any)]]](1024))
+
+      killableStream.flatMap { complete =>
+        qS.flatMap { q =>
+          stateS.map { state =>
+            def addStreamData(
+                rgi: ResourceGroupId,
+                k: ResourceKey,
+                stream: fs2.Stream[F, Any]
+            ): fs2.Stream[F, NonEmptyList[(BigInt, Any)]] =
               stream
                 .evalMap { x =>
                   state.get
-                    .map(_.subscriptions.toList.collect { case (bd, (rgi2, k2)) if rgi2 == rgi && k2 == k => bd }.toNel)
+                    .map(_.subscriptions.toList.collect {
+                      case (bd, (rgi2, k2)) if rgi2 == rgi && k2 == k => bd
+                    }.toNel)
                     .map(_.map((x, _)))
                 }
                 .unNone
                 .map { case (x, nel) => nel.map((_, x)) }
 
-            def backgroundStreamBroadcast(rgi: ResourceGroupId, k: ResourceKey, stream: fs2.Stream[F, Any]) =
-              broadcastChanges(addStreamData(rgi, k, stream))
-
-            def openStream(rgi: ResourceGroupId, k: ResourceKey): F[Either[Throwable, Cleanup]] = {
+            def openStream(rgi: ResourceGroupId, k: ResourceKey): F[F[Unit]] = {
               val res = ss.streams(rgi)(k)
 
-              res.allocated
-                .flatMap { case (stream, cleanup) =>
-                  backgroundStreamBroadcast(rgi, k, stream)
-                    .map(_.cancel >> cleanup)
-                }
-                .attempt
-                .flatTap {
-                  case Left(_) => state.update(s2 => s2.copy(openResources = s2.openResources - ((rgi, k))))
-                  case _       => F.unit
-                }
+              fs2.Stream
+                .resource(res)
+                .flatMap(addStreamData(rgi, k, _).enqueueUnterminatedChunks(q))
+                .handleErrorWith(e => fs2.Stream.eval(complete(e)))
+                .compile
+                .drain
+                .start
+                .map(_.cancel)
             }
 
             // Maybe there is already a resource open for this type of stream?
             // Also, this is pretty volatile and unsafe, so no cancellation here
             def reserveResourceF(rgi: ResourceGroupId, k: ResourceKey): F[BigInt] = F.uncancelable { _ =>
               for {
-                d <- F.deferred[Either[Throwable, Cleanup]]
+                d <- F.deferred[Cleanup]
                 tryAlloc <- state.modify { s =>
                   val compositeKey = (rgi, k)
                   val (newMap, openF) =
                     s.openResources.get(compositeKey) match {
                       case Some((listeners, fa)) =>
                         val newEntry = (listeners + 1, fa)
-                        (s.openResources + (compositeKey -> newEntry), fa)
+                        (s.openResources + (compositeKey -> newEntry), F.unit)
                       case None =>
-                        val open: F[Either[Throwable, Cleanup]] = openStream(rgi, k).flatTap(d.complete)
+                        val open: F[Unit] = openStream(rgi, k).flatMap(d.complete).void
 
-                        val newEntry = (1, d.get)
+                        val newEntry = (1, d.get.flatten)
 
                         (s.openResources + (compositeKey -> newEntry), open)
                     }
 
                   val nextId = s.nextId
 
-                  (s.copy(openResources = newMap, nextId = nextId + 1), openF.map(_.as(nextId)))
+                  (s.copy(openResources = newMap, nextId = nextId + 1), openF.as(nextId))
                 }
-                o <- tryAlloc.rethrow
+                o <- tryAlloc
               } yield o
             }
 
@@ -134,7 +140,7 @@ object Interpreter {
                               openResources = s.openResources - ck,
                               subscriptions = s.subscriptions - id
                             ),
-                            result.flatMap(_.sequence_).void
+                            result
                           )
                         }
                     }
@@ -153,6 +159,7 @@ object Interpreter {
             }
           }
         }
+      }
     }
   }
 
@@ -321,7 +328,7 @@ object Interpreter {
    *       since every node that occurs as a child is found and eliminated.
    *
    *   Remove the subscription for all children of the highest common signal ancestor nodes.
-   *   
+   *
    *   Now, let the highest common signal ancestors be the new root nodes.
    *   Plan and evaluate the new root nodes.
    *
