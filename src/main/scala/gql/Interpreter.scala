@@ -38,24 +38,21 @@ object Interpreter {
           openResources: Map[(ResourceGroupId, ResourceKey), (Listeners, Cleanup)]
       )
 
-      val stateS =
-        fs2.Stream
-          .bracket(F.ref(SubscriptionState(BigInt(1), Map.empty, Map.empty)))(
-            _.get.flatMap(_.openResources.toList.parTraverse { case (_, (_, fa)) => fa }.void)
-          )
+      val stateS = fs2.Stream
+        .bracket(F.ref(SubscriptionState(BigInt(1), Map.empty, Map.empty)))(
+          _.get.flatMap(_.openResources.toList.parTraverse { case (_, (_, fa)) => fa }.void)
+        )
 
-      val killableStream: fs2.Stream[F, Throwable => F[Unit]] =
-        fs2.Stream
-          .eval(F.deferred[Throwable])
-          .flatMap { d =>
-            fs2
-              .Stream(d)
-              .interruptWhen(d.get.map(_.asLeft[Unit]))
-              .map(d => (t: Throwable) => d.complete(t).void)
-          }
+      val killableStream: fs2.Stream[F, Throwable => F[Unit]] = fs2.Stream
+        .eval(F.deferred[Throwable])
+        .flatMap { d =>
+          fs2
+            .Stream(d)
+            .interruptWhen(d.get.map(_.asLeft[Unit]))
+            .map(d => (t: Throwable) => d.complete(t).void)
+        }
 
-      val qS =
-        fs2.Stream.eval(Queue.bounded[F, Chunk[NonEmptyList[(BigInt, Any)]]](1024))
+      val qS = fs2.Stream.eval(Queue.bounded[F, Chunk[NonEmptyList[(BigInt, Any)]]](1024))
 
       killableStream.flatMap { complete =>
         qS.flatMap { q =>
