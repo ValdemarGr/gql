@@ -334,6 +334,7 @@ object Interpreter {
    */
 
   /*
+   * Thoughts 3:
    * For every tree evaluation, construct a mapping of children: Map[SigId, Set[SigId]]
    * Computing the set of nodes to remove is:
    * R = { c | c \in children(x) \land x \in S }
@@ -342,7 +343,7 @@ object Interpreter {
    *
    * Also during tree evaluation, construct a mapping of 
    * evaluation data meta: Map[SigId, (Cursor, InitialValue, PreparedDataField[F, Any, Any])],
-   * which is used to construct the new root nodes.
+   * which is used to construct the new root nodes: S.map(meta.get).
    *
    */
 
