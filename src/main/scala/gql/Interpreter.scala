@@ -341,11 +341,28 @@ object Interpreter {
    * Computing the highest common signal ancestors is easy:
    * S \cap R
    *
-   * Also during tree evaluation, construct a mapping of 
+   * Also during tree evaluation, construct a mapping of
    * evaluation data meta: Map[SigId, (Cursor, InitialValue, PreparedDataField[F, Any, Any])],
    * which is used to construct the new root nodes: S.map(meta.get).
    *
    */
+
+  final case class SignalRecompute(
+      toRemove: Set[BigInt],
+      hcsa: Set[BigInt]
+  )
+
+  final case class SignalMetadata(
+      parents: Map[BigInt, Set[BigInt]]
+  ) {
+    def recompute(s: Set[BigInt]): SignalRecompute = {
+      // Keep all nodes that do not have a parent that occured in the changed set
+      // A node has a changed parent, if at least one parent occurs in s
+      val hcsa = s.filter(id => parents.get(id).getOrElse(Set.empty).exists(s.contains))
+      val toRemove = hcsa.flatMap(hcsaId => parents.filter { case (nid, parents) => parents.contains(hcsaId) }.keySet)
+      SignalRecompute(toRemove, hcsa)
+    }
+  }
 
   def interpret[F[_]](
       rootInput: Any,
