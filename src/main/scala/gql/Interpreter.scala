@@ -359,8 +359,44 @@ object Interpreter {
       // Keep all nodes that do not have a parent that occured in the changed set
       // A node has a changed parent, if at least one parent occurs in s
       val hcsa = s.filter(id => parents.get(id).getOrElse(Set.empty).exists(s.contains))
+      // Remove all nodes that have a parent in hcsa
       val toRemove = hcsa.flatMap(hcsaId => parents.filter { case (nid, parents) => parents.contains(hcsaId) }.keySet)
       SignalRecompute(toRemove, hcsa)
+    }
+  }
+
+  def groupNodeValues[A](nvs: List[(Vector[GraphPath], A)]): Map[GraphPath, List[(Vector[GraphPath], A)]] =
+    nvs.groupMap { case (c, _) => c.head } { case (c, v) => (c.tail, v) }
+
+  // It is assumed that if any node occurs in the path to the new subtree
+  // then it occurs as a node in the old tree
+  def stichInto(
+      olds: List[(Vector[GraphPath], Any)],
+      newSubtrees: List[(Vector[GraphPath], List[(Vector[GraphPath], Any)])]
+  ): List[(Vector[GraphPath], Any)] = {
+    val (finals, iterates) = newSubtrees.partitionEither {
+      case (x +: xs, ys) if xs.isEmpty => Left((x, ys))
+      case (xs, ys)                    => Right((xs, ys))
+    }
+
+    val finalMap = finals.toMap
+
+    val iteratesMap = groupNodeValues(iterates)
+
+    groupNodeValues(olds).toList.flatMap { case (pathName, oldPathTail) =>
+      // Either this path is a final path; we stich it into this path
+      val newChildren =
+        finalMap.get(pathName) match {
+          case Some(newSubtree) => newSubtree
+          case None             =>
+            // Or there is something on this path that we need to merge
+            iteratesMap.get(pathName) match {
+              case Some(newPaths) => stichInto(oldPathTail, newPaths)
+              // Or maybe this path has nothing new
+              case None => oldPathTail
+            }
+        }
+      newChildren.map { case (p, v) => (pathName +: p, v) }
     }
   }
 
@@ -423,8 +459,7 @@ object Interpreter {
                       xs =>
                         impl(xs).timed
                           .flatMap { case (dur, value) =>
-                            submit(s"batch_${batcher.id}", dur, value.size) >>
-                              submit(n.name, dur, value.size).as(value)
+                            submit(s"batch_${batcher.id}", dur, xs.size) >> submit(n.name, dur, xs.size).as(value)
                           }
                     )
                   )
@@ -530,9 +565,7 @@ object Interpreter {
             case _ => F.raiseError(new Exception(s"expected a single value at at ${df.name} (${df.id}), but got ${cursors.size}"))
           }
         case PreparedList(of) =>
-          cursors
-            .groupMap { case (k, _) => k.head } { case (k, v) => k.tail -> v }
-            .toList
+          groupNodeValues(cursors).toList
             .traverse {
               case (Index(_), tl) => unpackPrep(df, tl, of)
               case (hd, _)        => F.raiseError[Json](new Exception(s"expected index at list in ${df.name} (${df.id}), but got $hd"))
@@ -545,8 +578,8 @@ object Interpreter {
         levelCursors: List[(Vector[GraphPath], Any)],
         sel: NonEmptyList[PreparedField[F, Any]]
     ): F[NonEmptyList[JsonObject]] = {
-      val m: Map[GraphPath, List[(Vector[GraphPath], Any)]] = levelCursors
-        .groupMap { case (c, _) => c.head } { case (c, v) => (c.tail, v) }
+      val m: Map[GraphPath, List[(Vector[GraphPath], Any)]] = groupNodeValues(levelCursors)
+
       sel.traverse { pf =>
         pf match {
           case PreparedFragField(id, specify, selection) =>
