@@ -347,6 +347,24 @@ object Interpreter {
    *
    */
 
+  trait SignalMetadataAccumulator[F[_]] {
+    def add(
+        cursor: Cursor,
+        initialValue: Any,
+        field: PreparedDataField[F, Any, Any],
+        ref: StreamReference[Any, Any],
+        key: Any
+    ): F[Unit]
+
+    def getState: F[Map[BigInt, (Cursor, Any, PreparedDataField[F, Any, Any])]]
+  }
+
+  object SignalMetadataAccumulator {
+    def apply[F[_]](implicit sigAlg: SignalSubscriptionAlg[F]) = ???
+    // new SignalMetadataAccumulator[F] {
+    // }
+  }
+
   final case class SignalRecompute(
       toRemove: Set[BigInt],
       hcsa: Set[BigInt]
