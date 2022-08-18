@@ -108,7 +108,16 @@ object Interpreter {
 
                   val nextId = s.nextId
 
-                  (s.copy(openResources = newMap, nextId = nextId + 1), openF.as(nextId))
+                  val sub = (nextId -> compositeKey)
+
+                  (
+                    s.copy(
+                      openResources = newMap,
+                      nextId = nextId + 1,
+                      subscriptions = s.subscriptions + sub
+                    ),
+                    openF.as(nextId)
+                  )
                 }
                 o <- tryAlloc
               } yield o
@@ -246,7 +255,6 @@ object Interpreter {
   def runStreamed[F[_]: Statistics](
       rootInput: Any,
       rootSel: NonEmptyList[PreparedField[F, Any]],
-      plan: NonEmptyList[Optimizer.Node],
       schemaState: SchemaState[F]
   )(implicit F: Async[F]): fs2.Stream[F, NonEmptyList[JsonObject]] =
     StreamResourceAlg[F](schemaState).flatMap { implicit streamResouceAlg =>
@@ -290,10 +298,12 @@ object Interpreter {
                                   plan = Optimizer.plan(costTree)
                                   executionDeps = planExecutionDeps[F](rootSel, plan)
                                   result <- interpret[F](newRootSel, executionDeps, schemaState, Some(submissionAlg))
-                                  output <- reconstruct[F](rootSel, result)
+                                  output <- reconstruct[F](newRootSel.map { case (k, _) => k }, result)
                                 } yield output
 
-                              (submissionAlg.getState, outputF.map(Some(_))).parTupled
+                              val ns = submissionAlg.getState.map(m => m ++ accum)
+
+                              (ns, outputF.map(Some(_))).parTupled
                             }
                           }
                       }
@@ -493,13 +503,14 @@ object Interpreter {
                   val subscribeF =
                     signalSubmission.traverse_ { alg =>
                       tl(in.value).flatMap { dst =>
-                        alg.add(in.cursor, in.value, df.copy(resolve = resolver), dst.ref, dst.key)
+                        alg.add(in.cursor, in.value, df.copy(resolve = resolver.contramap[Any]((in.value, _))), dst.ref, dst.key)
                       }
                     }
 
-                  hd(in.value).map(v => in.copy(value = v))
+                  subscribeF >>
+                    hd(in.value).map(v => in.copy(value = (in.value, v)))
                 }
-                .flatMap(nvs => collapseInputs(df, nvs))
+                .flatMap(nvs => collapseInputs(df.copy(resolve = resolver.asInstanceOf[Resolver[F, Any, Any]]), nvs))
           }
         }
 

@@ -16,24 +16,24 @@ import cats.arrow.FunctionK
  * T the intermediate type that the stream emits and is transformed to A
  */
 final case class SignalResolver[F[_]: MonadCancelThrow, I, K, A, T](
-    resolver: LeafResolver[F, T, A],
+    resolver: LeafResolver[F, (I, T), A],
     head: I => F[T],
-    tail: I => F[SignalResolver.DataStreamTail[K, T]],
+    tail: I => F[SignalResolver.DataStreamTail[K, T]]
     // filterMap: (I, T) => F[Option[T]]
-) extends Resolver[F, I, T] {
+) extends Resolver[F, I, A] {
   def mapK[G[_]: MonadCancelThrow](fk: F ~> G): SignalResolver[G, I, K, A, T] =
     SignalResolver(
       resolver.mapK(fk),
       i => fk(head(i)),
-      i => fk(tail(i)),
+      i => fk(tail(i))
       // (i, a) => fk(filterMap(i, a))
     )
 
   def contramap[C](g: C => I): SignalResolver[F, C, K, A, T] =
     SignalResolver(
-      resolver,
+      resolver.contramap[(C, T)] { case (c, t) => (g(c), t) },
       i => head(g(i)),
-      i => tail(g(i)).map(dst => dst.copy(ref = StreamReference(dst.ref.id))),
+      i => tail(g(i)).map(dst => dst.copy(ref = StreamReference(dst.ref.id)))
       // (i, a) => filterMap(g(i), a)
       // new ConstrainedPipe[A, B] {
       //   def pipe[F[_]](implicit F: Async[F]): fs2.Pipe[F, A, B] = postTail(g(i), a).pipe[F]
