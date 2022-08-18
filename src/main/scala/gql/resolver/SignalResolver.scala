@@ -19,14 +19,14 @@ final case class SignalResolver[F[_]: MonadCancelThrow, I, K, A, T](
     resolver: LeafResolver[F, T, A],
     head: I => F[T],
     tail: I => F[SignalResolver.DataStreamTail[K, T]],
-    filterMap: (I, T) => F[Option[T]]
+    // filterMap: (I, T) => F[Option[T]]
 ) extends Resolver[F, I, T] {
   def mapK[G[_]: MonadCancelThrow](fk: F ~> G): SignalResolver[G, I, K, A, T] =
     SignalResolver(
       resolver.mapK(fk),
       i => fk(head(i)),
       i => fk(tail(i)),
-      (i, a) => fk(filterMap(i, a))
+      // (i, a) => fk(filterMap(i, a))
     )
 
   def contramap[C](g: C => I): SignalResolver[F, C, K, A, T] =
@@ -34,7 +34,7 @@ final case class SignalResolver[F[_]: MonadCancelThrow, I, K, A, T](
       resolver,
       i => head(g(i)),
       i => tail(g(i)).map(dst => dst.copy(ref = StreamReference(dst.ref.id))),
-      (i, a) => filterMap(g(i), a)
+      // (i, a) => filterMap(g(i), a)
       // new ConstrainedPipe[A, B] {
       //   def pipe[F[_]](implicit F: Async[F]): fs2.Pipe[F, A, B] = postTail(g(i), a).pipe[F]
       // }

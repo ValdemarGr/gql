@@ -17,7 +17,7 @@ import cats.effect.std.Queue
 import fs2.Chunk
 
 object Interpreter {
-  trait SignalSubscriptionAlg[F[_]] {
+  trait StreamResourceAlg[F[_]] {
     def subscribe(ref: StreamReference[Any, Any], key: Any): F[BigInt]
 
     def remove(id: BigInt): F[Unit]
@@ -25,8 +25,8 @@ object Interpreter {
     def changeLog: fs2.Stream[F, NonEmptyList[(BigInt, Any)]]
   }
 
-  object SignalSubscriptionAlg {
-    def apply[F[_]](ss: SchemaState[F])(implicit F: Concurrent[F]): fs2.Stream[F, SignalSubscriptionAlg[F]] = {
+  object StreamResourceAlg {
+    def apply[F[_]](ss: SchemaState[F])(implicit F: Concurrent[F]): fs2.Stream[F, StreamResourceAlg[F]] = {
       type ResourceGroupId = Int
       type ResourceKey = Any
       type Cleanup = F[Unit]
@@ -144,7 +144,7 @@ object Interpreter {
                 }
               }.flatten
 
-            new SignalSubscriptionAlg[F] {
+            new StreamResourceAlg[F] {
               override def subscribe(ref: StreamReference[Any, Any], key: Any): F[BigInt] =
                 reserveResourceF(ref.id, key)
 
@@ -158,6 +158,37 @@ object Interpreter {
         }
       }
     }
+  }
+
+  trait SignalSubmissionAlg[F[_]] {
+    def add(
+        cursor: Cursor,
+        initialValue: Any,
+        field: PreparedDataField[F, Any, Any],
+        ref: StreamReference[Any, Any],
+        key: Any
+    ): F[Unit]
+
+    def getState: F[Map[BigInt, (Cursor, Any, PreparedDataField[F, Any, Any])]]
+  }
+
+  object SignalSubmissionAlg {
+    def apply[F[_]](implicit sigAlg: StreamResourceAlg[F], F: Concurrent[F]) =
+      F.ref(Map.empty[BigInt, (Cursor, Any, PreparedDataField[F, Any, Any])]).map { state =>
+        new SignalSubmissionAlg[F] {
+          def add(
+              cursor: Cursor,
+              initialValue: Any,
+              field: PreparedDataField[F, Any, Any],
+              ref: StreamReference[Any, Any],
+              key: Any
+          ): F[Unit] =
+            sigAlg.subscribe(ref, key).flatMap(id => state.update(_ + (id -> (cursor, initialValue, field))))
+
+          def getState: F[Map[BigInt, (Cursor, Any, PreparedDataField[F, Any, Any])]] =
+            state.get
+        }
+      }
   }
 
   final case class Converted(batchId: String, idsContained: Map[Int, List[Converted]])
@@ -207,6 +238,47 @@ object Interpreter {
   ): F[NonEmptyList[JsonObject]] =
     interpret[F](rootInput, rootSel, planExecutionDeps[F](rootSel, plan), schemaState)
       .flatMap(reconstruct[F](rootSel, _))
+
+  // def runStreamed[F[_]: Statistics](
+  //     rootInput: Any,
+  //     rootSel: NonEmptyList[PreparedField[F, Any]],
+  //     plan: NonEmptyList[Optimizer.Node],
+  //     schemaState: SchemaState[F]
+  // )(implicit F: Async[F]): fs2.Stream[F, NonEmptyList[JsonObject]] =
+  //   StreamResourceAlg[F](schemaState).flatMap { implicit streamResouceAlg =>
+  //     // first iteration
+  //     SignalSubmissionAlg[F].flatMap { submissionAlg =>
+  //       val outputF =
+  //         for {
+  //           costTree <- Optimizer.costTree[F](rootSel)
+  //           plan = Optimizer.plan(costTree)
+  //           executionDeps = planExecutionDeps[F](rootSel, plan)
+  //           result <- interpret[F](rootSel, rootSel, executionDeps, schemaState, Some(submissionAlg))
+  //           output <- reconstruct[F](rootSel, result)
+  //         } yield output
+
+  //       fs2.Stream
+  //         .eval(outputF)
+  //         .flatMap { initialOutput =>
+  //           fs2.Stream.emit(initialOutput) ++
+  //             fs2.Stream.eval(submissionAlg.getState).flatMap { initState =>
+  //               streamResouceAlg.changeLog
+  //                 .evalMapAccumulate(initState) { case (accum, next) =>
+  //                   next
+  //                     .filter { case (k, _) => accum.contains(k) }
+  //                     .toNel
+  //                     .traverse { nextNel =>
+  //                       val s = nextNel.toList.map { case (k, _) => k }.toSet
+  //                       val nodes = accum.toList.map { case (k, (cursor, _, _)) => (cursor, k) }
+  //                       val meta = computeMetadata(nodes, s)
+  //                       val rootNodes: List[(BigInt, Any)] = nextNel.filter { case (k, _) => meta.hcsa.contains(k) }
+  //                       F.unit
+  //                     }
+  //                 }
+  //             }
+  //         }
+  //     }
+  //   }
 
   final case class ExecutionDeps[F[_]](
       nodeMap: Map[Int, Optimizer.Node],
@@ -265,122 +337,30 @@ object Interpreter {
     ExecutionDeps(nodeMap, dataFieldMap, batches)
   }
 
-  /*
-   * Stream strategy:
-   *
-   * Emit the values for "head" as F[List[NodeValue]]
-   *
-   * Emit resource of node updates as Resource[F, Stream[F, Chunk[(StreamId, Cursor, NodeValue)]]]
-   *
-   * Return them as F[(F[List[NodeValue]], Resource[F, Stream[F, Chunk[(StreamId, Cursor, NodeValue)]]])]
-   * Where the outer F allocates all evaluation dependencies, the inner F evaluates all head values and
-   * the inner resource opens all streams.
-   *
-   * For queries and mutations the resource can stay closed.
-   *
-   * For subscriptions the resource should be opened and for every chunk
-   * the smallest common signal node parent should be found, such that if two nodes N1 and N2 are updated
-   * and cursor(N1) > cursor(N2) then N2 is the maximal parent of { N1, N2 }, since an update for N2
-   * also causes N1 to re-evaluate regardless.
-   *
-   * Any updated nodes that do not occur in smallest common signal nodes must be released.
-   * (This warrents an unique identifier for each node)
-   * There exists a time window where a node is no longer relevant but is still emitting updates.
-   * The stream of updates should be filtered by "active" nodes.
-   *
-   * Next, de-duplicate all smallest common signal nodes types by id.
-   * Let this set of de-duplicated smallest common signal nodes be the new root nodes.
-   * Now create an optimized plan and re-evaluate this set of root nodes like an ordinary query.
-   *
-   * This will provide new List[NodeValue] wich must be merged with the previously emitted List[NodeValue],
-   * discarding all nodes that are no longer relevant by always picking the new List[NodeValue]'s result.
-   *
-   * The new set of signals contained in the right resource, must be merged with the previous set of signals.
-   * (Maybe perform resource closing here?)
-   *
-   * The Resource type definiton serves as a simple abstraction, but is not sufficient since release should
-   * occur on a per-signal basis.
-   */
+  def computeToRemove(nodes: List[(Vector[GraphPath], BigInt)], s: Set[BigInt]): Set[BigInt] =
+    groupNodeValues(nodes).flatMap { case (_, tl) =>
+      val (nodeHere, iterates) = tl.partitionEither {
+        case (xs, y) if xs.isEmpty => Left(y)
+        case (xs, y)               => Right((xs, y))
+      }
 
-  /*
-   * Strategy 2:
-   * Subscribe to the changeLog in the signal alg.
-   *
-   * Evaluate the initial plan, which results in List[NodeValue]
-   * Emit the initial plan's result.
-   *
-   * For every changeLog chunk:
-   *   Find the highest common signal ancestor of all changed nodes by:
-   *     Find all nodes parents, let this be P(id): Set[NodeId]:
-   *       Start from the root with S = {}.
-   *       If node is a signal node, add the node's id to S and save the mapping id -> S.
-   *       Recurse into children with the parameter S.
-   *     The highest common signal ancestor set of the changed nodes is
-   *     HCSA = { x | x \in S \land (P(x) \cap S = \emptyset) }
-   *
-   *     Algo 2:
-   *       For every changed node N, let this be IC: List[Set[NodeId]]:
-   *         For every child, find the first node that occurs in the changed nodes.
-   *       The changed nodes - IC are the highest common signal ancestor nodes,
-   *       since every node that occurs as a child is found and eliminated.
-   *
-   *   Remove the subscription for all children of the highest common signal ancestor nodes.
-   *
-   *   Now, let the highest common signal ancestors be the new root nodes.
-   *   Plan and evaluate the new root nodes.
-   *
-   *   Merge the new List[NodeValue] with the old List[NodeValue] by always picking the newest result.
-   *   Emit this new result and save it for next iteration.
-   */
-
-  /*
-   * Thoughts 3:
-   * For every tree evaluation, construct a mapping of children: Map[SigId, Set[SigId]]
-   * Computing the set of nodes to remove is:
-   * R = { c | c \in children(x) \land x \in S }
-   * Computing the highest common signal ancestors is easy:
-   * S \cap R
-   *
-   * Also during tree evaluation, construct a mapping of
-   * evaluation data meta: Map[SigId, (Cursor, InitialValue, PreparedDataField[F, Any, Any])],
-   * which is used to construct the new root nodes: S.map(meta.get).
-   *
-   */
-
-  trait SignalMetadataAccumulator[F[_]] {
-    def add(
-        cursor: Cursor,
-        initialValue: Any,
-        field: PreparedDataField[F, Any, Any],
-        ref: StreamReference[Any, Any],
-        key: Any
-    ): F[Unit]
-
-    def getState: F[Map[BigInt, (Cursor, Any, PreparedDataField[F, Any, Any])]]
-  }
-
-  object SignalMetadataAccumulator {
-    def apply[F[_]](implicit sigAlg: SignalSubscriptionAlg[F]) = ???
-    // new SignalMetadataAccumulator[F] {
-    // }
-  }
+      nodeHere match {
+        case x :: Nil if s.contains(x) => iterates.map { case (_, v) => v }.toSet
+        case x :: Nil                  => computeToRemove(iterates, s)
+        case Nil                       => computeToRemove(iterates, s)
+        case _                         => throw new Exception(s"something went terribly wrong $nodes")
+      }
+    }.toSet
 
   final case class SignalRecompute(
       toRemove: Set[BigInt],
       hcsa: Set[BigInt]
   )
 
-  final case class SignalMetadata(
-      parents: Map[BigInt, Set[BigInt]]
-  ) {
-    def recompute(s: Set[BigInt]): SignalRecompute = {
-      // Keep all nodes that do not have a parent that occured in the changed set
-      // A node has a changed parent, if at least one parent occurs in s
-      val hcsa = s.filter(id => parents.get(id).getOrElse(Set.empty).exists(s.contains))
-      // Remove all nodes that have a parent in hcsa
-      val toRemove = hcsa.flatMap(hcsaId => parents.filter { case (nid, parents) => parents.contains(hcsaId) }.keySet)
-      SignalRecompute(toRemove, hcsa)
-    }
+  def computeMetadata(nodes: List[(Cursor, BigInt)], s: Set[BigInt]): SignalRecompute = {
+    val tr = computeToRemove(nodes.map { case (k, v) => (k.path, v) }, s)
+    val hcsa = s -- tr
+    SignalRecompute(tr, hcsa)
   }
 
   def groupNodeValues[A](nvs: List[(Vector[GraphPath], A)]): Map[GraphPath, List[(Vector[GraphPath], A)]] =
@@ -422,7 +402,8 @@ object Interpreter {
       rootInput: Any,
       rootSel: NonEmptyList[PreparedField[F, Any]],
       executionDeps: ExecutionDeps[F],
-      schemaState: SchemaState[F]
+      schemaState: SchemaState[F],
+      signalSubmission: Option[SignalSubmissionAlg[F]] = None
   )(implicit F: Async[F], stats: Statistics[F]): F[List[NodeValue]] =
     Supervisor[F].use { sup =>
       executionDeps.batchExecutionState[F].flatMap { batchStateMap =>
@@ -482,6 +463,19 @@ object Interpreter {
                     )
                   )
                 }
+            case SignalResolver(resolver, hd, tl) =>
+              inputs
+                .parTraverse { in =>
+                  val subscribeF =
+                    signalSubmission.traverse_ { alg =>
+                      tl(in.value).flatMap { dst =>
+                        alg.add(in.cursor, in.value, df.copy(resolve = resolver), dst.ref, dst.key)
+                      }
+                    }
+
+                  hd(in.value).map(v => in.copy(value = v))
+                }
+                .flatMap(nvs => collapseInputs(df, nvs))
           }
         }
 
