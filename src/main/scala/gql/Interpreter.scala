@@ -212,6 +212,10 @@ object Interpreter {
       NodeValue(cursor.ided(id), value)
   }
 
+  object NodeValue {
+    def empty[A](value: A) = NodeValue(Cursor(Vector.empty), value)
+  }
+
   sealed trait StateSubmissionOutcome
   final case class FinalSubmission(accumulatedInputs: Map[Int, List[NodeValue]]) extends StateSubmissionOutcome
   case object NoState extends StateSubmissionOutcome
@@ -226,7 +230,7 @@ object Interpreter {
       costTree <- Optimizer.costTree[F](rootSel)
       plan = Optimizer.plan(costTree)
       executionDeps = planExecutionDeps[F](rootSel, plan)
-      result <- interpret[F](rootSel, rootSel, executionDeps, schemaState)
+      result <- interpret[F](rootSel.map((_, List(NodeValue.empty(rootInput)))), executionDeps, schemaState)
       output <- reconstruct[F](rootSel, result)
     } yield output
 
@@ -236,49 +240,70 @@ object Interpreter {
       plan: NonEmptyList[Optimizer.Node],
       schemaState: SchemaState[F]
   ): F[NonEmptyList[JsonObject]] =
-    interpret[F](rootInput, rootSel, planExecutionDeps[F](rootSel, plan), schemaState)
+    interpret[F](rootSel.map((_, List(NodeValue.empty(rootInput)))), planExecutionDeps[F](rootSel, plan), schemaState)
       .flatMap(reconstruct[F](rootSel, _))
 
-  // def runStreamed[F[_]: Statistics](
-  //     rootInput: Any,
-  //     rootSel: NonEmptyList[PreparedField[F, Any]],
-  //     plan: NonEmptyList[Optimizer.Node],
-  //     schemaState: SchemaState[F]
-  // )(implicit F: Async[F]): fs2.Stream[F, NonEmptyList[JsonObject]] =
-  //   StreamResourceAlg[F](schemaState).flatMap { implicit streamResouceAlg =>
-  //     // first iteration
-  //     SignalSubmissionAlg[F].flatMap { submissionAlg =>
-  //       val outputF =
-  //         for {
-  //           costTree <- Optimizer.costTree[F](rootSel)
-  //           plan = Optimizer.plan(costTree)
-  //           executionDeps = planExecutionDeps[F](rootSel, plan)
-  //           result <- interpret[F](rootSel, rootSel, executionDeps, schemaState, Some(submissionAlg))
-  //           output <- reconstruct[F](rootSel, result)
-  //         } yield output
+  def runStreamed[F[_]: Statistics](
+      rootInput: Any,
+      rootSel: NonEmptyList[PreparedField[F, Any]],
+      plan: NonEmptyList[Optimizer.Node],
+      schemaState: SchemaState[F]
+  )(implicit F: Async[F]): fs2.Stream[F, NonEmptyList[JsonObject]] =
+    StreamResourceAlg[F](schemaState).flatMap { implicit streamResouceAlg =>
+      // first iteration
+      fs2.Stream.eval(SignalSubmissionAlg[F]).flatMap { submissionAlg =>
+        val outputF =
+          for {
+            costTree <- Optimizer.costTree[F](rootSel)
+            plan = Optimizer.plan(costTree)
+            executionDeps = planExecutionDeps[F](rootSel, plan)
+            result <- interpret[F](rootSel.map((_, List(NodeValue.empty(rootInput)))), executionDeps, schemaState, Some(submissionAlg))
+            output <- reconstruct[F](rootSel, result)
+          } yield output
 
-  //       fs2.Stream
-  //         .eval(outputF)
-  //         .flatMap { initialOutput =>
-  //           fs2.Stream.emit(initialOutput) ++
-  //             fs2.Stream.eval(submissionAlg.getState).flatMap { initState =>
-  //               streamResouceAlg.changeLog
-  //                 .evalMapAccumulate(initState) { case (accum, next) =>
-  //                   next
-  //                     .filter { case (k, _) => accum.contains(k) }
-  //                     .toNel
-  //                     .traverse { nextNel =>
-  //                       val s = nextNel.toList.map { case (k, _) => k }.toSet
-  //                       val nodes = accum.toList.map { case (k, (cursor, _, _)) => (cursor, k) }
-  //                       val meta = computeMetadata(nodes, s)
-  //                       val rootNodes: List[(BigInt, Any)] = nextNel.filter { case (k, _) => meta.hcsa.contains(k) }
-  //                       F.unit
-  //                     }
-  //                 }
-  //             }
-  //         }
-  //     }
-  //   }
+        fs2.Stream
+          .eval(outputF)
+          .flatMap { initialOutput =>
+            fs2.Stream.emit(initialOutput) ++
+              fs2.Stream.eval(submissionAlg.getState).flatMap { initState =>
+                streamResouceAlg.changeLog
+                  .evalMapAccumulate(initState) { case (accum, next) =>
+                    next
+                      .filter { case (k, _) => accum.contains(k) }
+                      .toNel
+                      .flatTraverse { nextNel =>
+                        val s = nextNel.toList.map { case (k, _) => k }.toSet
+                        val nodes = accum.toList.map { case (k, (cursor, _, _)) => (cursor, k) }
+                        val meta = computeMetadata(nodes, s)
+                        val rootNodes: List[(BigInt, Any)] = nextNel.filter { case (k, _) => meta.hcsa.contains(k) }
+                        val prepaedRoots =
+                          rootNodes.map { case (id, input) =>
+                            val (cursor, _, field) = accum(id)
+                            (field, List(NodeValue.empty(input)))
+                          }
+                        prepaedRoots.toNel
+                          .traverse { newRootSel =>
+                            SignalSubmissionAlg[F].flatMap { submissionAlg =>
+                              val outputF =
+                                for {
+                                  costTree <- Optimizer.costTree[F](rootSel)
+                                  plan = Optimizer.plan(costTree)
+                                  executionDeps = planExecutionDeps[F](rootSel, plan)
+                                  result <- interpret[F](newRootSel, executionDeps, schemaState, Some(submissionAlg))
+                                  output <- reconstruct[F](rootSel, result)
+                                } yield output
+
+                              (submissionAlg.getState, outputF.map(Some(_))).parTupled
+                            }
+                          }
+                      }
+                      .map(_.getOrElse((accum, None)))
+                  }
+                  .collect { case (_, Some(x)) => x }
+              }
+          }
+      }
+    }
 
   final case class ExecutionDeps[F[_]](
       nodeMap: Map[Int, Optimizer.Node],
@@ -399,8 +424,7 @@ object Interpreter {
   }
 
   def interpret[F[_]](
-      rootInput: Any,
-      rootSel: NonEmptyList[PreparedField[F, Any]],
+      rootSel: NonEmptyList[(PreparedField[F, Any], List[NodeValue])],
       executionDeps: ExecutionDeps[F],
       schemaState: SchemaState[F],
       signalSubmission: Option[SignalSubmissionAlg[F]] = None
@@ -562,7 +586,9 @@ object Interpreter {
           }
         }
 
-        go(rootSel, List(NodeValue(Cursor(Vector.empty), rootInput)))
+        rootSel.toList.parFlatTraverse { case (field, inputs) =>
+          go(NonEmptyList.of(field), inputs)
+        }
       }
     }
 
