@@ -380,7 +380,7 @@ query withNestedFragments {
      *
      */
     StreamReference[F, String, Unit](k =>
-      Resource.pure(fs2.Stream(k).repeat.lift[F].metered((if (k == "John") 2 else 5).second).as(()))
+      Resource.pure(fs2.Stream(k).repeat.lift[F].metered((if (k == "John") 200 else 500).millis).as(()))
     ).flatMap { nameStreamReference =>
       BatcherReference[F, Int, ServerData](xs => F.pure(xs.map(x => x -> ServerData(x)).toMap)).map { serverDataBatcher =>
         implicit val inputDataType: Input[InputData] = in.obj[InputData](
