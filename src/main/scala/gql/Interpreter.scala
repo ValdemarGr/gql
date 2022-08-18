@@ -580,7 +580,7 @@ object Interpreter {
 
                       // fork each node's continuation
                       // in parallel, start every node's computation
-                      (trivialF, batchedF).mapN(_ ++ _)
+                      (trivialF, batchedF).parMapN(_ ++ _)
                     }
               }
           }
