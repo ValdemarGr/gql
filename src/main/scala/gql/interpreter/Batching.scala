@@ -14,7 +14,7 @@ case object NotFinalSubmission extends StateSubmissionOutcome
 
 final case class BatchExecutionState(remainingInputs: Set[Int], inputMap: Map[Int, List[NodeValue]])
 
-final case class ExecutionDeps[F[_]](
+final case class Batching[F[_]](
     nodeMap: Map[Int, Optimizer.Node],
     dataFieldMap: Map[Int, PreparedDataField[F, Any, Any]],
     batches: List[NonEmptyList[Int]]
@@ -27,8 +27,8 @@ final case class ExecutionDeps[F[_]](
       }
       .map(_.toMap)
 }
-object ExecutionDeps {
-  def planExecutionDeps[F[_]](rootSel: NonEmptyList[PreparedField[F, Any]], plan: NonEmptyList[Optimizer.Node]): ExecutionDeps[F] = {
+object Batching {
+  def plan[F[_]](rootSel: NonEmptyList[PreparedField[F, Any]], plan: NonEmptyList[Optimizer.Node]): Batching[F] = {
     val flat = Optimizer.flattenNodeTree(plan)
 
     def unpackPrep(prep: Prepared[F, Any]): Eval[List[(Int, PreparedDataField[F, Any, Any])]] = Eval.defer {
@@ -68,6 +68,6 @@ object ExecutionDeps {
             .map { case (nodeType, nodes) => nodes.map(_.id) }
         }
 
-    ExecutionDeps(nodeMap, dataFieldMap, batches)
+    Batching(nodeMap, dataFieldMap, batches)
   }
 }

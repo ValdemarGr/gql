@@ -26,7 +26,7 @@ object Interpreter {
     for {
       costTree <- Optimizer.costTree[F](rootSel)
       plan = Optimizer.plan(costTree)
-      executionDeps = planExecutionDeps[F](rootSel, plan)
+      executionDeps = Batching.plan[F](rootSel, plan)
       result <- interpret[F](rootSel.map((_, List(NodeValue.empty(rootInput)))), executionDeps, schemaState)
       output <- reconstruct[F](rootSel, result)
     } yield output
@@ -37,7 +37,7 @@ object Interpreter {
       plan: NonEmptyList[Optimizer.Node],
       schemaState: SchemaState[F]
   ): F[NonEmptyList[JsonObject]] =
-    interpret[F](rootSel.map((_, List(NodeValue.empty(rootInput)))), planExecutionDeps[F](rootSel, plan), schemaState)
+    interpret[F](rootSel.map((_, List(NodeValue.empty(rootInput)))), Batching.plan[F](rootSel, plan), schemaState)
       .flatMap(reconstruct[F](rootSel, _))
 
   def runStreamed[F[_]: Statistics](
@@ -52,7 +52,7 @@ object Interpreter {
           for {
             costTree <- Optimizer.costTree[F](rootSel)
             plan = Optimizer.plan(costTree)
-            executionDeps = planExecutionDeps[F](rootSel, plan)
+            executionDeps = Batching.plan[F](rootSel, plan)
             result <- interpret[F](rootSel.map((_, List(NodeValue.empty(rootInput)))), executionDeps, schemaState, Some(submissionAlg))
             output <- reconstruct[F](rootSel, result)
           } yield output
@@ -84,7 +84,7 @@ object Interpreter {
                                 for {
                                   costTree <- Optimizer.costTree[F](rootSel)
                                   plan = Optimizer.plan(costTree)
-                                  executionDeps = planExecutionDeps[F](rootSel, plan)
+                                  executionDeps = Batching.plan[F](rootSel, plan)
                                   result <- interpret[F](newRootSel, executionDeps, schemaState, Some(submissionAlg))
                                   output <- reconstruct[F](newRootSel.map { case (k, _) => k }, result)
                                 } yield output
@@ -102,63 +102,6 @@ object Interpreter {
           }
       }
     }
-
-  final case class ExecutionDeps[F[_]](
-      nodeMap: Map[Int, Optimizer.Node],
-      dataFieldMap: Map[Int, PreparedDataField[F, Any, Any]],
-      batches: List[NonEmptyList[Int]]
-  ) {
-    def batchExecutionState[F[_]](implicit F: Concurrent[F]): F[Map[Int, Ref[F, BatchExecutionState]]] =
-      batches
-        .flatTraverse { batch =>
-          val l = batch.toList
-          F.ref(BatchExecutionState(l.toSet, Map.empty[Int, List[NodeValue]])).map(s => l.map(_ -> s))
-        }
-        .map(_.toMap)
-  }
-
-  def planExecutionDeps[F[_]](rootSel: NonEmptyList[PreparedField[F, Any]], plan: NonEmptyList[Optimizer.Node]): ExecutionDeps[F] = {
-    val flat = Optimizer.flattenNodeTree(plan)
-
-    def unpackPrep(prep: Prepared[F, Any]): Eval[List[(Int, PreparedDataField[F, Any, Any])]] = Eval.defer {
-      prep match {
-        case PreparedLeaf(_, _) => Eval.now(Nil)
-        case PreparedList(of)   => unpackPrep(of)
-        case Selection(fields)  => flattenDataFieldMap(fields).map(_.toList)
-      }
-    }
-
-    def flattenDataFieldMap(sel: NonEmptyList[PreparedField[F, Any]]): Eval[NonEmptyList[(Int, PreparedDataField[F, Any, Any])]] =
-      Eval.defer {
-        sel.flatTraverse { pf =>
-          pf match {
-            case df @ PreparedDataField(id, name, resolve, selection, batchName) =>
-              val hd = id -> df
-              unpackPrep(selection).map(tl => NonEmptyList(hd, tl))
-            case PreparedFragField(_, _, selection) => flattenDataFieldMap(selection.fields)
-          }
-        }
-      }
-
-    val nodeMap: Map[Int, Optimizer.Node] = flat.toList.map(x => x.id -> x).toMap
-
-    val dataFieldMap: Map[Int, PreparedDataField[F, Any, Any]] = flattenDataFieldMap(rootSel).value.toList.toMap
-
-    val batches: List[NonEmptyList[Int]] =
-      flat
-        .groupBy(_.end)
-        .toList
-        .zipWithIndex
-        .flatMap { case ((_, group), idx) =>
-          group
-            .groupBy(_.batchName)
-            .filter { case (o, nodes) => nodes.size > 1 && o.isDefined }
-            .toList
-            .map { case (nodeType, nodes) => nodes.map(_.id) }
-        }
-
-    ExecutionDeps(nodeMap, dataFieldMap, batches)
-  }
 
   def computeToRemove(nodes: List[(Vector[GraphPath], BigInt)], s: Set[BigInt]): Set[BigInt] =
     groupNodeValues(nodes).flatMap { case (k, tl) =>
@@ -223,7 +166,7 @@ object Interpreter {
 
   def interpret[F[_]](
       rootSel: NonEmptyList[(PreparedField[F, Any], List[NodeValue])],
-      executionDeps: ExecutionDeps[F],
+      executionDeps: Batching[F],
       schemaState: SchemaState[F],
       signalSubmission: Option[SignalMetadataAccumulator[F]] = None
   )(implicit F: Async[F], stats: Statistics[F]): F[List[NodeValue]] =
