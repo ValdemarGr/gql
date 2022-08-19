@@ -615,7 +615,7 @@ fragment F2 on Data {
           println(showDiff(p, costTree))
           println(s"inital plan cost: ${planCost(costTree)}")
           println(s"optimized plan cost: ${planCost(p)}")
-          println(Interpreter.run[IO]((), x, p, schema.state).unsafeRunSync())
+          println(interpreter.Interpreter.run[IO]((), x, p, schema.state).unsafeRunSync())
         }
 
         planAndRun
@@ -647,7 +647,7 @@ query withNestedFragments {
     println(showDiff(p, costTree))
     println(s"inital plan cost: ${planCost(costTree)}")
     println(s"optimized plan cost: ${planCost(p)}")
-    println(Interpreter.run[IO]((), x, p, schema.state).unsafeRunSync())
+    println(interpreter.Interpreter.run[IO]((), x, p, schema.state).unsafeRunSync())
   }
 
   val qsig = """
@@ -678,7 +678,7 @@ query withNestedFragments {
     val costTree = Optimizer.costTree[IO](x).unsafeRunSync()
     println(showTree(0, costTree))
 
-    Interpreter
+    interpreter.Interpreter
       .runStreamed[IO]((), x, schema.state)
       .evalMap(x => IO.println(s"got new subtree ${x.mkString_("\n")}"))
       .compile
