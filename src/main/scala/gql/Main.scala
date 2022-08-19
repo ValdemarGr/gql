@@ -428,8 +428,8 @@ query withNestedFragments {
             "nestedSignal" ->
               field(nameStreamReference[F, Data[F], Data[F]](eff { case (i, _) => i.c.map(_.head) })(_ => F.unit)(i => F.pure(i.a))),
             // TODO crashes
-            // "nestedSignal2" ->
-            //   field(nameStreamReference[F, Data[F], Data[F]](eff { case (i, _) => i.c.map(_.head) })(_ => F.unit)(i => F.pure(i.a))),
+            "nestedSignal2" ->
+              field(nameStreamReference[F, Data[F], Data[F]](eff { case (i, _) => i.c.map(_.head) })(_ => F.unit)(i => F.pure(i.a))),
             // "nestedSignal2" ->
             //   argumented(arg[Int]("num", Some(42)))(
             //     nameStreamReference[F, (Data[F], Int), Data[F]](eff { case ((i, _), _) => i.c.map(_.head) })(_ => F.unit) { case (i, _) =>
@@ -652,6 +652,9 @@ query withNestedFragments {
 
   parseAndPrep(qsig).map { x =>
     implicit lazy val stats = Statistics[IO].unsafeRunSync()
+
+    val costTree = Optimizer.costTree[IO](x).unsafeRunSync()
+    println(showTree(0, costTree))
 
     Interpreter
       .runStreamed[IO]((), x, schema.state)

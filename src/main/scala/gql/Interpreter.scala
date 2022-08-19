@@ -373,7 +373,7 @@ object Interpreter {
   }
 
   def computeToRemove(nodes: List[(Vector[GraphPath], BigInt)], s: Set[BigInt]): Set[BigInt] =
-    groupNodeValues(nodes).flatMap { case (_, tl) =>
+    groupNodeValues(nodes).flatMap { case (k, tl) =>
       val (nodeHere, iterates) = tl.partitionEither {
         case (xs, y) if xs.isEmpty => Left(y)
         case (xs, y)               => Right((xs, y))
@@ -383,7 +383,7 @@ object Interpreter {
         case x :: Nil if s.contains(x) => iterates.map { case (_, v) => v }.toSet
         case x :: Nil                  => computeToRemove(iterates, s)
         case Nil                       => computeToRemove(iterates, s)
-        case _                         => throw new Exception(s"something went terribly wrong $nodes")
+        case _                         => throw new Exception(s"something went terribly wrong $nodes and $s")
       }
     }.toSet
 
@@ -503,7 +503,7 @@ object Interpreter {
                   val subscribeF =
                     signalSubmission.traverse_ { alg =>
                       tl(in.value).flatMap { dst =>
-                        alg.add(in.cursor, in.value, df.copy(resolve = resolver.contramap[Any]((in.value, _))), dst.ref, dst.key)
+                        alg.add(in.cursor.ided(df.id), in.value, df.copy(resolve = resolver.contramap[Any]((in.value, _))), dst.ref, dst.key)
                       }
                     }
 
