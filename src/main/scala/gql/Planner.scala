@@ -15,7 +15,7 @@ import cats.Monad
 import cats.mtl.Stateful
 import cats.Eval
 
-object Optimizer {
+object Planner {
   final case class Node(
       id: Int,
       name: String,

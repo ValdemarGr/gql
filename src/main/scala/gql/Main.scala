@@ -107,7 +107,7 @@ object Main extends App {
       s"failed with char $c at offset ${e.failedAtOffset} on line $ln with code ${c.toInt}: \n${niceError}\nfor data:\n$msg"
   }
 
-  def showTree(indent: Int, nodes: NonEmptyList[Optimizer.Node]): String = {
+  def showTree(indent: Int, nodes: NonEmptyList[Planner.Node]): String = {
     val pad = "  " * indent
     nodes
       .map { n =>
@@ -118,7 +118,7 @@ object Main extends App {
       .mkString_("")
   }
 
-  def showDiff_(fa: NonEmptyList[Optimizer.Node], fb: NonEmptyList[Optimizer.Node], maxEnd: Double): String = {
+  def showDiff_(fa: NonEmptyList[Planner.Node], fb: NonEmptyList[Planner.Node], maxEnd: Double): String = {
     fa.sortBy(_.id)
       .zip(fb.sortBy(_.id))
       .map { case (a, b) =>
@@ -135,16 +135,16 @@ object Main extends App {
       .mkString_("")
   }
 
-  def showDiff(fa: NonEmptyList[Optimizer.Node], fb: NonEmptyList[Optimizer.Node]) = {
-    val me = Optimizer.flattenNodeTree(fa).maximumBy(_.end).end
+  def showDiff(fa: NonEmptyList[Planner.Node], fb: NonEmptyList[Planner.Node]) = {
+    val me = Planner.flattenNodeTree(fa).maximumBy(_.end).end
     AnsiColor.RED_B + "old field schedule" + AnsiColor.RESET + "\n" +
       AnsiColor.GREEN_B + "new field schedule" + AnsiColor.RESET + "\n" +
       AnsiColor.BLUE_B + "new field offset (deferral of execution)" + AnsiColor.RESET + "\n" +
       showDiff_(fa, fb, me)
   }
 
-  def planCost(nodes: NonEmptyList[Optimizer.Node]): Double = {
-    val fnt = Optimizer.flattenNodeTree(nodes)
+  def planCost(nodes: NonEmptyList[Planner.Node]): Double = {
+    val fnt = Planner.flattenNodeTree(nodes)
 
     fnt
       .groupBy(_.name)
@@ -610,8 +610,8 @@ fragment F2 on Data {
         implicit lazy val stats = Statistics[IO].unsafeRunSync()
 
         def planAndRun = {
-          val costTree = Optimizer.costTree[IO](x).unsafeRunSync()
-          val p = Optimizer.plan(costTree)
+          val costTree = Planner.costTree[IO](x).unsafeRunSync()
+          val p = Planner.plan(costTree)
           println(showDiff(p, costTree))
           println(s"inital plan cost: ${planCost(costTree)}")
           println(s"optimized plan cost: ${planCost(p)}")
@@ -642,8 +642,8 @@ query withNestedFragments {
   parseAndPrep(inputQuery).map { x =>
     implicit lazy val stats = Statistics[IO].unsafeRunSync()
 
-    val costTree = Optimizer.costTree[IO](x).unsafeRunSync()
-    val p = Optimizer.plan(costTree)
+    val costTree = Planner.costTree[IO](x).unsafeRunSync()
+    val p = Planner.plan(costTree)
     println(showDiff(p, costTree))
     println(s"inital plan cost: ${planCost(costTree)}")
     println(s"optimized plan cost: ${planCost(p)}")
@@ -675,7 +675,7 @@ query withNestedFragments {
   parseAndPrep(qsig).map { x =>
     implicit lazy val stats = Statistics[IO].unsafeRunSync()
 
-    val costTree = Optimizer.costTree[IO](x).unsafeRunSync()
+    val costTree = Planner.costTree[IO](x).unsafeRunSync()
     println(showTree(0, costTree))
 
     interpreter.Interpreter

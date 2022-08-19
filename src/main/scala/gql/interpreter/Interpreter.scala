@@ -24,8 +24,8 @@ object Interpreter {
       schemaState: SchemaState[F]
   ): F[NonEmptyList[JsonObject]] =
     for {
-      costTree <- Optimizer.costTree[F](rootSel)
-      plan = Optimizer.plan(costTree)
+      costTree <- Planner.costTree[F](rootSel)
+      plan = Planner.plan(costTree)
       executionDeps = Batching.plan[F](rootSel, plan)
       result <- interpret[F](rootSel.map((_, List(NodeValue.empty(rootInput)))), executionDeps, schemaState)
       output <- reconstruct[F](rootSel, result)
@@ -34,7 +34,7 @@ object Interpreter {
   def run[F[_]: Async: Statistics](
       rootInput: Any,
       rootSel: NonEmptyList[PreparedField[F, Any]],
-      plan: NonEmptyList[Optimizer.Node],
+      plan: NonEmptyList[Planner.Node],
       schemaState: SchemaState[F]
   ): F[NonEmptyList[JsonObject]] =
     interpret[F](rootSel.map((_, List(NodeValue.empty(rootInput)))), Batching.plan[F](rootSel, plan), schemaState)
@@ -50,8 +50,8 @@ object Interpreter {
       fs2.Stream.eval(SignalMetadataAccumulator[F]).flatMap { submissionAlg =>
         val outputF =
           for {
-            costTree <- Optimizer.costTree[F](rootSel)
-            plan = Optimizer.plan(costTree)
+            costTree <- Planner.costTree[F](rootSel)
+            plan = Planner.plan(costTree)
             executionDeps = Batching.plan[F](rootSel, plan)
             result <- interpret[F](rootSel.map((_, List(NodeValue.empty(rootInput)))), executionDeps, schemaState, Some(submissionAlg))
             output <- reconstruct[F](rootSel, result)
@@ -82,8 +82,8 @@ object Interpreter {
                             SignalMetadataAccumulator[F].flatMap { submissionAlg =>
                               val outputF =
                                 for {
-                                  costTree <- Optimizer.costTree[F](rootSel)
-                                  plan = Optimizer.plan(costTree)
+                                  costTree <- Planner.costTree[F](rootSel)
+                                  plan = Planner.plan(costTree)
                                   executionDeps = Batching.plan[F](rootSel, plan)
                                   result <- interpret[F](newRootSel, executionDeps, schemaState, Some(submissionAlg))
                                   output <- reconstruct[F](newRootSel.map { case (k, _) => k }, result)
