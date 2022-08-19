@@ -28,6 +28,8 @@ object Planner {
     lazy val start = end - cost
   }
 
+  def makeBatchName(b: BatcherReference[Any, Any]) = s"batch_${b.id}"
+
   // TODO get stats for all occuring batch names in the graph before running the algorithm,
   // such that mutation during the algorithm is be avoided
   def constructCostTree[F[_]](
@@ -41,8 +43,8 @@ object Planner {
     prepared.flatTraverse {
       case PreparedDataField(id, name, resolve, selection, tn) =>
         val batchName = resolve match {
-          case BatchResolver(batcher, _) => Some(s"batch_${batcher.id}")
-          case _                            => None
+          case BatchResolver(batcher, _) => Some(makeBatchName(batcher))
+          case _                         => None
         }
         // Use parent typename + field as fallback name since this will be unique
         // it is of utmost importance that different resolvers don't get mixed into the same statistic

@@ -19,17 +19,18 @@ import gql._
 
 object Interpreter {
   def planAndRun[F[_]: Async: Statistics](
-      rootInput: Any,
-      rootSel: NonEmptyList[PreparedField[F, Any]],
-      schemaState: SchemaState[F]
-  ): F[NonEmptyList[JsonObject]] =
+      rootSel: NonEmptyList[(PreparedField[F, Any], List[NodeValue])],
+      schemaState: SchemaState[F],
+      signalAccum: Option[SignalMetadataAccumulator[F]] = None
+  ): F[List[NodeValue]] = {
+    val rootFields = rootSel.map { case (k, _) => k }
     for {
-      costTree <- Planner.costTree[F](rootSel)
+      costTree <- Planner.costTree[F](rootFields)
       plan = Planner.plan(costTree)
-      executionDeps = Batching.plan[F](rootSel, plan)
-      result <- interpret[F](rootSel.map((_, List(NodeValue.empty(rootInput)))), executionDeps, schemaState)
-      output <- reconstruct[F](rootSel, result)
-    } yield output
+      executionDeps = Batching.plan[F](rootFields, plan)
+      result <- interpret[F](rootSel, executionDeps, schemaState, signalAccum)
+    } yield result
+  }
 
   def run[F[_]: Async: Statistics](
       rootInput: Any,
@@ -46,7 +47,47 @@ object Interpreter {
       schemaState: SchemaState[F]
   )(implicit F: Async[F]): fs2.Stream[F, NonEmptyList[JsonObject]] =
     SubscriptionSupervisor[F](schemaState).flatMap { implicit streamResouceAlg =>
+      def runStreamIt(
+          root: NonEmptyList[(PreparedField[F, Any], List[NodeValue])]
+      ): F[(List[NodeValue], Map[BigInt, (Cursor, Any, PreparedDataField[F, Any, Any])])] =
+        SignalMetadataAccumulator[F].flatMap { accumulator =>
+          (planAndRun[F](root, schemaState, Some(accumulator)), accumulator.getState).tupled
+        }
+
       // first iteration
+      fs2.Stream
+        .eval(runStreamIt(rootSel.map((_, List(NodeValue.empty(rootInput))))))
+        .flatMap { case (initialNvs, initialSignals) =>
+          streamResouceAlg.changeLog
+            .evalMapAccumulate((initialNvs, initialSignals)) { case ((prevNvs, activeSigs), changes) =>
+              // remove dead nodes (concurrent access can cause dead updates to linger)
+              changes
+                .filter { case (k, _) => activeSigs.contains(k) }
+                .toNel
+                .flatTraverse { activeChanges =>
+                  val s = activeChanges.toList.map { case (k, _) => k }.toSet
+                  val allSigNodes = activeSigs.toList.map { case (k, (cursor, _, _)) => (cursor, k) }
+                  val meta = computeMetadata(allSigNodes, s)
+                  val rootNodes: List[(BigInt, Any)] = activeChanges.filter { case (k, _) => meta.hcsa.contains(k) }
+                  val prepaedRoots =
+                    rootNodes.map { case (id, input) =>
+                      val (cursor, _, field) = activeSigs(id)
+                      (field, List(NodeValue(cursor, input)))
+                    }
+
+                  prepaedRoots.toNel
+                    .traverse { newRootSel =>
+                      runStreamIt(newRootSel).map { case (newNvs, newSigs) =>
+                        // TODO do some removal of subscriptions and in active sigs
+                        // TODO merge new and old nvs constructively
+                        ((newNvs, newSigs ++ activeSigs), None)
+                      }
+                    }
+                }
+                .map(_.getOrElse(((prevNvs, activeSigs), None)))
+            }
+        }
+
       fs2.Stream.eval(SignalMetadataAccumulator[F]).flatMap { submissionAlg =>
         val outputF =
           for {
@@ -223,7 +264,7 @@ object Interpreter {
                       xs =>
                         impl(xs).timed
                           .flatMap { case (dur, value) =>
-                            submit(s"batch_${batcher.id}", dur, xs.size) >> submit(n.name, dur, xs.size).as(value)
+                            submit(Planner.makeBatchName(batcher), dur, xs.size) >> submit(n.name, dur, xs.size).as(value)
                           }
                     )
                   )
@@ -234,15 +275,21 @@ object Interpreter {
                   val subscribeF =
                     signalSubmission.traverse_ { alg =>
                       tl(in.value).flatMap { dst =>
-                        alg
-                          .add(in.cursor.ided(df.id), in.value, df.copy(resolve = resolver.contramap[Any]((in.value, _))), dst.ref, dst.key)
+                        // close in the initial value for tail Resorver[F, (I, T), A]
+                        val df2 = df.copy(resolve = resolver.contramap[Any]((in.value, _)))
+                        alg.add(in.cursor.ided(df.id), in.value, df2, dst.ref, dst.key)
                       }
                     }
 
                   subscribeF >>
+                    // close in the initial value for head
                     hd(in.value).map(v => in.copy(value = (in.value, v)))
                 }
-                .flatMap(nvs => collapseInputs(df.copy(resolve = resolver.asInstanceOf[Resolver[F, Any, Any]]), nvs))
+                .flatMap { nvs =>
+                  // we tupled the initial into nvs (head), cast since expects (Any, Any) but NodeValue contains Any
+                  val df2 = df.copy(resolve = resolver.asInstanceOf[Resolver[F, Any, Any]])
+                  collapseInputs(df2, nvs)
+                }
           }
         }
 
