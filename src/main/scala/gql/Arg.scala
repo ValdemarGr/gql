@@ -28,8 +28,6 @@ object Arg {
   implicit lazy val applicativeForArgs: Applicative[Arg] = new Applicative[Arg] {
     override def pure[A](a: A): Arg[A] =
       Arg(Vector.empty, (_, a))
-    // override def map[A, B](fa: Arg[A])(f: A => B): Arg[B] =
-    //   fa.copy(decode = fa.decode andThen { case (s, a) => (s, f(a)) })
 
     override def ap[A, B](ff: Arg[A => B])(fa: Arg[A]): Arg[B] =
       Arg(
