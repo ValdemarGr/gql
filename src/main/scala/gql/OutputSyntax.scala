@@ -7,7 +7,27 @@ import shapeless.Lazy
 import scala.reflect.ClassTag
 import gql.resolver._
 
+class FieldBuilder[F[_], I] {
+  def apply[A](r: Resolver[F, I, A])(implicit tpe: => Output[F, A]): Output.Field[F, I, A, Unit] = {
+    implicit lazy val t = tpe
+    apply[Unit, A](Applicative[Arg].unit)(r.contramap[(I, Unit)] { case (i, _) => i })
+  }
+
+  def apply[Ag, A](arg: Arg[Ag])(r: Resolver[F, (I, Ag), A])(implicit tpe: => Output[F, A]): Output.Field[F, I, A, Ag] =
+    Output.Field(
+      arg,
+      r,
+      Eval.later(tpe)
+    )
+}
+
 abstract class OutputSyntax {
+  def fields[F[_], I](
+      hd: (String, Output.Field[F, I, _, _]),
+      tl: (String, Output.Field[F, I, _, _])*
+  ): NonEmptyList[(String, Output.Field[F, I, _, _])] =
+    NonEmptyList(hd, tl.toList)
+
   def field[F[_], I, A](r: Resolver[F, I, A])(implicit tpe: => Output[F, A]) =
     Output.Field(
       Applicative[Arg].unit,
@@ -28,6 +48,9 @@ abstract class OutputSyntax {
       r,
       Eval.later(tpe)
     )
+
+  def obj2[F[_], I](name: String)(build: FieldBuilder[F, I] => NonEmptyList[(String, Output.Field[F, I, _, _])]) =
+    Output.Obj[F, I](name, build(new FieldBuilder[F, I]))
 
   def obj[F[_], A](
       name: String,

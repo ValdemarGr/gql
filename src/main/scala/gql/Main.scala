@@ -417,26 +417,48 @@ query withNestedFragments {
             "value" -> pure(_.value)
           )
 
-        implicit def dataType: Output.Obj[F, Data[F]] =
-          obj[F, Data[F]](
-            "Data",
-            "a" -> field(pur(_.a)),
-            "a2" -> argumented(arg[Int]("num", Some(42)))(pur { case (i, _) => i.a }),
-            "b" -> field(eff(_.b)),
-            "sd" -> field(serverDataBatcher.traverse(_.b.map(i => Seq(i, i + 1, i * 2)))),
-            "c" -> field(eff(_.c.map(_.toSeq))),
-            "nestedSignal" ->
-              field(nameStreamReference[F, Data[F], Data[F]](eff { case (i, _) => i.c.map(_.head) })(_ => F.unit)(i => F.pure(i.a))),
-            // TODO crashes
-            "nestedSignal2" ->
-              field(nameStreamReference[F, Data[F], Data[F]](eff { case (i, _) => i.c.map(_.head) })(_ => F.unit)(i => F.pure(i.a))),
-            // "nestedSignal2" ->
-            //   argumented(arg[Int]("num", Some(42)))(
-            //     nameStreamReference[F, (Data[F], Int), Data[F]](eff { case ((i, _), _) => i.c.map(_.head) })(_ => F.unit) { case (i, _) =>
-            //       F.pure(i.a)
-            //     }
-            //   )
-          )
+        // def makeCommonFields[F[_]](b: FieldBuilder[F, Data[F]]): Unit =
+        //   b.arg(arg[Int]("num", Some(42)))(pur { case (i, _) => i.a })
+
+        // implicit class LalaOps[A](a: A) {
+        //   def ++(a2: A) = NonEmptyList.of(a, a2)
+        // }
+
+        implicit lazy val dataType: Output.Obj[F, Data[F]] =
+          obj2[F, Data[F]]("Data") { f =>
+            fields(
+              "a" -> f(pur(_.a)),
+              "a2" -> f(arg[Int]("num", Some(42)))(pur { case (i, _) => i.a }),
+              "b" -> f(eff(_.b)),
+              "sd" -> f(serverDataBatcher.traverse(_.b.map(i => Seq(i, i + 1, i * 2)))),
+              "c" -> f(eff(_.c.map(_.toSeq))),
+              "nestedSignal" ->
+                f(nameStreamReference[F, Data[F], Data[F]](eff { case (i, _) => i.c.map(_.head) })(_ => F.unit)(i => F.pure(i.a))),
+              "nestedSignal2" ->
+                f(nameStreamReference[F, Data[F], Data[F]](eff { case (i, _) => i.c.map(_.head) })(_ => F.unit)(i => F.pure(i.a)))
+            )
+          }
+
+        // implicit def dataType: Output.Obj[F, Data[F]] =
+        //   obj[F, Data[F]](
+        //     "Data",
+        //     "a" -> field(pur(_.a)),
+        //     "a2" -> argumented(arg[Int]("num", Some(42)))(pur { case (i, _) => i.a }),
+        //     "b" -> field(eff(_.b)),
+        //     "sd" -> field(serverDataBatcher.traverse(_.b.map(i => Seq(i, i + 1, i * 2)))),
+        //     "c" -> field(eff(_.c.map(_.toSeq))),
+        //     "nestedSignal" ->
+        //       field(nameStreamReference[F, Data[F], Data[F]](eff { case (i, _) => i.c.map(_.head) })(_ => F.unit)(i => F.pure(i.a))),
+        //     // TODO crashes
+        //     "nestedSignal2" ->
+        //       field(nameStreamReference[F, Data[F], Data[F]](eff { case (i, _) => i.c.map(_.head) })(_ => F.unit)(i => F.pure(i.a)))
+        //     // "nestedSignal2" ->
+        //     //   argumented(arg[Int]("num", Some(42)))(
+        //     //     nameStreamReference[F, (Data[F], Int), Data[F]](eff { case ((i, _), _) => i.c.map(_.head) })(_ => F.unit) { case (i, _) =>
+        //     //       F.pure(i.a)
+        //     //     }
+        //     //   )
+        //   )
 
         implicit def otherDataType: Output.Obj[F, OtherData[F]] =
           obj[F, OtherData[F]](
