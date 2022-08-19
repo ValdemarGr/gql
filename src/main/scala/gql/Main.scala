@@ -420,19 +420,22 @@ query withNestedFragments {
         implicit def dataType: Output.Obj[F, Data[F]] =
           obj[F, Data[F]](
             "Data",
-            "a" -> pure(_.a),
-            "b" -> effect(_.b),
-            "sd" -> batchTraverse(serverDataBatcher)(_.b.map(i => Seq(i, i + 1, i * 2))),
-            "c" -> effect(_.c.map(_.toSeq)),
-            "nestedSignal" -> Output.Field(
-              Applicative[Arg].unit,
-              SignalResolver[F, Data[F], String, Data[F], Unit](
-                EffectResolver[F, (Data[F], Unit), Data[F]] { case (i, _) => i.c.map(_.head) },
-                _ => F.unit,
-                x => F.pure(SignalResolver.DataStreamTail(nameStreamReference, x.a))
-              ).contramap[(Data[F], Unit)] { case (x, _) => x },
-              Eval.later(dataType)
-            )
+            "a" -> field(pur(_.a)),
+            "a2" -> argumented(arg[Int]("num", Some(42)))(pur { case (i, _) => i.a }),
+            "b" -> field(eff(_.b)),
+            "sd" -> field(serverDataBatcher.traverse(_.b.map(i => Seq(i, i + 1, i * 2)))),
+            "c" -> field(eff(_.c.map(_.toSeq))),
+            "nestedSignal" ->
+              field(nameStreamReference[F, Data[F], Data[F]](eff { case (i, _) => i.c.map(_.head) })(_ => F.unit)(i => F.pure(i.a))),
+            // TODO crashes
+            // "nestedSignal2" ->
+            //   field(nameStreamReference[F, Data[F], Data[F]](eff { case (i, _) => i.c.map(_.head) })(_ => F.unit)(i => F.pure(i.a))),
+            // "nestedSignal2" ->
+            //   argumented(arg[Int]("num", Some(42)))(
+            //     nameStreamReference[F, (Data[F], Int), Data[F]](eff { case ((i, _), _) => i.c.map(_.head) })(_ => F.unit) { case (i, _) =>
+            //       F.pure(i.a)
+            //     }
+            //   )
           )
 
         implicit def otherDataType: Output.Obj[F, OtherData[F]] =
@@ -628,6 +631,9 @@ query withNestedFragments {
   val qsig = """
 query withNestedFragments {
   getData {
+    nestedSignal2 {
+      a
+    }
     nestedSignal {
       a
       nestedSignal {
@@ -647,6 +653,11 @@ query withNestedFragments {
   parseAndPrep(qsig).map { x =>
     implicit lazy val stats = Statistics[IO].unsafeRunSync()
 
-    Interpreter.runStreamed[IO]((), x, schema.state).evalMap(x => IO.println(s"got new subtree ${x.mkString_("\n")}")).compile.drain.unsafeRunSync()
+    Interpreter
+      .runStreamed[IO]((), x, schema.state)
+      .evalMap(x => IO.println(s"got new subtree ${x.mkString_("\n")}"))
+      .compile
+      .drain
+      .unsafeRunSync()
   }
 }

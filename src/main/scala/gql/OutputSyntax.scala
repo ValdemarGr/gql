@@ -8,6 +8,27 @@ import scala.reflect.ClassTag
 import gql.resolver._
 
 abstract class OutputSyntax {
+  def field[F[_], I, A](r: Resolver[F, I, A])(implicit tpe: => Output[F, A]) =
+    Output.Field(
+      Applicative[Arg].unit,
+      r.contramap[(I, Unit)] { case (i, _) => i },
+      Eval.later(tpe)
+    )
+
+  // def augment[F[_], I, A, Ag](arg: Arg[Ag])(f: Output.Field[F, (I, Ag), A, Unit]) =
+  //   Output.Field(
+  //     f.args *> arg,
+  //     f.resolve.contramap[(I, Ag)] { case (i, ag) => ((i, ag), ()) },
+  //     f.output
+  //   )
+
+  def argumented[F[_], I, A, Ag](arg: Arg[Ag])(r: Resolver[F, (I, Ag), A])(implicit tpe: => Output[F, A]) =
+    Output.Field(
+      arg,
+      r,
+      Eval.later(tpe)
+    )
+
   def obj[F[_], A](
       name: String,
       hd: (String, Output.Field[F, A, _, _]),
@@ -46,6 +67,12 @@ abstract class OutputSyntax {
       EffectResolver { case (i, a) => resolver(i, a) },
       Eval.later(tpe)
     )
+
+  def eff[F[_], I, T](resolver: I => F[T]) =
+    EffectResolver[F, I, T](resolver)
+
+  def pur[F[_], I, T](resolver: I => T) =
+    PureResolver[F, I, T](resolver)
 
   def pure[F[_], I, T](resolver: I => T)(implicit tpe: => Output[F, T]): Output.Field[F, I, T, Unit] =
     pure[F, I, T, Unit](Applicative[Arg].unit) { case (i, _) => resolver(i) }(tpe)

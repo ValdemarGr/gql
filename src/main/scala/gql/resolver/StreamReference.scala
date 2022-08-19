@@ -4,8 +4,15 @@ import cats.data._
 import cats._
 import cats.effect._
 import gql.SchemaState
+import gql.Output
+import cats.implicits._
 
-final case class StreamReference[K, T](id: Int)
+final case class StreamReference[K, T](id: Int) {
+  def apply[F[_]: MonadCancelThrow, I, A](resolver: LeafResolver[F, (I, T), A])(hd: I => F[T])(
+      k: I => F[K]
+  ): SignalResolver[F, I, K, A, T] =
+    SignalResolver[F, I, K, A, T](resolver, hd, k.andThen(_.map(SignalResolver.DataStreamTail(this, _))))
+}
 
 object StreamReference {
   def apply[F[_], K, T](

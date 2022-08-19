@@ -1,6 +1,7 @@
 package gql
 
 import cats._
+import cats.implicits._
 
 final case class ArgParam[A](
     name: String,
@@ -11,13 +12,20 @@ final case class ArgParam[A](
 final case class Arg[A](
     entries: Vector[ArgParam[_]],
     decode: List[_] => (List[_], A)
-)
+) {
+  def apply[F[_], I, O](f: Output.Field[F, (I, A), O, Unit]): Output.Field[F, I, O, A] =
+    Output.Field(
+      f.args *> this,
+      f.resolve.contramap[(I, A)] { case (i, ag) => ((i, ag), ()) },
+      f.output
+    )
+}
 
 object Arg {
   def initial[A](entry: ArgParam[A]): Arg[A] =
     Arg(Vector(entry), { s => (s.tail, s.head.asInstanceOf[A]) })
 
-  implicit lazy val applicativeForArgs = new Applicative[Arg] {
+  implicit lazy val applicativeForArgs: Applicative[Arg] = new Applicative[Arg] {
     override def pure[A](a: A): Arg[A] =
       Arg(Vector.empty, (_, a))
     // override def map[A, B](fa: Arg[A])(f: A => B): Arg[B] =

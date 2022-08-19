@@ -11,7 +11,7 @@ final case class Batch[F[_], K, A, T](
     Batch(keys, post.andThen(_.flatMap(f)))
 }
 
-object BatchPartition {
+object Batch {
   implicit def applicativeForBatchPartition[F[_]: Applicative, K, T]: Applicative[Batch[F, K, *, T]] = {
     type G[A] = Batch[F, K, A, T]
     new Applicative[G] {
