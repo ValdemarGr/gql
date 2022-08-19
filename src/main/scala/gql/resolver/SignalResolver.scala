@@ -15,6 +15,17 @@ import cats.arrow.FunctionK
  * A the output type
  * T the intermediate type that the stream emits and is transformed to A
  */
+// TODO consider further if having signals occur as list elements is better;
+// [Type!]! here the index in the list itsef, can be a signal.
+// Special cases are Option where size = 1 | 0 and singular where size = 1
+// Like batch, have a post-processing
+/*
+ * final case class SignalResolver[F[_]: MonadCancelThrow, I, K, A, T](
+ *  resolver: LeafResolver[F, (I, List[T]), A],
+ *  head: I => F[List[T]],
+ *  tail: I => F[List[SignalResolver.DataStreamTail[K, T]]]
+ * )
+ */
 final case class SignalResolver[F[_]: MonadCancelThrow, I, K, A, T](
     resolver: LeafResolver[F, (I, T), A],
     head: I => F[T],
