@@ -55,88 +55,88 @@ object Interpreter {
         }
 
       // first iteration
-      //fs2.Stream
-      //  .eval(runStreamIt(rootSel.map((_, List(NodeValue.empty(rootInput))))))
-      //  .flatMap { case (initialNvs, initialSignals) =>
-      //    fs2.Stream.eval(reconstruct(rootSel, initialNvs)).flatMap { initialOutput =>
-      //      streamResouceAlg.changeLog
-      //        .evalMapAccumulate((initialOutput, initialSignals)) { case ((prevOutput, activeSigs), changes) =>
-      //          // remove dead nodes (concurrent access can cause dead updates to linger)
-      //          changes
-      //            .filter { case (k, _) => activeSigs.contains(k) }
-      //            .toNel
-      //            .flatTraverse { activeChanges =>
-      //              val s = activeChanges.toList.map { case (k, _) => k }.toSet
-      //              val allSigNodes = activeSigs.toList.map { case (k, (cursor, _, _)) => (cursor, k) }
-      //              val meta = computeMetadata(allSigNodes, s)
-      //              val rootNodes: List[(BigInt, Any)] = activeChanges.filter { case (k, _) => meta.hcsa.contains(k) }
-      //              val prepaedRoots =
-      //                rootNodes.map { case (id, input) =>
-      //                  val (cursor, _, field) = activeSigs(id)
-      //                  (field, List(NodeValue(NodePosition.startAt(cursor), input)))
-      //                }
+      fs2.Stream
+        .eval(runStreamIt(rootSel.map((_, List(NodeValue.empty(rootInput))))))
+       .flatMap { case (initialNvs, initialSignals) =>
+         fs2.Stream.eval(reconstruct(rootSel, initialNvs)).flatMap { initialOutput =>
+           streamResouceAlg.changeLog
+             .evalMapAccumulate((initialOutput, initialSignals)) { case ((prevOutput, activeSigs), changes) =>
+               // remove dead nodes (concurrent access can cause dead updates to linger)
+               changes
+                 .filter { case (k, _) => activeSigs.contains(k) }
+                 .toNel
+                 .flatTraverse { activeChanges =>
+                   val s = activeChanges.toList.map { case (k, _) => k }.toSet
+                   val allSigNodes = activeSigs.toList.map { case (k, (cursor, _, _)) => (cursor, k) }
+                   val meta = computeMetadata(allSigNodes, s)
+                   val rootNodes: List[(BigInt, Any)] = activeChanges.filter { case (k, _) => meta.hcsa.contains(k) }
+                   val prepaedRoots =
+                     rootNodes.map { case (id, input) =>
+                       val (cursor, _, field) = activeSigs(id)
+                       (field, List(NodeValue(NodePosition.startAt(cursor), input)))
+                     }
 
-      //              prepaedRoots.toNel
-      //                .traverse { newRootSel =>
-      //                  runStreamIt(newRootSel).map { case (newNvs, newSigs) =>
-      //                    def associateRoots(
-      //                        xs: List[(Vector[GraphArc], (PreparedDataField[F, Any, Any], Cursor))],
-      //                        soFar: List[(Vector[GraphArc], Any)]
-      //                    ): List[(PreparedDataField[F, Any, Any], Cursor, List[(Vector[GraphArc], Any)])] = {
-      //                      val (nodeHere, iterates) = xs.partitionEither {
-      //                        case (xs, y) if xs.isEmpty => Left(y)
-      //                        case (xs, y)               => Right((xs, y))
-      //                      }
+                   prepaedRoots.toNel
+                     .traverse { newRootSel =>
+                       runStreamIt(newRootSel).map { case (newNvs, newSigs) =>
+                         // def associateRoots(
+                         //     xs: List[(Vector[GraphArc], (PreparedDataField[F, Any, Any], Cursor))],
+                         //     soFar: List[(Cursor, Any)]
+                         // ): List[(PreparedDataField[F, Any, Any], Cursor, List[(Vector[GraphArc], Any)])] = {
+                         //   val (nodeHere, iterates) = xs.partitionEither {
+                         //     case (xs, y) if xs.isEmpty => Left(y)
+                         //     case (xs, y)               => Right((xs, y))
+                         //   }
 
-      //                      val heres: List[(PreparedDataField[F, Any, Any], Cursor, List[(Vector[GraphArc], Any)])] =
-      //                        nodeHere.map { case (pf, c) => (pf, c, soFar) }
+                         //   val heres: List[(PreparedDataField[F, Any, Any], Cursor, List[(Vector[GraphArc], Any)])] =
+                         //     nodeHere.map { case (pf, c) => (pf, c, soFar) }
 
-      //                      val its =
-      //                        if (iterates.nonEmpty) {
-      //                          val sf = groupNodeValues(soFar)
-      //                          val its = groupNodeValues(iterates)
+                         //   val its =
+                         //     if (iterates.nonEmpty) {
+                         //       val sf = groupNodeValues(soFar)
+                         //       val its = groupNodeValues(iterates)
 
-      //                          val m =
-      //                            sf.alignWith(its) {
-      //                              case Ior.Both(l, r) => associateRoots(r, l)
-      //                              case _              => ???
-      //                            }
+                         //       val m =
+                         //         sf.alignWith(its) {
+                         //           case Ior.Both(l, r) => associateRoots(r, l)
+                         //           case _              => ???
+                         //         }
 
-      //                          m.values.toList.flatten
-      //                        } else {
-      //                          Nil
-      //                        }
+                         //       m.values.toList.flatten
+                         //     } else {
+                         //       Nil
+                         //     }
 
-      //                      its ++ heres
-      //                    }
+                         //   its ++ heres
+                         // }
 
-      //                    // TODO do some removal of subscriptions and in active sigs
-      //                    // TODO merge new nvs and old json constructively
-      //                    // newRootSel's cursors are a strict suprset of nvs
-      //                    // strategically we can use newRootSel + newNvs to figure out
-      //                    // the replacement cursor and the replacement value.
-      //                    // Said another way;
-      //                    // initial:
-      //                    // List[NodeValue]
-      //                    //
-      //                    // by traversing the initial field's cursor
-      //                    // NonEmptyList[(Cursor, PreparedDataField[F, Any, Any], List[NodeValue])]
-      //                    //
-      //                    // by converting the remaining (PreparedDataField[F, Any, Any], List[NodeValue]) to json
-      //                    // via usual reconstruction
-      //                    // NonEmptyList[(Cursor, Json)]
-      //                    //
-      //                    // by stitching every (Json at position Cursor) into the previous object
-      //                    // NonEmptyList[JsonObject]
-      //                    val newOutput = (prevOutput, newRootSel, newNvs)
-      //                    ((initialOutput, newSigs ++ activeSigs), None)
-      //                  }
-      //                }
-      //            }
-      //            .map(_.getOrElse(((initialOutput, activeSigs), None)))
-      //        }
-      //    }
-      //  }
+                         // TODO do some removal of subscriptions and in active sigs
+                         // TODO merge new nvs and old json constructively
+                         // newRootSel's cursors are a strict suprset of nvs
+                         // strategically we can use newRootSel + newNvs to figure out
+                         // the replacement cursor and the replacement value.
+                         // Said another way;
+                         // initial:
+                         // List[NodeValue]
+                         //
+                         // by traversing the initial field's cursor
+                         // NonEmptyList[(Cursor, PreparedDataField[F, Any, Any], List[NodeValue])]
+                         //
+                         // by converting the remaining (PreparedDataField[F, Any, Any], List[NodeValue]) to json
+                         // via usual reconstruction
+                         // NonEmptyList[(Cursor, Json)]
+                         //
+                         // by stitching every (Json at position Cursor) into the previous object
+                         // NonEmptyList[JsonObject]
+                         val newOutput = (prevOutput, newRootSel, newNvs)
+                         ((initialOutput, newSigs ++ activeSigs), None)
+                       }
+                     }
+                 }
+                 .map(_.getOrElse(((initialOutput, activeSigs), None)))
+             }
+         }
+       }
 
       fs2.Stream.eval(SignalMetadataAccumulator[F]).flatMap { submissionAlg =>
         val outputF =
