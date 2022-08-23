@@ -22,14 +22,14 @@ object Interpreter {
       rootSel: NonEmptyList[(PreparedField[F, Any], List[NodeValue])],
       schemaState: SchemaState[F],
       signalAccum: Option[SignalMetadataAccumulator[F]] = None
-  ): F[List[NodeValue]] = {
+  ): F[(List[NodeValue], Batching[F])] = {
     val rootFields = rootSel.map { case (k, _) => k }
     for {
       costTree <- Planner.costTree[F](rootFields)
       plan = Planner.plan(costTree)
       executionDeps = Batching.plan[F](rootFields, plan)
       result <- interpret[F](rootSel, executionDeps, schemaState, signalAccum)
-    } yield result
+    } yield (result, executionDeps)
   }
 
   def run[F[_]: Async: Statistics](
@@ -37,161 +37,103 @@ object Interpreter {
       rootSel: NonEmptyList[PreparedField[F, Any]],
       plan: NonEmptyList[Planner.Node],
       schemaState: SchemaState[F]
-  ): F[NonEmptyList[JsonObject]] =
-    interpret[F](rootSel.map((_, List(NodeValue.empty(rootInput)))), Batching.plan[F](rootSel, plan), schemaState)
+  ): F[JsonObject] =
+    interpret[F](rootSel.map((_, List(NodeValue.empty(rootInput, BigInt(0))))), Batching.plan[F](rootSel, plan), schemaState)
       .flatMap(reconstruct[F](rootSel, _))
+
+  def stitchInto[F[_]](
+      oldTree: Json,
+      subTree: Json,
+      path: Cursor,
+      nameMap: Map[Int, String]
+  ): Json =
+    path.uncons match {
+      case None => subTree
+      case Some((p, tl)) =>
+        p match {
+          case Ided(id) =>
+            val oldObj = oldTree.asObject.get
+            val name = nameMap(id)
+            oldObj.add(name, stitchInto(oldObj(name).get, subTree, tl, nameMap)).asJson
+          case Index(index) =>
+            val oldArr = oldTree.asArray.get
+            oldArr.updated(index, stitchInto(oldArr(index), subTree, tl, nameMap)).asJson
+        }
+    }
 
   def runStreamed[F[_]: Statistics](
       rootInput: Any,
       rootSel: NonEmptyList[PreparedField[F, Any]],
       schemaState: SchemaState[F]
-  )(implicit F: Async[F]): fs2.Stream[F, NonEmptyList[JsonObject]] =
+  )(implicit F: Async[F]): fs2.Stream[F, Json] =
     SubscriptionSupervisor[F](schemaState).flatMap { implicit streamResouceAlg =>
       def runStreamIt(
           root: NonEmptyList[(PreparedField[F, Any], List[NodeValue])]
-      ): F[(List[NodeValue], Map[BigInt, (Cursor, Any, PreparedDataField[F, Any, Any])])] =
+      ): F[(List[NodeValue], Batching[F], Map[BigInt, (Cursor, Any, PreparedDataField[F, Any, Any])])] =
         SignalMetadataAccumulator[F].flatMap { accumulator =>
-          (planAndRun[F](root, schemaState, Some(accumulator)), accumulator.getState).tupled
+          (planAndRun[F](root, schemaState, Some(accumulator)), accumulator.getState)
+            .mapN { case ((res, deps), sigs) => (res, deps, sigs) }
         }
 
       // first iteration
       fs2.Stream
-        .eval(runStreamIt(rootSel.map((_, List(NodeValue.empty(rootInput))))))
-       .flatMap { case (initialNvs, initialSignals) =>
-         fs2.Stream.eval(reconstruct(rootSel, initialNvs)).flatMap { initialOutput =>
-           streamResouceAlg.changeLog
-             .evalMapAccumulate((initialOutput, initialSignals)) { case ((prevOutput, activeSigs), changes) =>
-               // remove dead nodes (concurrent access can cause dead updates to linger)
-               changes
-                 .filter { case (k, _) => activeSigs.contains(k) }
-                 .toNel
-                 .flatTraverse { activeChanges =>
-                   val s = activeChanges.toList.map { case (k, _) => k }.toSet
-                   val allSigNodes = activeSigs.toList.map { case (k, (cursor, _, _)) => (cursor, k) }
-                   val meta = computeMetadata(allSigNodes, s)
-                   val rootNodes: List[(BigInt, Any)] = activeChanges.filter { case (k, _) => meta.hcsa.contains(k) }
-                   val prepaedRoots =
-                     rootNodes.map { case (id, input) =>
-                       val (cursor, _, field) = activeSigs(id)
-                       (field, List(NodeValue(NodePosition.startAt(cursor), input)))
-                     }
+        .eval(runStreamIt(rootSel.map((_, List(NodeValue.empty(rootInput, BigInt(1)))))))
+        .flatMap { case (initialNvs, _, initialSignals) =>
+          fs2.Stream.eval(reconstruct(rootSel, initialNvs)).flatMap { initialOutput =>
+            fs2.Stream.emit(initialOutput.asJson) ++
+              streamResouceAlg.changeLog
+                .evalScan((initialOutput.asJson, initialSignals)) { case ((prevOutput, activeSigs), changes) =>
+                  // remove dead nodes (concurrent access can cause dead updates to linger)
+                  changes
+                    .filter { case (k, _) => activeSigs.contains(k) }
+                    .toNel
+                    .flatTraverse { activeChanges =>
+                      val s = activeChanges.toList.map { case (k, _) => k }.toSet
+                      val allSigNodes = activeSigs.toList.map { case (k, (cursor, _, _)) => (cursor, k) }
+                      val meta = computeMetadata(allSigNodes, s)
+                      val rootNodes: List[(BigInt, Any)] = activeChanges.filter { case (k, _) => meta.hcsa.contains(k) }
+                      val prepaedRoots =
+                        rootNodes.mapWithIndex { case ((id, input), idx) =>
+                          val (cursor, _, field) = activeSigs(id)
+                          (field, cursor, List(NodeValue(NodeMeta.empty(BigInt(idx)), input)), idx)
+                        }
 
-                   prepaedRoots.toNel
-                     .traverse { newRootSel =>
-                       runStreamIt(newRootSel).map { case (newNvs, newSigs) =>
-                         // def associateRoots(
-                         //     xs: List[(Vector[GraphArc], (PreparedDataField[F, Any, Any], Cursor))],
-                         //     soFar: List[(Cursor, Any)]
-                         // ): List[(PreparedDataField[F, Any, Any], Cursor, List[(Vector[GraphArc], Any)])] = {
-                         //   val (nodeHere, iterates) = xs.partitionEither {
-                         //     case (xs, y) if xs.isEmpty => Left(y)
-                         //     case (xs, y)               => Right((xs, y))
-                         //   }
+                      prepaedRoots.toNel
+                        .traverse { newRootSel =>
+                          runStreamIt(newRootSel.map { case (df, _, inputs, _) => (df, inputs) }).flatMap { case (newNvs, deps, newSigs) =>
+                            val nameMap = deps.dataFieldMap.view.mapValues(_.name).toMap
 
-                         //   val heres: List[(PreparedDataField[F, Any, Any], Cursor, List[(Vector[GraphArc], Any)])] =
-                         //     nodeHere.map { case (pf, c) => (pf, c, soFar) }
+                            val groupIdMapping =
+                              newRootSel.toList.map { case (df, rootCursor, _, idx) => idx -> (rootCursor, df) }.toMap
 
-                         //   val its =
-                         //     if (iterates.nonEmpty) {
-                         //       val sf = groupNodeValues(soFar)
-                         //       val its = groupNodeValues(iterates)
+                            val l: List[(BigInt, List[NodeValue])] = newNvs.groupBy(_.meta.stableId).toList
 
-                         //       val m =
-                         //         sf.alignWith(its) {
-                         //           case Ior.Both(l, r) => associateRoots(r, l)
-                         //           case _              => ???
-                         //         }
+                            val recombinedF: F[Json] =
+                              l
+                                .parTraverse { case (group, results) =>
+                                  val (rootCursor, df) = groupIdMapping(group.toInt)
+                                  reconstruct[F](NonEmptyList.one(df), results).tupleRight(rootCursor)
+                                }
+                                .map(_.foldLeft(prevOutput) { case (accum, (obj, pos)) =>
+                                  stitchInto(accum, obj.asJson, pos, nameMap)
+                                })
 
-                         //       m.values.toList.flatten
-                         //     } else {
-                         //       Nil
-                         //     }
+                            recombinedF.flatMap { res =>
+                              val withNew = newSigs ++ activeSigs
+                              val garbageCollected = withNew -- meta.toRemove
 
-                         //   its ++ heres
-                         // }
-
-                         // TODO do some removal of subscriptions and in active sigs
-                         // TODO merge new nvs and old json constructively
-                         // newRootSel's cursors are a strict suprset of nvs
-                         // strategically we can use newRootSel + newNvs to figure out
-                         // the replacement cursor and the replacement value.
-                         // Said another way;
-                         // initial:
-                         // List[NodeValue]
-                         //
-                         // by traversing the initial field's cursor
-                         // NonEmptyList[(Cursor, PreparedDataField[F, Any, Any], List[NodeValue])]
-                         //
-                         // by converting the remaining (PreparedDataField[F, Any, Any], List[NodeValue]) to json
-                         // via usual reconstruction
-                         // NonEmptyList[(Cursor, Json)]
-                         //
-                         // by stitching every (Json at position Cursor) into the previous object
-                         // NonEmptyList[JsonObject]
-                         val newOutput = (prevOutput, newRootSel, newNvs)
-                         ((initialOutput, newSigs ++ activeSigs), None)
-                       }
-                     }
-                 }
-                 .map(_.getOrElse(((initialOutput, activeSigs), None)))
-             }
-         }
-       }
-
-      fs2.Stream.eval(SignalMetadataAccumulator[F]).flatMap { submissionAlg =>
-        val outputF =
-          for {
-            costTree <- Planner.costTree[F](rootSel)
-            plan = Planner.plan(costTree)
-            executionDeps = Batching.plan[F](rootSel, plan)
-            result <- interpret[F](rootSel.map((_, List(NodeValue.empty(rootInput)))), executionDeps, schemaState, Some(submissionAlg))
-            output <- reconstruct[F](rootSel, result)
-          } yield output
-
-        fs2.Stream
-          .eval(outputF)
-          .flatMap { initialOutput =>
-            fs2.Stream.emit(initialOutput) ++
-              fs2.Stream.eval(submissionAlg.getState).flatMap { initState =>
-                streamResouceAlg.changeLog
-                  .evalMapAccumulate(initState) { case (accum, next) =>
-                    next
-                      .filter { case (k, _) => accum.contains(k) }
-                      .toNel
-                      .flatTraverse { nextNel =>
-                        val s = nextNel.toList.map { case (k, _) => k }.toSet
-                        val nodes = accum.toList.map { case (k, (cursor, _, _)) => (cursor, k) }
-                        val meta = computeMetadata(nodes, s)
-                        val rootNodes: List[(BigInt, Any)] = nextNel.filter { case (k, _) => meta.hcsa.contains(k) }
-                        val prepaedRoots =
-                          rootNodes.map { case (id, input) =>
-                            val (cursor, _, field) = accum(id)
-                            (field, List(NodeValue.empty(input)))
-                          }
-                        prepaedRoots.toNel
-                          .traverse { newRootSel =>
-                            SignalMetadataAccumulator[F].flatMap { submissionAlg =>
-                              val outputF =
-                                for {
-                                  costTree <- Planner.costTree[F](rootSel)
-                                  plan = Planner.plan(costTree)
-                                  executionDeps = Batching.plan[F](rootSel, plan)
-                                  result <- interpret[F](newRootSel, executionDeps, schemaState, Some(submissionAlg))
-                                  output <- reconstruct[F](newRootSel.map { case (k, _) => k }, result)
-                                } yield output
-
-                              val ns = submissionAlg.getState.map(m => m ++ accum)
-
-                              (ns, outputF.map(Some(_))).parTupled
+                              meta.toRemove.toList
+                                .traverse(streamResouceAlg.remove)
+                                .as((res, garbageCollected))
                             }
                           }
-                      }
-                      .map(_.getOrElse((accum, None)))
-                  }
-                  .collect { case (_, Some(x)) => x }
-              }
+                        }
+                    }
+                    .map(_.getOrElse((initialOutput.asJson, activeSigs)))
+                }
+                .map { case (j, _) => j }
           }
-      }
+        }
     }
 
   def computeToRemove(nodes: List[(Cursor, BigInt)], s: Set[BigInt]): Set[BigInt] = {
@@ -288,7 +230,7 @@ object Interpreter {
         type BatchKey = Any
 
         final case class NodeBatch(
-            inputs: List[(NodePosition, Batch[F, BatchKey, Any, Any])],
+            inputs: List[(NodeMeta, Batch[F, BatchKey, Any, Any])],
             resolve: Set[BatchKey] => F[Map[BatchKey, Any]]
         )
 
@@ -317,7 +259,7 @@ object Interpreter {
               val impl = schemaState.batchers(batcher.id)
 
               inputs
-                .parTraverse(in => partition(in.value).map(b => (in.position, b)))
+                .parTraverse(in => partition(in.value).map(b => (in.meta, b)))
                 .map { zs =>
                   Right(
                     NodeBatch(
@@ -338,7 +280,7 @@ object Interpreter {
                       tl(in.value).flatMap { dst =>
                         // close in the initial value for tail Resorver[F, (I, T), A]
                         val df2 = df.copy(resolve = resolver.contramap[Any]((in.value, _)))
-                        alg.add(in.position.absolutePath, in.value, df2, dst.ref, dst.key)
+                        alg.add(in.meta.relativePath, in.value, df2, dst.ref, dst.key)
                       }
                     }
 
@@ -357,7 +299,7 @@ object Interpreter {
         def runFields(dfs: NonEmptyList[PreparedField[F, Any]], in: List[NodeValue]): F[List[NodeValue]] =
           dfs.toList.parFlatTraverse {
             case PreparedFragField(id, specify, selection) =>
-              runFields(selection.fields, in.flatMap(x => specify(x.value).toList.map(y => x.ided(id, y))))
+              runFields(selection.fields, in.flatMap(x => specify(x.value).toList.map(y => x.setValue(y))))
             case df @ PreparedDataField(id, _, _, _, _) => runDataField(df, in.map(x => x.ided(id, x.value)))
           }
 
@@ -447,7 +389,7 @@ object Interpreter {
 
   def reconstruct[F[_]](rootSel: NonEmptyList[PreparedField[F, Any]], values: List[NodeValue])(implicit
       F: MonadThrow[F]
-  ): F[NonEmptyList[JsonObject]] = {
+  ): F[JsonObject] = {
     def unpackPrep(df: PreparedDataField[F, Any, Any], cursors: List[(Cursor, Any)], p: Prepared[F, Any]): F[Json] =
       p match {
         case PreparedLeaf(name, encode) =>
@@ -462,28 +404,31 @@ object Interpreter {
               case (hd, _)        => F.raiseError[Json](new Exception(s"expected index at list in ${df.name} (${df.id}), but got $hd"))
             }
             .map(Json.fromValues)
-        case Selection(fields) => unpackCursor(cursors, fields).map(_.reduceLeft(_ deepMerge _).asJson)
+        case Selection(fields) => unpackCursor(cursors, fields).map(_.asJson)
       }
 
     def unpackCursor(
         levelCursors: List[(Cursor, Any)],
         sel: NonEmptyList[PreparedField[F, Any]]
-    ): F[NonEmptyList[JsonObject]] = {
+    ): F[JsonObject] = {
       val m = groupNodeValues(levelCursors)
 
-      sel.traverse { pf =>
-        pf match {
-          case PreparedFragField(id, specify, selection) =>
-            m.get(Ided(id)) match {
-              case None       => F.pure(JsonObject.empty)
-              case Some(frag) => unpackCursor(frag, selection.fields).map(_.reduceLeft(_ deepMerge _))
-            }
-          case df @ PreparedDataField(id, name, resolve, selection, batchName) =>
-            unpackPrep(df, m(Ided(id)), selection).map(x => JsonObject(name -> x))
+      sel
+        .traverse { pf =>
+          pf match {
+            case PreparedFragField(id, specify, selection) =>
+              unpackCursor(levelCursors, selection.fields)
+            // m.get(Ided(id)) match {
+            //   case None       => F.pure(JsonObject.empty)
+            //   case Some(frag) => unpackCursor(frag, selection.fields)
+            // }
+            case df @ PreparedDataField(id, name, resolve, selection, batchName) =>
+              unpackPrep(df, m(Ided(id)), selection).map(x => JsonObject(name -> x))
+          }
         }
-      }
+        .map(_.reduceLeft(_ deepMerge _))
     }
 
-    unpackCursor(values.map(nv => nv.position.relativePath -> nv.value), rootSel)
+    unpackCursor(values.map(nv => nv.meta.relativePath -> nv.value), rootSel)
   }
 }

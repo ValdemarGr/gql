@@ -16,40 +16,38 @@ final case class Cursor(path: Chain[GraphArc]) {
   def head = headOption.get
 
   def tail = Cursor(Chain.fromOption(path.uncons).flatMap { case (_, tl) => tl })
+
+  def uncons = path.uncons.map{ case (p, tl) => (p, Cursor(tl)) }
 }
 
 object Cursor {
   def empty = Cursor(Chain.empty)
 }
 
-final case class NodePosition(
-    startPosition: Cursor,
-    relativePath: Cursor
+final case class NodeMeta(
+    relativePath: Cursor,
+    stableId: BigInt
 ) {
-  lazy val absolutePath = Cursor(startPosition.path ++ relativePath.path)
-
-  def index(i: Int): NodePosition = NodePosition(startPosition, relativePath.index(i))
-  def ided(id: Int): NodePosition = NodePosition(startPosition, relativePath.ided(id))
+  def index(i: Int): NodeMeta = NodeMeta(relativePath.index(i), stableId)
+  def ided(id: Int): NodeMeta = NodeMeta(relativePath.ided(id), stableId)
 }
 
-object NodePosition {
-  def startAt(cursor: Cursor): NodePosition = NodePosition(cursor, Cursor.empty)
-
-  def empty = startAt(Cursor.empty)
+object NodeMeta {
+  def empty(stableId: BigInt) = NodeMeta(Cursor.empty, stableId)
 }
 
 final case class NodeValue(
-    position: NodePosition,
+    meta: NodeMeta,
     value: Any
 ) {
   def index(xs: List[Any]): List[NodeValue] =
-    xs.zipWithIndex.map { case (x, i) => NodeValue(position.index(i), x) }
+    xs.zipWithIndex.map { case (x, i) => NodeValue(meta.index(i), x) }
   def ided(id: Int, value: Any): NodeValue =
-    NodeValue(position.ided(id), value)
+    NodeValue(meta.ided(id), value)
 
   def setValue(value: Any): NodeValue = copy(value = value)
 }
 
 object NodeValue {
-  def empty[A](value: A) = NodeValue(NodePosition(Cursor(Chain.empty), Cursor(Chain.empty)), value)
+  def empty[A](value: A, stableId: BigInt) = NodeValue(NodeMeta.empty(stableId), value)
 }
