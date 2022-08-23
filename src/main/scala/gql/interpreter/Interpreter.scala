@@ -78,7 +78,7 @@ object Interpreter {
       // first iteration
       fs2.Stream
         .eval(runStreamIt(rootSel.map((_, List(NodeValue.empty(rootInput, BigInt(1)))))))
-        .flatMap { case (initialNvs, _, initialSignals) =>
+        .flatMap { case (initialNvs, deps, initialSignals) =>
           fs2.Stream.eval(reconstruct(rootSel, initialNvs)).flatMap { initialOutput =>
             fs2.Stream.emit(initialOutput.asJson) ++
               streamResouceAlg.changeLog
@@ -95,12 +95,12 @@ object Interpreter {
                       val prepaedRoots =
                         rootNodes.mapWithIndex { case ((id, input), idx) =>
                           val (cursor, _, field) = activeSigs(id)
-                          (field, cursor, List(NodeValue(NodeMeta.empty(BigInt(idx)), input)), idx)
+                          (field, cursor, List(NodeValue(NodeMeta.startAt(cursor, BigInt(idx)), input)), idx)
                         }
 
                       prepaedRoots.toNel
                         .traverse { newRootSel =>
-                          runStreamIt(newRootSel.map { case (df, _, inputs, _) => (df, inputs) }).flatMap { case (newNvs, deps, newSigs) =>
+                          runStreamIt(newRootSel.map { case (df, _, inputs, _) => (df, inputs) }).flatMap { case (newNvs, _, newSigs) =>
                             val nameMap = deps.dataFieldMap.view.mapValues(_.name).toMap
 
                             val groupIdMapping =
@@ -115,12 +115,15 @@ object Interpreter {
                                   reconstruct[F](NonEmptyList.one(df), results).tupleRight(rootCursor)
                                 }
                                 .map(_.foldLeft(prevOutput) { case (accum, (obj, pos)) =>
+                                  println(s"stitchin into at pos $pos")
+                                  println(obj)
+                                  println(accum)
                                   stitchInto(accum, obj.asJson, pos, nameMap)
                                 })
 
                             recombinedF.flatMap { res =>
                               val withNew = newSigs ++ activeSigs
-                              val garbageCollected = withNew -- meta.toRemove
+                              val garbageCollected = withNew // -- meta.toRemove
 
                               meta.toRemove.toList
                                 .traverse(streamResouceAlg.remove)
@@ -280,7 +283,7 @@ object Interpreter {
                       tl(in.value).flatMap { dst =>
                         // close in the initial value for tail Resorver[F, (I, T), A]
                         val df2 = df.copy(resolve = resolver.contramap[Any]((in.value, _)))
-                        alg.add(in.meta.relativePath, in.value, df2, dst.ref, dst.key)
+                        alg.add(in.meta.absolutePath, in.value, df2, dst.ref, dst.key)
                       }
                     }
 

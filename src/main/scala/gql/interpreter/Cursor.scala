@@ -1,6 +1,7 @@
 package gql.interpreter
 
 import cats.data._
+import cats.instances.stream
 
 sealed trait GraphArc
 final case class Ided(id: Int) extends GraphArc
@@ -17,7 +18,7 @@ final case class Cursor(path: Chain[GraphArc]) {
 
   def tail = Cursor(Chain.fromOption(path.uncons).flatMap { case (_, tl) => tl })
 
-  def uncons = path.uncons.map{ case (p, tl) => (p, Cursor(tl)) }
+  def uncons = path.uncons.map { case (p, tl) => (p, Cursor(tl)) }
 }
 
 object Cursor {
@@ -25,15 +26,20 @@ object Cursor {
 }
 
 final case class NodeMeta(
+    startPosition: Cursor,
     relativePath: Cursor,
     stableId: BigInt
 ) {
-  def index(i: Int): NodeMeta = NodeMeta(relativePath.index(i), stableId)
-  def ided(id: Int): NodeMeta = NodeMeta(relativePath.ided(id), stableId)
+  lazy val absolutePath = Cursor(startPosition.path ++ relativePath.path)
+
+  def index(i: Int): NodeMeta = NodeMeta(startPosition, relativePath.index(i), stableId)
+  def ided(id: Int): NodeMeta = NodeMeta(startPosition, relativePath.ided(id), stableId)
 }
 
 object NodeMeta {
-  def empty(stableId: BigInt) = NodeMeta(Cursor.empty, stableId)
+  def startAt(startPosition: Cursor, stableId: BigInt) = NodeMeta(startPosition, Cursor.empty, stableId)
+
+  def empty(stableId: BigInt) = startAt(Cursor.empty, stableId)
 }
 
 final case class NodeValue(
@@ -49,5 +55,8 @@ final case class NodeValue(
 }
 
 object NodeValue {
-  def empty[A](value: A, stableId: BigInt) = NodeValue(NodeMeta.empty(stableId), value)
+  def startAt[A](value: A, stableId: BigInt, startPosition: Cursor) =
+    NodeValue(NodeMeta.startAt(startPosition, stableId), value)
+
+  def empty[A](value: A, stableId: BigInt) = startAt(value, stableId, Cursor.empty)
 }
