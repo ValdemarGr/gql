@@ -124,7 +124,7 @@ object Interpreter {
 
                             recombinedF.flatMap { res =>
                               val withNew = newSigs ++ activeSigs
-                              val garbageCollected = withNew // -- meta.toRemove
+                              val garbageCollected = withNew -- meta.toRemove
 
                               meta.toRemove.toList
                                 .traverse(streamResouceAlg.remove)
@@ -256,7 +256,7 @@ object Interpreter {
                       tl(in.value).flatMap { dst =>
                         // close in the initial value for tail Resorver[F, (I, T), A]
                         val df2 = df.copy(resolve = resolver.contramap[Any]((in.value, _)))
-                        println(s"adding sub for cursor ${in.meta.absolutePath}: $df2")
+                        // println(s"adding sub for cursor ${in.meta.absolutePath}: $df2")
                         // TODO bug here maybe
                         alg.add(in.meta.absolutePath, in.value, df2, dst.ref, dst.key)
                       }
@@ -279,7 +279,7 @@ object Interpreter {
             case PreparedFragField(id, specify, selection) =>
               runFields(selection.fields, in.flatMap(x => specify(x.value).toList.map(y => x.setValue(y))))
             case df @ PreparedDataField(id, name, _, _, _) => 
-              println(s"adding $id by name $name to cursors:\n${in.map(_.meta).mkString("\n")}")
+              // println(s"adding $id by name $name to cursors:\n${in.map(_.meta).mkString("\n")}")
               runDataField(df, in.map(x => x.ided(id, x.value)))
           }
 
