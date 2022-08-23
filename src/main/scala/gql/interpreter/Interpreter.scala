@@ -95,6 +95,7 @@ object Interpreter {
                       val prepaedRoots =
                         rootNodes.mapWithIndex { case ((id, input), idx) =>
                           val (cursor, _, field) = activeSigs(id)
+                          // println(cursor)
                           (field, cursor, List(NodeValue(NodeMeta.startAt(cursor, BigInt(idx)), input)), idx)
                         }
 
@@ -115,9 +116,9 @@ object Interpreter {
                                   reconstruct[F](NonEmptyList.one(df), results).tupleRight(rootCursor)
                                 }
                                 .map(_.foldLeft(prevOutput) { case (accum, (obj, pos)) =>
-                                  println(s"stitchin into at pos $pos")
-                                  println(obj)
-                                  println(accum)
+                                  // println(s"stitchin into at pos $pos")
+                                  // println(obj)
+                                  // println(accum)
                                   stitchInto(accum, obj.asJson, pos, nameMap)
                                 })
 
@@ -148,11 +149,15 @@ object Interpreter {
           case (xs, y)                    => Left((xs, y))
         }
 
+      lazy val msg =
+        s"something went terribly wrong s=$s, k=$k, nodeHere:${nodeHere}\niterates:\n${iterates.mkString("\n")}\nall nodes:\n${nodes.mkString("\n")}"
+
+      // println(msg)
       nodeHere match {
         case x :: Nil if s.contains(x) => iterates.map { case (_, v) => v }.toSet
         case x :: Nil                  => computeToRemove(iterates, s)
         case Nil                       => computeToRemove(iterates, s)
-        case _                         => throw new Exception(s"something went terribly wrong $nodes and $s")
+        case _                         => throw new Exception(msg)
       }
     }.toSet
   }
@@ -178,38 +183,6 @@ object Interpreter {
       case xs                              => Right(groupNodeValues(xs))
     }
   }
-
-  // It is assumed that if any node occurs in the path to the new subtree
-  // then it occurs as a node in the old tree
-  // def stichInto(
-  //     olds: List[(Vector[GraphArc], Any)],
-  //     newSubtrees: List[(CHain[GraphArc], List[(Vector[GraphArc], Any)])]
-  // ): List[(Vector[GraphArc], Any)] = {
-  //   val (finals, iterates) = newSubtrees.partitionEither {
-  //     case (x +: xs, ys) if xs.isEmpty => Left((x, ys))
-  //     case (xs, ys)                    => Right((xs, ys))
-  //   }
-
-  //   val finalMap = finals.toMap
-
-  //   val iteratesMap = groupNodeValues(iterates)
-
-  //   groupNodeValues(olds).toList.flatMap { case (pathName, oldPathTail) =>
-  //     // Either this path is a final path; we stich it into this path
-  //     val newChildren =
-  //       finalMap.get(pathName) match {
-  //         case Some(newSubtree) => newSubtree
-  //         case None             =>
-  //           // Or there is something on this path that we need to merge
-  //           iteratesMap.get(pathName) match {
-  //             case Some(newPaths) => stichInto(oldPathTail, newPaths)
-  //             // Or maybe this path has nothing new
-  //             case None => oldPathTail
-  //           }
-  //       }
-  //     newChildren.map { case (p, v) => (pathName +: p, v) }
-  //   }
-  // }
 
   def interpret[F[_]](
       rootSel: NonEmptyList[(PreparedField[F, Any], List[NodeValue])],
@@ -283,6 +256,8 @@ object Interpreter {
                       tl(in.value).flatMap { dst =>
                         // close in the initial value for tail Resorver[F, (I, T), A]
                         val df2 = df.copy(resolve = resolver.contramap[Any]((in.value, _)))
+                        println(s"adding sub for cursor ${in.meta.absolutePath}: $df2")
+                        // TODO bug here maybe
                         alg.add(in.meta.absolutePath, in.value, df2, dst.ref, dst.key)
                       }
                     }
@@ -303,7 +278,9 @@ object Interpreter {
           dfs.toList.parFlatTraverse {
             case PreparedFragField(id, specify, selection) =>
               runFields(selection.fields, in.flatMap(x => specify(x.value).toList.map(y => x.setValue(y))))
-            case df @ PreparedDataField(id, _, _, _, _) => runDataField(df, in.map(x => x.ided(id, x.value)))
+            case df @ PreparedDataField(id, name, _, _, _) => 
+              println(s"adding $id by name $name to cursors:\n${in.map(_.meta).mkString("\n")}")
+              runDataField(df, in.map(x => x.ided(id, x.value)))
           }
 
         def startNext(df: PreparedDataField[F, Any, Any], outputs: List[NodeValue]): F[List[NodeValue]] = {

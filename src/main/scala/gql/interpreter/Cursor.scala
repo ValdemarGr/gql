@@ -19,6 +19,8 @@ final case class Cursor(path: Chain[GraphArc]) {
   def tail = Cursor(Chain.fromOption(path.uncons).flatMap { case (_, tl) => tl })
 
   def uncons = path.uncons.map { case (p, tl) => (p, Cursor(tl)) }
+
+  def dropInit = Cursor(Chain.fromOption(path.initLast).flatMap { case (c, _) => c })
 }
 
 object Cursor {
