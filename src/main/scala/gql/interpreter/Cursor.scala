@@ -27,6 +27,12 @@ object Cursor {
   def empty = Cursor(Chain.empty)
 }
 
+object LastPath {
+  def unapply(cursor: Cursor): Option[GraphArc] =
+    cursor.path.initLast
+      .flatMap { case (c, l) => Some(l).filter(_ => c.isEmpty) }
+}
+
 final case class NodeMeta(
     startPosition: Cursor,
     relativePath: Cursor,

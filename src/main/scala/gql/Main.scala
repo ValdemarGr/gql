@@ -681,6 +681,7 @@ query withNestedFragments {
     interpreter.Interpreter
       .runStreamed[IO]((), x, schema.state)
       .evalMap(x => IO.println(s"got new subtree ${x.show}"))
+      .take(10)
       .compile
       .drain
       .unsafeRunSync()

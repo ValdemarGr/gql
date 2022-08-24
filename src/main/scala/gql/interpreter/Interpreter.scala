@@ -41,7 +41,7 @@ object Interpreter {
     interpret[F](rootSel.map((_, List(NodeValue.empty(rootInput, BigInt(0))))), Batching.plan[F](rootSel, plan), schemaState)
       .flatMap(reconstruct[F](rootSel, _))
 
-  def stitchInto[F[_]](
+  def stitchInto(
       oldTree: Json,
       subTree: Json,
       path: Cursor,
@@ -54,7 +54,12 @@ object Interpreter {
           case Ided(id) =>
             val oldObj = oldTree.asObject.get
             val name = nameMap(id)
-            oldObj.add(name, stitchInto(oldObj(name).get, subTree, tl, nameMap)).asJson
+            val oldValue = oldObj(name).get
+            val newSubTree = stitchInto(oldValue, subTree, tl, nameMap)
+            // println(oldValue)
+            // println(s"adding $name>>>>>>>>>>")
+            // println(newSubTree)
+            oldObj.add(name, newSubTree).asJson
           case Index(index) =>
             val oldArr = oldTree.asArray.get
             oldArr.updated(index, stitchInto(oldArr(index), subTree, tl, nameMap)).asJson
@@ -89,7 +94,7 @@ object Interpreter {
                     .toNel
                     .flatTraverse { activeChanges =>
                       val s = activeChanges.toList.map { case (k, _) => k }.toSet
-                      val allSigNodes = activeSigs.toList.map { case (k, (cursor, _, _)) => (cursor, k) }
+                      val allSigNodes = activeSigs.toList.map { case (k, (cursor, _, df)) => (cursor.ided(df.id), k) }
                       val meta = computeMetadata(allSigNodes, s)
                       val rootNodes: List[(BigInt, Any)] = activeChanges.filter { case (k, _) => meta.hcsa.contains(k) }
                       val prepaedRoots =
@@ -109,17 +114,21 @@ object Interpreter {
 
                             val l: List[(BigInt, List[NodeValue])] = newNvs.groupBy(_.meta.stableId).toList
 
+                            // println("performing new stitch $$$$$$$$$$$$$$$$$$")
                             val recombinedF: F[Json] =
                               l
                                 .parTraverse { case (group, results) =>
                                   val (rootCursor, df) = groupIdMapping(group.toInt)
-                                  reconstruct[F](NonEmptyList.one(df), results).tupleRight(rootCursor)
+                                  reconstruct[F](NonEmptyList.one(df), results).tupleRight(rootCursor.ided(df.id))
                                 }
                                 .map(_.foldLeft(prevOutput) { case (accum, (obj, pos)) =>
-                                  // println(s"stitchin into at pos $pos")
-                                  // println(obj)
+                                  // println("stitch iteration ###################")
                                   // println(accum)
-                                  stitchInto(accum, obj.asJson, pos, nameMap)
+                                  // this object has one entry, the resolved field itself
+                                  val hack = obj.toMap.head._2
+                                  // println(s"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ${pos.path.map(_.asInstanceOf[Ided].id).map(nameMap.apply).mkString_("->")}")
+                                  // println(hack)
+                                  stitchInto(accum, hack, pos, nameMap)
                                 })
 
                             recombinedF.flatMap { res =>
@@ -142,25 +151,43 @@ object Interpreter {
 
   def computeToRemove(nodes: List[(Cursor, BigInt)], s: Set[BigInt]): Set[BigInt] = {
     import Chain._
-    groupNodeValues(nodes).flatMap { case (k, tl) =>
-      val (iterates, nodeHere) = tl
-        .partitionEither {
-          case (xs, y) if xs.path.isEmpty => Right(y)
-          case (xs, y)                    => Left((xs, y))
-        }
-
-      lazy val msg =
-        s"something went terribly wrong s=$s, k=$k, nodeHere:${nodeHere}\niterates:\n${iterates.mkString("\n")}\nall nodes:\n${nodes.mkString("\n")}"
-
-      // println(msg)
-      nodeHere match {
-        case x :: Nil if s.contains(x) => iterates.map { case (_, v) => v }.toSet
-        case x :: Nil                  => computeToRemove(iterates, s)
-        case Nil                       => computeToRemove(iterates, s)
-        case _                         => throw new Exception(msg)
+    val (children, nodeHere) = nodes
+      .partitionEither {
+        case (xs, y) if xs.path.isEmpty => Right(y)
+        case (xs, y)                    => Left((xs, y))
       }
-    }.toSet
+
+    lazy val msg =
+      s"something went terribly wrong s=$s, nodeHere:${nodeHere}\niterates:\n${children.mkString("\n")}\nall nodes:\n${nodes.mkString("\n")}"
+
+    nodeHere match {
+      case x :: Nil if s.contains(x) => children.map { case (_, v) => v }.toSet
+      case _ :: Nil | Nil            => groupNodeValues(children).flatMap { case (_, v) => computeToRemove(v, s) }.toSet
+      case _                         => throw new Exception(msg)
+    }
   }
+
+  // def computeToRemove(nodes: List[(Cursor, BigInt)], s: Set[BigInt]): Set[BigInt] = {
+  //   import Chain._
+  //   groupNodeValues(nodes).flatMap { case (k, tl) =>
+  //     val (iterates, nodeHere) = tl
+  //       .partitionEither {
+  //         case (xs, y) if xs.path.isEmpty => Right(y)
+  //         case (xs, y)                    => Left((xs, y))
+  //       }
+
+  //     lazy val msg =
+  //       s"something went terribly wrong s=$s, k=$k, nodeHere:${nodeHere}\niterates:\n${iterates.mkString("\n")}\nall nodes:\n${nodes.mkString("\n")}"
+
+  //     // println(msg)
+  //     nodeHere match {
+  //       case x :: Nil if s.contains(x) => iterates.map { case (_, v) => v }.toSet
+  //       case x :: Nil                  => computeToRemove(iterates, s)
+  //       case Nil                       => computeToRemove(iterates, s)
+  //       case _                         => throw new Exception(msg)
+  //     }
+  //   }.toSet
+  // }
 
   final case class SignalRecompute(
       toRemove: Set[BigInt],
@@ -175,14 +202,6 @@ object Interpreter {
 
   def groupNodeValues[A](nvs: List[(Cursor, A)]): Map[GraphArc, List[(Cursor, A)]] =
     nvs.groupMap { case (c, _) => c.head } { case (c, v) => (c.tail, v) }
-
-  // Either there are multiple different paths or there is no more pathing
-  def finalOrContinuation[A](nvs: List[(Cursor, A)]): Either[A, Map[GraphArc, List[(Cursor, A)]]] = {
-    nvs match {
-      case (c, v) :: Nil if c.path.isEmpty => Left(v)
-      case xs                              => Right(groupNodeValues(xs))
-    }
-  }
 
   def interpret[F[_]](
       rootSel: NonEmptyList[(PreparedField[F, Any], List[NodeValue])],
@@ -221,13 +240,13 @@ object Interpreter {
 
           df.resolve match {
             case PureResolver(resolve) =>
-              F.pure(Left(inputs.map(in => in.setValue(resolve(in.value)))))
+              F.pure(Left(inputs.map(in => in.ided(df.id, resolve(in.value)))))
             case EffectResolver(resolve) =>
               inputs
                 .parTraverse { in =>
                   resolve(in.value).timed
                     .flatMap { case (dur, value) =>
-                      submit(n.name, dur, 1).as(in.setValue(value))
+                      submit(n.name, dur, 1).as(in.ided(df.id, value))
                     }
                 }
                 .map(Left(_))
@@ -235,7 +254,7 @@ object Interpreter {
               val impl = schemaState.batchers(batcher.id)
 
               inputs
-                .parTraverse(in => partition(in.value).map(b => (in.meta, b)))
+                .parTraverse(in => partition(in.value).map(b => (in.meta.ided(df.id), b)))
                 .map { zs =>
                   Right(
                     NodeBatch(
@@ -256,8 +275,6 @@ object Interpreter {
                       tl(in.value).flatMap { dst =>
                         // close in the initial value for tail Resorver[F, (I, T), A]
                         val df2 = df.copy(resolve = resolver.contramap[Any]((in.value, _)))
-                        // println(s"adding sub for cursor ${in.meta.absolutePath}: $df2")
-                        // TODO bug here maybe
                         alg.add(in.meta.absolutePath, in.value, df2, dst.ref, dst.key)
                       }
                     }
@@ -278,9 +295,7 @@ object Interpreter {
           dfs.toList.parFlatTraverse {
             case PreparedFragField(id, specify, selection) =>
               runFields(selection.fields, in.flatMap(x => specify(x.value).toList.map(y => x.setValue(y))))
-            case df @ PreparedDataField(id, name, _, _, _) => 
-              // println(s"adding $id by name $name to cursors:\n${in.map(_.meta).mkString("\n")}")
-              runDataField(df, in.map(x => x.ided(id, x.value)))
+            case df @ PreparedDataField(id, name, _, _, _) => runDataField(df, in)
           }
 
         def startNext(df: PreparedDataField[F, Any, Any], outputs: List[NodeValue]): F[List[NodeValue]] = {
