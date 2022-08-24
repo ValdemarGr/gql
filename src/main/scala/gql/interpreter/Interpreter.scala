@@ -119,6 +119,8 @@ object Interpreter {
                               l
                                 .parTraverse { case (group, results) =>
                                   val (rootCursor, df) = groupIdMapping(group.toInt)
+                                  // TODO
+                                  // reconstructField(df.selection, results)
                                   reconstruct[F](NonEmptyList.one(df), results).tupleRight(rootCursor.ided(df.id))
                                 }
                                 .map(_.foldLeft(prevOutput) { case (accum, (obj, pos)) =>
@@ -381,6 +383,41 @@ object Interpreter {
         }
       }
     }
+
+  def reconstructField[F[_]](p: Prepared[F, Any], cursors: List[(Cursor, Any)]): ValidatedNec[String, Json] =
+    p match {
+      case PreparedLeaf(name, encode) =>
+        cursors match {
+          case (_, x) :: Nil => encode(x).toValidatedNec
+          case _             => ???
+        }
+      case PreparedList(of) =>
+        groupNodeValues(cursors).toList
+          .traverse {
+            case (Index(_), tl) => reconstructField[F](of, tl)
+            case _              => ???
+          }
+          .map(Json.fromValues)
+      case Selection(fields) => reconstructSelection(cursors, fields).map(_.asJson)
+    }
+
+  def reconstructSelection[F[_]](
+      levelCursors: List[(Cursor, Any)],
+      sel: NonEmptyList[PreparedField[F, Any]]
+  ): ValidatedNec[String, JsonObject] = {
+    val m = groupNodeValues(levelCursors)
+
+    sel
+      .traverse { pf =>
+        pf match {
+          case PreparedFragField(id, specify, selection) =>
+            reconstructSelection(levelCursors, selection.fields)
+          case df @ PreparedDataField(id, name, resolve, selection, batchName) =>
+            reconstructField(selection, m(Ided(id))).map(x => JsonObject(name -> x))
+        }
+      }
+      .map(_.reduceLeft(_ deepMerge _))
+  }
 
   def reconstruct[F[_]](rootSel: NonEmptyList[PreparedField[F, Any]], values: List[NodeValue])(implicit
       F: MonadThrow[F]
