@@ -370,18 +370,6 @@ query withNestedFragments {
 
     final case class DataIds(ids: List[Int])
 
-    /*
-     * BatchReference[F, UUID, Case](getCaseEffeciently).flatMap{ caseBatchReference =>
-     *   StreamReference[F, UUID, UUID](subscribeToCaseKafkaTopic).flatMap{ caseStreamReference =>
-     *     ...
-     *     "caseData" -> signal(_.caseId: T Intermediate, batch(caseBatchReference)(identity: Batch Key from T)){ c =>
-     *       (caseStreamReference, c.caseId: Key)
-     *     }
-     *     ...
-     *   }
-     * }
-     *
-     */
     StreamReference[F, String, Unit](k =>
       Resource.pure(fs2.Stream(k).repeat.lift[F].metered((if (k == "John") 200 else 500).millis).as(()))
     ).flatMap { nameStreamReference =>

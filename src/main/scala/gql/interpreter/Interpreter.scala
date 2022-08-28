@@ -169,28 +169,6 @@ object Interpreter {
     }
   }
 
-  // def computeToRemove(nodes: List[(Cursor, BigInt)], s: Set[BigInt]): Set[BigInt] = {
-  //   import Chain._
-  //   groupNodeValues(nodes).flatMap { case (k, tl) =>
-  //     val (iterates, nodeHere) = tl
-  //       .partitionEither {
-  //         case (xs, y) if xs.path.isEmpty => Right(y)
-  //         case (xs, y)                    => Left((xs, y))
-  //       }
-
-  //     lazy val msg =
-  //       s"something went terribly wrong s=$s, k=$k, nodeHere:${nodeHere}\niterates:\n${iterates.mkString("\n")}\nall nodes:\n${nodes.mkString("\n")}"
-
-  //     // println(msg)
-  //     nodeHere match {
-  //       case x :: Nil if s.contains(x) => iterates.map { case (_, v) => v }.toSet
-  //       case x :: Nil                  => computeToRemove(iterates, s)
-  //       case Nil                       => computeToRemove(iterates, s)
-  //       case _                         => throw new Exception(msg)
-  //     }
-  //   }.toSet
-  // }
-
   final case class SignalRecompute(
       toRemove: Set[BigInt],
       hcsa: Set[BigInt]
