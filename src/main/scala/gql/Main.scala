@@ -33,6 +33,7 @@ import gql.resolver.StreamReference
 import gql.resolver.SignalResolver
 import gql.resolver.EffectResolver
 import gql.resolver.PureResolver
+import cats.mtl._
 
 object Main extends App {
   def showExpectation(e: Parser.Expectation): Eval[String] =
@@ -355,7 +356,9 @@ query withNestedFragments {
 
   implicit def listInputType[A](implicit tpe: Input[A]): Input[Vector[A]] = Input.Arr(tpe)
 
-  def testSchemaShape[F[_]](implicit F: Async[F]): State[SchemaState[F], SchemaShape[F, Unit]] = {
+  final case class Deps(v: String)
+
+  def testSchemaShape[F[_]](implicit F: Async[F], Ask: Ask[F, Deps]): State[SchemaState[F], SchemaShape[F, Unit]] = {
     final case class IdentityData(value: Int, value2: String)
 
     final case class InputData(
@@ -427,6 +430,7 @@ query withNestedFragments {
         implicit lazy val dataType: Output.Obj[F, Data[F]] =
           obj2[F, Data[F]]("Data") { f =>
             fields(
+              "dep" -> f(eff(_ => Ask.reader(_.v))),
               "a" -> f(pur(_.a)),
               "a2" -> f(arg[Int]("num", Some(42)))(pur { case (i, _) => i.a }),
               "b" -> f(eff(_.b)),
@@ -591,68 +595,26 @@ fragment F2 on Data {
   }
   """
 
-  val schema = Schema.stateful[IO, Unit](testSchemaShape[IO])
+  type D[A] = Kleisli[IO, Deps, A]
 
-  def parseAndPrep(q: String): Option[NonEmptyList[PreparedQuery.PreparedField[IO, Any]]] =
-    p.parseAll(q).map(PreparedQuery.prepare(_, schema, Map.empty)) match {
-      case Left(e) =>
-        println(errorMessage(q, e))
-        None
-      case Right(Left(x)) =>
-        println(x)
-        None
-      case Right(Right(x)) => Some(x)
-    }
+  def mainProgram[F[_]](implicit F: Async[F], A: Ask[F, Deps], C: std.Console[F]): F[Unit] = {
+    val schema = Schema.stateful[F, Unit](testSchemaShape[F])
 
-  {
-    def go =
-      parseAndPrep(qn).map { x =>
-        implicit lazy val stats = Statistics[IO].unsafeRunSync()
-
-        def planAndRun = {
-          val costTree = Planner.costTree[IO](x).unsafeRunSync()
-          val p = Planner.plan(costTree)
-          println(showDiff(p, costTree))
-          println(s"inital plan cost: ${planCost(costTree)}")
-          println(s"optimized plan cost: ${planCost(p)}")
-          println(interpreter.Interpreter.run[IO]((), x, p, schema.state).unsafeRunSync())
-        }
-
-        planAndRun
-        planAndRun
-        planAndRun
+    def parseAndPrep(q: String): Option[NonEmptyList[PreparedQuery.PreparedField[F, Any]]] =
+      p.parseAll(q).map(PreparedQuery.prepare(_, schema, Map.empty)) match {
+        case Left(e) =>
+          println(errorMessage(q, e))
+          None
+        case Right(Left(x)) =>
+          println(x)
+          None
+        case Right(Right(x)) => Some(x)
       }
 
-    go
-  }
-
-  println(Render.renderSchema(schema))
-
-  val inputQuery = """
-query withNestedFragments {
-  doIdentity {
-    value(num: 6, text: "world", xs: ["world", "hello"], input: {
-      value: 42
-      val2: "holla"
-    })
-  }
-}
-  """
-
-  parseAndPrep(inputQuery).map { x =>
-    implicit lazy val stats = Statistics[IO].unsafeRunSync()
-
-    val costTree = Planner.costTree[IO](x).unsafeRunSync()
-    val p = Planner.plan(costTree)
-    println(showDiff(p, costTree))
-    println(s"inital plan cost: ${planCost(costTree)}")
-    println(s"optimized plan cost: ${planCost(p)}")
-    println(interpreter.Interpreter.run[IO]((), x, p, schema.state).unsafeRunSync())
-  }
-
-  val qsig = """
+    val qsig = """
 query withNestedFragments {
   getData {
+    dep
     nestedSignal2 {
       a
     }
@@ -672,18 +634,21 @@ query withNestedFragments {
 }
   """
 
-  parseAndPrep(qsig).map { x =>
-    implicit lazy val stats = Statistics[IO].unsafeRunSync()
+    F.fromOption(parseAndPrep(qsig), new Exception(":((")).flatMap { x =>
+      Statistics[F].flatMap { implicit stats =>
+        Planner.costTree[F](x).flatMap { costTree =>
+          println(showTree(0, costTree))
 
-    val costTree = Planner.costTree[IO](x).unsafeRunSync()
-    println(showTree(0, costTree))
-
-    interpreter.Interpreter
-      .runStreamed[IO]((), x, schema.state)
-      .evalMap(x => IO.println(s"got new subtree ${x.show}"))
-      .take(10)
-      .compile
-      .drain
-      .unsafeRunSync()
+          interpreter.Interpreter
+            .runStreamed[F]((), x, schema.state)
+            .evalMap(x => C.println(s"got new subtree ${x.show}"))
+            .take(10)
+            .compile
+            .drain
+        }
+      }
+    }
   }
+
+  mainProgram[D].run(Deps("hey")).unsafeRunSync()
 }
