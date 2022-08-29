@@ -30,8 +30,8 @@ final case class SignalResolver[F[_]: MonadCancelThrow, I, K, A, T](
     resolver: LeafResolver[F, (I, T), A],
     head: I => F[T],
     tail: I => F[SignalResolver.DataStreamTail[K, T]]
-    // resolver: LeafResolver[F, (I, T), A],
-    // eval: I => F[(List[(K, T, Ref[T])], List[(K, T)] => F[A])]
+    // resolver: LeafResolver[F, (I, T2), A],
+    // eval: I => F[(List[(K, T, Ref[T])], List[(K, T)] => F[T2])]
     // TODO add filter eval scan implementation
     // evalScanFilter: (Z, (Z, I, T) => F[(Z, Option[T])])
     // post
