@@ -3,9 +3,15 @@ package gql
 import cats.data._
 import alleycats.Empty
 
+final case class Subscription[F[_], I, M](
+  name: String,
+  fields: NonEmptyList[(String, I => fs2.Stream[F, M], Output.Field[F, M, _, _])]
+)
+
 final case class SchemaShape[F[_], Q](
     query: Output.Obj[F, Q],
-    //query should be fields: List[(String, Field[F, Q, _, _])]
+    // mutation: Output.Obj[F, M],
+    // subscription: Output.Obj[F, M],
 )
 
 final case class Schema[F[_], Q](
