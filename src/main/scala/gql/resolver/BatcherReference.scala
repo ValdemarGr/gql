@@ -4,7 +4,7 @@ import cats.implicits._
 import cats._
 import cats.data._
 import gql.SchemaState
-import gql.Output
+import gql.out._
 import gql.Arg
 
 final case class BatcherReference[K, T](id: Int) {

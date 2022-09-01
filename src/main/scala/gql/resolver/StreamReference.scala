@@ -4,7 +4,6 @@ import cats.data._
 import cats._
 import cats.effect._
 import gql.SchemaState
-import gql.Output
 import cats.implicits._
 
 final case class StreamReference[K, T](id: Int) {

@@ -19,12 +19,7 @@ import gql.GQLParser.Value.NullValue
 import gql.GQLParser.Value.ListValue
 import gql.GQLParser.OperationDefinition.Detailed
 import gql.GQLParser.OperationDefinition.Simple
-import gql.Output.Interface
-import gql.Output.Obj
-import gql.Output.Union
-import gql.Output.Scalar
-import gql.Output.Opt
-import gql.Output.Arr
+import gql.out._
 import gql.resolver._
 
 object PreparedQuery {
@@ -63,7 +58,7 @@ object PreparedQuery {
   final case class AnalysisState(cycleSet: Set[String], nextId: Int)
 
   def underlyingOutputTypename[G[_]](ot: Output[G, Any]): String = ot match {
-    case Output.Enum(name, _)  => name
+    case Enum(name, _)         => name
     case Union(name, _)        => name
     case Interface(name, _, _) => name
     case Obj(name, _)          => name
@@ -74,7 +69,7 @@ object PreparedQuery {
 
   def friendlyName[G[_], A](ot: Output[G, A]): String = ot match {
     case Scalar(name, _)       => name
-    case Output.Enum(name, _)  => name
+    case Enum(name, _)         => name
     case Obj(name, _)          => name
     case Union(name, _)        => name
     case Interface(name, _, _) => name
@@ -113,7 +108,7 @@ object PreparedQuery {
     S.inspect(_.nextId) <* S.modify(x => x.copy(nextId = x.nextId + 1))
 
   def prepareSelections[F[_], G[_]](
-      ol: ObjectLike[G, Any],
+      ol: ObjLike[G, Any],
       s: GQLParser.SelectionSet,
       variableMap: Map[String, Json],
       fragments: Map[String, GQLParser.FragmentDefinition]
@@ -122,8 +117,8 @@ object PreparedQuery {
     s.selections.traverse[F, PreparedField[G, Any]] {
       case GQLParser.Selection.FieldSelection(field) =>
         schemaMap.get(field.name) match {
-          case None                                    => F.raiseError(s"unknown field name ${field.name}")
-          case Some(f: Output.Field[G, Any, Any, Any]) => prepareField[F, G](field, f, variableMap, fragments)
+          case None                             => F.raiseError(s"unknown field name ${field.name}")
+          case Some(f: Field[G, Any, Any, Any]) => prepareField[F, G](field, f, variableMap, fragments)
         }
       case GQLParser.Selection.InlineFragmentSelection(f) =>
         f.typeCondition match {
@@ -149,7 +144,7 @@ object PreparedQuery {
 
   def closeFieldParameters[F[_], G[_]](
       gqlField: GQLParser.Field,
-      field: Output.Field[G, Any, Any, Any],
+      field: Field[G, Any, Any, Any],
       variableMap: Map[String, Json]
   )(implicit
       S: Stateful[F, AnalysisState],
@@ -157,7 +152,7 @@ object PreparedQuery {
       D: Defer[F]
   ): F[(Resolver[G, Any, Any], Output[G, Any])] =
     (field, gqlField.arguments.toList.flatMap(_.nel.toList)) match {
-      case (Output.Field(args, resolve, graphqlType), provided) =>
+      case (Field(args, resolve, graphqlType), provided) =>
         val providedMap = provided.map(x => x.name -> x.value).toMap
         val argResolution =
           args.entries
@@ -180,7 +175,7 @@ object PreparedQuery {
 
   def prepareField[F[_], G[_]](
       gqlField: GQLParser.Field,
-      field: Output.Field[G, Any, Any, Any],
+      field: Field[G, Any, Any, Any],
       variableMap: Map[String, Json],
       fragments: Map[String, GQLParser.FragmentDefinition]
   )(implicit
@@ -191,16 +186,16 @@ object PreparedQuery {
     closeFieldParameters[F, G](gqlField, field, variableMap).flatMap { case (resolve, tpe) =>
       val prepF: F[Prepared[G, Any]] =
         (tpe, gqlField.selectionSet) match {
-          case (ol: ObjectLike[G, Any], Some(ss)) =>
+          case (ol: ObjLike[G, Any], Some(ss)) =>
             prepareSelections[F, G](ol, ss, variableMap, fragments)
               .map(Selection(_))
-          case (Output.Arr(ol: ObjectLike[G, Any]), Some(ss)) =>
+          case (Arr(ol: ObjLike[G, Any]), Some(ss)) =>
             prepareSelections[F, G](ol, ss, variableMap, fragments)
               .map(Selection(_))
               .map(x => PreparedList(x).asInstanceOf[Prepared[G, Any]])
-          case (e: Output.Enum[G, Any], None) =>
+          case (e: Enum[G, Any], None) =>
             F.pure(PreparedLeaf(e.name, x => Right(Json.fromString(e.encoder(x).get))))
-          case (s: Output.Scalar[G, Any], None) =>
+          case (s: Scalar[G, Any], None) =>
             F.pure(PreparedLeaf(s.name, x => Right(s.encoder(x))))
           case (o, Some(_)) => F.raiseError(s"type ${friendlyName[G, Any](o)} cannot have selections")
           case (o, None)    => F.raiseError(s"object like type ${friendlyName[G, Any](o)} must have a selection")
@@ -217,8 +212,8 @@ object PreparedQuery {
   // sel match { case x if x.name == name  => ... }
   def matchType[F[_], G[_]](
       name: String,
-      sel: ObjectLike[G, Any]
-  )(implicit F: MonadError[F, String]): F[(ObjectLike[G, Any], Any => Option[Any])] =
+      sel: ObjLike[G, Any]
+  )(implicit F: MonadError[F, String]): F[(ObjLike[G, Any], Any => Option[Any])] =
     if (sel.name == name) F.pure((sel, Some(_)))
     else {
       /*
@@ -279,7 +274,7 @@ object PreparedQuery {
     }
 
   def prepareFragment[F[_], G[_]](
-      ol: ObjectLike[G, Any],
+      ol: ObjLike[G, Any],
       f: GQLParser.FragmentDefinition,
       variableMap: Map[String, Json],
       fragments: Map[String, GQLParser.FragmentDefinition]
@@ -327,7 +322,7 @@ object PreparedQuery {
       //case Detailed(tpe, name, Some(variableDefinitions), _, _) => ???
       case Detailed(_, _, None, _, sel) =>
         prepareSelections[F, G](
-          schema.shape.query.asInstanceOf[ObjectLike[G, Any]],
+          schema.shape.query.asInstanceOf[ObjLike[G, Any]],
           sel,
           variableMap,
           frags.map(f => f.name -> f).toMap

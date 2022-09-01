@@ -34,6 +34,7 @@ import gql.resolver.SignalResolver
 import gql.resolver.EffectResolver
 import gql.resolver.PureResolver
 import cats.mtl._
+import gql.out._
 
 object Main extends App {
   def showExpectation(e: Parser.Expectation): Eval[String] =
@@ -341,14 +342,14 @@ query withNestedFragments {
 
   import gql.syntax.out._
   import gql.syntax._
-  implicit def intType[F[_]]: Output.Scalar[F, Int] = Output.Scalar("Int", Encoder.encodeInt)
+  implicit def intType[F[_]]: Scalar[F, Int] = Scalar("Int", Encoder.encodeInt)
 
-  implicit def stringType[F[_]]: Output.Scalar[F, String] = Output.Scalar("String", Encoder.encodeString)
+  implicit def stringType[F[_]]: Scalar[F, String] = Scalar("String", Encoder.encodeString)
 
   // implicit def listTypeForSome[F[_], A](implicit of: Output[F, A]): Output[F, Vector[A]] = Output.Arr(of)
-  implicit def seqTypeForAny[F[_], A](implicit of: Output[F, A]): Output[F, Seq[A]] = Output.Arr(of)
+  implicit def seqTypeForAny[F[_], A](implicit of: Output[F, A]): Output[F, Seq[A]] = Arr(of)
 
-  implicit def optTypeForSome[F[_], A](implicit of: Output[F, A]): Output[F, Option[A]] = Output.Opt(of)
+  implicit def optTypeForSome[F[_], A](implicit of: Output[F, A]): Output[F, Option[A]] = Opt(of)
 
   implicit val intInput: Input.Scalar[Int] = Input.Scalar("Int", Decoder.decodeInt)
 
@@ -394,7 +395,7 @@ query withNestedFragments {
 
         val inputDataArg = arg[InputData]("input")
 
-        implicit def identityDataType: Output.Obj[F, IdentityData] =
+        implicit def identityDataType: Obj[F, IdentityData] =
           obj[F, IdentityData](
             "IdentityData",
             "value" -> effect((valueArgs, inputDataArg).tupled) { case (x, ((y, z, hs), i)) =>
@@ -402,7 +403,7 @@ query withNestedFragments {
             }
           )
 
-        implicit def serverData: Output.Obj[F, ServerData] =
+        implicit def serverData: Obj[F, ServerData] =
           obj[F, ServerData](
             "ServerData",
             "value" -> pure(_.value)
@@ -415,7 +416,7 @@ query withNestedFragments {
         //   def ++(a2: A) = NonEmptyList.of(a, a2)
         // }
 
-        implicit lazy val dataType: Output.Obj[F, Data[F]] =
+        implicit lazy val dataType: Obj[F, Data[F]] =
           obj2[F, Data[F]]("Data") { f =>
             fields(
               "dep" -> f(eff(_ => Ask.reader(_.v))),
@@ -452,14 +453,14 @@ query withNestedFragments {
         //     //   )
         //   )
 
-        implicit def otherDataType: Output.Obj[F, OtherData[F]] =
+        implicit def otherDataType: Obj[F, OtherData[F]] =
           obj[F, OtherData[F]](
             "OtherData",
             "value" -> pure(_.value),
             "d1" -> effect(_.d1)
           )
 
-        implicit def datasType: Output.Union[F, Datas[F]] =
+        implicit def datasType: Union[F, Datas[F]] =
           union[F, Datas[F]](
             "Datas",
             contra[Data[F]] { case Datas.Dat(d) => d },
@@ -470,7 +471,7 @@ query withNestedFragments {
           def a: String
         }
         object A {
-          implicit def t: Output.Interface[F, A] =
+          implicit def t: Interface[F, A] =
             interface[F, A](
               obj(
                 "A",
@@ -485,7 +486,7 @@ query withNestedFragments {
           def d: String
         }
         object D {
-          implicit def t: Output.Interface[F, D] =
+          implicit def t: Interface[F, D] =
             interface[F, D](
               obj(
                 "D",
@@ -497,11 +498,11 @@ query withNestedFragments {
 
         final case class B(a: String) extends A
         object B {
-          implicit def t: Output.Obj[F, B] = obj[F, B]("B", "a" -> pure(_ => "B"), "b" -> pure(_ => Option("BO")))
+          implicit def t: Obj[F, B] = obj[F, B]("B", "a" -> pure(_ => "B"), "b" -> pure(_ => Option("BO")))
         }
         final case class C(a: String, d: String) extends A with D
         object C {
-          implicit def t: Output.Obj[F, C] = obj[F, C]("C", "a" -> pure(_ => "C"), "d" -> pure(_ => "D"))
+          implicit def t: Obj[F, C] = obj[F, C]("C", "a" -> pure(_ => "C"), "d" -> pure(_ => "D"))
         }
 
         SchemaShape[F, Unit](

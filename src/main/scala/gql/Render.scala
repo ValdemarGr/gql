@@ -1,6 +1,6 @@
 package gql
 
-import gql.Output._
+import gql.out._
 import cats.implicits._
 import cats._
 import cats.mtl._
@@ -9,10 +9,10 @@ import cats.data._
 object Render {
   final case class RenderState[F[_]](
       discoveredTypes: Set[String],
-      toRender: List[ToplevelOutput[F, Any]]
+      toRender: List[Toplevel[F, Any]]
   )
 
-  def maybeAdd[F[_], G[_]](tpe: ToplevelOutput[G, Any])(implicit
+  def maybeAdd[F[_], G[_]](tpe: Toplevel[G, Any])(implicit
       F: Monad[F],
       D: Defer[F],
       S: Stateful[F, RenderState[G]]
@@ -29,7 +29,7 @@ object Render {
       }
     }
 
-  def renderToplevelTypeInline[F[_], G[_]](tl: ToplevelOutput[G, Any])(implicit
+  def renderToplevelTypeInline[F[_], G[_]](tl: Toplevel[G, Any])(implicit
       F: Monad[F],
       D: Defer[F],
       S: Stateful[F, RenderState[G]]
@@ -46,13 +46,13 @@ object Render {
         renderField[F, G](of, optional = false)
           .map(x => s"[$x]")
           .map(x => if (optional) x else s"$x!")
-      case tl: ToplevelOutput[G, Any] =>
+      case tl: Toplevel[G, Any] =>
         renderToplevelTypeInline[F, G](tl)
           .map(x => if (optional) x else s"$x!")
     }
   }
 
-  def renderFields[F[_], G[_]](xs: NonEmptyList[(String, Output.Field[G, _, _, _])])(implicit
+  def renderFields[F[_], G[_]](xs: NonEmptyList[(String, Field[G, _, _, _])])(implicit
       F: Monad[F],
       D: Defer[F],
       S: Stateful[F, RenderState[G]]
@@ -62,7 +62,7 @@ object Render {
     }
   }
 
-  def renderToplevelType[F[_], G[_]](tpe: ToplevelOutput[G, Any], interfaceInstances: Map[String, List[String]])(implicit
+  def renderToplevelType[F[_], G[_]](tpe: Toplevel[G, Any], interfaceInstances: Map[String, List[String]])(implicit
       F: Monad[F],
       D: Defer[F],
       S: Stateful[F, RenderState[G]]
@@ -116,7 +116,7 @@ object Render {
       alreadyChecked: Set[String]
   )
 
-  def discoverInterfaceInstances[F[_], G[_]](x: ObjectLike[G, _])(implicit
+  def discoverInterfaceInstances[F[_], G[_]](x: ObjLike[G, _])(implicit
       F: Monad[F],
       D: Defer[F],
       S: Stateful[F, InterfaceDiscovery]
@@ -131,14 +131,14 @@ object Render {
               Chain
                 .fromSeq(fields.toList)
                 .map { case (_, f) => f.output.value }
-                .collect { case ol: ObjectLike[G, _] => ol }
+                .collect { case ol: ObjLike[G, _] => ol }
                 .flatTraverse(discoverInterfaceInstances[F, G](_))
                 .map(here ++ _)
             case Obj(_, fields) =>
               Chain
                 .fromSeq(fields.toList)
                 .map { case (_, f) => f.output.value }
-                .collect { case ol: ObjectLike[G, _] => ol }
+                .collect { case ol: ObjLike[G, _] => ol }
                 .flatTraverse(discoverInterfaceInstances[F, G](_))
             case Union(name, types) =>
               Chain
