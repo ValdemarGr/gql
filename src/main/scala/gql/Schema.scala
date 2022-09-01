@@ -4,12 +4,12 @@ import cats.data._
 import alleycats.Empty
 
 final case class Subscription[F[_], I, M](
-  name: String,
-  fields: NonEmptyList[(String, I => fs2.Stream[F, M], Output.Field[F, M, _, _])]
+    name: String,
+    fields: NonEmptyList[(String, I => fs2.Stream[F, M], Output.Field[F, M, _, _])]
 )
 
 final case class SchemaShape[F[_], Q](
-    query: Output.Obj[F, Q],
+    query: Output.Obj[F, Q]
     // mutation: Output.Obj[F, M],
     // subscription: Output.Obj[F, M],
 )
