@@ -357,4 +357,19 @@ object PreparedQuery {
       .value
       .value
   }
+
+  sealed trait StaticOrStream[F[_]]
+  object StaticOrStream {
+    final case class Static[F[_]](rootFields: NonEmptyList[PreparedField[F, Any]]) extends StaticOrStream[F]
+    final case class Stream[F[_]](
+        dataStream: Any => fs2.Stream[F, Any],
+        root: PreparedField[F, Any]
+    ) extends StaticOrStream[F]
+  }
+
+  def prepare2[F[_], Q, M, S](
+      executabels: NonEmptyList[GQLParser.ExecutableDefinition],
+      schema: Schema[F, Q],
+      variableMap: Map[String, Json]
+  ): Either[String, StaticOrStream[F]] = ???
 }

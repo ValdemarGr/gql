@@ -16,6 +16,7 @@ import fs2.concurrent.Signal
 import cats.effect.std.Queue
 import fs2.Chunk
 import gql._
+import gql.out._
 
 object Interpreter {
   def planAndRun[F[_]: Async: Statistics](
