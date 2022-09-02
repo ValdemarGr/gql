@@ -25,7 +25,7 @@ object Execute {
       case Left(err) => F.pure(Left(err))
       case Right(x) =>
         x match {
-          case PreparedQuery.StaticOrStream.Static(rootFields)   =>
+          case PreparedQuery.StaticOrStream.Static(rootFields) =>
             Interpreter
           case PreparedQuery.StaticOrStream.Stream(stream, root) =>
         }
