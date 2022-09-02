@@ -8,15 +8,15 @@ import cats.data._
 import gql.interpreter.Interpreter
 
 object Execute {
-  sealed trait ExecutionOutcome[F[_]]
+  sealed trait ExecutorOutcome[F[_], Q, M, S]
   object ExecutionOutcome {
-    final case class ValidationError[F[_]](message: String) extends ExecutionOutcome[F]
-    final case class StaticOutcome[F[_]](out: JsonObject) extends ExecutionOutcome[F]
-    final case class StreamOutcome[F[_]](out: Stream[F, JsonObject]) extends ExecutionOutcome[F]
+    final case class ValidationError[F[_], Q, M, S](msg: String) extends ExecutorOutcome[F, Q, M, S]
+    final case class Query[F[_], Q, M, S](run: Q => F[JsonObject]) extends ExecutorOutcome[F, Q, M, S]
+    final case class Mutation[F[_], Q, M, S](run: M => F[JsonObject]) extends ExecutorOutcome[F, Q, M, S]
+    final case class Stream[F[_], Q, M, S](run: S => fs2.Stream[F, JsonObject]) extends ExecutorOutcome[F, Q, M, S]
   }
 
-  // todo handle all elements in executable definition together
-  def execute[F[_], Q, M, S](
+  def executor[F[_]: Statistics, Q, M, S](
       query: NonEmptyList[GQLParser.ExecutableDefinition],
       schema: Schema[F, Q],
       variables: Map[String, Json],
@@ -26,11 +26,15 @@ object Execute {
       case Left(err) => F.pure(Left(err))
       case Right(x) =>
         x match {
-          case PreparedQuery.StaticOrStream.Static(rootFields) =>
-            Interpreter
-          case PreparedQuery.StaticOrStream.Stream(stream, root) =>
+          case PreparedQuery.OperationType.Query(rootFields) =>
+            ExecutionOutcome.Query[F, Q, M, S](Interpreter.runSync(_, rootFields, schemaState))
+          case PreparedQuery.OperationType.Mutation(rootFields) =>
+            ExecutionOutcome.Mutation[F, Q, M, S](Interpreter.runSync(_, rootFields, schemaState))
+          case PreparedQuery.OperationType.Subscription(dataStream, root) =>
+            ExecutionOutcome.Stream[F, Q, M, S] { s =>
+              dataStream(s).switchMap(Interpreter.runStreamed[F](_, NonEmptyList.one(root), schemaState))
+            }
         }
-      // Interpreter.run
     }
   }
 }

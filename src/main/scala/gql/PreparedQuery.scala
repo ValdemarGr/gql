@@ -358,18 +358,19 @@ object PreparedQuery {
       .value
   }
 
-  sealed trait StaticOrStream[F[_]]
-  object StaticOrStream {
-    final case class Static[F[_]](rootFields: NonEmptyList[PreparedField[F, Any]]) extends StaticOrStream[F]
-    final case class Stream[F[_]](
+  sealed trait OperationType[F[_]]
+  object OperationType {
+    final case class Query[F[_]](rootFields: NonEmptyList[PreparedField[F, Any]]) extends OperationType[F]
+    final case class Mutation[F[_]](rootFields: NonEmptyList[PreparedField[F, Any]]) extends OperationType[F]
+    final case class Subscription[F[_]](
         dataStream: Any => fs2.Stream[F, Any],
         root: PreparedField[F, Any]
-    ) extends StaticOrStream[F]
+    ) extends OperationType[F]
   }
 
   def prepare2[F[_], Q, M, S](
       executabels: NonEmptyList[GQLParser.ExecutableDefinition],
       schema: Schema[F, Q],
       variableMap: Map[String, Json]
-  ): Either[String, StaticOrStream[F]] = ???
+  ): Either[String, OperationType[F]] = ???
 }

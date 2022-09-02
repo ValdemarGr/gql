@@ -67,11 +67,23 @@ object Interpreter {
         }
     }
 
+  def runSync[F[_]: Async: Statistics](
+      rootInput: Any,
+      rootSel: NonEmptyList[PreparedField[F, Any]],
+      schemaState: SchemaState[F]
+  ) = {
+    for {
+      costTree <- Planner.costTree[F](rootSel)
+      plan = Planner.plan(costTree)
+      out <- run[F](rootInput, rootSel, plan, schemaState)
+    } yield out
+  }
+
   def runStreamed[F[_]: Statistics](
       rootInput: Any,
       rootSel: NonEmptyList[PreparedField[F, Any]],
       schemaState: SchemaState[F]
-  )(implicit F: Async[F]): fs2.Stream[F, Json] =
+  )(implicit F: Async[F]): fs2.Stream[F, JsonObject] =
     SubscriptionSupervisor[F](schemaState).flatMap { implicit streamResouceAlg =>
       def runStreamIt(
           root: NonEmptyList[(PreparedField[F, Any], List[NodeValue])]
@@ -86,9 +98,9 @@ object Interpreter {
         .eval(runStreamIt(rootSel.map((_, List(NodeValue.empty(rootInput, BigInt(1)))))))
         .flatMap { case (initialNvs, deps, initialSignals) =>
           fs2.Stream.eval(reconstruct(rootSel, initialNvs)).flatMap { initialOutput =>
-            fs2.Stream.emit(initialOutput.asJson) ++
+            fs2.Stream.emit(initialOutput) ++
               streamResouceAlg.changeLog
-                .evalScan((initialOutput.asJson, initialSignals)) { case ((prevOutput, activeSigs), changes) =>
+                .evalScan((initialOutput, initialSignals)) { case ((prevOutput, activeSigs), changes) =>
                   // remove dead nodes (concurrent access can cause dead updates to linger)
                   changes
                     .filter { case (k, _) => activeSigs.contains(k) }
@@ -116,7 +128,7 @@ object Interpreter {
                             val l: List[(BigInt, List[NodeValue])] = newNvs.groupBy(_.meta.stableId).toList
 
                             // println("performing new stitch $$$$$$$$$$$$$$$$$$")
-                            val recombinedF: F[Json] =
+                            val recombinedF: F[JsonObject] =
                               l
                                 .parTraverse { case (group, results) =>
                                   val (rootCursor, df) = groupIdMapping(group.toInt)
@@ -131,7 +143,7 @@ object Interpreter {
                                   val hack = obj.toMap.head._2
                                   // println(s"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ${pos.path.map(_.asInstanceOf[Ided].id).map(nameMap.apply).mkString_("->")}")
                                   // println(hack)
-                                  stitchInto(accum, hack, pos, nameMap)
+                                  stitchInto(accum.asJson, hack, pos, nameMap).asObject.get
                                 })
 
                             recombinedF.flatMap { res =>
@@ -145,7 +157,7 @@ object Interpreter {
                           }
                         }
                     }
-                    .map(_.getOrElse((initialOutput.asJson, activeSigs)))
+                    .map(_.getOrElse((initialOutput, activeSigs)))
                 }
                 .map { case (j, _) => j }
           }
