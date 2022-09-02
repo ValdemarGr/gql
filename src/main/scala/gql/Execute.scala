@@ -15,6 +15,7 @@ object Execute {
     final case class StreamOutcome[F[_]](out: Stream[F, JsonObject]) extends ExecutionOutcome[F]
   }
 
+  // todo handle all elements in executable definition together
   def execute[F[_], Q, M, S](
       query: NonEmptyList[GQLParser.ExecutableDefinition],
       schema: Schema[F, Q],
