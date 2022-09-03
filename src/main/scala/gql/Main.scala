@@ -9,15 +9,8 @@ import io.circe._
 import cats._
 import cats.arrow.FunctionK
 import cats.effect.unsafe.implicits.global
-import gql.GQLParser.Value.VariableValue
-import gql.GQLParser.Value.FloatValue
-import gql.GQLParser.Value.NullValue
-import gql.GQLParser.Value.ObjectValue
-import gql.GQLParser.Value.EnumValue
-import gql.GQLParser.Value.BooleanValue
-import gql.GQLParser.Value.IntValue
-import gql.GQLParser.Value.ListValue
-import gql.GQLParser.Value.StringValue
+import gql.parser.QueryParser
+import gql.parser.QueryParser.Value._
 import conversions._
 import cats.effect.std.Random
 import cats.parse.Parser
@@ -298,7 +291,7 @@ query withNestedFragments {
     }
   """
 
-  val p = GQLParser.executableDefinition.rep
+  val p = QueryParser.executableDefinition.rep
   def tryParse[A](p: cats.parse.Parser[A], q: String): Unit =
     p.parseAll(q) match {
       case Left(e) =>

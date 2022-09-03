@@ -1,4 +1,4 @@
-package gql
+package gql.parser
 
 import cats.implicits._
 import cats.parse.{Parser => P}
@@ -11,15 +11,7 @@ import io.circe.Json
 import cats.parse.Caret
 
 // https://spec.graphql.org/June2018/#sec-Source-Text
-object GQLParser {
-  final case class Pos[+A](caret: Caret, value: A)
-
-  def pos[A](p: P[A]): P[Pos[A]] =
-    (p ~ P.caret).map { case (a, c) => Pos(c, a) }
-
-  def pos0[A](p: Parser0[A]): Parser0[Pos[A]] =
-    (p ~ P.caret).map { case (a, c) => Pos(c, a) }
-
+object QueryParser {
   val whiteSpace = Rfc5234.wsp
 
   val lineTerminator = Rfc5234.lf | Rfc5234.crlf | Rfc5234.cr
@@ -119,7 +111,7 @@ object GQLParser {
   }
   lazy val executableDefinition = {
     import ExecutableDefinition._
-    pos(fragmentDefinition).map(Fragment(_)) |
+    Pos.pos(fragmentDefinition).map(Fragment(_)) |
       operationDefinition.map(Operation(_))
   }
 
@@ -160,7 +152,7 @@ object GQLParser {
 
   final case class SelectionSet(selections: NonEmptyList[Pos[Selection]])
   lazy val selectionSet: P[SelectionSet] = P.defer {
-    pos(selection).rep.between(t('{'), t('}')).map(SelectionSet(_))
+    Pos.pos(selection).rep.between(t('{'), t('}')).map(SelectionSet(_))
   }
 
   sealed trait Selection
@@ -185,9 +177,8 @@ object GQLParser {
       selectionSet: Pos[Option[SelectionSet]]
   )
   lazy val field: P[Field] = P.defer {
-    (P.backtrack(alias).?.with1 ~ name ~ arguments.? ~ directives.? ~ pos0(selectionSet.?)).map { case ((((a, n), args), d), s) =>
-      Field(a, n, args, d, s)
-    }
+    (P.backtrack(alias).?.with1 ~ name ~ arguments.? ~ directives.? ~ Pos.pos0(selectionSet.?))
+      .map { case ((((a, n), args), d), s) => Field(a, n, args, d, s) }
   }
 
   lazy val alias = name <* t(':')

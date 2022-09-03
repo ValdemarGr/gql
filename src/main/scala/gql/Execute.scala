@@ -1,5 +1,6 @@
 package gql
 
+import gql.parser.{QueryParser => P}
 import fs2.Stream
 import cats.implicits._
 import cats.effect._
@@ -17,7 +18,7 @@ object Execute {
   }
 
   def executor[F[_]: Statistics, Q, M, S](
-      query: NonEmptyList[GQLParser.ExecutableDefinition],
+      query: NonEmptyList[P.ExecutableDefinition],
       schema: Schema[F, Q],
       variables: Map[String, Json],
       schemaState: SchemaState[F]
