@@ -126,24 +126,27 @@ object PreparedQuery {
   def nextId[F[_]: Monad](implicit S: Stateful[F, Prep]) =
     S.inspect(_.nextId) <* S.modify(x => x.copy(nextId = x.nextId + 1))
 
-  def raise[F[_], A](s: String, caret: Option[Caret] = None)(implicit S: Stateful[F, Prep], F: MonadError[F, PositionalError]): F[A] =
+  def raise[F[_], A](s: String, caret: Option[Caret])(implicit S: Stateful[F, Prep], F: MonadError[F, PositionalError]): F[A] =
     S.get.map(state => PositionalError(state.cursor, caret, s)).flatMap(F.raiseError[A])
 
-  def raiseOpt[F[_], A](o: Option[A], s: String, caret: Option[Caret] = None)(implicit
+  def raiseOpt[F[_], A](o: Option[A], s: String, caret: Option[Caret])(implicit
       S: Stateful[F, Prep],
       F: MonadError[F, PositionalError]
   ): F[A] =
     o.map(_.pure[F]).getOrElse(raise[F, A](s, caret))
 
-  def raiseEither[F[_], A](e: Either[String, A])(implicit S: Stateful[F, Prep], F: MonadError[F, PositionalError]): F[A] =
+  def raiseEither[F[_], A](e: Either[String, A], caret: Option[Caret])(implicit
+      S: Stateful[F, Prep],
+      F: MonadError[F, PositionalError]
+  ): F[A] =
     e match {
-      case Left(value)  => raise[F, A](value)
+      case Left(value)  => raise[F, A](value, caret)
       case Right(value) => F.pure(value)
     }
 
-  def selection[F[_]: Monad, A](path: String)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
-    S.get.flatMap { state =>
-      S.set(state.copy(cursor = state.cursor.add(path))) >> fa <* S.set(state)
+  def ambientPath[F[_]: Monad, A](path: String)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
+    S.inspect(_.cursor).flatMap { c =>
+      S.modify(_.copy(cursor = c.add(path))) *> fa <* S.modify(_.copy(cursor = c))
     }
 
   def prepareSelections[F[_], G[_]](
@@ -155,9 +158,11 @@ object PreparedQuery {
     val schemaMap = ol.fieldMap
     s.selections.traverse[F, PreparedField[G, Any]] {
       case Pos(caret, GQLParser.Selection.FieldSelection(field)) =>
-        schemaMap.get(field.name) match {
-          case None                             => raise(s"unknown field name ${field.name}", Some(caret))
-          case Some(f: Field[G, Any, Any, Any]) => prepareField[F, G](field, caret, f, variableMap, fragments)
+        ambientPath(field.name) {
+          schemaMap.get(field.name) match {
+            case None                             => raise(s"unknown field name ${field.name}", Some(caret))
+            case Some(f: Field[G, Any, Any, Any]) => prepareField[F, G](field, caret, f, variableMap, fragments)
+          }
         }
       case Pos(caret, GQLParser.Selection.InlineFragmentSelection(f)) =>
         f.typeCondition match {
@@ -170,11 +175,13 @@ object PreparedQuery {
             }
         }
       case Pos(caret, GQLParser.Selection.FragmentSpreadSelection(f)) =>
-        fragments.get(f.fragmentName) match {
-          case None => raise(s"unknown fragment name ${f.fragmentName}", Some(caret))
-          case Some(fd) =>
-            prepareFragment[F, G](ol, fd, variableMap, fragments)
-              .flatMap[PreparedField[G, Any]](fd => nextId[F].map(id => PreparedFragField(id, fd.specify, Selection(fd.fields))))
+        ambientPath(f.fragmentName) {
+          fragments.get(f.fragmentName) match {
+            case None => raise(s"unknown fragment name ${f.fragmentName}", Some(caret))
+            case Some(fd) =>
+              prepareFragment[F, G](ol, fd, variableMap, fragments)
+                .flatMap[PreparedField[G, Any]](fd => nextId[F].map(id => PreparedFragField(id, fd.specify, Selection(fd.fields))))
+          }
         }
     }
   }
@@ -200,7 +207,7 @@ object PreparedQuery {
           providedMap
             .get(arg.name) match {
             case None    => raiseOpt[F, Any](arg.default, s"missing argument ${arg.name}", Some(caret))
-            case Some(x) => parserValueToValue(x, variableMap, caret).flatMap(j => raiseEither[F, Any](arg.input.decode(j)))
+            case Some(x) => parserValueToValue(x, variableMap, caret).flatMap(j => raiseEither[F, Any](arg.input.decode(j), Some(caret)))
           }
         }
         .map(_.toList)
@@ -362,19 +369,20 @@ object PreparedQuery {
   ) = {
     val op: F[GQLParser.OperationDefinition] =
       (ops, operationName) match {
-        case (Nil, _)      => raise(s"no operations provided")
+        case (Nil, _)      => raise(s"no operations provided", None)
         case (x :: Nil, _) => F.pure(x)
         case (xs, _) if xs.exists {
               case _: GQLParser.OperationDefinition.Simple => true
               case _                                       => false
             } =>
-          raise(s"exactly one operation must be suplied for shorthand queries")
+          raise(s"exactly one operation must be suplied for shorthand queries", None)
         case (x :: y :: _, None) =>
-          raise(s"operation name must be supplied for multiple operations")
+          raise(s"operation name must be supplied for multiple operations", None)
         case (xs, Some(name)) =>
           raiseOpt(
             xs.collectFirst { case d: GQLParser.OperationDefinition.Detailed if d.name.contains(name) => d },
-            s"unable to find operation $name"
+            s"unable to find operation $name",
+            None
           )
       }
 
