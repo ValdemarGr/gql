@@ -55,7 +55,22 @@ object PreparedQuery {
 
   final case class PreparedLeaf[F[_], A](name: String, encode: A => Either[String, Json]) extends Prepared[F, A]
 
-  final case class AnalysisState(cycleSet: Set[String], nextId: Int)
+  final case class PositionalError(position: PrepCursor, message: String)
+
+  final case class PrepCursor(position: List[String]) {
+    def add(name: String): PrepCursor = PrepCursor(name :: position)
+    def pop: PrepCursor = PrepCursor(position.tail)
+  }
+
+  object PrepCursor {
+    val empty: PrepCursor = PrepCursor(Nil)
+  }
+
+  final case class Prep(
+      cycleSet: Set[String],
+      nextId: Int,
+      cursor: PrepCursor
+  )
 
   def underlyingOutputTypename[G[_]](ot: Output[G, Any]): String = ot match {
     case Enum(name, _)         => name
@@ -77,67 +92,86 @@ object PreparedQuery {
     case x: Arr[G, _]          => s"[${friendlyName[G, Any](x.of.asInstanceOf[Output[G, Any]])}]"
   }
 
-  def parserValueToValue(value: GQLParser.Value, variableMap: Map[String, Json]): Either[String, Value] = {
-    def go[F[_]](x: GQLParser.Value)(implicit
-        F: MonadError[F, String],
-        D: Defer[F]
-    ): F[Value] =
+  def parserValueToValue[F[_]](value: GQLParser.Value, variableMap: Map[String, Json])(implicit
+      S: Stateful[F, Prep],
+      F: MonadError[F, PositionalError],
+      D: Defer[F]
+  ): F[Value] = {
+    def go(x: GQLParser.Value): F[Value] =
       x match {
         case IntValue(v) => F.pure(Value.IntValue(v))
         case ObjectValue(v) =>
           D.defer {
             v.traverse { case (k, v) =>
-              go[F](v).map(k -> _)
+              go(v).map(k -> _)
             }.map(xs => Value.ObjectValue(xs.toMap))
           }
         case ListValue(v) =>
-          D.defer(v.toVector.traverse(go[F]).map(Value.ArrayValue(_)))
+          D.defer(v.toVector.traverse(go).map(Value.ArrayValue(_)))
         case EnumValue(v) => F.pure(Value.EnumValue(v))
         case VariableValue(v) =>
-          F.fromOption(variableMap.get(v).map(Value.JsonValue(_)), s"variable $v not found")
+          raiseOpt(variableMap.get(v).map(Value.JsonValue(_)), s"variable $v not found")
         case NullValue       => F.pure(Value.NullValue)
         case BooleanValue(v) => F.pure(Value.BooleanValue(v))
-        case FloatValue(v)   => F.fromOption(v.toBigDecimal.map(Value.FloatValue(_)), s"$v is not a vaild json number")
-        case StringValue(v)  => F.pure(Value.StringValue(v))
+        case FloatValue(v) =>
+          raiseOpt(v.toBigDecimal.map(Value.FloatValue(_)), s"$v is not a vaild json number")
+        case StringValue(v) => F.pure(Value.StringValue(v))
       }
 
-    go[EitherT[Eval, String, *]](value).value.value
+    go(value)
   }
 
-  def nextId[F[_]: Monad](implicit S: Stateful[F, AnalysisState]) =
+  def nextId[F[_]: Monad](implicit S: Stateful[F, Prep]) =
     S.inspect(_.nextId) <* S.modify(x => x.copy(nextId = x.nextId + 1))
+
+  def raise[F[_], A](s: String)(implicit S: Stateful[F, Prep], F: MonadError[F, PositionalError]): F[A] =
+    S.inspect(_.cursor).map(PositionalError(_, s)).flatMap(F.raiseError[A])
+
+  def raiseOpt[F[_], A](o: Option[A], s: String)(implicit S: Stateful[F, Prep], F: MonadError[F, PositionalError]): F[A] =
+    o.map(_.pure[F]).getOrElse(raise[F, A](s))
+
+  def raiseEither[F[_], A](e: Either[String, A])(implicit S: Stateful[F, Prep], F: MonadError[F, PositionalError]): F[A] =
+    e match {
+      case Left(value)  => raise[F, A](value)
+      case Right(value) => F.pure(value)
+    }
+
+  def selection[F[_]: Monad, A](path: String)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
+    S.modify(s => s.copy(cursor = s.cursor.add(path))) >>
+      fa <*
+      S.modify(s => s.copy(cursor = s.cursor.pop))
 
   def prepareSelections[F[_], G[_]](
       ol: ObjLike[G, Any],
       s: GQLParser.SelectionSet,
       variableMap: Map[String, Json],
       fragments: Map[String, GQLParser.FragmentDefinition]
-  )(implicit S: Stateful[F, AnalysisState], F: MonadError[F, String], D: Defer[F]): F[NonEmptyList[PreparedField[G, Any]]] = D.defer {
+  )(implicit S: Stateful[F, Prep], F: MonadError[F, PositionalError], D: Defer[F]): F[NonEmptyList[PreparedField[G, Any]]] = D.defer {
     val schemaMap = ol.fieldMap
     s.selections.traverse[F, PreparedField[G, Any]] {
       case GQLParser.Selection.FieldSelection(field) =>
         schemaMap.get(field.name) match {
-          case None                             => F.raiseError(s"unknown field name ${field.name}")
+          case None                             => raise(s"unknown field name ${field.name}")
           case Some(f: Field[G, Any, Any, Any]) => prepareField[F, G](field, f, variableMap, fragments)
         }
       case GQLParser.Selection.InlineFragmentSelection(f) =>
         f.typeCondition match {
-          case None => F.raiseError(s"inline fragment must have a type condition")
+          case None => raise(s"inline fragment must have a type condition")
           case Some(typeCnd) =>
             matchType[F, G](typeCnd, ol).flatMap { case (ol, specialize) =>
               prepareSelections[F, G](ol, f.selectionSet, variableMap, fragments)
                 .map(Selection(_))
                 .flatMap[PreparedField[G, Any]](s => nextId[F].map(id => PreparedFragField(id, specialize, s)))
-                .adaptError(e => s"in inline fragment with condition $typeCnd: $e")
+                .handleErrorWith(e => raise(s"in inline fragment with condition $typeCnd: $e"))
             }
         }
       case GQLParser.Selection.FragmentSpreadSelection(f) =>
         fragments.get(f.fragmentName) match {
-          case None => F.raiseError(s"unknown fragment name ${f.fragmentName}")
+          case None => raise(s"unknown fragment name ${f.fragmentName}")
           case Some(fd) =>
             prepareFragment[F, G](ol, fd, variableMap, fragments)
               .flatMap[PreparedField[G, Any]](fd => nextId[F].map(id => PreparedFragField(id, fd.specify, Selection(fd.fields))))
-              .adaptError(e => s"in fragment ${fd.name}: $e")
+              .handleErrorWith(e => raise(s"in fragment ${fd.name}: $e"))
         }
     }
   }
@@ -147,8 +181,8 @@ object PreparedQuery {
       field: Field[G, Any, Any, Any],
       variableMap: Map[String, Json]
   )(implicit
-      S: Stateful[F, AnalysisState],
-      F: MonadError[F, String],
+      S: Stateful[F, Prep],
+      F: MonadError[F, PositionalError],
       D: Defer[F]
   ): F[(Resolver[G, Any, Any], Output[G, Any])] =
     (field, gqlField.arguments.toList.flatMap(_.nel.toList)) match {
@@ -159,18 +193,17 @@ object PreparedQuery {
             .traverse { arg =>
               providedMap
                 .get(arg.name) match {
-                case None    => arg.default.toRight(s"missing argument ${arg.name}")
-                case Some(x) => parserValueToValue(x, variableMap).flatMap(j => arg.input.decode(j))
+                case None    => raiseOpt[F, Any](arg.default, s"missing argument ${arg.name}")
+                case Some(x) => parserValueToValue(x, variableMap).flatMap(j => raiseEither[F, Any](arg.input.decode(j)))
               }
             }
             .map(_.toList)
 
-        F.fromEither(argResolution)
-          .map(args.decode)
-          .map { case (_, resolvedArg) =>
-            val closed = resolve.contramap[Any]((_, resolvedArg))
-            (closed, graphqlType.value)
-          }
+        argResolution.flatMap { x =>
+          val (_, resolvedArg) = args.decode(x)
+          val closed = resolve.contramap[Any]((_, resolvedArg))
+          F.pure((closed, graphqlType.value))
+        }
     }
 
   def prepareField[F[_], G[_]](
@@ -179,8 +212,8 @@ object PreparedQuery {
       variableMap: Map[String, Json],
       fragments: Map[String, GQLParser.FragmentDefinition]
   )(implicit
-      S: Stateful[F, AnalysisState],
-      F: MonadError[F, String],
+      S: Stateful[F, Prep],
+      F: MonadError[F, PositionalError],
       D: Defer[F]
   ): F[PreparedField[G, Any]] = {
     closeFieldParameters[F, G](gqlField, field, variableMap).flatMap { case (resolve, tpe) =>
@@ -197,8 +230,8 @@ object PreparedQuery {
             F.pure(PreparedLeaf(e.name, x => Right(Json.fromString(e.encoder(x).get))))
           case (s: Scalar[G, Any], None) =>
             F.pure(PreparedLeaf(s.name, x => Right(s.encoder(x))))
-          case (o, Some(_)) => F.raiseError(s"type ${friendlyName[G, Any](o)} cannot have selections")
-          case (o, None)    => F.raiseError(s"object like type ${friendlyName[G, Any](o)} must have a selection")
+          case (o, Some(_)) => raise(s"type ${friendlyName[G, Any](o)} cannot have selections")
+          case (o, None)    => raise(s"object like type ${friendlyName[G, Any](o)} must have a selection")
         }
 
       prepF.flatMap(p =>
@@ -213,7 +246,7 @@ object PreparedQuery {
   def matchType[F[_], G[_]](
       name: String,
       sel: ObjLike[G, Any]
-  )(implicit F: MonadError[F, String]): F[(ObjLike[G, Any], Any => Option[Any])] =
+  )(implicit F: MonadError[F, PositionalError], S: Stateful[F, Prep]): F[(ObjLike[G, Any], Any => Option[Any])] =
     if (sel.name == name) F.pure((sel, Some(_)))
     else {
       /*
@@ -255,16 +288,16 @@ object PreparedQuery {
        AFrag resolves matches on B and picks that implementation.
        */
       sel match {
-        case Obj(n, _) => F.raiseError(s"tried to match with type $name on type object type $n")
+        case Obj(n, _) => raise(s"tried to match with type $name on type object type $n")
         case Interface(n, instances, fields) =>
-          F.fromOption(
+          raiseOpt(
             instances
               .get(name)
               .map(i => (i.ol, i.specify)),
             s"$name does not implement interface $n, possible implementations are ${instances.keySet.mkString(", ")}"
           )
         case Union(n, types) =>
-          F.fromOption(
+          raiseOpt(
             types
               .lookup(name)
               .map(i => (i.ol, i.specify)),
@@ -279,14 +312,14 @@ object PreparedQuery {
       variableMap: Map[String, Json],
       fragments: Map[String, GQLParser.FragmentDefinition]
   )(implicit
-      S: Stateful[F, AnalysisState],
-      F: MonadError[F, String],
+      S: Stateful[F, Prep],
+      F: MonadError[F, PositionalError],
       D: Defer[F]
   ): F[FragmentDefinition[G, Any]] =
     D.defer {
       S.get.flatMap {
         case c if c.cycleSet(f.name) =>
-          F.raiseError(s"fragment by name ${f.name} is cyclic, discovered through path ${c.cycleSet.mkString(" -> ")}")
+          raise(s"fragment by name ${f.name} is cyclic, discovered through path ${c.cycleSet.mkString(" -> ")}")
         case _ =>
           val beforeF: F[Unit] = S.modify(s => s.copy(cycleSet = s.cycleSet + f.name))
           val afterF: F[Unit] = S.modify(s => s.copy(cycleSet = s.cycleSet - f.name))
@@ -294,7 +327,7 @@ object PreparedQuery {
           val programF: F[FragmentDefinition[G, Any]] =
             matchType[F, G](f.typeCnd, ol).flatMap { case (t, specialize) =>
               prepareSelections[F, G](t, f.selectionSet, variableMap, fragments).attempt.flatMap {
-                case Left(err) => F.raiseError[FragmentDefinition[G, Any]](s"in fragment ${f.name}: $err")
+                case Left(err) => raise(s"in fragment ${f.name}: $err")
                 case Right(x)  => F.pure(FragmentDefinition(f.name, f.typeCnd, specialize, x))
               }
             }
@@ -309,8 +342,8 @@ object PreparedQuery {
       schema: Schema[G, Q],
       variableMap: Map[String, Json]
   )(implicit
-      S: Stateful[F, AnalysisState],
-      F: MonadError[F, String],
+      S: Stateful[F, Prep],
+      F: MonadError[F, PositionalError],
       D: Defer[F]
   ) = {
     // prepare all fragments
@@ -334,7 +367,7 @@ object PreparedQuery {
       executabels: NonEmptyList[GQLParser.ExecutableDefinition],
       schema: Schema[F, Q],
       variableMap: Map[String, Json]
-  ): Either[String, NonEmptyList[PreparedField[F, Any]]] = {
+  ): Either[PositionalError, NonEmptyList[PreparedField[F, Any]]] = {
     val (ops, frags) =
       executabels.toList.partitionEither {
         case GQLParser.ExecutableDefinition.Operation(op)  => Left(op)
@@ -348,12 +381,12 @@ object PreparedQuery {
     //   case Detailed(tpe, name, Some(variableDefinitions), _, _) => ???
     // }
 
-    type G[A] = StateT[EitherT[Eval, String, *], AnalysisState, A]
+    type G[A] = StateT[EitherT[Eval, PositionalError, *], Prep, A]
 
     val o = prepareParts[G, F, Q](ops, frags, schema, variableMap)
 
     o
-      .runA(AnalysisState(Set.empty, 1))
+      .runA(Prep(Set.empty, 1, PrepCursor.empty))
       .value
       .value
   }
