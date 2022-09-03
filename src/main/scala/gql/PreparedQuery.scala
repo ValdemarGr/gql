@@ -43,7 +43,6 @@ object PreparedQuery {
   final case class Selection[F[_], A](fields: NonEmptyList[PreparedField[F, A]]) extends Prepared[F, A]
 
   final case class PreparedList[F[_], A](of: Prepared[F, A]) extends Prepared[F, A]
-  final case class PreparedList2[F[_], A](of: Prepared[F, A]) extends Prepared[F, List[A]]
 
   final case class PreparedLeaf[F[_], A](name: String, encode: A => Either[String, Json]) extends Prepared[F, A]
 
@@ -363,7 +362,7 @@ object PreparedQuery {
         case (x :: Nil, _) => F.pure(x)
         case (xs, _) if xs.exists {
               case _: P.OperationDefinition.Simple => true
-              case _                                       => false
+              case _                               => false
             } =>
           raise(s"exactly one operation must be suplied for shorthand queries", None)
         case (x :: y :: _, None) =>
