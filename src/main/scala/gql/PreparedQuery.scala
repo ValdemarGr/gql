@@ -374,13 +374,17 @@ object PreparedQuery {
           frags.map(f => f.name -> f).toMap
         )
       // TODO decode variables
-      case GQLParser.OperationDefinition.Detailed(_, _, _, _, sel) =>
-        prepareSelections[F, G](
-          schema.shape.query.asInstanceOf[ObjLike[G, Any]],
-          sel,
-          variableMap,
-          frags.map(f => f.name -> f).toMap
-        )
+      case GQLParser.OperationDefinition.Detailed(ot, _, _, _, sel) =>
+        // TODO handle other things than query
+        ot match {
+          case GQLParser.OperationType.Query =>
+            prepareSelections[F, G](
+              schema.shape.query.asInstanceOf[ObjLike[G, Any]],
+              sel,
+              variableMap,
+              frags.map(f => f.name -> f).toMap
+            )
+        }
     }
   }
 
