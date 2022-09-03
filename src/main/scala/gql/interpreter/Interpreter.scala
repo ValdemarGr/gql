@@ -441,10 +441,6 @@ object Interpreter {
           pf match {
             case PreparedFragField(id, specify, selection) =>
               unpackCursor(levelCursors, selection.fields)
-            // m.get(Ided(id)) match {
-            //   case None       => F.pure(JsonObject.empty)
-            //   case Some(frag) => unpackCursor(frag, selection.fields)
-            // }
             case df @ PreparedDataField(id, name, resolve, selection, batchName) =>
               unpackPrep(df, m(Ided(id)), selection).map(x => JsonObject(name -> x))
           }
