@@ -340,27 +340,48 @@ object PreparedQuery {
       ops: List[GQLParser.OperationDefinition],
       frags: List[GQLParser.FragmentDefinition],
       schema: Schema[G, Q],
-      variableMap: Map[String, Json]
+      variableMap: Map[String, Json],
+      operationName: Option[String] = None
   )(implicit
       S: Stateful[F, Prep],
       F: MonadError[F, PositionalError],
       D: Defer[F]
   ) = {
-    // prepare all fragments
-    // val prepped: F[Unit] = frags.traverse(frag => prepareFragment[F, G](null, frag, variableMap, null)).void
+    val op: F[GQLParser.OperationDefinition] =
+      (ops, operationName) match {
+        case (Nil, _)      => raise(s"no operations provided")
+        case (x :: Nil, _) => F.pure(x)
+        case (xs, _) if xs.exists {
+              case _: GQLParser.OperationDefinition.Simple => true
+              case _                                       => false
+            } =>
+          raise(s"exactly one operation must be suplied for shorthand queries")
+        case (x :: y :: _, None) =>
+          raise(s"operation name must be supplied for multiple operations")
+        case (xs, Some(name)) =>
+          raiseOpt(
+            xs.collectFirst { case d: GQLParser.OperationDefinition.Detailed if d.name.contains(name) => d },
+            s"unable to find operation $name"
+          )
+      }
 
-    /*prepped >>*/
-    (ops.head match {
-      //case Simple(_)                                            => ???
-      //case Detailed(tpe, name, Some(variableDefinitions), _, _) => ???
-      case Detailed(_, _, None, _, sel) =>
+    op.flatMap {
+      case GQLParser.OperationDefinition.Simple(sel) =>
         prepareSelections[F, G](
           schema.shape.query.asInstanceOf[ObjLike[G, Any]],
           sel,
           variableMap,
           frags.map(f => f.name -> f).toMap
         )
-    })
+      // TODO decode variables
+      case GQLParser.OperationDefinition.Detailed(_, _, _, _, sel) =>
+        prepareSelections[F, G](
+          schema.shape.query.asInstanceOf[ObjLike[G, Any]],
+          sel,
+          variableMap,
+          frags.map(f => f.name -> f).toMap
+        )
+    }
   }
 
   def prepare[F[_], Q](
@@ -373,13 +394,6 @@ object PreparedQuery {
         case GQLParser.ExecutableDefinition.Operation(op)  => Left(op)
         case GQLParser.ExecutableDefinition.Fragment(frag) => Right(frag)
       }
-
-    // blabla check args first
-    // ops.map {
-    //   case Simple(_)                                            => ???
-    //   case Detailed(tpe, name, None, _, _)                      => ???
-    //   case Detailed(tpe, name, Some(variableDefinitions), _, _) => ???
-    // }
 
     type G[A] = StateT[EitherT[Eval, PositionalError, *], Prep, A]
 
