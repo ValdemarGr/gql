@@ -30,3 +30,11 @@ final case class EffectResolver[F[_], I, A](resolve: I => F[A]) extends LeafReso
   def contramap[B](g: B => I): EffectResolver[F, B, A] =
     EffectResolver(g andThen resolve)
 }
+
+final case class EffectResolver2[F[_], I, A](resolve: I => F[Either[String, A]]) extends LeafResolver[F, I, A] {
+  def mapK[G[_]: MonadCancelThrow](fk: F ~> G): EffectResolver2[G, I, A] =
+    EffectResolver2(resolve.andThen(fk.apply))
+
+  def contramap[B](g: B => I): EffectResolver2[F, B, A] =
+    EffectResolver2(g andThen resolve)
+}

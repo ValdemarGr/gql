@@ -36,12 +36,12 @@ object LastPath {
 final case class NodeMeta(
     startPosition: Cursor,
     relativePath: Cursor,
-    stableId: BigInt
+    cursorGroup: BigInt
 ) {
   lazy val absolutePath = Cursor(startPosition.path ++ relativePath.path)
 
-  def index(i: Int): NodeMeta = NodeMeta(startPosition, relativePath.index(i), stableId)
-  def ided(id: Int): NodeMeta = NodeMeta(startPosition, relativePath.ided(id), stableId)
+  def index(i: Int): NodeMeta = NodeMeta(startPosition, relativePath.index(i), cursorGroup)
+  def ided(id: Int): NodeMeta = NodeMeta(startPosition, relativePath.ided(id), cursorGroup)
 }
 
 object NodeMeta {
@@ -68,3 +68,28 @@ object NodeValue {
 
   def empty[A](value: A, stableId: BigInt) = startAt(value, stableId, Cursor.empty)
 }
+
+final case class EvalNode(meta: NodeMeta, value: Any) {
+  def setValue(value: Any): EvalNode = copy(value = value)
+
+  def modify(f: NodeMeta => NodeMeta): EvalNode = copy(meta = f(meta))
+
+  def succeed(value: Any, f: NodeMeta => NodeMeta): EvalNode =
+    EvalNode(f(meta), value)
+
+  def succeed(value: Any): EvalNode = succeed(value, identity)
+
+  def fail(error: String, f: NodeMeta => NodeMeta): EvalNode =
+    EvalNode(f(meta), error)
+
+  def fail(error: String): EvalNode = fail(error, identity)
+}
+
+object EvalNode {
+  def startAt[A](value: A, cursorGroup: BigInt, startPosition: Cursor) =
+    EvalNode(NodeMeta.startAt(startPosition, cursorGroup), value)
+
+  def empty[A](value: A, cursorGroup: BigInt) = startAt(value, cursorGroup, Cursor.empty)
+}
+
+final case class EvalFailure(meta: NodeMeta, error: String)
