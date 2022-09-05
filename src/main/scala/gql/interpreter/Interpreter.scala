@@ -401,10 +401,12 @@ object Interpreter {
             .map(_.getOrElse(NoState))
 
         type BatchKey = Any
+        type BatchValue = Any
+        type BatchResult = Any
 
         final case class NodeBatch(
-            inputs: Chain[(NodeMeta, Batch[F, BatchKey, Any, Any])],
-            resolve: Set[BatchKey] => W[Map[BatchKey, Any]]
+            inputs: Chain[(NodeMeta, Batch[F, BatchKey, BatchValue, BatchResult])],
+            resolve: Set[BatchKey] => W[Map[BatchKey, BatchValue]]
         )
 
         def submit(name: String, duration: FiniteDuration, size: Int): W[Unit] =
@@ -500,8 +502,13 @@ object Interpreter {
         def startNext(df: PreparedDataField[F, Any, Any], outputs: Chain[EvalNode]): W[Chain[EvalNode]] = {
           def evalSel(s: Prepared[F, Any], in: Chain[EvalNode]): W[Chain[EvalNode]] = W.defer {
             s match {
-              case PreparedLeaf(_, _) => W.pure(in)
-              // F.fromEither(in.traverse(nv => enc(nv.value).leftMap(e => new Exception(e)).map(nv.setValue(_))))
+              case PreparedLeaf(name, enc) =>
+                in.flatTraverse { en =>
+                  enc(en.value) match {
+                    case Left(err) => fail(EvalFailure(Chain(en.meta), Some(err), s"during leaf $name decoding", None))
+                    case Right(x)  => W.pure(Chain(en.setValue(x)))
+                  }
+                }
               case Selection(fields) => runFields(fields, in)
               case PreparedList(of) =>
                 val partitioned =
@@ -517,29 +524,97 @@ object Interpreter {
           evalSel(df.selection, outputs)
         }
 
+        /*
+         * 1. Partitions the inputs into batch and trivial (non-batch)
+         *
+         * 2. Then runs the batch efficiently and the trivial in parallel
+         *
+         * 3. Then reconstructs every batch field's output from
+         *    the batched results and calls the batch fields continuations in parallel
+         *
+         * 4. Finally, combines the results in parallel.
+         */
+        def runDataInputs(datas: Chain[(PreparedDataField[F, Any, Any], Chain[EvalNode])]) = {
+          val inputsResolved =
+            datas.parTraverse { case (df, v) => runInputs(df, v).map(df -> _) }
+
+          val partitioned =
+            inputsResolved.map(_.partitionEither { case (df, e) => e.bimap((df, _), (df, _)) })
+
+          partitioned
+            .flatMap { case (trivial, batched) =>
+              val trivialF = trivial.parFlatTraverse { case (df, fas) => startNext(df, fas) }
+
+              val batchedF =
+                NonEmptyChain
+                  .fromChain(batched)
+                  .traverse { nec =>
+                    val (_, b) = nec.head
+
+                    val keys: Set[BatchKey] = nec.toChain
+                      .flatMap { case (_, bn) => bn.inputs.flatMap { case (_, b) => Chain.fromSeq(b.keys) } }
+                      .toIterable
+                      .toSet
+
+                    b
+                      .resolve(keys)
+                      .flatMap { (resultLookup: Map[BatchKey, BatchValue]) =>
+                        nec.toChain.parFlatTraverse { case (df, bn) =>
+                          val mappedValuesF: W[Chain[EvalNode]] = bn.inputs.parFlatTraverse { case (c, b) =>
+                            val lookupsF: W[Chain[(BatchKey, BatchValue)]] = Chain.fromSeq(b.keys).flatTraverse { (k: BatchKey) =>
+                              resultLookup.get(k) match {
+                                case None    => fail[(BatchKey, BatchValue)](EvalFailure(Chain(c), None, "during batch resolution", None))
+                                case Some(x) => W.pure(Chain(k -> x))
+                              }
+                            }
+
+                            lookupsF.flatMap { keys =>
+                              lift(b.post(keys.toList).map(res => Chain(EvalNode(c, res))))
+                                .handleErrorWith(e => fail[EvalNode](EvalFailure(Chain(c), None, "during batch post-resolution", Some(e))))
+                            }
+
+                          }
+
+                          mappedValuesF.flatMap(startNext(df, _))
+                        }
+                      }
+                      .handleErrorWith { e =>
+                        val nms = nec.toChain.flatMap { case (_, bn) => bn.inputs.map { case (nm, _) => nm } }
+                        fail(EvalFailure(nms, None, "during batched resolve", Some(e)))
+                      }
+                  }
+                  .map(Chain.fromOption)
+                  .map(_.flatten)
+
+              // fork each node's continuation
+              // in parallel, start every node's computation
+              (trivialF, batchedF).parMapN(_ ++ _)
+            }
+        }
+
         def runDataField(df: PreparedDataField[F, Any, Any], input: Chain[EvalNode]): W[Chain[EvalNode]] = W.defer {
           // maybe join
           submitAndMaybeStart(df.id, input).flatMap {
             // No batching state, so just start
-            case NoState =>
-              runInputs(df, input)
-                .flatMap[Chain[EvalNode]] {
-                  case Left(xs) => W.pure(xs)
-                  case Right(nb) =>
-                    nb
-                      .resolve(nb.inputs.map { case (_, k) => k }.toIterable.toSet)
-                      .flatMap { outM =>
-                        nb.inputs.flatTraverse { case (m, batch) =>
-                          Chain.fromSeq(batch.keys).flatTraverse { k =>
-                            outM.get(k) match {
-                              case None    => fail(EvalFailure(Chain(m), None, "during batch resolution", None))
-                              case Some(x) => W.pure(Chain(EvalNode(m, x)))
-                            }
-                          }
-                        }
-                      }
-                }
-                .flatMap(startNext(df, _))
+            case NoState => runDataInputs(Chain(df -> input))
+            // runInputs(df, input)
+            //   .flatMap[Chain[EvalNode]] {
+            //     case Left(xs) => W.pure(xs)
+            //     case Right(nb) =>
+            //       nb
+            //         .resolve(nb.inputs.map { case (_, k) => k }.toIterable.toSet)
+            //         .flatMap { outM =>
+            //           nb.inputs.flatTraverse { case (m, batch) =>
+            //             Chain.fromSeq(batch.keys).flatTraverse { (k: BatchKey) =>
+            //               outM.get(k) match {
+            //                 case None    => fail(EvalFailure(Chain(m), None, "during batch resolution", None))
+            //                 case Some(x) => W.pure(Chain(EvalNode(m, x)))
+            //               }
+            //             }
+            //           }
+            //         }
+            //   }
+            //   .flatMap(startNext(df, _))
             // join
             // There is a batch state, but we didn't add the final input
             // Stop here, someone else will start the batch
@@ -551,59 +626,9 @@ object Interpreter {
 
               val inputLst = in
 
-              inputLst
-                .map { case (k, v) => executionDeps.dataFieldMap(k) -> v }
-                .parTraverse { case (df, v) => runInputs(df, v).map(df -> _) }
-                .map(_.partitionEither { case (df, e) => e.bimap((df, _), (df, _)) })
-                .flatMap { case (trivial, batched) =>
-                  val trivialF = trivial.parFlatTraverse { case (df, fas) => startNext(df, fas) }
+              val withDfs = inputLst.map { case (k, v) => executionDeps.dataFieldMap(k) -> v }
 
-                  val batchedF =
-                    NonEmptyChain
-                      .fromChain(batched)
-                      .traverse { nec =>
-                        val (_, b) = nec.head
-
-                        val keys = nec.toChain
-                          .flatMap { case (_, bn) => bn.inputs.flatMap { case (_, b) => Chain.fromSeq(b.keys) } }
-                          .toIterable
-                          .toSet
-
-                        b
-                          .resolve(keys)
-                          .flatMap { resultLookup =>
-                            nec.toChain.parFlatTraverse { case (df, bn) =>
-                              val mappedValuesF = bn.inputs.parFlatTraverse { case (c, b) =>
-                                val lookupsF = Chain.fromSeq(b.keys).flatTraverse { k =>
-                                  resultLookup.get(k) match {
-                                    case None    => fail[(Any, Any)](EvalFailure(Chain(c), None, "during batch resolution", None))
-                                    case Some(x) => W.pure(Chain(k -> x))
-                                  }
-                                }
-
-                                lookupsF.flatMap { keys =>
-                                  lift(b.post(keys.toList).map(res => Chain(EvalNode(c, res))))
-                                    .handleErrorWith(e =>
-                                      fail[EvalNode](EvalFailure(Chain(c), None, "during batch post-resolution", Some(e)))
-                                    )
-                                }
-                              }
-
-                              mappedValuesF.flatMap(startNext(df, _))
-                            }
-                          }
-                          .handleErrorWith { e =>
-                            val nms = nec.toChain.flatMap { case (_, bn) => bn.inputs.map { case (nm, _) => nm } }
-                            fail(EvalFailure(nms, None, "during batched resolve", Some(e)))
-                          }
-                      }
-                      .map(Chain.fromOption)
-                      .map(_.flatten)
-
-                  // fork each node's continuation
-                  // in parallel, start every node's computation
-                  (trivialF, batchedF).parMapN(_ ++ _)
-                }
+              runDataInputs(withDfs)
           }
         }
 
