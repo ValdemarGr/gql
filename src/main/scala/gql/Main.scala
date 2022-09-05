@@ -25,7 +25,6 @@ import gql.resolver.BatcherReference
 import gql.resolver.StreamReference
 import gql.resolver.SignalResolver
 import gql.resolver.EffectResolver
-import gql.resolver.PureResolver
 import cats.mtl._
 import gql.out._
 

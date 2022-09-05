@@ -66,31 +66,35 @@ abstract class OutputSyntax {
 
   def contra[B] = OutputSyntax.PartiallyAppliedContra[B]()
 
-  def effect[F[_], I, T](resolver: I => F[T])(implicit tpe: => Output[F, T]): Field[F, I, T, Unit] =
-    effect[F, I, T, Unit](Applicative[Arg].unit) { case (i, _) => resolver(i) }(tpe)
+  def effect[F[_]: Functor, I, T](resolver: I => F[T])(implicit tpe: => Output[F, T]): Field[F, I, T, Unit] = {
+    implicit lazy val t2 = tpe
+    effect[F, I, T, Unit](Applicative[Arg].unit) { case (i, _) => resolver(i) }
+  }
 
-  def effect[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => F[T])(implicit
+  def effect[F[_]: Functor, I, T, A](arg: Arg[A])(resolver: (I, A) => F[T])(implicit
       tpe: => Output[F, T]
   ): Field[F, I, T, A] =
     Field[F, I, T, A](
       arg,
-      EffectResolver { case (i, a) => resolver(i, a) },
+      EffectResolver { case (i, a) => resolver(i, a).map(Right(_)) },
       Eval.later(tpe)
     )
 
-  def eff[F[_], I, T](resolver: I => F[T]) =
-    EffectResolver[F, I, T](resolver)
+  def eff[F[_]: Functor, I, T](resolver: I => F[T]) =
+    EffectResolver[F, I, T](x => resolver(x).map(Right(_)))
 
-  def pur[F[_], I, T](resolver: I => T) =
-    PureResolver[F, I, T](resolver)
+  def pur[F[_], I, T](resolver: I => T)(implicit F: Applicative[F]) =
+    EffectResolver[F, I, T](x => F.pure(Right(resolver(x))))
 
-  def pure[F[_], I, T](resolver: I => T)(implicit tpe: => Output[F, T]): Field[F, I, T, Unit] =
-    pure[F, I, T, Unit](Applicative[Arg].unit) { case (i, _) => resolver(i) }(tpe)
+  def pure[F[_]: Applicative, I, T](resolver: I => T)(implicit tpe: => Output[F, T]): Field[F, I, T, Unit] = {
+    implicit lazy val t2 = tpe
+    pure[F, I, T, Unit](Applicative[Arg].unit) { case (i, _) => resolver(i) }
+  }
 
-  def pure[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => T)(implicit tpe: => Output[F, T]): Field[F, I, T, A] =
+  def pure[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => T)(implicit tpe: => Output[F, T], F: Applicative[F]): Field[F, I, T, A] =
     Field[F, I, T, A](
       arg,
-      PureResolver { case (i, a) => resolver(i, a) },
+      EffectResolver { case (i, a) => F.pure(Right(resolver(i, a))) },
       Eval.later(tpe)
     )
 
