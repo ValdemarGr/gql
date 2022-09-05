@@ -12,7 +12,9 @@ trait SignalMetadataAccumulator[F[_]] {
       field: PreparedDataField[F, Any, Any],
       ref: StreamReference[Any, Any],
       key: Any
-  ): F[Unit]
+  ): F[BigInt]
+
+  def remove(id: BigInt): F[Unit]
 
   def getState: F[Map[BigInt, (Cursor, Any, PreparedDataField[F, Any, Any])]]
 }
@@ -27,8 +29,10 @@ object SignalMetadataAccumulator {
             field: PreparedDataField[F, Any, Any],
             ref: StreamReference[Any, Any],
             key: Any
-        ): F[Unit] =
-          sigAlg.subscribe(ref, key).flatMap(id => state.update(_ + (id -> (cursor, initialValue, field))))
+        ): F[BigInt] =
+          sigAlg.subscribe(ref, key).flatMap(id => state.update(_ + (id -> (cursor, initialValue, field))).as(id))
+
+        def remove(id: BigInt): F[Unit] = sigAlg.remove(id) >> state.update(_ - id)
 
         def getState: F[Map[BigInt, (Cursor, Any, PreparedDataField[F, Any, Any])]] =
           state.get
