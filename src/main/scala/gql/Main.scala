@@ -412,7 +412,7 @@ query withNestedFragments {
           obj2[F, Data[F]]("Data") { f =>
             fields(
               "dep" -> f(eff(_ => Ask.reader(_.v))),
-              "a" -> f(pur(_.a)),
+              "a" -> f(eff(x => F.raiseError[String](new Exception("testtt")))),
               "a2" -> f(arg[Int]("num", Some(42)))(pur { case (i, _) => i.a }),
               "b" -> f(eff(_.b)),
               "sd" -> f(serverDataBatcher.traverse(_.b.map(i => Seq(i, i + 1, i * 2)))),

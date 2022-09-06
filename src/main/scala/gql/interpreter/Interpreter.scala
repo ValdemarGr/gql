@@ -66,8 +66,9 @@ object Interpreter {
     } yield out
   }
 
+  // TODO also handle the rest of the EvalFailure structure
   def combineSplit(fails: Chain[EvalFailure], succs: Chain[EvalNode]): Chain[(NodeMeta, Option[Any])] =
-    fails.flatMap(_.meta).map(m => (m, None)) ++ succs.map(n => (n.meta, Some(n.value)))
+    fails.flatMap{x => println(x); x.meta}.map(m => (m, None)) ++ succs.map(n => (n.meta, Some(n.value)))
 
   def runStreamed[F[_]: Statistics](
       rootInput: Any,
