@@ -615,20 +615,31 @@ query withNestedFragments {
 }
   """
 
-    F.fromOption(parseAndPrep(qsig), new Exception(":((")).flatMap { x =>
+    F.fromOption(parseAndPrep(qn), new Exception(":((")).flatMap { x =>
       Statistics[F].flatMap { implicit stats =>
         Planner.costTree[F](x).flatMap { costTree =>
           println(showTree(0, costTree))
 
           interpreter.Interpreter
-            .runStreamed[F]((), x, schema.state)
-            .evalMap(x => C.println(s"got new subtree ${x.show}"))
-            .take(10)
-            .compile
-            .drain
+            .runSync[F]((), x, schema.state)
+            .flatMap(x => C.println(x))
         }
       }
-    }
+    } >>
+      F.fromOption(parseAndPrep(qsig), new Exception(":((")).flatMap { x =>
+        Statistics[F].flatMap { implicit stats =>
+          Planner.costTree[F](x).flatMap { costTree =>
+            println(showTree(0, costTree))
+
+            interpreter.Interpreter
+              .runStreamed[F]((), x, schema.state)
+              .evalMap(x => C.println(s"got new subtree ${x.show}"))
+              .take(10)
+              .compile
+              .drain
+          }
+        }
+      }
   }
 
   mainProgram[D].run(Deps("hey")).unsafeRunSync()

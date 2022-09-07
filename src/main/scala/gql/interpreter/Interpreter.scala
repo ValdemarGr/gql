@@ -54,118 +54,129 @@ object Interpreter {
         }
     }
 
-  def runSync[F[_]: Async: Statistics](
-      rootInput: Any,
-      rootSel: NonEmptyList[PreparedField[F, Any]],
-      schemaState: SchemaState[F]
-  ) = {
-    for {
-      costTree <- Planner.costTree[F](rootSel)
-      plan = Planner.plan(costTree)
-      out <- run[F](rootInput, rootSel, plan, schemaState)
-    } yield out
-  }
-
   // TODO also handle the rest of the EvalFailure structure
   def combineSplit(fails: Chain[EvalFailure], succs: Chain[EvalNode]): Chain[(NodeMeta, Option[Any])] =
-    fails.flatMap{x => println(x); x.meta}.map(m => (m, None)) ++ succs.map(n => (n.meta, Some(n.value)))
+    fails.flatMap { x => println(x); x.meta }.map(m => (m, None)) ++ succs.map(n => (n.meta, Some(n.value)))
+
+  def constructStream[F[_]: Statistics](
+      rootInput: Any,
+      rootSel: NonEmptyList[PreparedField[F, Any]],
+      schemaState: SchemaState[F],
+      streamResourceAlg: Option[SubscriptionSupervisor[F]]
+  )(implicit F: Async[F]): fs2.Stream[F, JsonObject] = {
+    val changeLog = fs2.Stream.fromOption(streamResourceAlg).flatMap(_.changeLog)
+
+    val accumulatorF = streamResourceAlg.traverse(implicit alg => SignalMetadataAccumulator[F])
+
+    def runStreamIt(
+        root: NonEmptyList[(PreparedField[F, Any], Chain[EvalNode])]
+    ): F[(Chain[EvalFailure], Chain[EvalNode], Batching[F], Map[BigInt, (Cursor, Any, PreparedDataField[F, Any, Any])])] =
+      accumulatorF.flatMap { accumulatorOpt =>
+        val rootFields = root.map { case (k, _) => k }
+        for {
+          costTree <- Planner.costTree[F](rootFields)
+          plan = Planner.plan(costTree)
+          executionDeps = Batching.plan[F](rootFields, plan)
+          (fails, succs) <- interpret[F](root, executionDeps, schemaState, accumulatorOpt).run
+          s <- accumulatorOpt match {
+            case Some(x) => x.getState
+            case None    => F.pure(Map.empty[BigInt, (Cursor, Any, PreparedDataField[F, Any, Any])])
+          }
+        } yield (fails, succs, executionDeps, s)
+      }
+
+    // first iteration
+    fs2.Stream
+      .eval(runStreamIt(rootSel.map((_, Chain(EvalNode.empty(rootInput, BigInt(1)))))))
+      .flatMap { case (initialFails, initialSuccs, deps, initialSignals) =>
+        val c = combineSplit(initialFails, initialSuccs).toList.map { case (m, v) => m.absolutePath -> v }
+
+        fs2.Stream(reconstructSelection(c, rootSel)).flatMap { initialOutput =>
+          fs2.Stream.emit(initialOutput) ++
+            changeLog
+              .evalScan((initialOutput, initialSignals)) { case ((prevOutput, activeSigs), changes) =>
+                // remove dead nodes (concurrent access can cause dead updates to linger)
+                changes
+                  .filter { case (k, _) => activeSigs.contains(k) }
+                  .toNel
+                  .flatTraverse { activeChanges =>
+                    val s = activeChanges.toList.map { case (k, _) => k }.toSet
+                    val allSigNodes = activeSigs.toList.map { case (k, (cursor, _, df)) => (cursor.ided(df.id), k) }
+                    val meta = computeMetadata(allSigNodes, s)
+                    val rootNodes: List[(BigInt, Any)] = activeChanges.filter { case (k, _) => meta.hcsa.contains(k) }
+                    val prepaedRoots =
+                      rootNodes.mapWithIndex { case ((id, input), idx) =>
+                        val (cursor, _, field) = activeSigs(id)
+                        val cursorGroup = BigInt(idx)
+                        (field, cursor, Chain(EvalNode.startAt(input, cursorGroup, cursor)), cursorGroup)
+                      }
+
+                    prepaedRoots.toNel
+                      .traverse { newRootSel =>
+                        runStreamIt(newRootSel.map { case (df, _, inputs, _) => (df, inputs) })
+                          .flatMap { case (newFails, newSuccs, _, newSigs) =>
+                            val nameMap = deps.dataFieldMap.view.mapValues(_.name).toMap
+
+                            val groupIdMapping =
+                              newRootSel.toList.map { case (df, rootCursor, _, idx) => idx -> (rootCursor, df) }.toMap
+
+                            val all = combineSplit(newFails, newSuccs)
+                            val l: List[(BigInt, List[(NodeMeta, Option[Any])])] =
+                              all.toList.groupBy { case (m, _) => m.cursorGroup }.toList
+
+                            // println("performing new stitch $$$$$$$$$$$$$$$$$$")
+                            val recombined: JsonObject =
+                              l
+                                .map { case (group, results) =>
+                                  val (rootCursor, df) = groupIdMapping(group.toInt)
+                                  // TODO
+                                  // reconstructField(df.selection, results)
+                                  val rc =
+                                    reconstructSelection(results.map { case (m, x) => m.relativePath -> x }, NonEmptyList.one(df))
+
+                                  (rc, rootCursor.ided(df.id))
+                                }
+                                .foldLeft(prevOutput) { case (accum, (obj, pos)) =>
+                                  // println("stitch iteration ###################")
+                                  // println(accum)
+                                  // this object has one entry, the resolved field itself
+                                  val hack = obj.toMap.head._2
+                                  // println(s"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ${pos.path.map(_.asInstanceOf[Ided].id).map(nameMap.apply).mkString_("->")}")
+                                  // println(hack)
+                                  stitchInto(accum.asJson, hack, pos, nameMap).asObject.get
+                                }
+
+                            val withNew = newSigs ++ activeSigs
+                            val garbageCollected = withNew -- meta.toRemove
+
+                            meta.toRemove.toList
+                              .traverse(x => streamResourceAlg.traverse_(_.remove(x)))
+                              .as((recombined, garbageCollected))
+                          }
+                      }
+                  }
+                  .map(_.getOrElse((initialOutput, activeSigs)))
+              }
+              .map { case (j, _) => j }
+        }
+      }
+  }
 
   def runStreamed[F[_]: Statistics](
       rootInput: Any,
       rootSel: NonEmptyList[PreparedField[F, Any]],
       schemaState: SchemaState[F]
   )(implicit F: Async[F]): fs2.Stream[F, JsonObject] =
-    SubscriptionSupervisor[F](schemaState).flatMap { implicit streamResouceAlg =>
-      def runStreamIt(
-          root: NonEmptyList[(PreparedField[F, Any], Chain[EvalNode])]
-      ): F[(Chain[EvalFailure], Chain[EvalNode], Batching[F], Map[BigInt, (Cursor, Any, PreparedDataField[F, Any, Any])])] =
-        SignalMetadataAccumulator[F].flatMap { accumulator =>
-          val rootFields = root.map { case (k, _) => k }
-          for {
-            costTree <- Planner.costTree[F](rootFields)
-            plan = Planner.plan(costTree)
-            executionDeps = Batching.plan[F](rootFields, plan)
-            (fails, succs) <- interpret[F](root, executionDeps, schemaState, Some(accumulator)).run
-            s <- accumulator.getState
-          } yield (fails, succs, executionDeps, s)
-        }
-
-      // first iteration
-      fs2.Stream
-        .eval(runStreamIt(rootSel.map((_, Chain(EvalNode.empty(rootInput, BigInt(1)))))))
-        .flatMap { case (initialFails, initialSuccs, deps, initialSignals) =>
-          val c = combineSplit(initialFails, initialSuccs).toList.map { case (m, v) => m.absolutePath -> v }
-
-          fs2.Stream(reconstructSelection(c, rootSel)).flatMap { initialOutput =>
-            fs2.Stream.emit(initialOutput) ++
-              streamResouceAlg.changeLog
-                .evalScan((initialOutput, initialSignals)) { case ((prevOutput, activeSigs), changes) =>
-                  // remove dead nodes (concurrent access can cause dead updates to linger)
-                  changes
-                    .filter { case (k, _) => activeSigs.contains(k) }
-                    .toNel
-                    .flatTraverse { activeChanges =>
-                      val s = activeChanges.toList.map { case (k, _) => k }.toSet
-                      val allSigNodes = activeSigs.toList.map { case (k, (cursor, _, df)) => (cursor.ided(df.id), k) }
-                      val meta = computeMetadata(allSigNodes, s)
-                      val rootNodes: List[(BigInt, Any)] = activeChanges.filter { case (k, _) => meta.hcsa.contains(k) }
-                      val prepaedRoots =
-                        rootNodes.mapWithIndex { case ((id, input), idx) =>
-                          val (cursor, _, field) = activeSigs(id)
-                          val cursorGroup = BigInt(idx)
-                          (field, cursor, Chain(EvalNode.startAt(input, cursorGroup, cursor)), cursorGroup)
-                        }
-
-                      prepaedRoots.toNel
-                        .traverse { newRootSel =>
-                          runStreamIt(newRootSel.map { case (df, _, inputs, _) => (df, inputs) })
-                            .flatMap { case (newFails, newSuccs, _, newSigs) =>
-                              val nameMap = deps.dataFieldMap.view.mapValues(_.name).toMap
-
-                              val groupIdMapping =
-                                newRootSel.toList.map { case (df, rootCursor, _, idx) => idx -> (rootCursor, df) }.toMap
-
-                              val all = combineSplit(newFails, newSuccs)
-                              val l: List[(BigInt, List[(NodeMeta, Option[Any])])] =
-                                all.toList.groupBy { case (m, _) => m.cursorGroup }.toList
-
-                              // println("performing new stitch $$$$$$$$$$$$$$$$$$")
-                              val recombined: JsonObject =
-                                l
-                                  .map { case (group, results) =>
-                                    val (rootCursor, df) = groupIdMapping(group.toInt)
-                                    // TODO
-                                    // reconstructField(df.selection, results)
-                                    val rc =
-                                      reconstructSelection(results.map { case (m, x) => m.relativePath -> x }, NonEmptyList.one(df))
-
-                                    (rc, rootCursor.ided(df.id))
-                                  }
-                                  .foldLeft(prevOutput) { case (accum, (obj, pos)) =>
-                                    // println("stitch iteration ###################")
-                                    // println(accum)
-                                    // this object has one entry, the resolved field itself
-                                    val hack = obj.toMap.head._2
-                                    // println(s"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ${pos.path.map(_.asInstanceOf[Ided].id).map(nameMap.apply).mkString_("->")}")
-                                    // println(hack)
-                                    stitchInto(accum.asJson, hack, pos, nameMap).asObject.get
-                                  }
-
-                              val withNew = newSigs ++ activeSigs
-                              val garbageCollected = withNew -- meta.toRemove
-
-                              meta.toRemove.toList
-                                .traverse(streamResouceAlg.remove)
-                                .as((recombined, garbageCollected))
-                            }
-                        }
-                    }
-                    .map(_.getOrElse((initialOutput, activeSigs)))
-                }
-                .map { case (j, _) => j }
-          }
-        }
+    SubscriptionSupervisor[F](schemaState).flatMap { streamResouceAlg =>
+      constructStream[F](rootInput, rootSel, schemaState, Some(streamResouceAlg))
     }
+
+  def runSync[F[_]: Async: Statistics](
+      rootInput: Any,
+      rootSel: NonEmptyList[PreparedField[F, Any]],
+      schemaState: SchemaState[F]
+  ): F[JsonObject] =
+    constructStream[F](rootInput, rootSel, schemaState, None).take(1).compile.lastOrError
 
   def computeToRemove(nodes: List[(Cursor, BigInt)], s: Set[BigInt]): Set[BigInt] = {
     import Chain._
@@ -430,7 +441,7 @@ object Interpreter {
             // join
             // We are the final submitter, start the computation
             case FinalSubmission(inputs) =>
-              val in = inputs.toList.asInstanceOf[Chain[(Int, Chain[EvalNode])]]
+              val in = Chain.fromSeq(inputs.toList)
 
               val inputLst = in
 
