@@ -56,14 +56,14 @@ object Interpreter {
 
   // TODO also handle the rest of the EvalFailure structure
   def combineSplit(fails: Chain[EvalFailure], succs: Chain[EvalNode]): Chain[(NodeMeta, Option[Any])] =
-    fails.flatMap { x => println(x); x.meta }.map(m => (m, None)) ++ succs.map(n => (n.meta, Some(n.value)))
+    fails.flatMap(_.meta).map(m => (m, None)) ++ succs.map(n => (n.meta, Some(n.value)))
 
   def constructStream[F[_]: Statistics](
       rootInput: Any,
       rootSel: NonEmptyList[PreparedField[F, Any]],
       schemaState: SchemaState[F],
       streamResourceAlg: Option[SubscriptionSupervisor[F]]
-  )(implicit F: Async[F]): fs2.Stream[F, JsonObject] = {
+  )(implicit F: Async[F]): fs2.Stream[F, (Chain[EvalFailure], JsonObject)] = {
     val changeLog = fs2.Stream.fromOption(streamResourceAlg).flatMap(_.changeLog)
 
     val accumulatorF = streamResourceAlg.traverse(implicit alg => SignalMetadataAccumulator[F])
@@ -92,9 +92,9 @@ object Interpreter {
         val c = combineSplit(initialFails, initialSuccs).toList.map { case (m, v) => m.absolutePath -> v }
 
         fs2.Stream(reconstructSelection(c, rootSel)).flatMap { initialOutput =>
-          fs2.Stream.emit(initialOutput) ++
+          fs2.Stream.emit((initialFails, initialOutput)) ++
             changeLog
-              .evalScan((initialOutput, initialSignals)) { case ((prevOutput, activeSigs), changes) =>
+              .evalMapAccumulate((initialOutput, initialSignals)) { case ((prevOutput, activeSigs), changes) =>
                 // remove dead nodes (concurrent access can cause dead updates to linger)
                 changes
                   .filter { case (k, _) => activeSigs.contains(k) }
@@ -149,15 +149,18 @@ object Interpreter {
                             val withNew = newSigs ++ activeSigs
                             val garbageCollected = withNew -- meta.toRemove
 
+                            val o = ((recombined, garbageCollected), Some((newFails, recombined)))
+
                             meta.toRemove.toList
                               .traverse(x => streamResourceAlg.traverse_(_.remove(x)))
-                              .as((recombined, garbageCollected))
+                              .as(o)
                           }
                       }
                   }
-                  .map(_.getOrElse((initialOutput, activeSigs)))
+                  .map(_.getOrElse(((initialOutput, activeSigs), None)))
               }
-              .map { case (j, _) => j }
+              .map { case (_, x) => x }
+              .unNone
         }
       }
   }
@@ -166,7 +169,7 @@ object Interpreter {
       rootInput: Any,
       rootSel: NonEmptyList[PreparedField[F, Any]],
       schemaState: SchemaState[F]
-  )(implicit F: Async[F]): fs2.Stream[F, JsonObject] =
+  )(implicit F: Async[F]): fs2.Stream[F, (Chain[EvalFailure], JsonObject)] =
     SubscriptionSupervisor[F](schemaState).flatMap { streamResouceAlg =>
       constructStream[F](rootInput, rootSel, schemaState, Some(streamResouceAlg))
     }
@@ -175,7 +178,7 @@ object Interpreter {
       rootInput: Any,
       rootSel: NonEmptyList[PreparedField[F, Any]],
       schemaState: SchemaState[F]
-  ): F[JsonObject] =
+  ): F[(Chain[EvalFailure], JsonObject)] =
     constructStream[F](rootInput, rootSel, schemaState, None).take(1).compile.lastOrError
 
   def computeToRemove(nodes: List[(Cursor, BigInt)], s: Set[BigInt]): Set[BigInt] = {
