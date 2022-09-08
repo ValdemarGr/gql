@@ -633,7 +633,12 @@ query withNestedFragments {
 
             interpreter.Interpreter
               .runStreamed[F]((), x, schema.state)
-              .evalMap(x => C.println(s"got new subtree $x"))
+              .evalMap { case (failures, x) =>
+                C.println(s"got new subtree") >>
+                  C.println("errors:") >>
+                  C.println(ResultEmitter.formatErrors(failures)) >>
+                  C.println(x.toString())
+              }
               .take(10)
               .compile
               .drain
