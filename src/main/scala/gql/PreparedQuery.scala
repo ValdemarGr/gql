@@ -44,7 +44,7 @@ object PreparedQuery {
 
   final case class PreparedList[F[_], A](of: Prepared[F, A]) extends Prepared[F, A]
 
-  final case class PreparedLeaf[F[_], A](name: String, encode: A => Either[String, Json]) extends Prepared[F, A]
+  final case class PreparedLeaf[F[_], A](name: String, encode: A => Json) extends Prepared[F, A]
 
   final case class PositionalError(position: PrepCursor, caret: Option[Caret], message: String)
 
@@ -234,9 +234,9 @@ object PreparedQuery {
               .map(Selection(_))
               .map(x => PreparedList(x).asInstanceOf[Prepared[G, Any]])
           case (e: Enum[G, Any], None) =>
-            F.pure(PreparedLeaf(e.name, x => Right(Json.fromString(e.encoder(x).get))))
+            F.pure(PreparedLeaf(e.name, x => Json.fromString(e.encoder(x).get)))
           case (s: Scalar[G, Any], None) =>
-            F.pure(PreparedLeaf(s.name, x => Right(s.encoder(x))))
+            F.pure(PreparedLeaf(s.name, s.encoder.apply))
           case (o, Some(_)) => raise(s"type ${friendlyName[G, Any](o)} cannot have selections", Some(selCaret))
           case (o, None)    => raise(s"object like type ${friendlyName[G, Any](o)} must have a selection", Some(selCaret))
         }

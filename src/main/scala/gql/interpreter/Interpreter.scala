@@ -19,6 +19,45 @@ import gql._
 import gql.out._
 
 object Interpreter {
+  type BatchKey = Any
+  type BatchValue = Any
+  type BatchResult = Any
+
+  sealed trait ErrorPath
+  object ErrorPath {
+    final case class Field(name: String) extends ErrorPath
+    final case class Index(index: Int) extends ErrorPath
+  }
+
+  sealed trait ErrorType
+  object ErrorType {
+    final case class BatchResolutionError(
+        paths: Chain[ErrorPath],
+        exception: Throwable,
+        keys: Set[Any]
+    )
+    final case class BatchReassociationError(
+        path: ErrorPath,
+        exception: Throwable,
+        resultMap: Map[BatchKey, BatchValue]
+    )
+    final case class BatchMissingKeyError(
+        path: ErrorPath,
+        resultMap: Map[BatchKey, BatchValue],
+        key: BatchKey
+    )
+  }
+
+  final case class Error(
+      paths: Chain[ErrorPath],
+      userMessage: String
+  )
+
+  final case class Result(
+      errors: Chain[EvalFailure],
+      data: Json
+  )
+
   def run[F[_]: Async: Statistics](
       rootInput: Any,
       rootSel: NonEmptyList[PreparedField[F, Any]],
@@ -55,8 +94,8 @@ object Interpreter {
     }
 
   // TODO also handle the rest of the EvalFailure structure
-  def combineSplit(fails: Chain[EvalFailure], succs: Chain[EvalNode]): Chain[(NodeMeta, Option[Any])] =
-    fails.flatMap(_.meta).map(m => (m, None)) ++ succs.map(n => (n.meta, Some(n.value)))
+  def combineSplit(fails: Chain[EvalFailure], succs: Chain[EvalNode]): Chain[(NodeMeta, Json)] =
+    fails.flatMap(_.meta).map(m => (m, Json.Null)) ++ succs.map(n => (n.meta, n.value.asInstanceOf[Json]))
 
   def constructStream[F[_]: Statistics](
       rootInput: Any,
@@ -89,6 +128,8 @@ object Interpreter {
     fs2.Stream
       .eval(runStreamIt(rootSel.map((_, Chain(EvalNode.empty(rootInput, BigInt(1)))))))
       .flatMap { case (initialFails, initialSuccs, deps, initialSignals) =>
+        val nameMap = deps.dataFieldMap.view.mapValues(_.name).toMap
+
         val c = combineSplit(initialFails, initialSuccs).toList.map { case (m, v) => m.absolutePath -> v }
 
         fs2.Stream(reconstructSelection(c, rootSel)).flatMap { initialOutput =>
@@ -115,13 +156,11 @@ object Interpreter {
                       .traverse { newRootSel =>
                         runStreamIt(newRootSel.map { case (df, _, inputs, _) => (df, inputs) })
                           .flatMap { case (newFails, newSuccs, _, newSigs) =>
-                            val nameMap = deps.dataFieldMap.view.mapValues(_.name).toMap
-
                             val groupIdMapping =
                               newRootSel.toList.map { case (df, rootCursor, _, idx) => idx -> (rootCursor, df) }.toMap
 
                             val all = combineSplit(newFails, newSuccs)
-                            val l: List[(BigInt, List[(NodeMeta, Option[Any])])] =
+                            val l: List[(BigInt, List[(NodeMeta, Json)])] =
                               all.toList.groupBy { case (m, _) => m.cursorGroup }.toList
 
                             // println("performing new stitch $$$$$$$$$$$$$$$$$$")
@@ -237,10 +276,6 @@ object Interpreter {
             })
             .map(_.getOrElse(NoState))
 
-        type BatchKey = Any
-        type BatchValue = Any
-        type BatchResult = Any
-
         final case class NodeBatch(
             inputs: Chain[(NodeMeta, Batch[F, BatchKey, BatchValue, BatchResult])],
             resolve: Set[BatchKey] => W[Map[BatchKey, BatchValue]]
@@ -341,13 +376,13 @@ object Interpreter {
         def startNext(df: PreparedDataField[F, Any, Any], outputs: Chain[EvalNode]): W[Chain[EvalNode]] = {
           def evalSel(s: Prepared[F, Any], in: Chain[EvalNode]): W[Chain[EvalNode]] = W.defer {
             s match {
-              case PreparedLeaf(name, enc) =>
-                in.flatTraverse { en =>
-                  enc(en.value) match {
-                    case Left(err) => fail(EvalFailure(Chain(en.meta), Some(err), s"during leaf $name decoding", None))
-                    case Right(x)  => W.pure(Chain(en.setValue(x)))
-                  }
-                }
+              // case PreparedLeaf(name, enc) => W.pure(in.map(en => enc(en.value)))
+              // in.flatTraverse { en =>
+              //   // enc(en.value) match {
+              //   //   case Left(err) => fail(EvalFailure(Chain(en.meta), Some(err), s"during leaf $name decoding", None))
+              //   //   case Right(x)  => W.pure(Chain(en.setValue(x)))
+              //   // }
+              // }
               case Selection(fields) => runFields(fields, in)
               case PreparedList(of) =>
                 val partitioned =
@@ -461,25 +496,28 @@ object Interpreter {
     }
   }
 
-  def reconstructField[F[_]](p: Prepared[F, Any], cursors: List[(Cursor, Option[Any])]): Json =
+  def reconstructField[F[_]](p: Prepared[F, Any], cursors: List[(Cursor, Json)]): Json =
     p match {
       case PreparedLeaf(_, _) =>
         cursors match {
-          case (_, x) :: Nil => x.map(_.asInstanceOf[Json]).getOrElse(Json.Null)
+          case (_, x) :: Nil => x
           case _             => ???
         }
       case PreparedList(of) =>
         Json.fromValues(
-          groupNodeValues(cursors).toList.map {
-            case (Index(_), tl) => reconstructField[F](of, tl)
-            case _              => ???
-          }
+          groupNodeValues(cursors).toList
+            .map {
+              case (Index(i), tl) => i -> tl
+              case _              => ???
+            }
+            .sortBy { case (i, _) => i }
+            .map { case (_, tl) => reconstructField[F](of, tl) }
         )
       case Selection(fields) => reconstructSelection(cursors, fields).asJson
     }
 
   def reconstructSelection[F[_]](
-      levelCursors: List[(Cursor, Option[Any])],
+      levelCursors: List[(Cursor, Json)],
       sel: NonEmptyList[PreparedField[F, Any]]
   ): JsonObject = {
     val m = groupNodeValues(levelCursors)

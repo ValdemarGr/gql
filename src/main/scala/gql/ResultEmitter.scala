@@ -7,6 +7,11 @@ import io.circe._
 import io.circe.syntax._
 
 object ResultEmitter {
+  final case class Result(
+    outputObject: Json,
+    exceptions: Chain[Throwable],
+  )
+
   def formatErrors(xs: Chain[EvalFailure]) =
     Json.arr(
       xs.flatMap { ef =>
@@ -19,4 +24,7 @@ object ResultEmitter {
         }
       }.toList: _*
     )
+
+  // def getExceptions(xs: Chain[EvalFailure]) =
+  //   xs.map ( ef => )
 }

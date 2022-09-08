@@ -5,10 +5,14 @@ import fs2.Stream
 import cats.implicits._
 import cats.effect._
 import io.circe._
+import io.circe.syntax._
 import cats.data._
-import gql.interpreter.Interpreter
+import gql.interpreter._
 
 object Execute {
+
+  // def getExceptions(xs: Chain[EvalFailure]) =
+  //   xs.map ( ef => )
   sealed trait ExecutorOutcome[F[_], Q, M, S]
   object ExecutorOutcome {
     final case class ValidationError[F[_], Q, M, S](msg: String) extends ExecutorOutcome[F, Q, M, S]
@@ -38,4 +42,16 @@ object Execute {
   //       }
   //   }
   // }
+  def formatErrors(xs: Chain[EvalFailure]) =
+    Json.arr(
+      xs.flatMap { ef =>
+        ef.meta.map { nm =>
+          JsonObject(
+            "message" -> Json.fromString(ef.error.getOrElse("internal error")),
+            "locations" -> Json.arr(nm.absolutePath.path.map(x => Json.fromString(x.toString())).toList: _*)
+            // "path" -> nm.asJson
+          ).asJson
+        }
+      }.toList: _*
+    )
 }
