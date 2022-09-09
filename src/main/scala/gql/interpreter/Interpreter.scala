@@ -46,6 +46,22 @@ object Interpreter {
         resultMap: Map[BatchKey, BatchValue],
         key: BatchKey
     )
+    final case class BatchPartitioningError(
+        path: ErrorPath,
+        exception: Throwable,
+        input: Any
+    )
+    final case class UnknownEffectResolutionError(
+        path: ErrorPath,
+        exception: Throwable,
+        input: Any
+    )
+    final case class KnownEffectResolutionError(
+        path: ErrorPath,
+        exception: Throwable,
+        input: Any,
+        userError: String
+    )
   }
 
   final case class Error(
@@ -94,8 +110,8 @@ object Interpreter {
     }
 
   // TODO also handle the rest of the EvalFailure structure
-  def combineSplit(fails: Chain[EvalFailure], succs: Chain[EvalNode]): Chain[(NodeMeta, Json)] =
-    fails.flatMap(_.meta).map(m => (m, Json.Null)) ++ succs.map(n => (n.meta, n.value.asInstanceOf[Json]))
+  def combineSplit(fails: Chain[EvalFailure], succs: Chain[EvalNode[Json]]): Chain[(NodeMeta, Json)] =
+    fails.flatMap(_.meta).map(m => (m, Json.Null)) ++ succs.map(n => (n.meta, n.value))
 
   def constructStream[F[_]: Statistics](
       rootInput: Any,
@@ -108,8 +124,8 @@ object Interpreter {
     val accumulatorF = streamResourceAlg.traverse(implicit alg => SignalMetadataAccumulator[F])
 
     def runStreamIt(
-        root: NonEmptyList[(PreparedField[F, Any], Chain[EvalNode])]
-    ): F[(Chain[EvalFailure], Chain[EvalNode], Batching[F], Map[BigInt, (Cursor, Any, PreparedDataField[F, Any, Any])])] =
+        root: NonEmptyList[(PreparedField[F, Any], Chain[EvalNode[Any]])]
+    ): F[(Chain[EvalFailure], Chain[EvalNode[Json]], Batching[F], Map[BigInt, (Cursor, Any, PreparedDataField[F, Any, Any])])] =
       accumulatorF.flatMap { accumulatorOpt =>
         val rootFields = root.map { case (k, _) => k }
         for {
@@ -253,11 +269,11 @@ object Interpreter {
     nvs.groupMap { case (c, _) => c.head } { case (c, v) => (c.tail, v) }
 
   def interpret[F[_]](
-      rootSel: NonEmptyList[(PreparedField[F, Any], Chain[EvalNode])],
+      rootSel: NonEmptyList[(PreparedField[F, Any], Chain[EvalNode[Any]])],
       executionDeps: Batching[F],
       schemaState: SchemaState[F],
       signalSubmission: Option[SignalMetadataAccumulator[F]] = None
-  )(implicit F: Async[F], stats: Statistics[F]): WriterT[F, Chain[EvalFailure], Chain[EvalNode]] = {
+  )(implicit F: Async[F], stats: Statistics[F]): WriterT[F, Chain[EvalFailure], Chain[EvalNode[Json]]] = {
     type W[A] = WriterT[F, Chain[EvalFailure], A]
     val W = Async[W]
     val lift: F ~> W = WriterT.liftK[F, Chain[EvalFailure]]
@@ -265,7 +281,7 @@ object Interpreter {
 
     Supervisor[W].use { sup =>
       executionDeps.batchExecutionState[W].flatMap { batchStateMap =>
-        def submitAndMaybeStart(nodeId: Int, input: Chain[EvalNode]): W[StateSubmissionOutcome] =
+        def submitAndMaybeStart(nodeId: Int, input: Chain[EvalNode[Any]]): W[StateSubmissionOutcome] =
           batchStateMap
             .get(nodeId)
             .traverse(_.modify { s =>
@@ -284,14 +300,14 @@ object Interpreter {
         def submit(name: String, duration: FiniteDuration, size: Int): W[Unit] =
           sup.supervise(WriterT.liftF(stats.updateStats(name, duration, size))).void
 
-        def runSignal(df: PreparedDataField[F, Any, Any], sf: SignalResolver[F, Any, Any, Any, Any], inputs: Chain[EvalNode]) =
+        def runSignal(df: PreparedDataField[F, Any, Any], sf: SignalResolver[F, Any, Any, Any, Any], inputs: Chain[EvalNode[Any]]) =
           inputs
             .parFlatTraverse { in =>
               val hdF =
-                lift(sf.head(in.value)).map(v => Chain(in.copy(value = (in.value, v))))
+                lift(sf.head(in.value)).map(v => Chain(in.copy(value = (in.value, v).asInstanceOf[Any])))
 
-              def failHeadF(e: Throwable) =
-                fail[EvalNode](EvalFailure(Chain(in.meta), None, "during signal head resolution", Some(e)))
+              def failHeadF[A](e: Throwable) =
+                fail[EvalNode[A]](EvalFailure(Chain(in.meta), None, "during signal head resolution", Some(e)))
 
               signalSubmission match {
                 case None => hdF.handleErrorWith(failHeadF)
@@ -299,7 +315,7 @@ object Interpreter {
                   lift(sf.tail(in.value)).attempt
                     .flatMap {
                       case Left(e) =>
-                        fail[EvalNode](EvalFailure(Chain(in.meta), None, "during signal tail resolution", Some(e)))
+                        fail[EvalNode[Any]](EvalFailure(Chain(in.meta), None, "during signal tail resolution", Some(e)))
                       case Right(dst) =>
                         // close in the initial value for tail Resolver[F, (I, T), A]
                         val df2 = df.copy(resolve = sf.resolver.contramap[Any]((in.value, _)))
@@ -318,8 +334,8 @@ object Interpreter {
 
         def runInputs(
             df: PreparedDataField[F, Any, Any],
-            inputs: Chain[EvalNode]
-        ): W[Either[Chain[EvalNode], NodeBatch]] = {
+            inputs: Chain[EvalNode[Any]]
+        ): W[Either[Chain[EvalNode[Any]], NodeBatch]] = {
           val n = executionDeps.nodeMap(df.id)
 
           df.resolve match {
@@ -330,7 +346,7 @@ object Interpreter {
 
                   lift(resolve(in.value)).timed
                     .flatMap {
-                      case (_, Left(e)) => fail[EvalNode](EvalFailure(Chain(next), Some(e), "during effect resolution", None))
+                      case (_, Left(e)) => fail[EvalNode[Any]](EvalFailure(Chain(next), Some(e), "during effect resolution", None))
                       case (dur, Right(x)) =>
                         val out = Chain(EvalNode(next, x))
                         submit(n.name, dur, 1).as(out)
@@ -366,24 +382,18 @@ object Interpreter {
           }
         }
 
-        def runFields(dfs: NonEmptyList[PreparedField[F, Any]], in: Chain[EvalNode]): W[Chain[EvalNode]] =
+        def runFields(dfs: NonEmptyList[PreparedField[F, Any]], in: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] =
           Chain.fromSeq(dfs.toList).parFlatTraverse {
             case PreparedFragField(id, specify, selection) =>
               runFields(selection.fields, in.flatMap(x => Chain.fromOption(specify(x.value)).map(y => x.setValue(y))))
             case df @ PreparedDataField(id, name, _, _, _) => runDataField(df, in)
           }
 
-        def startNext(df: PreparedDataField[F, Any, Any], outputs: Chain[EvalNode]): W[Chain[EvalNode]] = {
-          def evalSel(s: Prepared[F, Any], in: Chain[EvalNode]): W[Chain[EvalNode]] = W.defer {
+        def startNext(df: PreparedDataField[F, Any, Any], outputs: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] = {
+          def evalSel(s: Prepared[F, Any], in: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] = W.defer {
             s match {
-              // case PreparedLeaf(name, enc) => W.pure(in.map(en => enc(en.value)))
-              // in.flatTraverse { en =>
-              //   // enc(en.value) match {
-              //   //   case Left(err) => fail(EvalFailure(Chain(en.meta), Some(err), s"during leaf $name decoding", None))
-              //   //   case Right(x)  => W.pure(Chain(en.setValue(x)))
-              //   // }
-              // }
-              case Selection(fields) => runFields(fields, in)
+              case PreparedLeaf(name, enc) => W.pure(in.map(en => en.setValue(enc(en.value))))
+              case Selection(fields)       => runFields(fields, in)
               case PreparedList(of) =>
                 val partitioned =
                   in.flatMap { nv =>
@@ -408,7 +418,7 @@ object Interpreter {
          *
          * 4. Finally, combines the results in parallel.
          */
-        def runDataInputs(datas: Chain[(PreparedDataField[F, Any, Any], Chain[EvalNode])]) = {
+        def runDataInputs(datas: Chain[(PreparedDataField[F, Any, Any], Chain[EvalNode[Any]])]): W[Chain[EvalNode[Json]]] = {
           val inputsResolved =
             datas.parTraverse { case (df, v) => runInputs(df, v).map(df -> _) }
 
@@ -434,7 +444,7 @@ object Interpreter {
                       .resolve(keys)
                       .flatMap { (resultLookup: Map[BatchKey, BatchValue]) =>
                         nec.toChain.parFlatTraverse { case (df, bn) =>
-                          val mappedValuesF: W[Chain[EvalNode]] = bn.inputs.parFlatTraverse { case (c, b) =>
+                          val mappedValuesF: W[Chain[EvalNode[Any]]] = bn.inputs.parFlatTraverse { case (c, b) =>
                             // find all results for this key
                             val lookupsF: W[Chain[(BatchKey, BatchValue)]] = Chain.fromSeq(b.keys).flatTraverse { (k: BatchKey) =>
                               resultLookup.get(k) match {
@@ -445,7 +455,9 @@ object Interpreter {
 
                             lookupsF.flatMap { keys =>
                               lift(b.post(keys.toList).map(res => Chain(EvalNode(c, res))))
-                                .handleErrorWith(e => fail[EvalNode](EvalFailure(Chain(c), None, "during batch post-resolution", Some(e))))
+                                .handleErrorWith(e =>
+                                  fail[EvalNode[Any]](EvalFailure(Chain(c), None, "during batch post-resolution", Some(e)))
+                                )
                             }
 
                           }
@@ -467,7 +479,7 @@ object Interpreter {
             }
         }
 
-        def runDataField(df: PreparedDataField[F, Any, Any], input: Chain[EvalNode]): W[Chain[EvalNode]] = W.defer {
+        def runDataField(df: PreparedDataField[F, Any, Any], input: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] = W.defer {
           // maybe join
           submitAndMaybeStart(df.id, input).flatMap {
             // No batching state, so just start

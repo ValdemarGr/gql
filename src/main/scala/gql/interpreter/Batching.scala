@@ -8,11 +8,11 @@ import cats.implicits._
 import cats._
 
 sealed trait StateSubmissionOutcome
-final case class FinalSubmission(accumulatedInputs: Map[Int, Chain[EvalNode]]) extends StateSubmissionOutcome
+final case class FinalSubmission(accumulatedInputs: Map[Int, Chain[EvalNode[Any]]]) extends StateSubmissionOutcome
 case object NoState extends StateSubmissionOutcome
 case object NotFinalSubmission extends StateSubmissionOutcome
 
-final case class BatchExecutionState(remainingInputs: Set[Int], inputMap: Map[Int, Chain[EvalNode]])
+final case class BatchExecutionState(remainingInputs: Set[Int], inputMap: Map[Int, Chain[EvalNode[Any]]])
 
 final case class Batching[F[_]](
     nodeMap: Map[Int, Planner.Node],
@@ -23,7 +23,7 @@ final case class Batching[F[_]](
     batches
       .flatTraverse { batch =>
         val l = batch.toList
-        F.ref(BatchExecutionState(l.toSet, Map.empty[Int, Chain[EvalNode]])).map(s => l.map(_ -> s))
+        F.ref(BatchExecutionState(l.toSet, Map.empty[Int, Chain[EvalNode[Any]]])).map(s => l.map(_ -> s))
       }
       .map(_.toMap)
 }

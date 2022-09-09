@@ -69,20 +69,15 @@ object NodeValue {
   def empty[A](value: A, stableId: BigInt) = startAt(value, stableId, Cursor.empty)
 }
 
-final case class EvalNode(meta: NodeMeta, value: Any) {
-  def setValue(value: Any): EvalNode = copy(value = value)
+final case class EvalNode[A](meta: NodeMeta, value: A) {
+  def setValue[B](value: B): EvalNode[B] = copy(value = value)
 
-  def modify(f: NodeMeta => NodeMeta): EvalNode = copy(meta = f(meta))
+  def modify(f: NodeMeta => NodeMeta): EvalNode[A] = copy(meta = f(meta))
 
-  def succeed(value: Any, f: NodeMeta => NodeMeta): EvalNode =
+  def succeed[B](value: B, f: NodeMeta => NodeMeta): EvalNode[B] =
     EvalNode(f(meta), value)
 
-  def succeed(value: Any): EvalNode = succeed(value, identity)
-
-  def fail(error: String, f: NodeMeta => NodeMeta): EvalNode =
-    EvalNode(f(meta), error)
-
-  def fail(error: String): EvalNode = fail(error, identity)
+  def succeed[B](value: B): EvalNode[B] = succeed(value, identity)
 }
 
 object EvalNode {
