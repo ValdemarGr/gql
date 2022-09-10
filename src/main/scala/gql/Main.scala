@@ -415,7 +415,7 @@ query withNestedFragments {
               "a" -> f(eff(x => F.raiseError[String](new Exception("testtt")))),
               "a2" -> f(arg[Int]("num", Some(42)))(pur { case (i, _) => i.a }),
               "b" -> f(eff(_.b)),
-              "sd" -> f(serverDataBatcher.traverse(_.b.map(i => Seq(i, i + 1, i * 2)))),
+              // "sd" -> f(serverDataBatcher.traverse(_.b.map(i => Seq(i, i + 1, i * 2)))),
               "c" -> f(eff(_.c.map(_.toSeq))),
               "nestedSignal" ->
                 f(nameStreamReference[F, Data[F], Data[F]](eff { case (i, _) => i.c.map(_.head) })(_ => F.unit)(i => F.pure(i.a))),

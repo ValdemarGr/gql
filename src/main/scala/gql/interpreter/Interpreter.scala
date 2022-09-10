@@ -35,33 +35,27 @@ object Interpreter {
         paths: Chain[ErrorPath],
         exception: Throwable,
         keys: Set[Any]
-    )
+    ) extends ErrorType
     final case class BatchReassociationError(
         path: ErrorPath,
         exception: Throwable,
         resultMap: Map[BatchKey, BatchValue]
-    )
+    ) extends ErrorType
     final case class BatchMissingKeyError(
         path: ErrorPath,
         resultMap: Map[BatchKey, BatchValue],
         key: BatchKey
-    )
+    ) extends ErrorType
     final case class BatchPartitioningError(
         path: ErrorPath,
-        exception: Throwable,
+        error: Either[Throwable, String],
         input: Any
-    )
-    final case class UnknownEffectResolutionError(
+    ) extends ErrorType
+    final case class EffectResolutionError(
         path: ErrorPath,
-        exception: Throwable,
+        error: Either[Throwable, String],
         input: Any
-    )
-    final case class KnownEffectResolutionError(
-        path: ErrorPath,
-        exception: Throwable,
-        input: Any,
-        userError: String
-    )
+    ) extends ErrorType
   }
 
   final case class Error(
@@ -273,13 +267,26 @@ object Interpreter {
       executionDeps: Batching[F],
       schemaState: SchemaState[F],
       signalSubmission: Option[SignalMetadataAccumulator[F]] = None
-  )(implicit F: Async[F], stats: Statistics[F]): WriterT[F, Chain[EvalFailure], Chain[EvalNode[Json]]] = {
-    type W[A] = WriterT[F, Chain[EvalFailure], A]
+  )(implicit F: Async[F], stats: Statistics[F]): WriterT[F, Chain[ErrorType], Chain[EvalNode[Json]]] = {
+    type W[A] = WriterT[F, Chain[ErrorType], A]
     val W = Async[W]
-    val lift: F ~> W = WriterT.liftK[F, Chain[EvalFailure]]
-    def fail[A](e: EvalFailure): W[Chain[A]] = WriterT.put(Chain.empty[A])(Chain.one(e))
+    type E = Chain[EvalNode[Any]]
+    val lift: F ~> W = WriterT.liftK[F, Chain[ErrorType]]
+    def fail[A](e: ErrorType): W[Chain[A]] = WriterT.put(Chain.empty[A])(Chain.one(e))
+    def failM[A](e: ErrorType)(implicit M: Monoid[A]): W[A] = WriterT.put(M.empty)(Chain.one(e))
 
-    Supervisor[W].use { sup =>
+    def liftAttemptUser[A](fa: EitherT[F, String, A]): W[Either[Either[Throwable, String], A]] =
+      lift(fa.value).attempt
+        .map {
+          case Left(err)        => Left(Left(err))
+          case Right(Left(err)) => Left(Right(err))
+          case Right(Right(x))  => Right(x)
+        }
+
+    def liftUser[A](fa: EitherT[F, String, A]): W[Either[String, A]] =
+      lift(fa.value)
+
+    Supervisor[F].mapK(lift).use { sup =>
       executionDeps.batchExecutionState[W].flatMap { batchStateMap =>
         def submitAndMaybeStart(nodeId: Int, input: Chain[EvalNode[Any]]): W[StateSubmissionOutcome] =
           batchStateMap
@@ -294,11 +301,14 @@ object Interpreter {
 
         final case class NodeBatch(
             inputs: Chain[(NodeMeta, Batch[F, BatchKey, BatchValue, BatchResult])],
-            resolve: Set[BatchKey] => W[Map[BatchKey, BatchValue]]
+            resolve: Set[BatchKey] => F[Map[BatchKey, BatchValue]]
         )
 
-        def submit(name: String, duration: FiniteDuration, size: Int): W[Unit] =
-          sup.supervise(WriterT.liftF(stats.updateStats(name, duration, size))).void
+        def submit(name: String, duration: FiniteDuration, size: Int): F[Unit] =
+          sup.supervise(stats.updateStats(name, duration, size)).void
+
+        def submitW(name: String, duration: FiniteDuration, size: Int): W[Unit] =
+          lift(submit(name, duration, size))
 
         def runSignal(df: PreparedDataField[F, Any, Any], sf: SignalResolver[F, Any, Any, Any, Any], inputs: Chain[EvalNode[Any]]) =
           inputs
@@ -344,14 +354,20 @@ object Interpreter {
                 .parFlatTraverse { in =>
                   val next = in.meta.ided(df.id)
 
-                  lift(resolve(in.value)).timed
-                    .flatMap {
-                      case (_, Left(e)) => fail[EvalNode[Any]](EvalFailure(Chain(next), Some(e), "during effect resolution", None))
-                      case (dur, Right(x)) =>
-                        val out = Chain(EvalNode(next, x))
-                        submit(n.name, dur, 1).as(out)
+                  liftAttemptUser(resolve(in.value)).timed
+                    .flatMap[E] {
+                      case (_, Left(e)) =>
+                        failM[E](
+                          ErrorType.EffectResolutionError(
+                            null,
+                            e,
+                            in.value
+                          )
+                        )
+                      case (dur, Right(v)) =>
+                        val out = Chain(EvalNode(next, v))
+                        submitW(n.name, dur, 1) as out
                     }
-                    .handleErrorWith(e => fail(EvalFailure(Chain(next), None, "during effect resolution", Some(e))))
                 }
                 .map(Left(_))
             case BatchResolver(batcher, partition) =>
@@ -360,9 +376,18 @@ object Interpreter {
               val partitioned: W[Chain[(NodeMeta, Batch[F, Any, Any, Any])]] = inputs.parFlatTraverse { in =>
                 val next = in.meta.ided(df.id)
 
-                lift(partition(in.value))
-                  .map(b => Chain((next, b)))
-                  .handleErrorWith(e => fail(EvalFailure(Chain(next), None, "during partitioning", Some(e))))
+                liftAttemptUser(partition(in.value))
+                  .flatMap {
+                    case Left(e) =>
+                      failM[Chain[(NodeMeta, Batch[F, Any, Any, Any])]](
+                        ErrorType.BatchPartitioningError(
+                          null,
+                          e,
+                          in.value
+                        )
+                      )
+                    case Right(b) => W.pure(Chain((next, b)))
+                  }
               }
 
               partitioned
@@ -371,7 +396,7 @@ object Interpreter {
                     NodeBatch(
                       zs,
                       xs =>
-                        lift(impl(xs)).timed
+                        impl(xs).timed
                           .flatMap { case (dur, value) =>
                             submit(Planner.makeBatchName(batcher), dur, xs.size) >> submit(n.name, dur, xs.size).as(value)
                           }
@@ -448,16 +473,18 @@ object Interpreter {
                             // find all results for this key
                             val lookupsF: W[Chain[(BatchKey, BatchValue)]] = Chain.fromSeq(b.keys).flatTraverse { (k: BatchKey) =>
                               resultLookup.get(k) match {
-                                case None    => fail[(BatchKey, BatchValue)](EvalFailure(Chain(c), None, "during batch resolution", None))
+                                case None =>
+                                  ??? // fail[(BatchKey, BatchValue)](EvalFailure(Chain(c), None, "during batch resolution", None))
                                 case Some(x) => W.pure(Chain(k -> x))
                               }
                             }
 
                             lookupsF.flatMap { keys =>
-                              lift(b.post(keys.toList).map(res => Chain(EvalNode(c, res))))
-                                .handleErrorWith(e =>
-                                  fail[EvalNode[Any]](EvalFailure(Chain(c), None, "during batch post-resolution", Some(e)))
-                                )
+                              ???
+                            // lift(b.post(keys.toList).map(res => Chain(EvalNode(c, res))).value)
+                            //   .handleErrorWith(e =>
+                            //     fail[EvalNode[Any]](EvalFailure(Chain(c), None, "during batch post-resolution", Some(e)))
+                            //   )
                             }
 
                           }
