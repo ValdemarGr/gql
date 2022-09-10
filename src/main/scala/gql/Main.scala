@@ -340,7 +340,7 @@ query withNestedFragments {
               "b" -> f(eff(_.b)),
               "sd" -> f(serverDataBatcher.traverse(x => IorT.liftF(x.b.map(i => Seq(i, i + 1, i * 2))))),
               "c" -> f(eff(_.c.map(_.toSeq))),
-              "doo" -> f(pur(_ => Vector.empty[String])),
+              "doo" -> f(pur(_ => Vector(Vector(Vector.empty[String])))),
               "nestedSignal" ->
                 f(
                   nameStreamReference[F, Data[F], Data[F]](eff { case (i, _) => i.c.map(_.head) })(_ => IorT.pure(()))(i =>

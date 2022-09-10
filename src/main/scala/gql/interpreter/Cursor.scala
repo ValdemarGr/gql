@@ -2,6 +2,7 @@ package gql.interpreter
 
 import cats.data._
 import cats.instances.stream
+import cats.kernel.Order
 
 sealed trait GraphArc
 object GraphArc {
@@ -17,6 +18,10 @@ final case class Cursor(path: Chain[GraphArc]) {
   def headOption = path.headOption
 
   def head = headOption.get
+
+  def lastOption = path.lastOption
+
+  def last = lastOption.get
 
   def tail = Cursor(Chain.fromOption(path.uncons).flatMap { case (_, tl) => tl })
 

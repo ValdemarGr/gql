@@ -367,13 +367,17 @@ object Interpreter {
               case PreparedLeaf(name, enc) => W.pure(in.map(en => en.setValue(enc(en.value))))
               case Selection(fields)       => runFields(fields, in)
               case PreparedList(of) =>
-                val partitioned =
-                  in.flatMap { nv =>
+                val (emties, continuations) =
+                  in.partitionEither { nv =>
                     val inner = Chain.fromSeq(nv.value.asInstanceOf[Seq[Any]])
 
-                    inner.mapWithIndex { case (v, i) => nv.succeed(v, _.index(i)) }
+                    NonEmptyChain.fromChain(inner) match {
+                      case None      => Left(nv.setValue(Json.arr()))
+                      case Some(nec) => Right(nec.mapWithIndex { case (v, i) => nv.succeed(v, _.index(i)) })
+                    }
                   }
-                evalSel(of, partitioned)
+
+                evalSel(of, continuations.flatMap(_.toChain)).map(_ ++ emties)
               case PreparedOption(of) =>
                 val (nulls, continuations) =
                   in.partitionEither { nv =>
@@ -501,33 +505,24 @@ object Interpreter {
   }
 
   def reconstructField[F[_]](p: Prepared[F, Any], cursors: List[(Cursor, Json)]): Json = {
-    // We first need to determine if the result is just null
-    // To do so, there must be one path, and it must be empty
     val m = groupNodeValues2(cursors)
-    val terminal = m.get(None)
-    terminal match {
-      // case Some(t) if m.size == 1 && t.size == 1 && t.exists { case (_, o) => o.isEmpty } => Json.Null
+
+    m.get(None) match {
+      case Some(t) if m.size == 1 && t.forall { case (_, o) => o.isNull } => Json.Null
       case _ =>
         p match {
           case PreparedLeaf(_, _) =>
-            cursors
-              .collectFirst { case (_, x) if !x.isNull => x }
-              .getOrElse(Json.Null)
+            cursors.collectFirst { case (_, x) if !x.isNull => x }.get
           case PreparedList(of) =>
-            Json.fromValues(
-              m.toList
-                .collect { case (Some(GraphArc.Index(i)), tl) => i -> tl }
-                .sortBy { case (i, _) => i }
-                .map { case (_, tl) => reconstructField[F](of, tl) }
-            )
+            m.toVector
+              .collect { case (Some(GraphArc.Index(i)), tl) => i -> tl }
+              .sortBy { case (i, _) => i }
+              .map { case (_, tl) => reconstructField[F](of, tl) }
+              .asJson
           case PreparedOption(of) =>
-            terminal match {
-              case Some(t) if m.size == 1 && t.forall { case (_, o) => o.isNull } =>
-                Json.Null
-              case _ =>
-                reconstructField[F](of, cursors)
-            }
-          case Selection(fields) => _reconstructSelection(cursors, fields, m).asJson
+            reconstructField[F](of, cursors)
+          case Selection(fields) =>
+            _reconstructSelection(cursors, fields, m).asJson
         }
     }
   }
@@ -544,7 +539,7 @@ object Interpreter {
             _reconstructSelection(levelCursors, selection.fields, m)
           case df @ PreparedDataField(_, name, _, selection, _) =>
             JsonObject(
-              name -> m.get(Some(GraphArc.Field(name))).map(reconstructField(selection, _)).getOrElse(Json.Null)
+              name -> reconstructField(selection, m.get(Some(GraphArc.Field(name))).toList.flatten)
             )
         }
       }
@@ -556,4 +551,380 @@ object Interpreter {
       sel: NonEmptyList[PreparedField[F, Any]]
   ): JsonObject =
     _reconstructSelection(levelCursors, sel, groupNodeValues2(levelCursors))
+
+  // def interpret2[F[_]](
+  //     rootSel: NonEmptyList[(PreparedField[F, Any], Chain[EvalNode[Any]])],
+  //     executionDeps: Batching[F],
+  //     schemaState: SchemaState[F],
+  //     signalSubmission: Option[SignalMetadataAccumulator[F]] = None
+  // )(implicit F: Async[F], stats: Statistics[F]): WriterT[F, Chain[EvalFailure], Json] = {
+  //   type W[A] = WriterT[F, Chain[EvalFailure], A]
+  //   val W = Async[W]
+  //   type E = Chain[EvalNode[Any]]
+  //   val lift: F ~> W = WriterT.liftK[F, Chain[EvalFailure]]
+
+  //   def runDataField(df: PreparedDataField[F, Any, Any], input: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] = ???
+  //   // W.defer {
+  //   // // maybe join
+  //   // submitAndMaybeStart(df.id, input).flatMap {
+  //   //   // No batching state, so just start
+  //   //   case NoState => runDataInputs(Chain(df -> input))
+  //   //   // join
+  //   //   // There is a batch state, but we didn't add the final input
+  //   //   // Stop here, someone else will start the batch
+  //   //   case NotFinalSubmission => W.pure(Chain.empty)
+  //   //   // join
+  //   //   // We are the final submitter, start the computation
+  //   //   case FinalSubmission(inputs) =>
+  //   //     val in = Chain.fromSeq(inputs.toList)
+
+  //   //     val inputLst = in
+
+  //   //     val withDfs = inputLst.map { case (k, v) => executionDeps.dataFieldMap(k) -> v }
+
+  //   //     runDataInputs(withDfs)
+  //   // }
+  //   // }
+
+  //   def runFields(dfs: NonEmptyList[PreparedField[F, Any]], in: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] = {
+  //     Chain.fromSeq(dfs.toList).flatTraverse {
+  //       case PreparedFragField(id, specify, selection) =>
+  //         runFields(selection.fields, in.flatMap(x => Chain.fromOption(specify(x.value)).map(y => x.setValue(y))))
+  //       case df @ PreparedDataField(id, name, _, _, _) => runDataField(df, in)
+  //     }
+  //     // def go(dfs: NonEmptyList[PreparedField[F, Any]], in: Chain[EvalNode[Any]]): W[Chain[(String, Chain[Json])]] = {
+  //     //   Chain.fromSeq(dfs.toList).flatTraverse {
+  //     //     case PreparedFragField(id, specify, selection) =>
+  //     //       go(selection.fields, in.flatMap(x => Chain.fromOption(specify(x.value)).map(y => x.setValue(y))))
+  //     //     case df @ PreparedDataField(id, name, _, _, _) => runDataField(df, in)
+  //     //   }
+  //     // }
+  //     // val o = go(dfs, in)
+  //   }
+
+  //   def startNext(df: PreparedDataField[F, Any, Any], outputs: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] = {
+  //     def evalSel(s: Prepared[F, Any], in: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] = W.defer {
+  //       s match {
+  //         case PreparedLeaf(name, enc) => W.pure(in.map(en => en.setValue(enc(en.value))))
+  //         case Selection(fields)       =>
+  //           runFields(fields, in)
+  //         case PreparedList(of) =>
+  //           val partitioned =
+  //             in.flatMap { nv =>
+  //               val inner = Chain.fromSeq(nv.value.asInstanceOf[Seq[Any]])
+
+  //               inner.mapWithIndex { case (v, i) => nv.succeed(v, _.index(i)) }
+  //             }
+  //           evalSel(of, partitioned).map { res =>
+  //             Chain.fromSeq(
+  //               res.toList
+  //                 .groupMap(x => x.cursorGroup.relativePath.head)(x => x.modify(_.copy(relativePath = x.cursorGroup.relativePath.tail)))
+  //                 .values
+  //                 .toList
+  //                 .map { same =>
+  //                   val n = same.toNel.get
+  //                   n.head.setValue(same.map(_.value).asJson)
+  //                 }
+  //             )
+  //           }
+  //         case PreparedOption(of) =>
+  //           val (nulls, continuations) =
+  //             in.partitionEither { nv =>
+  //               val inner = nv.value.asInstanceOf[Option[Any]]
+
+  //               inner match {
+  //                 case None    => Left(nv.setValue(Json.Null))
+  //                 case Some(v) => Right(nv.setValue(v))
+  //               }
+  //             }
+  //           evalSel(of, continuations).map(_ ++ nulls)
+  //       }
+  //     }
+
+  //     evalSel(df.selection, outputs)
+  //   }
+  //   ???
+
+  //   // def failM[A](e: EvalFailure)(implicit M: Monoid[A]): W[A] = WriterT.put(M.empty)(Chain.one(e))
+
+  //   // def attemptUser[A](fa: IorT[F, String, A], constructor: Either[Throwable, String] => EvalFailure)(implicit
+  //   //     M: Monoid[A]
+  //   // ): W[A] =
+  //   //   lift(fa.value).attempt.flatMap {
+  //   //     case Left(ex)              => WriterT.put(M.empty)(Chain(constructor(Left(ex))))
+  //   //     case Right(Ior.Both(l, r)) => WriterT.put(r)(Chain(constructor(Right(l))))
+  //   //     case Right(Ior.Left(l))    => WriterT.put(M.empty)(Chain(constructor(Right(l))))
+  //   //     case Right(Ior.Right(r))   => WriterT.put(r)(Chain.empty)
+  //   //   }
+
+  //   // def attemptUserE(fa: IorT[F, String, E], constructor: Either[Throwable, String] => EvalFailure): W[E] =
+  //   //   attemptUser[E](fa, constructor)
+
+  //   // Supervisor[F].mapK(lift).use { sup =>
+  //   //   executionDeps.batchExecutionState[W].flatMap { batchStateMap =>
+  //   //     def submitAndMaybeStart(nodeId: Int, input: Chain[EvalNode[Any]]): W[StateSubmissionOutcome] =
+  //   //       batchStateMap
+  //   //         .get(nodeId)
+  //   //         .traverse(_.modify { s =>
+  //   //           val newSet = s.remainingInputs - nodeId
+  //   //           val newMap = s.inputMap + (nodeId -> input)
+  //   //           val newState = BatchExecutionState(newSet, newMap)
+  //   //           (newState, if (newSet.isEmpty && s.remainingInputs.nonEmpty) FinalSubmission(newMap) else NotFinalSubmission)
+  //   //         })
+  //   //         .map(_.getOrElse(NoState))
+
+  //   //     final case class NodeBatch(
+  //   //         inputs: Chain[(CursorGroup, Batch[F, BatchKey, BatchValue, BatchResult])],
+  //   //         resolve: Set[BatchKey] => F[Map[BatchKey, BatchValue]]
+  //   //     )
+
+  //   //     def submit(name: String, duration: FiniteDuration, size: Int): F[Unit] =
+  //   //       sup.supervise(stats.updateStats(name, duration, size)).void
+
+  //   //     def runSignal(df: PreparedDataField[F, Any, Any], sf: SignalResolver[F, Any, Any, Any, Any], inputs: Chain[EvalNode[Any]]) =
+  //   //       inputs
+  //   //         .parFlatTraverse { in =>
+  //   //           val hdF: IorT[F, String, EvalNode[Any]] =
+  //   //             sf.head(in.value).map(v => in.copy(value = (in.value, v).asInstanceOf[Any]))
+
+  //   //           val headChainF = hdF.map(Chain(_))
+
+  //   //           val debugCursor = in.cursorGroup.field(df.name)
+
+  //   //           signalSubmission match {
+  //   //             case None =>
+  //   //               attemptUserE(
+  //   //                 headChainF,
+  //   //                 EvalFailure.SignalHeadResolution(debugCursor, _, in.value)
+  //   //               )
+  //   //             case Some(ss) =>
+  //   //               attemptUser(
+  //   //                 sf.tail(in.value).map(Chain(_)),
+  //   //                 EvalFailure.SignalTailResolution(debugCursor, _, in.value)
+  //   //               )
+  //   //                 .flatMap(_.flatTraverse { dst =>
+  //   //                   val df2 = df.copy(resolve = sf.resolver.contramap[Any]((in.value, _)))
+  //   //                   lift(ss.add(in.cursorGroup.absolutePath, in.value, df2, dst.ref, dst.key)).flatMap { id =>
+  //   //                     // if hd fails, then unsubscribe again
+  //   //                     // note that if any parent changes, this (unsubscription) will happen automatically, so this
+  //   //                     // can be viewed as an optimization
+  //   //                     val handledHeadF =
+  //   //                       IorT {
+  //   //                         hdF.value
+  //   //                           .attemptTap {
+  //   //                             case Left(_)            => ss.remove(id)
+  //   //                             case Right(Ior.Left(_)) => ss.remove(id)
+  //   //                             case _                  => F.unit
+  //   //                           }
+  //   //                       }
+
+  //   //                     attemptUserE(
+  //   //                       handledHeadF.map(Chain(_)),
+  //   //                       EvalFailure.SignalHeadResolution(debugCursor, _, in.value)
+  //   //                     )
+  //   //                   }
+  //   //                 })
+  //   //           }
+  //   //         }
+  //   //         .flatMap { nvs =>
+  //   //           // we tupled the initial into nvs (head), cast since expects (Any, Any) but EvalNode contains Any
+  //   //           val df2 = df.copy(resolve = sf.resolver.asInstanceOf[Resolver[F, Any, Any]])
+  //   //           runInputs(df2, nvs)
+  //   //         }
+
+  //   //     def runInputs(
+  //   //         df: PreparedDataField[F, Any, Any],
+  //   //         inputs: Chain[EvalNode[Any]]
+  //   //     ): W[Either[Chain[EvalNode[Any]], NodeBatch]] = {
+  //   //       val n = executionDeps.nodeMap(df.id)
+
+  //   //       df.resolve match {
+  //   //         case EffectResolver(resolve) =>
+  //   //           inputs
+  //   //             .parFlatTraverse { in =>
+  //   //               val next = in.cursorGroup.field(df.name)
+
+  //   //               attemptUser(
+  //   //                 resolve(in.value).timed.semiflatMap { case (dur, v) =>
+  //   //                   val out = Chain(EvalNode(next, v))
+  //   //                   submit(n.name, dur, 1) as out
+  //   //                 },
+  //   //                 EvalFailure.EffectResolution(next, _, in.value)
+  //   //               )
+  //   //             }
+  //   //             .map(Left(_))
+  //   //         case BatchResolver(batcher, partition) =>
+  //   //           val impl = schemaState.batchers(batcher.id)
+
+  //   //           val partitioned: W[Chain[(CursorGroup, Batch[F, Any, Any, Any])]] = inputs.parFlatTraverse { in =>
+  //   //             val next = in.cursorGroup.field(df.name)
+
+  //   //             attemptUser[Chain[(CursorGroup, Batch[F, Any, Any, Any])]](
+  //   //               partition(in.value).map(b => Chain((next, b))),
+  //   //               EvalFailure.BatchPartitioning(next, _, in.value)
+  //   //             )
+  //   //           }
+
+  //   //           partitioned
+  //   //             .map { zs =>
+  //   //               Right(
+  //   //                 NodeBatch(
+  //   //                   zs,
+  //   //                   xs =>
+  //   //                     impl(xs).timed
+  //   //                       .flatMap { case (dur, value) =>
+  //   //                         submit(Planner.makeBatchName(batcher), dur, xs.size) >> submit(n.name, dur, xs.size).as(value)
+  //   //                       }
+  //   //                 )
+  //   //               )
+  //   //             }
+  //   //         case sr @ SignalResolver(_, _, _) => runSignal(df, sr, inputs)
+  //   //       }
+  //   //     }
+
+  //   //     def runFields(dfs: NonEmptyList[PreparedField[F, Any]], in: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] =
+  //   //       Chain.fromSeq(dfs.toList).parFlatTraverse {
+  //   //         case PreparedFragField(id, specify, selection) =>
+  //   //           runFields(selection.fields, in.flatMap(x => Chain.fromOption(specify(x.value)).map(y => x.setValue(y))))
+  //   //         case df @ PreparedDataField(id, name, _, _, _) => runDataField(df, in)
+  //   //       }
+
+  //   //     def startNext(df: PreparedDataField[F, Any, Any], outputs: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] = {
+  //   //       def evalSel(s: Prepared[F, Any], in: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] = W.defer {
+  //   //         s match {
+  //   //           case PreparedLeaf(name, enc) => W.pure(in.map(en => en.setValue(enc(en.value))))
+  //   //           case Selection(fields)       => runFields(fields, in)
+  //   //           case PreparedList(of) =>
+  //   //             val partitioned =
+  //   //               in.flatMap { nv =>
+  //   //                 val inner = Chain.fromSeq(nv.value.asInstanceOf[Seq[Any]])
+
+  //   //                 inner.mapWithIndex { case (v, i) => nv.succeed(v, _.index(i)) }
+  //   //               }
+  //   //             evalSel(of, partitioned)
+  //   //           case PreparedOption(of) =>
+  //   //             val (nulls, continuations) =
+  //   //               in.partitionEither { nv =>
+  //   //                 val inner = nv.value.asInstanceOf[Option[Any]]
+
+  //   //                 inner match {
+  //   //                   case None    => Left(nv.setValue(Json.Null))
+  //   //                   case Some(v) => Right(nv.setValue(v))
+  //   //                 }
+  //   //               }
+  //   //             evalSel(of, continuations).map(_ ++ nulls)
+  //   //         }
+  //   //       }
+
+  //   //       evalSel(df.selection, outputs)
+  //   //     }
+
+  //   //     /*
+  //   //      * 1. Partitions the inputs into batch and trivial (non-batch)
+  //   //      *
+  //   //      * 2. Then runs the batch efficiently and the trivial in parallel
+  //   //      *
+  //   //      * 3. Then reconstructs every batch field's output from
+  //   //      *    the batched results and calls the batch fields continuations in parallel
+  //   //      *
+  //   //      * 4. Finally, combines the results in parallel.
+  //   //      */
+  //   //     def runDataInputs(datas: Chain[(PreparedDataField[F, Any, Any], Chain[EvalNode[Any]])]): W[Chain[EvalNode[Json]]] = {
+  //   //       val inputsResolved =
+  //   //         datas.parTraverse { case (df, v) => runInputs(df, v).map(df -> _) }
+
+  //   //       val partitioned =
+  //   //         inputsResolved.map(_.partitionEither { case (df, e) => e.bimap((df, _), (df, _)) })
+
+  //   //       partitioned
+  //   //         .flatMap { case (trivial, batched) =>
+  //   //           val trivialF = trivial.parFlatTraverse { case (df, fas) => startNext(df, fas) }
+
+  //   //           val batchedF =
+  //   //             NonEmptyChain
+  //   //               .fromChain(batched)
+  //   //               .traverse { nec =>
+  //   //                 val (_, b) = nec.head
+
+  //   //                 val keys: Set[BatchKey] = nec.toChain
+  //   //                   .flatMap { case (_, bn) => bn.inputs.flatMap { case (_, b) => Chain.fromSeq(b.keys) } }
+  //   //                   .toIterable
+  //   //                   .toSet
+
+  //   //                 val resolvedF: F[WriterT[F, Chain[EvalFailure], Chain[EvalNode[Json]]]] =
+  //   //                   b.resolve(keys)
+  //   //                     .map { (resultLookup: Map[BatchKey, BatchValue]) =>
+  //   //                       nec.toChain.parFlatTraverse { case (df, bn) =>
+  //   //                         val mappedValuesF: W[Chain[EvalNode[Any]]] = bn.inputs.parFlatTraverse { case (c, b) =>
+  //   //                           // find all results for this key
+  //   //                           val lookupsF: W[Chain[(BatchKey, BatchValue)]] = Chain.fromSeq(b.keys).flatTraverse { (k: BatchKey) =>
+  //   //                             resultLookup.get(k) match {
+  //   //                               case None =>
+  //   //                                 failM[Chain[(BatchKey, BatchValue)]](
+  //   //                                   EvalFailure.BatchMissingKey(c, resultLookup, b.keys, k)
+  //   //                                 )
+  //   //                               case Some(x) => W.pure(Chain(k -> x))
+  //   //                             }
+  //   //                           }
+
+  //   //                           lookupsF.flatMap { keys =>
+  //   //                             attemptUserE(
+  //   //                               b.post(keys.toList).map(res => Chain(EvalNode(c, res))),
+  //   //                               EvalFailure.BatchPostProcessing(c, _, keys)
+  //   //                             )
+  //   //                           }
+  //   //                         }
+
+  //   //                         mappedValuesF.flatMap(startNext(df, _))
+  //   //                       }
+  //   //                     }
+
+  //   //                 lift(resolvedF).attempt
+  //   //                   .flatMap {
+  //   //                     case Left(ex) =>
+  //   //                       val posses =
+  //   //                         nec.toChain.flatMap { case (_, bn) => bn.inputs.map { case (nm, _) => nm } }
+  //   //                       WriterT.put(Chain.empty[EvalNode[Json]])(
+  //   //                         Chain(EvalFailure.BatchResolution(posses, ex, keys))
+  //   //                       )
+  //   //                     case Right(fa) => fa
+  //   //                   }
+  //   //               }
+  //   //               .map(Chain.fromOption)
+  //   //               .map(_.flatten)
+
+  //   //           // fork each node's continuation
+  //   //           // in parallel, start every node's computation
+  //   //           (trivialF, batchedF).parMapN(_ ++ _)
+  //   //         }
+  //   //     }
+
+  //   //     def runDataField(df: PreparedDataField[F, Any, Any], input: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] = W.defer {
+  //   //       // maybe join
+  //   //       submitAndMaybeStart(df.id, input).flatMap {
+  //   //         // No batching state, so just start
+  //   //         case NoState => runDataInputs(Chain(df -> input))
+  //   //         // join
+  //   //         // There is a batch state, but we didn't add the final input
+  //   //         // Stop here, someone else will start the batch
+  //   //         case NotFinalSubmission => W.pure(Chain.empty)
+  //   //         // join
+  //   //         // We are the final submitter, start the computation
+  //   //         case FinalSubmission(inputs) =>
+  //   //           val in = Chain.fromSeq(inputs.toList)
+
+  //   //           val inputLst = in
+
+  //   //           val withDfs = inputLst.map { case (k, v) => executionDeps.dataFieldMap(k) -> v }
+
+  //   //           runDataInputs(withDfs)
+  //   //       }
+  //   //     }
+
+  //   //     Chain.fromSeq(rootSel.toList).parFlatTraverse { case (field, inputs) =>
+  //   //       runFields(NonEmptyList.one(field), inputs)
+  //   //     }
+  //   //   }
+  //   // }
+  // }
 }
