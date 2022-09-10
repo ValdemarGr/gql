@@ -60,7 +60,6 @@ object ParserUtil {
     val virtualLineStartChar = column - virtualN
     val virtualLineStart = math.max(0, virtualLineStartChar)
     val virtualLineIndicators = math.min(virtualLineStartChar + virtualN, virtualN)
-    println((virtualLineStartChar, virtualLineStart, virtualLineIndicators))
 
     val virtualErrorLine =
       (">" * virtualLineStartChar) + ("^" * (virtualLineIndicators + 1 + virtualN)) + s" line:$ln code:${conflictingCharacter.toInt}"

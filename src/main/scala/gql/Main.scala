@@ -593,9 +593,9 @@ fragment F2 on Data {
     val schema = Schema.stateful[F, Unit](testSchemaShape[F])
 
     def parseAndPrep(q: String): Option[NonEmptyList[PreparedQuery.PreparedField[F, Any]]] =
-      p.parseAll(q).map(PreparedQuery.prepare(_, schema, Map.empty)) match {
+      ParserUtil.parse(q).map(PreparedQuery.prepare(_, schema, Map.empty)) match {
         case Left(e) =>
-          println(errorMessage(q, e))
+          println(e.prettyError.value)
           None
         case Right(Left(x)) =>
           println(x)
@@ -608,7 +608,7 @@ query withNestedFragments {
   getData {
     dep
     nestedSignal2 {
-      a
+      ,a
     }
     nestedSignal {
       a
@@ -658,28 +658,5 @@ query withNestedFragments {
       }
   }
 
-  // mainProgram[D].run(Deps("hey")).unsafeRunSync()
-
-  println(ParserUtil.parse("""
-query withNestedFragments {
-  getData {
-    dep
-    nestedSignal2 {
-      ,a 
-    }
-    nestedSignal {
-      a
-      nestedSignal {
-        a
-        nestedSignal {
-          a
-          nestedSignal {
-            a
-          }
-        }
-      }
-    }
-  }
-}
-  """).leftMap(_.prettyError.value))
+  mainProgram[D].run(Deps("hey")).unsafeRunSync()
 }
