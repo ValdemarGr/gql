@@ -78,6 +78,9 @@ abstract class OutputSyntax {
       Eval.later(tpe)
     )
 
+  def full[F[_], I, T](resolver: I => IorT[F, String, T]) =
+    EffectResolver[F, I, T](resolver)
+
   def eff[F[_]: Applicative, I, T](resolver: I => F[T]) =
     EffectResolver[F, I, T](x => IorT.liftF(resolver(x)))
 

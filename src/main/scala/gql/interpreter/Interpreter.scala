@@ -26,7 +26,7 @@ object Interpreter {
       schemaState: SchemaState[F]
   ): F[JsonObject] =
     interpret[F](rootSel.map((_, Chain(EvalNode.empty(rootInput, BigInt(0))))), Batching.plan[F](rootSel, plan), schemaState).run
-      .map { case (f, s) => combineSplit(null, s) }
+      .map { case (f, s) => combineSplit(f, s) }
       .map(xs => reconstructSelection(xs.map { case (nm, x) => nm.relativePath -> x }.toList, rootSel))
 
   def stitchInto(
@@ -52,7 +52,6 @@ object Interpreter {
         }
     }
 
-  // TODO also handle the rest of the EvalFailure structure
   def combineSplit(fails: Chain[EvalFailure], succs: Chain[EvalNode[Json]]): Chain[(CursorGroup, Json)] =
     fails.flatMap(_.paths).map(m => (m, Json.Null)) ++ succs.map(n => (n.cursorGroup, n.value))
 
@@ -510,7 +509,7 @@ object Interpreter {
       case PreparedLeaf(_, _) =>
         cursors match {
           case (_, x) :: Nil => x
-          case _             => ???
+          case ys            => throw new IllegalStateException(s"Leaf field should have exactly one cursor, got $ys")
         }
       case PreparedList(of) =>
         Json.fromValues(
