@@ -4,13 +4,15 @@ import cats.data._
 import cats.instances.stream
 
 sealed trait GraphArc
-final case class Ided(id: Int) extends GraphArc
-final case class Index(index: Int) extends GraphArc
+object GraphArc {
+  final case class Field(name: String) extends GraphArc
+  final case class Index(index: Int) extends GraphArc
+}
 
 final case class Cursor(path: Chain[GraphArc]) {
   def add(next: GraphArc): Cursor = Cursor(path :+ next)
-  def index(idx: Int) = add(Index(idx))
-  def ided(id: Int) = add(Ided(id))
+  def index(idx: Int) = add(GraphArc.Index(idx))
+  def field( /*id: Int,*/ name: String) = add(GraphArc.Field(name))
 
   def headOption = path.headOption
 
@@ -27,68 +29,43 @@ object Cursor {
   def empty = Cursor(Chain.empty)
 }
 
-object LastPath {
-  def unapply(cursor: Cursor): Option[GraphArc] =
-    cursor.path.initLast
-      .flatMap { case (c, l) => Some(l).filter(_ => c.isEmpty) }
-}
-
-final case class NodeMeta(
+final case class CursorGroup(
     startPosition: Cursor,
     relativePath: Cursor,
-    cursorGroup: BigInt
+    id: BigInt
 ) {
   lazy val absolutePath = Cursor(startPosition.path ++ relativePath.path)
 
-  def index(i: Int): NodeMeta = NodeMeta(startPosition, relativePath.index(i), cursorGroup)
-  def ided(id: Int): NodeMeta = NodeMeta(startPosition, relativePath.ided(id), cursorGroup)
+  def index(i: Int): CursorGroup = CursorGroup(startPosition, relativePath.index(i), id)
+  def field(name: String): CursorGroup = CursorGroup(startPosition, relativePath.field(name), id)
 }
 
-object NodeMeta {
-  def startAt(startPosition: Cursor, stableId: BigInt) = NodeMeta(startPosition, Cursor.empty, stableId)
+object CursorGroup {
+  def startAt(id: BigInt, start: Cursor) = CursorGroup(start, Cursor.empty, id)
 
-  def empty(stableId: BigInt) = startAt(Cursor.empty, stableId)
+  def empty(id: BigInt) = startAt(id, Cursor.empty)
 }
 
-final case class NodeValue(
-    meta: NodeMeta,
-    value: Any
-) {
-  def index(xs: List[Any]): List[NodeValue] =
-    xs.zipWithIndex.map { case (x, i) => NodeValue(meta.index(i), x) }
-  def ided(id: Int, value: Any): NodeValue =
-    NodeValue(meta.ided(id), value)
-
-  def setValue(value: Any): NodeValue = copy(value = value)
-}
-
-object NodeValue {
-  def startAt[A](value: A, stableId: BigInt, startPosition: Cursor) =
-    NodeValue(NodeMeta.startAt(startPosition, stableId), value)
-
-  def empty[A](value: A, stableId: BigInt) = startAt(value, stableId, Cursor.empty)
-}
-
-final case class EvalNode[A](meta: NodeMeta, value: A) {
+final case class EvalNode[A](cursorGroup: CursorGroup, value: A) {
   def setValue[B](value: B): EvalNode[B] = copy(value = value)
 
-  def modify(f: NodeMeta => NodeMeta): EvalNode[A] = copy(meta = f(meta))
+  def modify(f: CursorGroup => CursorGroup): EvalNode[A] = copy(cursorGroup = f(cursorGroup))
 
-  def succeed[B](value: B, f: NodeMeta => NodeMeta): EvalNode[B] =
-    EvalNode(f(meta), value)
+  def succeed[B](value: B, f: CursorGroup => CursorGroup): EvalNode[B] =
+    EvalNode(f(cursorGroup), value)
 
   def succeed[B](value: B): EvalNode[B] = succeed(value, identity)
 }
 
 object EvalNode {
   def startAt[A](value: A, cursorGroup: BigInt, startPosition: Cursor) =
-    EvalNode(NodeMeta.startAt(startPosition, cursorGroup), value)
+    EvalNode(CursorGroup.startAt(cursorGroup, startPosition), value)
 
   def empty[A](value: A, cursorGroup: BigInt) = startAt(value, cursorGroup, Cursor.empty)
 }
 
 final case class EvalFailure(
-    meta: Chain[NodeMeta],
+    cursorGroups: Chain[CursorGroup],
     error: Option[String],
     internal: String,
     throwable: Option[Throwable]
