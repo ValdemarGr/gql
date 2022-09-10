@@ -11,43 +11,43 @@ import gql.interpreter._
 
 object Execute {
 
-  // def getExceptions(xs: Chain[EvalFailure]) =
-  //   xs.map ( ef => )
+  type Output = (Chain[EvalFailure], JsonObject)
+
   sealed trait ExecutorOutcome[F[_], Q, M, S]
   object ExecutorOutcome {
     final case class ValidationError[F[_], Q, M, S](msg: String) extends ExecutorOutcome[F, Q, M, S]
-    final case class Query[F[_], Q, M, S](run: Q => F[JsonObject]) extends ExecutorOutcome[F, Q, M, S]
-    final case class Mutation[F[_], Q, M, S](run: M => F[JsonObject]) extends ExecutorOutcome[F, Q, M, S]
-    final case class Stream[F[_], Q, M, S](run: S => fs2.Stream[F, JsonObject]) extends ExecutorOutcome[F, Q, M, S]
+    final case class Query[F[_], Q, M, S](run: Q => F[Output]) extends ExecutorOutcome[F, Q, M, S]
+    final case class Mutation[F[_], Q, M, S](run: M => F[Output]) extends ExecutorOutcome[F, Q, M, S]
+    final case class Stream[F[_], Q, M, S](run: S => fs2.Stream[F, Output]) extends ExecutorOutcome[F, Q, M, S]
   }
 
-  // def executor[F[_]: Statistics, Q, M, S](
-  //     query: NonEmptyList[P.ExecutableDefinition],
-  //     schema: Schema[F, Q],
-  //     variables: Map[String, Json],
-  //     schemaState: SchemaState[F]
-  // )(implicit F: Async[F]): ExecutorOutcome[F, Q, M, S] = {
-  //   PreparedQuery.prepare2(query, schema, variables) match {
-  //     case Left(err) => ExecutorOutcome.ValidationError(err)
-  //     case Right(x) =>
-  //       x match {
-  //         case PreparedQuery.OperationType.Query(rootFields) =>
-  //           ExecutorOutcome.Query[F, Q, M, S](Interpreter.runSync(_, rootFields, schemaState))
-  //         case PreparedQuery.OperationType.Mutation(rootFields) =>
-  //           ExecutorOutcome.Mutation[F, Q, M, S](Interpreter.runSync(_, rootFields, schemaState))
-  //         case PreparedQuery.OperationType.Subscription(dataStream, root) =>
-  //           ExecutorOutcome.Stream[F, Q, M, S] { s =>
-  //             dataStream(s).switchMap(Interpreter.runStreamed[F](_, NonEmptyList.one(root), schemaState))
-  //           }
-  //       }
-  //   }
-  // }
-  final case class GQLError(
-      message: String,
-      path: CursorGroup
-  )
+  def executor[F[_]: Statistics, Q, M, S](
+      query: NonEmptyList[P.ExecutableDefinition],
+      schema: Schema[F, Q],
+      variables: Map[String, Json],
+      schemaState: SchemaState[F]
+  )(implicit F: Async[F]): ExecutorOutcome[F, Q, M, S] = {
+    PreparedQuery.prepare2(query, schema, variables) match {
+      case Left(err) => ExecutorOutcome.ValidationError(err)
+      case Right(x) =>
+        x match {
+          case PreparedQuery.OperationType.Query(rootFields) =>
+            ExecutorOutcome.Query[F, Q, M, S](Interpreter.runSync(_, rootFields, schemaState))
+          case PreparedQuery.OperationType.Mutation(rootFields) =>
+            ExecutorOutcome.Mutation[F, Q, M, S](Interpreter.runSync(_, rootFields, schemaState))
+          case PreparedQuery.OperationType.Subscription(dataStream, root) =>
+            ExecutorOutcome.Stream[F, Q, M, S] { s =>
+              dataStream(s).switchMap(Interpreter.runStreamed[F](_, NonEmptyList.one(root), schemaState))
+            }
+        }
+    }
+  }
 
   def formatErrors(xs: Chain[EvalFailure]) = {
+    final case class GQLError(
+        message: String,
+        path: CursorGroup
+    )
     def formatEither(e: Either[Throwable, String]) =
       e.swap.as("internal error").merge
 
