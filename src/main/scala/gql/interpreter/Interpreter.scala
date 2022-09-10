@@ -152,24 +152,6 @@ object Interpreter {
                                 .foldLeft(prevOutput) { case (accum, (patch, pos)) =>
                                   stitchInto(accum.asJson, patch, pos).asObject.get
                                 }
-                            // val recombined: JsonObject =
-                            //   l
-                            //     .map { case (group, results) =>
-                            //       val (rootCursor, df) = groupIdMapping(group.toInt)
-                            //       val rc =
-                            //         reconstructSelection(results.map { case (m, x) => m.relativePath -> x }, NonEmptyList.one(df))
-
-                            //       (rc, rootCursor.field(df.name))
-                            //     }
-                            //     .foldLeft(prevOutput) { case (accum, (obj, pos)) =>
-                            //       // println("stitch iteration ###################")
-                            //       // println(accum)
-                            //       // this object has one entry, the resolved field itself
-                            //       val hack = obj.toMap.head._2
-                            //       // println(s"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ${pos.path.map(_.asInstanceOf[Ided].id).map(nameMap.apply).mkString_("->")}")
-                            //       // println(hack)
-                            //       stitchInto(accum.asJson, hack, pos).asObject.get
-                            //     }
 
                             val withNew = newSigs ++ activeSigs
                             val garbageCollected = withNew -- meta.toRemove
