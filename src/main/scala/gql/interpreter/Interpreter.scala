@@ -98,10 +98,21 @@ object Interpreter {
                   .filter { case (k, _) => activeSigs.contains(k) }
                   .toNel
                   .flatTraverse { activeChanges =>
+                    // The hcsa algorithm can most likely be optimized
+                    // It takes atleast n time currently
                     val s = activeChanges.toList.map { case (k, _) => k }.toSet
-                    val allSigNodes = activeSigs.toList.map { case (k, (cursor, _, df)) => (cursor.field(df.name), k) }
+                    val allSigNodes = activeSigs.toList.map { case (k, (cursor, _, df)) =>
+                      // The cursor is to the parent, traversing the arc for df.name will get us to the changed node
+                      (cursor.field(df.name), k)
+                    }
                     val meta = computeMetadata(allSigNodes, s)
+
+                    // The root nodes are the highest common signal ancestors
                     val rootNodes: List[(BigInt, Any)] = activeChanges.filter { case (k, _) => meta.hcsa.contains(k) }
+
+                    // Partition every HCSA node into it's own cursor group (for efficient re-association later)
+                    // We cannot use the field name to group them, since two changed fields can have the same name
+                    // The property of field uniqueness is lost since we are starting at n different non-root nodes
                     val prepaedRoots =
                       rootNodes.mapWithIndex { case ((id, input), idx) =>
                         val (cursor, _, field) = activeSigs(id)
@@ -113,32 +124,52 @@ object Interpreter {
                       .traverse { newRootSel =>
                         runStreamIt(newRootSel.map { case (df, _, inputs, _) => (df, inputs) })
                           .flatMap { case (newFails, newSuccs, _, newSigs) =>
+                            // Mapping from group to start cursor and data field
                             val groupIdMapping =
                               newRootSel.toList.map { case (df, rootCursor, _, idx) => idx -> (rootCursor, df) }.toMap
 
                             val all = combineSplit(newFails, newSuccs)
+                            // group -> results
                             val l: List[(BigInt, List[(CursorGroup, Json)])] =
                               all.toList.groupBy { case (m, _) => m.id }.toList
 
-                            // println("performing new stitch $$$$$$$$$$$$$$$$$$")
-                            val recombined: JsonObject =
-                              l
-                                .map { case (group, results) =>
-                                  val (rootCursor, df) = groupIdMapping(group.toInt)
-                                  val rc =
-                                    reconstructSelection(results.map { case (m, x) => m.relativePath -> x }, NonEmptyList.one(df))
+                            val prepped =
+                              l.map { case (group, results) =>
+                                val (rootCursor, df) = groupIdMapping(group.toInt)
+                                // Before re-constructing, drop the head of the cursor
+                                // Since that edge will be where the result should be stitched into
+                                val tailResults = results.map { case (m, x) => m.relativePath.tail -> x }
+                                val rec = reconstructField(df.selection, tailResults)
 
-                                  (rc, rootCursor.field(df.name))
+                                // Left is the object, right is the position to replace
+                                (rec, rootCursor.field(df.name))
+                              }
+
+                            // fold every group's result together
+                            // basecase is previous output
+                            val recombined =
+                              prepped
+                                .foldLeft(prevOutput) { case (accum, (patch, pos)) =>
+                                  stitchInto(accum.asJson, patch, pos).asObject.get
                                 }
-                                .foldLeft(prevOutput) { case (accum, (obj, pos)) =>
-                                  // println("stitch iteration ###################")
-                                  // println(accum)
-                                  // this object has one entry, the resolved field itself
-                                  val hack = obj.toMap.head._2
-                                  // println(s"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ${pos.path.map(_.asInstanceOf[Ided].id).map(nameMap.apply).mkString_("->")}")
-                                  // println(hack)
-                                  stitchInto(accum.asJson, hack, pos).asObject.get
-                                }
+                            // val recombined: JsonObject =
+                            //   l
+                            //     .map { case (group, results) =>
+                            //       val (rootCursor, df) = groupIdMapping(group.toInt)
+                            //       val rc =
+                            //         reconstructSelection(results.map { case (m, x) => m.relativePath -> x }, NonEmptyList.one(df))
+
+                            //       (rc, rootCursor.field(df.name))
+                            //     }
+                            //     .foldLeft(prevOutput) { case (accum, (obj, pos)) =>
+                            //       // println("stitch iteration ###################")
+                            //       // println(accum)
+                            //       // this object has one entry, the resolved field itself
+                            //       val hack = obj.toMap.head._2
+                            //       // println(s"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ${pos.path.map(_.asInstanceOf[Ided].id).map(nameMap.apply).mkString_("->")}")
+                            //       // println(hack)
+                            //       stitchInto(accum.asJson, hack, pos).asObject.get
+                            //     }
 
                             val withNew = newSigs ++ activeSigs
                             val garbageCollected = withNew -- meta.toRemove
