@@ -42,17 +42,44 @@ object Execute {
   //       }
   //   }
   // }
-  def formatErrors(xs: Chain[EvalFailure]) =
-    Json.arr(
+  final case class GQLError(
+      message: String,
+      path: CursorGroup
+  )
 
-      // xs.flatMap { ef =>
-      //   ef.meta.map { nm =>
-      //     JsonObject(
-      //       "message" -> Json.fromString(ef.error.getOrElse("internal error")),
-      //       "locations" -> Json.arr(nm.absolutePath.path.map(x => Json.fromString(x.toString())).toList: _*)
-      //       // "path" -> nm.asJson
-      //     ).asJson
-      //   }
-      // }.toList: _*
-    )
+  def formatErrors(xs: Chain[EvalFailure]) = {
+    def formatEither(e: Either[Throwable, String]) =
+      e.swap.as("internal error").merge
+
+    import EvalFailure._
+    val errors =
+      xs.flatMap { ef =>
+        ef match {
+          case EffectResolution(path, error, _) =>
+            Chain(GQLError(formatEither(error), path))
+          case SignalHeadResolution(path, error, _) =>
+            Chain(GQLError(formatEither(error), path))
+          case BatchMissingKey(path, _, _, _) =>
+            Chain(GQLError("internal error", path))
+          case SignalTailResolution(path, error, input) =>
+            Chain(GQLError(formatEither(error), path))
+          case BatchPartitioning(path, error, input) =>
+            Chain(GQLError(formatEither(error), path))
+          case BatchPostProcessing(path, error, resultMap) =>
+            Chain(GQLError(formatEither(error), path))
+          case BatchResolution(paths, exception, keys) =>
+            paths.map(path => GQLError("internal error", path))
+
+        }
+      }
+    errors.map { err =>
+      Json.obj(
+        "message" -> Json.fromString(err.message),
+        "path" -> err.path.absolutePath.path.map {
+          case GraphArc.Field(name) => Json.fromString(name)
+          case GraphArc.Index(idx)  => Json.fromInt(idx)
+        }.asJson
+      )
+    }.asJson
+  }
 }

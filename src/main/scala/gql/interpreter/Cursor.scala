@@ -12,7 +12,7 @@ object GraphArc {
 final case class Cursor(path: Chain[GraphArc]) {
   def add(next: GraphArc): Cursor = Cursor(path :+ next)
   def index(idx: Int) = add(GraphArc.Index(idx))
-  def field( /*id: Int,*/ name: String) = add(GraphArc.Field(name))
+  def field(name: String) = add(GraphArc.Field(name))
 
   def headOption = path.headOption
 

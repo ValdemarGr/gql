@@ -128,8 +128,6 @@ object Interpreter {
                               l
                                 .map { case (group, results) =>
                                   val (rootCursor, df) = groupIdMapping(group.toInt)
-                                  // TODO
-                                  // reconstructField(df.selection, results)
                                   val rc =
                                     reconstructSelection(results.map { case (m, x) => m.relativePath -> x }, NonEmptyList.one(df))
 
