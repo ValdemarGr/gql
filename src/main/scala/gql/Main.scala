@@ -665,7 +665,7 @@ query withNestedFragments {
   getData {
     dep
     nestedSignal2 {
-      a 
+      ,a 
     }
     nestedSignal {
       a
