@@ -32,8 +32,7 @@ object Interpreter {
   def stitchInto(
       oldTree: Json,
       subTree: Json,
-      path: Cursor,
-      nameMap: Map[Int, String]
+      path: Cursor
   ): Json =
     path.uncons match {
       case None => subTree
@@ -42,14 +41,14 @@ object Interpreter {
           case GraphArc.Field(name) =>
             val oldObj = oldTree.asObject.get
             val oldValue = oldObj(name).get
-            val newSubTree = stitchInto(oldValue, subTree, tl, nameMap)
+            val newSubTree = stitchInto(oldValue, subTree, tl)
             // println(oldValue)
             // println(s"adding $name>>>>>>>>>>")
             // println(newSubTree)
             oldObj.add(name, newSubTree).asJson
           case GraphArc.Index(index) =>
             val oldArr = oldTree.asArray.get
-            oldArr.updated(index, stitchInto(oldArr(index), subTree, tl, nameMap)).asJson
+            oldArr.updated(index, stitchInto(oldArr(index), subTree, tl)).asJson
         }
     }
 
@@ -88,8 +87,6 @@ object Interpreter {
     fs2.Stream
       .eval(runStreamIt(rootSel.map((_, Chain(EvalNode.empty(rootInput, BigInt(1)))))))
       .flatMap { case (initialFails, initialSuccs, deps, initialSignals) =>
-        val nameMap = deps.dataFieldMap.view.mapValues(_.name).toMap
-
         val c = combineSplit(initialFails, initialSuccs).toList.map { case (m, v) => m.absolutePath -> v }
 
         fs2.Stream(reconstructSelection(c, rootSel)).flatMap { initialOutput =>
@@ -102,7 +99,7 @@ object Interpreter {
                   .toNel
                   .flatTraverse { activeChanges =>
                     val s = activeChanges.toList.map { case (k, _) => k }.toSet
-                    val allSigNodes = activeSigs.toList.map { case (k, (cursor, _, df)) => (cursor.field(nameMap(df.id)), k) }
+                    val allSigNodes = activeSigs.toList.map { case (k, (cursor, _, df)) => (cursor.field(df.name), k) }
                     val meta = computeMetadata(allSigNodes, s)
                     val rootNodes: List[(BigInt, Any)] = activeChanges.filter { case (k, _) => meta.hcsa.contains(k) }
                     val prepaedRoots =
@@ -131,7 +128,7 @@ object Interpreter {
                                   val rc =
                                     reconstructSelection(results.map { case (m, x) => m.relativePath -> x }, NonEmptyList.one(df))
 
-                                  (rc, rootCursor.field(nameMap(df.id)))
+                                  (rc, rootCursor.field(df.name))
                                 }
                                 .foldLeft(prevOutput) { case (accum, (obj, pos)) =>
                                   // println("stitch iteration ###################")
@@ -140,7 +137,7 @@ object Interpreter {
                                   val hack = obj.toMap.head._2
                                   // println(s"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ${pos.path.map(_.asInstanceOf[Ided].id).map(nameMap.apply).mkString_("->")}")
                                   // println(hack)
-                                  stitchInto(accum.asJson, hack, pos, nameMap).asObject.get
+                                  stitchInto(accum.asJson, hack, pos).asObject.get
                                 }
 
                             val withNew = newSigs ++ activeSigs
@@ -221,8 +218,6 @@ object Interpreter {
     type E = Chain[EvalNode[Any]]
     val lift: F ~> W = WriterT.liftK[F, Chain[EvalFailure]]
 
-    val nameMap = executionDeps.dataFieldMap.view.mapValues(_.name).toMap
-
     def failM[A](e: EvalFailure)(implicit M: Monoid[A]): W[A] = WriterT.put(M.empty)(Chain.one(e))
 
     def attemptUser[A](fa: IorT[F, String, A], constructor: Either[Throwable, String] => EvalFailure)(implicit
@@ -267,16 +262,18 @@ object Interpreter {
 
               val headChainF = hdF.map(Chain(_))
 
+              val debugCursor = in.cursorGroup.field(df.name)
+
               signalSubmission match {
                 case None =>
                   attemptUserE(
                     headChainF,
-                    EvalFailure.SignalHeadResolution(in.cursorGroup, _, in.value)
+                    EvalFailure.SignalHeadResolution(debugCursor, _, in.value)
                   )
                 case Some(ss) =>
                   attemptUser(
                     sf.tail(in.value).map(Chain(_)),
-                    EvalFailure.SignalTailResolution(in.cursorGroup, _, in.value)
+                    EvalFailure.SignalTailResolution(debugCursor, _, in.value)
                   )
                     .flatMap(_.flatTraverse { dst =>
                       val df2 = df.copy(resolve = sf.resolver.contramap[Any]((in.value, _)))
@@ -296,7 +293,7 @@ object Interpreter {
 
                         attemptUserE(
                           handledHeadF.map(Chain(_)),
-                          EvalFailure.SignalHeadResolution(in.cursorGroup, _, in.value)
+                          EvalFailure.SignalHeadResolution(debugCursor, _, in.value)
                         )
                       }
                     })
@@ -318,7 +315,7 @@ object Interpreter {
             case EffectResolver(resolve) =>
               inputs
                 .parFlatTraverse { in =>
-                  val next = in.cursorGroup.field(nameMap(df.id))
+                  val next = in.cursorGroup.field(df.name)
 
                   attemptUser(
                     resolve(in.value).timed.semiflatMap { case (dur, v) =>
@@ -333,7 +330,7 @@ object Interpreter {
               val impl = schemaState.batchers(batcher.id)
 
               val partitioned: W[Chain[(CursorGroup, Batch[F, Any, Any, Any])]] = inputs.parFlatTraverse { in =>
-                val next = in.cursorGroup.field(nameMap(df.id))
+                val next = in.cursorGroup.field(df.name)
 
                 attemptUser[Chain[(CursorGroup, Batch[F, Any, Any, Any])]](
                   partition(in.value).map(b => Chain((next, b))),
