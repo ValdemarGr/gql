@@ -28,6 +28,7 @@ import gql.resolver.EffectResolver
 import cats.mtl._
 import gql.out._
 import cats.instances.unit
+import gql.parser.ParserUtil
 
 object Main extends App {
   def showExpectation(e: Parser.Expectation): Eval[String] =
@@ -657,5 +658,28 @@ query withNestedFragments {
       }
   }
 
-  mainProgram[D].run(Deps("hey")).unsafeRunSync()
+  // mainProgram[D].run(Deps("hey")).unsafeRunSync()
+
+  println(ParserUtil.parse("""
+query withNestedFragments {
+  getData {
+    dep
+    nestedSignal2 {
+      a 
+    }
+    nestedSignal {
+      a
+      nestedSignal {
+        a
+        nestedSignal {
+          a
+          nestedSignal {
+            a
+          }
+        }
+      }
+    }
+  }
+}
+  """).leftMap(_.prettyError.value))
 }
