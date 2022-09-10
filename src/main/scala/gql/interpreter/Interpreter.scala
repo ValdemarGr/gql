@@ -19,21 +19,7 @@ import gql._
 import gql.out._
 
 object Interpreter {
-  def run[F[_]: Async: Statistics](
-      rootInput: Any,
-      rootSel: NonEmptyList[PreparedField[F, Any]],
-      plan: NonEmptyList[Planner.Node],
-      schemaState: SchemaState[F]
-  ): F[JsonObject] =
-    interpret[F](rootSel.map((_, Chain(EvalNode.empty(rootInput, BigInt(0))))), Batching.plan[F](rootSel, plan), schemaState).run
-      .map { case (f, s) => combineSplit(f, s) }
-      .map(xs => reconstructSelection(xs.map { case (nm, x) => nm.relativePath -> x }.toList, rootSel))
-
-  def stitchInto(
-      oldTree: Json,
-      subTree: Json,
-      path: Cursor
-  ): Json =
+  def stitchInto(oldTree: Json, subTree: Json, path: Cursor): Json =
     path.uncons match {
       case None => subTree
       case Some((p, tl)) =>
@@ -42,9 +28,6 @@ object Interpreter {
             val oldObj = oldTree.asObject.get
             val oldValue = oldObj(name).get
             val newSubTree = stitchInto(oldValue, subTree, tl)
-            // println(oldValue)
-            // println(s"adding $name>>>>>>>>>>")
-            // println(newSubTree)
             oldObj.add(name, newSubTree).asJson
           case GraphArc.Index(index) =>
             val oldArr = oldTree.asArray.get
@@ -556,47 +539,4 @@ object Interpreter {
       sel: NonEmptyList[PreparedField[F, Any]]
   ): JsonObject =
     _reconstructSelection(levelCursors, sel, groupNodeValues2(levelCursors))
-
-  // def reconstructField[F[_]](p: Prepared[F, Any], cursors: List[(Cursor, Json)]): Json = {
-  //   // If there is nothing else on this path, then return the json
-  //   // This handles arbitary null's in the tree
-  //   if (cursors.size == 1 && cursors.exists { case (c, j) => c.path.size == 1 }) cursors.head._2
-  //   else {
-  //     p match {
-  //       case PreparedLeaf(_, _) =>
-  //         cursors
-  //           .collectFirst { case (_, v) if !v.isNull => v }
-  //           .getOrElse(Json.Null)
-  //       case PreparedList(of) =>
-  //         Json.fromValues(
-  //           groupNodeValues(cursors).toList
-  //             .map {
-  //               case (GraphArc.Index(i), tl) => i -> tl
-  //               case _                       => ???
-  //             }
-  //             .sortBy { case (i, _) => i }
-  //             .map { case (_, tl) => reconstructField[F](of, tl) }
-  //         )
-  //       case Selection(fields) => reconstructSelection(cursors, fields).asJson
-  //     }
-  //   }
-  // }
-
-  // def reconstructSelection[F[_]](
-  //     levelCursors: List[(Cursor, Json)],
-  //     sel: NonEmptyList[PreparedField[F, Any]]
-  // ): JsonObject = {
-  //   val m = groupNodeValues(levelCursors)
-
-  //   sel
-  //     .map { pf =>
-  //       pf match {
-  //         case PreparedFragField(id, specify, selection) =>
-  //           reconstructSelection(levelCursors, selection.fields)
-  //         case df @ PreparedDataField(_, name, _, selection, _) =>
-  //           JsonObject(name -> reconstructField(selection, m(GraphArc.Field(name))))
-  //       }
-  //     }
-  //     .reduceLeft(_ deepMerge _)
-  // }
 }
