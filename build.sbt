@@ -33,6 +33,10 @@ lazy val sharedSettings = Seq(
   addCompilerPlugin("com.olegpy" %% "better-monadic-for" % "0.3.1")
 )
 
-lazy val root = project
-  .in(file("."))
+lazy val core = project
+  .in(file("modules/core"))
   .settings(sharedSettings: _*)
+
+/* lazy val http4s = project */
+/*   .in(file("modules/http4s")) */
+/*   .settings(sharedSettings: _*) */
