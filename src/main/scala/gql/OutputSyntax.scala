@@ -66,23 +66,23 @@ abstract class OutputSyntax {
 
   def contra[B] = OutputSyntax.PartiallyAppliedContra[B]()
 
-  def effect[F[_]: Functor, I, T](resolver: I => F[T])(implicit tpe: => Output[F, T]): Field[F, I, T, Unit] =
+  def effect[F[_]: Applicative, I, T](resolver: I => F[T])(implicit tpe: => Output[F, T]): Field[F, I, T, Unit] =
     effect[F, I, T, Unit](Applicative[Arg].unit) { case (i, _) => resolver(i) }(implicitly, tpe)
 
-  def effect[F[_]: Functor, I, T, A](arg: Arg[A])(resolver: (I, A) => F[T])(implicit
+  def effect[F[_]: Applicative, I, T, A](arg: Arg[A])(resolver: (I, A) => F[T])(implicit
       tpe: => Output[F, T]
   ): Field[F, I, T, A] =
     Field[F, I, T, A](
       arg,
-      EffectResolver { case (i, a) => EitherT.liftF(resolver(i, a)) },
+      EffectResolver { case (i, a) => IorT.liftF(resolver(i, a)) },
       Eval.later(tpe)
     )
 
-  def eff[F[_]: Functor, I, T](resolver: I => F[T]) =
-    EffectResolver[F, I, T](x => EitherT.liftF(resolver(x)))
+  def eff[F[_]: Applicative, I, T](resolver: I => F[T]) =
+    EffectResolver[F, I, T](x => IorT.liftF(resolver(x)))
 
   def pur[F[_], I, T](resolver: I => T)(implicit F: Applicative[F]) =
-    EffectResolver[F, I, T](resolver.andThen(EitherT.pure(_)))
+    EffectResolver[F, I, T](resolver.andThen(IorT.pure(_)))
 
   def pure[F[_]: Applicative, I, T](resolver: I => T)(implicit tpe: => Output[F, T]): Field[F, I, T, Unit] =
     pure[F, I, T, Unit](Applicative[Arg].unit) { case (i, _) => resolver(i) }(implicitly, tpe)
@@ -90,7 +90,7 @@ abstract class OutputSyntax {
   def pure[F[_]: Applicative, I, T, A](arg: Arg[A])(resolver: (I, A) => T)(implicit tpe: => Output[F, T]): Field[F, I, T, A] =
     Field[F, I, T, A](
       arg,
-      EffectResolver { case (i, a) => EitherT.pure(resolver(i, a)) },
+      EffectResolver { case (i, a) => IorT.pure(resolver(i, a)) },
       Eval.later(tpe)
     )
 

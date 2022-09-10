@@ -29,6 +29,10 @@ object Interpreter {
     final case class Index(index: Int) extends ErrorPath
   }
 
+  final case class PartiallyAppliedError(val closure: Either[Throwable, String] => ErrorType) extends AnyVal {
+    def apply(err: Either[Throwable, String]): ErrorType = closure(err)
+  }
+
   sealed trait ErrorType
   object ErrorType {
     final case class SignalHeadResolutionError(
@@ -36,16 +40,28 @@ object Interpreter {
         error: Either[Throwable, String],
         input: Any
     ) extends ErrorType
+    object SignalHeadResolutionError {
+      def apply(paths: ErrorPath, input: Any) =
+        PartiallyAppliedError(new SignalHeadResolutionError(paths, _, input))
+    }
     final case class SignalTailResolutionError(
         paths: ErrorPath,
         error: Either[Throwable, String],
         input: Any
     ) extends ErrorType
+    object SignalTailResolutionError {
+      def apply(paths: ErrorPath, input: Any) =
+        PartiallyAppliedError(new SignalTailResolutionError(paths, _, input))
+    }
     final case class BatchResolutionError(
         paths: Chain[ErrorPath],
         error: Either[Throwable, String],
         keys: Set[Any]
     ) extends ErrorType
+    object BatchResolutionError {
+      def apply(paths: Chain[ErrorPath], keys: Set[Any]) =
+        PartiallyAppliedError(new BatchResolutionError(paths, _, keys))
+    }
     final case class BatchPostProcessingError(
         path: ErrorPath,
         error: Either[Throwable, String],
@@ -62,11 +78,19 @@ object Interpreter {
         error: Either[Throwable, String],
         input: Any
     ) extends ErrorType
+    object BatchPartitioningError {
+      def apply(path: ErrorPath, input: Any) =
+        PartiallyAppliedError(new BatchPartitioningError(path, _, input))
+    }
     final case class EffectResolutionError(
         path: ErrorPath,
         error: Either[Throwable, String],
         input: Any
     ) extends ErrorType
+    object EffectResolutionError {
+      def apply(path: ErrorPath, input: Any) =
+        PartiallyAppliedError(new EffectResolutionError(path, _, input))
+    }
   }
 
   final case class Error(
@@ -283,8 +307,23 @@ object Interpreter {
     val W = Async[W]
     type E = Chain[EvalNode[Any]]
     val lift: F ~> W = WriterT.liftK[F, Chain[ErrorType]]
+
     def fail[A](e: ErrorType): W[Chain[A]] = WriterT.put(Chain.empty[A])(Chain.one(e))
+
     def failM[A](e: ErrorType)(implicit M: Monoid[A]): W[A] = WriterT.put(M.empty)(Chain.one(e))
+
+    def attemptUser[A](fa: IorT[F, String, A], constructor: Either[Throwable, String] => ErrorType)(implicit
+        M: Monoid[A]
+    ): W[A] =
+      lift(fa.value).attempt.flatMap {
+        case Left(ex)              => WriterT.put(M.empty)(Chain(constructor(Left(ex))))
+        case Right(Ior.Both(l, r)) => WriterT.put(r)(Chain(constructor(Right(l))))
+        case Right(Ior.Left(l))    => WriterT.put(M.empty)(Chain(constructor(Right(l))))
+        case Right(Ior.Right(r))   => WriterT.put(r)(Chain.empty)
+      }
+
+    def attemptUserE(fa: IorT[F, String, E], constructor: Either[Throwable, String] => ErrorType): W[E] =
+      attemptUser[E](fa, constructor)
 
     def liftAttemptUser[A](fa: EitherT[F, String, A]): W[Either[Either[Throwable, String], A]] =
       lift(fa.value).attempt
@@ -321,54 +360,56 @@ object Interpreter {
         def runSignal(df: PreparedDataField[F, Any, Any], sf: SignalResolver[F, Any, Any, Any, Any], inputs: Chain[EvalNode[Any]]) =
           inputs
             .parFlatTraverse { in =>
-              val hdF =
-                sf.head(in.value).map(v => Chain(in.copy(value = (in.value, v).asInstanceOf[Any])))
+              val hdF: IorT[F, String, EvalNode[Any]] =
+                sf.head(in.value).map(v => in.copy(value = (in.value, v).asInstanceOf[Any]))
+
+              val headChainF = hdF.map(Chain(_))
 
               signalSubmission match {
                 case None =>
-                  liftAttemptUser(hdF)
-                    .flatMap {
-                      case Left(e) =>
-                        failM[E](
+                  attemptUserE(
+                    headChainF,
+                    ErrorType.SignalHeadResolutionError(
+                      null,
+                      _,
+                      in.value
+                    )
+                  )
+                case Some(ss) =>
+                  attemptUser(
+                    sf.tail(in.value).map(Chain(_)),
+                    ErrorType.SignalTailResolutionError(
+                      null,
+                      _,
+                      in.value
+                    )
+                  )
+                    .flatMap(_.flatTraverse { dst =>
+                      val df2 = df.copy(resolve = sf.resolver.contramap[Any]((in.value, _)))
+                      lift(ss.add(in.meta.absolutePath, in.value, df2, dst.ref, dst.key)).flatMap { id =>
+                        // if hd fails, then unsubscribe again
+                        // note that if any parent changes, this (unsubscription) will happen automatically, so this
+                        // can be viewed as an optimization
+                        val handledHeadF =
+                          IorT {
+                            hdF.value
+                              .attemptTap {
+                                case Left(_)            => ss.remove(id)
+                                case Right(Ior.Left(_)) => ss.remove(id)
+                                case _                  => F.unit
+                              }
+                          }
+
+                        attemptUserE(
+                          handledHeadF.map(Chain(_)),
                           ErrorType.SignalHeadResolutionError(
                             null,
-                            e,
+                            _,
                             in.value
                           )
                         )
-                      case Right(hd) => W.pure(hd)
-                    }
-                case Some(ss) =>
-                  liftAttemptUser(sf.tail(in.value))
-                    .flatMap {
-                      case Left(e) =>
-                        failM[E](
-                          ErrorType.SignalTailResolutionError(
-                            null,
-                            e,
-                            in.value
-                          )
-                        )
-                      case Right(dst) =>
-                        // close in the initial value for tail Resolver[F, (I, T), A]
-                        val df2 = df.copy(resolve = sf.resolver.contramap[Any]((in.value, _)))
-                        lift(ss.add(in.meta.absolutePath, in.value, df2, dst.ref, dst.key)).flatMap { id =>
-                          // if hd fails, then unsubscribe again
-                          liftAttemptUser(hdF)
-                            .flatMap {
-                              case Left(e) =>
-                                lift(ss.remove(id)) >>
-                                  failM[E](
-                                    ErrorType.SignalHeadResolutionError(
-                                      null,
-                                      e,
-                                      in.value
-                                    )
-                                  )
-                              case Right(hd) => W.pure(hd)
-                            }
-                        }
-                    }
+                      }
+                    })
               }
             }
             .flatMap { nvs =>
@@ -389,20 +430,17 @@ object Interpreter {
                 .parFlatTraverse { in =>
                   val next = in.meta.ided(df.id)
 
-                  liftAttemptUser(resolve(in.value)).timed
-                    .flatMap[E] {
-                      case (_, Left(e)) =>
-                        failM[E](
-                          ErrorType.EffectResolutionError(
-                            null,
-                            e,
-                            in.value
-                          )
-                        )
-                      case (dur, Right(v)) =>
-                        val out = Chain(EvalNode(next, v))
-                        submitW(n.name, dur, 1) as out
-                    }
+                  attemptUser(
+                    resolve(in.value).timed.semiflatMap { case (dur, v) =>
+                      val out = Chain(EvalNode(next, v))
+                      submit(n.name, dur, 1) as out
+                    },
+                    ErrorType.EffectResolutionError(
+                      null,
+                      _,
+                      in.value
+                    )
+                  )
                 }
                 .map(Left(_))
             case BatchResolver(batcher, partition) =>
@@ -411,18 +449,14 @@ object Interpreter {
               val partitioned: W[Chain[(NodeMeta, Batch[F, Any, Any, Any])]] = inputs.parFlatTraverse { in =>
                 val next = in.meta.ided(df.id)
 
-                liftAttemptUser(partition(in.value))
-                  .flatMap {
-                    case Left(e) =>
-                      failM[Chain[(NodeMeta, Batch[F, Any, Any, Any])]](
-                        ErrorType.BatchPartitioningError(
-                          null,
-                          e,
-                          in.value
-                        )
-                      )
-                    case Right(b) => W.pure(Chain((next, b)))
-                  }
+                attemptUser[Chain[(NodeMeta, Batch[F, Any, Any, Any])]](
+                  partition(in.value).map(b => Chain((next, b))),
+                  ErrorType.BatchPartitioningError(
+                    null,
+                    _,
+                    in.value
+                  )
+                )
               }
 
               partitioned
@@ -531,18 +565,14 @@ object Interpreter {
                               }
 
                               lookupsF.flatMap { keys =>
-                                liftAttemptUser(b.post(keys.toList).map(res => Chain(EvalNode(c, res))))
-                                  .flatMap {
-                                    case Left(e) =>
-                                      failM[Chain[EvalNode[Any]]](
-                                        ErrorType.BatchPostProcessingError(
-                                          null,
-                                          e,
-                                          keys
-                                        )
-                                      )
-                                    case Right(x) => W.pure(x)
-                                  }
+                                attemptUserE(
+                                  b.post(keys.toList).map(res => Chain(EvalNode(c, res))),
+                                  ErrorType.BatchPostProcessingError(
+                                    null,
+                                    _,
+                                    keys
+                                  )
+                                )
                               }
                             }
 

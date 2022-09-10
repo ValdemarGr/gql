@@ -13,8 +13,8 @@ import cats.data._
  */
 final case class SignalResolver[F[_]: MonadCancelThrow, I, K, A, T](
     resolver: LeafResolver[F, (I, T), A],
-    head: I => EitherT[F, String, T],
-    tail: I => EitherT[F, String, SignalResolver.DataStreamTail[K, T]]
+    head: I => IorT[F, String, T],
+    tail: I => IorT[F, String, SignalResolver.DataStreamTail[K, T]]
 ) extends Resolver[F, I, A] {
   def mapK[G[_]: MonadCancelThrow](fk: F ~> G): SignalResolver[G, I, K, A, T] =
     SignalResolver(

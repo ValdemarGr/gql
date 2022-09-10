@@ -7,8 +7,8 @@ import gql.SchemaState
 import cats.implicits._
 
 final case class StreamReference[K, T](id: Int) {
-  def apply[F[_]: MonadCancelThrow, I, A](resolver: LeafResolver[F, (I, T), A])(hd: I => EitherT[F, String, T])(
-      k: I => EitherT[F, String, K]
+  def apply[F[_]: MonadCancelThrow, I, A](resolver: LeafResolver[F, (I, T), A])(hd: I => IorT[F, String, T])(
+      k: I => IorT[F, String, K]
   ): SignalResolver[F, I, K, A, T] =
     SignalResolver[F, I, K, A, T](resolver, hd, k.andThen(_.map(SignalResolver.DataStreamTail(this, _))))
 }
