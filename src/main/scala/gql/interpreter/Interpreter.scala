@@ -52,8 +52,8 @@ object Interpreter {
         }
     }
 
-  def combineSplit(fails: Chain[EvalFailure], succs: Chain[EvalNode[Json]]): Chain[(CursorGroup, Json)] =
-    fails.flatMap(_.paths).map(m => (m, Json.Null)) ++ succs.map(n => (n.cursorGroup, n.value))
+  def combineSplit(fails: Chain[EvalFailure], succs: Chain[EvalNode[Json]]): Chain[(CursorGroup, Option[Json])] =
+    fails.flatMap(_.paths).map(m => (m, None)) ++ succs.map(n => (n.cursorGroup, Some(n.value)))
 
   def constructStream[F[_]: Statistics](
       rootInput: Any,
@@ -129,7 +129,7 @@ object Interpreter {
 
                             val all = combineSplit(newFails, newSuccs)
                             // group -> results
-                            val l: List[(BigInt, List[(CursorGroup, Json)])] =
+                            val l: List[(BigInt, List[(CursorGroup, Option[Json])])] =
                               all.toList.groupBy { case (m, _) => m.id }.toList
 
                             val prepped =
@@ -220,6 +220,9 @@ object Interpreter {
 
   def groupNodeValues[A](nvs: List[(Cursor, A)]): Map[GraphArc, List[(Cursor, A)]] =
     nvs.groupMap { case (c, _) => c.head } { case (c, v) => (c.tail, v) }
+
+  def groupNodeValues2[A](nvs: List[(Cursor, A)]): Map[Option[GraphArc], List[(Cursor, A)]] =
+    nvs.groupMap { case (c, _) => c.headOption } { case (c, v) => (c.tail, v) }
 
   def interpret[F[_]](
       rootSel: NonEmptyList[(PreparedField[F, Any], Chain[EvalNode[Any]])],
@@ -504,41 +507,96 @@ object Interpreter {
     }
   }
 
-  def reconstructField[F[_]](p: Prepared[F, Any], cursors: List[(Cursor, Json)]): Json =
-    p match {
-      case PreparedLeaf(_, _) =>
-        cursors match {
-          case (_, x) :: Nil => x
-          case ys            => throw new IllegalStateException(s"Leaf field should have exactly one cursor, got $ys")
+  def reconstructField[F[_]](p: Prepared[F, Any], cursors: List[(Cursor, Option[Json])]): Json = {
+    // We first need to determine if the result is just null
+    // To do so, there must be one path, and it must be empty
+    val m = groupNodeValues2(cursors)
+    val terminal = m.get(None)
+    terminal match {
+      case Some(t) if m.size == 1 && t.size == 1 && t.exists { case (_, o) => o.isEmpty } => Json.Null
+      case _ =>
+        p match {
+          case PreparedLeaf(_, _) =>
+            cursors
+              .collectFirst { case (_, Some(x)) => x }
+              .getOrElse(Json.Null)
+          case PreparedList(of) =>
+            Json.fromValues(
+              m.toList
+                .collect { case (Some(GraphArc.Index(i)), tl) => i -> tl }
+                .sortBy { case (i, _) => i }
+                .map { case (_, tl) => reconstructField[F](of, tl) }
+            )
+          case Selection(fields) => _reconstructSelection(cursors, fields, m).asJson
         }
-      case PreparedList(of) =>
-        Json.fromValues(
-          groupNodeValues(cursors).toList
-            .map {
-              case (GraphArc.Index(i), tl) => i -> tl
-              case _                       => ???
-            }
-            .sortBy { case (i, _) => i }
-            .map { case (_, tl) => reconstructField[F](of, tl) }
-        )
-      case Selection(fields) => reconstructSelection(cursors, fields).asJson
     }
+  }
 
-  def reconstructSelection[F[_]](
-      levelCursors: List[(Cursor, Json)],
-      sel: NonEmptyList[PreparedField[F, Any]]
+  def _reconstructSelection[F[_]](
+      levelCursors: List[(Cursor, Option[Json])],
+      sel: NonEmptyList[PreparedField[F, Any]],
+      m: Map[Option[GraphArc], List[(Cursor, Option[Json])]]
   ): JsonObject = {
-    val m = groupNodeValues(levelCursors)
-
     sel
       .map { pf =>
         pf match {
           case PreparedFragField(id, specify, selection) =>
-            reconstructSelection(levelCursors, selection.fields)
+            _reconstructSelection(levelCursors, selection.fields, m)
           case df @ PreparedDataField(_, name, _, selection, _) =>
-            JsonObject(name -> reconstructField(selection, m(GraphArc.Field(name))))
+            JsonObject(
+              name -> m.get(Some(GraphArc.Field(name))).map(reconstructField(selection, _)).getOrElse(Json.Null)
+            )
         }
       }
       .reduceLeft(_ deepMerge _)
   }
+
+  def reconstructSelection[F[_]](
+      levelCursors: List[(Cursor, Option[Json])],
+      sel: NonEmptyList[PreparedField[F, Any]]
+  ): JsonObject =
+    _reconstructSelection(levelCursors, sel, groupNodeValues2(levelCursors))
+
+  // def reconstructField[F[_]](p: Prepared[F, Any], cursors: List[(Cursor, Json)]): Json = {
+  //   // If there is nothing else on this path, then return the json
+  //   // This handles arbitary null's in the tree
+  //   if (cursors.size == 1 && cursors.exists { case (c, j) => c.path.size == 1 }) cursors.head._2
+  //   else {
+  //     p match {
+  //       case PreparedLeaf(_, _) =>
+  //         cursors
+  //           .collectFirst { case (_, v) if !v.isNull => v }
+  //           .getOrElse(Json.Null)
+  //       case PreparedList(of) =>
+  //         Json.fromValues(
+  //           groupNodeValues(cursors).toList
+  //             .map {
+  //               case (GraphArc.Index(i), tl) => i -> tl
+  //               case _                       => ???
+  //             }
+  //             .sortBy { case (i, _) => i }
+  //             .map { case (_, tl) => reconstructField[F](of, tl) }
+  //         )
+  //       case Selection(fields) => reconstructSelection(cursors, fields).asJson
+  //     }
+  //   }
+  // }
+
+  // def reconstructSelection[F[_]](
+  //     levelCursors: List[(Cursor, Json)],
+  //     sel: NonEmptyList[PreparedField[F, Any]]
+  // ): JsonObject = {
+  //   val m = groupNodeValues(levelCursors)
+
+  //   sel
+  //     .map { pf =>
+  //       pf match {
+  //         case PreparedFragField(id, specify, selection) =>
+  //           reconstructSelection(levelCursors, selection.fields)
+  //         case df @ PreparedDataField(_, name, _, selection, _) =>
+  //           JsonObject(name -> reconstructField(selection, m(GraphArc.Field(name))))
+  //       }
+  //     }
+  //     .reduceLeft(_ deepMerge _)
+  // }
 }

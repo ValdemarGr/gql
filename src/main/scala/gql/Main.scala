@@ -421,7 +421,8 @@ query withNestedFragments {
               "nestedSignal" ->
                 f(
                   nameStreamReference[F, Data[F], Data[F]](eff { case (i, _) => i.c.map(_.head) })(_ => IorT.pure(()))(i =>
-                    IorT.liftF(F.pure(i.a))
+                    // IorT.liftF(F.pure(i.a))
+                    IorT.leftT[F, String]("Hahaaaa, Nested signal errrorrororor!")
                   )
                 ),
               "nestedSignal2" ->
