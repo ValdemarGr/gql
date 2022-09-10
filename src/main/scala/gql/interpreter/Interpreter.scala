@@ -154,10 +154,12 @@ object Interpreter {
                                 }
 
                             val withNew = newSigs ++ activeSigs
+                            // All nodes that occured in the tree but are not in the HCSA are dead
                             val garbageCollected = withNew -- meta.toRemove
 
                             val o = ((recombined, garbageCollected), Some((newFails, recombined)))
 
+                            // Also remove the subscriptions
                             meta.toRemove.toList
                               .traverse(x => streamResourceAlg.traverse_(_.remove(x)))
                               .as(o)
