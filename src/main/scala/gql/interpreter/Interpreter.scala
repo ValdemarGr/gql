@@ -55,13 +55,9 @@ object Interpreter {
     }
     final case class BatchResolutionError(
         paths: Chain[ErrorPath],
-        error: Either[Throwable, String],
+        exception: Throwable,
         keys: Set[Any]
     ) extends ErrorType
-    object BatchResolutionError {
-      def apply(paths: Chain[ErrorPath], keys: Set[Any]) =
-        PartiallyAppliedError(new BatchResolutionError(paths, _, keys))
-    }
     final case class BatchPostProcessingError(
         path: ErrorPath,
         error: Either[Throwable, String],
@@ -534,18 +530,9 @@ object Interpreter {
                       .toIterable
                       .toSet
 
-                    liftAttemptUser(EitherT.liftF(b.resolve(keys)))
-                      .flatMap {
-                        case Left(e) =>
-                          val nms = nec.toChain.flatMap { case (_, bn) => bn.inputs.map { case (nm, _) => nm } }
-                          failM[Chain[EvalNode[Json]]](
-                            ErrorType.BatchResolutionError(
-                              null,
-                              e,
-                              keys
-                            )
-                          )
-                        case Right(resultLookup: Map[BatchKey, BatchValue]) =>
+                    val resolvedF: F[WriterT[F, Chain[ErrorType], Chain[EvalNode[Json]]]] =
+                      b.resolve(keys)
+                        .map { (resultLookup: Map[BatchKey, BatchValue]) =>
                           nec.toChain.parFlatTraverse { case (df, bn) =>
                             val mappedValuesF: W[Chain[EvalNode[Any]]] = bn.inputs.parFlatTraverse { case (c, b) =>
                               // find all results for this key
@@ -578,6 +565,21 @@ object Interpreter {
 
                             mappedValuesF.flatMap(startNext(df, _))
                           }
+                        }
+
+                    lift(resolvedF).attempt
+                      .flatMap {
+                        case Left(ex) =>
+                          WriterT.put(Chain.empty[EvalNode[Json]])(
+                            Chain(
+                              ErrorType.BatchResolutionError(
+                                null,
+                                ex,
+                                keys
+                              )
+                            )
+                          )
+                        case Right(fa) => fa
                       }
                   }
                   .map(Chain.fromOption)
