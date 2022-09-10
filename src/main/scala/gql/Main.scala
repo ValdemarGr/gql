@@ -27,6 +27,7 @@ import gql.resolver.SignalResolver
 import gql.resolver.EffectResolver
 import cats.mtl._
 import gql.out._
+import cats.instances.unit
 
 object Main extends App {
   def showExpectation(e: Parser.Expectation): Eval[String] =
@@ -415,12 +416,20 @@ query withNestedFragments {
               "a" -> f(eff(x => F.raiseError[String](new Exception("testtt")))),
               "a2" -> f(arg[Int]("num", Some(42)))(pur { case (i, _) => i.a }),
               "b" -> f(eff(_.b)),
-              // "sd" -> f(serverDataBatcher.traverse(_.b.map(i => Seq(i, i + 1, i * 2)))),
+              "sd" -> f(serverDataBatcher.traverse(x => EitherT.liftF(x.b.map(i => Seq(i, i + 1, i * 2))))),
               "c" -> f(eff(_.c.map(_.toSeq))),
               "nestedSignal" ->
-                f(nameStreamReference[F, Data[F], Data[F]](eff { case (i, _) => i.c.map(_.head) })(_ => F.unit)(i => F.pure(i.a))),
+                f(
+                  nameStreamReference[F, Data[F], Data[F]](eff { case (i, _) => i.c.map(_.head) })(_ => EitherT.pure(()))(i =>
+                    EitherT.liftF(F.pure(i.a))
+                  )
+                ),
               "nestedSignal2" ->
-                f(nameStreamReference[F, Data[F], Data[F]](eff { case (i, _) => i.c.map(_.head) })(_ => F.unit)(i => F.pure(i.a)))
+                f(
+                  nameStreamReference[F, Data[F], Data[F]](eff { case (i, _) => i.c.map(_.head) })(_ => EitherT.pure(()))(i =>
+                    EitherT.liftF(F.pure(i.a))
+                  )
+                )
             )
           }
 

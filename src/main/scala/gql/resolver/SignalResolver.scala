@@ -3,7 +3,7 @@ package gql.resolver
 import cats.effect._
 import cats.implicits._
 import cats._
-import cats.arrow.FunctionK
+import cats.data._
 
 /*
  * I input type
@@ -13,14 +13,14 @@ import cats.arrow.FunctionK
  */
 final case class SignalResolver[F[_]: MonadCancelThrow, I, K, A, T](
     resolver: LeafResolver[F, (I, T), A],
-    head: I => F[T],
-    tail: I => F[SignalResolver.DataStreamTail[K, T]]
+    head: I => EitherT[F, String, T],
+    tail: I => EitherT[F, String, SignalResolver.DataStreamTail[K, T]]
 ) extends Resolver[F, I, A] {
   def mapK[G[_]: MonadCancelThrow](fk: F ~> G): SignalResolver[G, I, K, A, T] =
     SignalResolver(
       resolver.mapK(fk),
-      i => fk(head(i)),
-      i => fk(tail(i))
+      i => head(i).mapK(fk),
+      i => tail(i).mapK(fk)
     )
 
   def contramap[C](g: C => I): SignalResolver[F, C, K, A, T] =

@@ -31,20 +31,31 @@ object Interpreter {
 
   sealed trait ErrorType
   object ErrorType {
+    final case class SignalHeadResolutionError(
+        paths: ErrorPath,
+        error: Either[Throwable, String],
+        input: Any
+    ) extends ErrorType
+    final case class SignalTailResolutionError(
+        paths: ErrorPath,
+        error: Either[Throwable, String],
+        input: Any
+    ) extends ErrorType
     final case class BatchResolutionError(
         paths: Chain[ErrorPath],
-        exception: Throwable,
+        error: Either[Throwable, String],
         keys: Set[Any]
     ) extends ErrorType
-    final case class BatchReassociationError(
+    final case class BatchPostProcessingError(
         path: ErrorPath,
-        exception: Throwable,
-        resultMap: Map[BatchKey, BatchValue]
+        error: Either[Throwable, String],
+        resultMap: Chain[(BatchKey, BatchValue)]
     ) extends ErrorType
     final case class BatchMissingKeyError(
         path: ErrorPath,
         resultMap: Map[BatchKey, BatchValue],
-        key: BatchKey
+        expectedKeys: List[BatchKey],
+        conflictingKey: BatchKey
     ) extends ErrorType
     final case class BatchPartitioningError(
         path: ErrorPath,
@@ -75,7 +86,7 @@ object Interpreter {
       schemaState: SchemaState[F]
   ): F[JsonObject] =
     interpret[F](rootSel.map((_, Chain(EvalNode.empty(rootInput, BigInt(0))))), Batching.plan[F](rootSel, plan), schemaState).run
-      .map { case (f, s) => combineSplit(f, s) }
+      .map { case (f, s) => combineSplit(null, s) }
       .map(xs => reconstructSelection(xs.map { case (nm, x) => nm.relativePath -> x }.toList, rootSel))
 
   def stitchInto(
@@ -131,7 +142,7 @@ object Interpreter {
             case Some(x) => x.getState
             case None    => F.pure(Map.empty[BigInt, (Cursor, Any, PreparedDataField[F, Any, Any])])
           }
-        } yield (fails, succs, executionDeps, s)
+        } yield (null /*fails*/, succs, executionDeps, s)
       }
 
     // first iteration
@@ -283,9 +294,6 @@ object Interpreter {
           case Right(Right(x))  => Right(x)
         }
 
-    def liftUser[A](fa: EitherT[F, String, A]): W[Either[String, A]] =
-      lift(fa.value)
-
     Supervisor[F].mapK(lift).use { sup =>
       executionDeps.batchExecutionState[W].flatMap { batchStateMap =>
         def submitAndMaybeStart(nodeId: Int, input: Chain[EvalNode[Any]]): W[StateSubmissionOutcome] =
@@ -314,24 +322,51 @@ object Interpreter {
           inputs
             .parFlatTraverse { in =>
               val hdF =
-                lift(sf.head(in.value)).map(v => Chain(in.copy(value = (in.value, v).asInstanceOf[Any])))
-
-              def failHeadF[A](e: Throwable) =
-                fail[EvalNode[A]](EvalFailure(Chain(in.meta), None, "during signal head resolution", Some(e)))
+                sf.head(in.value).map(v => Chain(in.copy(value = (in.value, v).asInstanceOf[Any])))
 
               signalSubmission match {
-                case None => hdF.handleErrorWith(failHeadF)
-                case Some(ss) =>
-                  lift(sf.tail(in.value)).attempt
+                case None =>
+                  liftAttemptUser(hdF)
                     .flatMap {
                       case Left(e) =>
-                        fail[EvalNode[Any]](EvalFailure(Chain(in.meta), None, "during signal tail resolution", Some(e)))
+                        failM[E](
+                          ErrorType.SignalHeadResolutionError(
+                            null,
+                            e,
+                            in.value
+                          )
+                        )
+                      case Right(hd) => W.pure(hd)
+                    }
+                case Some(ss) =>
+                  liftAttemptUser(sf.tail(in.value))
+                    .flatMap {
+                      case Left(e) =>
+                        failM[E](
+                          ErrorType.SignalTailResolutionError(
+                            null,
+                            e,
+                            in.value
+                          )
+                        )
                       case Right(dst) =>
                         // close in the initial value for tail Resolver[F, (I, T), A]
                         val df2 = df.copy(resolve = sf.resolver.contramap[Any]((in.value, _)))
                         lift(ss.add(in.meta.absolutePath, in.value, df2, dst.ref, dst.key)).flatMap { id =>
                           // if hd fails, then unsubscribe again
-                          hdF.handleErrorWith(e => lift(ss.remove(id)) >> failHeadF(e))
+                          liftAttemptUser(hdF)
+                            .flatMap {
+                              case Left(e) =>
+                                lift(ss.remove(id)) >>
+                                  failM[E](
+                                    ErrorType.SignalHeadResolutionError(
+                                      null,
+                                      e,
+                                      in.value
+                                    )
+                                  )
+                              case Right(hd) => W.pure(hd)
+                            }
                         }
                     }
               }
@@ -465,36 +500,54 @@ object Interpreter {
                       .toIterable
                       .toSet
 
-                    b
-                      .resolve(keys)
-                      .flatMap { (resultLookup: Map[BatchKey, BatchValue]) =>
-                        nec.toChain.parFlatTraverse { case (df, bn) =>
-                          val mappedValuesF: W[Chain[EvalNode[Any]]] = bn.inputs.parFlatTraverse { case (c, b) =>
-                            // find all results for this key
-                            val lookupsF: W[Chain[(BatchKey, BatchValue)]] = Chain.fromSeq(b.keys).flatTraverse { (k: BatchKey) =>
-                              resultLookup.get(k) match {
-                                case None =>
-                                  ??? // fail[(BatchKey, BatchValue)](EvalFailure(Chain(c), None, "during batch resolution", None))
-                                case Some(x) => W.pure(Chain(k -> x))
+                    liftAttemptUser(EitherT.liftF(b.resolve(keys)))
+                      .flatMap {
+                        case Left(e) =>
+                          val nms = nec.toChain.flatMap { case (_, bn) => bn.inputs.map { case (nm, _) => nm } }
+                          failM[Chain[EvalNode[Json]]](
+                            ErrorType.BatchResolutionError(
+                              null,
+                              e,
+                              keys
+                            )
+                          )
+                        case Right(resultLookup: Map[BatchKey, BatchValue]) =>
+                          nec.toChain.parFlatTraverse { case (df, bn) =>
+                            val mappedValuesF: W[Chain[EvalNode[Any]]] = bn.inputs.parFlatTraverse { case (c, b) =>
+                              // find all results for this key
+                              val lookupsF: W[Chain[(BatchKey, BatchValue)]] = Chain.fromSeq(b.keys).flatTraverse { (k: BatchKey) =>
+                                resultLookup.get(k) match {
+                                  case None =>
+                                    failM[Chain[(BatchKey, BatchValue)]](
+                                      ErrorType.BatchMissingKeyError(
+                                        null,
+                                        resultLookup,
+                                        b.keys,
+                                        k
+                                      )
+                                    )
+                                  case Some(x) => W.pure(Chain(k -> x))
+                                }
+                              }
+
+                              lookupsF.flatMap { keys =>
+                                liftAttemptUser(b.post(keys.toList).map(res => Chain(EvalNode(c, res))))
+                                  .flatMap {
+                                    case Left(e) =>
+                                      failM[Chain[EvalNode[Any]]](
+                                        ErrorType.BatchPostProcessingError(
+                                          null,
+                                          e,
+                                          keys
+                                        )
+                                      )
+                                    case Right(x) => W.pure(x)
+                                  }
                               }
                             }
 
-                            lookupsF.flatMap { keys =>
-                              ???
-                            // lift(b.post(keys.toList).map(res => Chain(EvalNode(c, res))).value)
-                            //   .handleErrorWith(e =>
-                            //     fail[EvalNode[Any]](EvalFailure(Chain(c), None, "during batch post-resolution", Some(e)))
-                            //   )
-                            }
-
+                            mappedValuesF.flatMap(startNext(df, _))
                           }
-
-                          mappedValuesF.flatMap(startNext(df, _))
-                        }
-                      }
-                      .handleErrorWith { e =>
-                        val nms = nec.toChain.flatMap { case (_, bn) => bn.inputs.map { case (nm, _) => nm } }
-                        fail(EvalFailure(nms, None, "during batched resolve", Some(e)))
                       }
                   }
                   .map(Chain.fromOption)
