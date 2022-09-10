@@ -35,6 +35,7 @@ object Batching {
       prep match {
         case PreparedLeaf(_, _) => Eval.now(Nil)
         case PreparedList(of)   => unpackPrep(of)
+        case PreparedOption(of) => unpackPrep(of)
         case Selection(fields)  => flattenDataFieldMap(fields).map(_.toList)
       }
     }

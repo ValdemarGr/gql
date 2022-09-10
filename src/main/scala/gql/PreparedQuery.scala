@@ -44,6 +44,8 @@ object PreparedQuery {
 
   final case class PreparedList[F[_], A](of: Prepared[F, A]) extends Prepared[F, A]
 
+  final case class PreparedOption[F[_], A](of: Prepared[F, A]) extends Prepared[F, A]
+
   final case class PreparedLeaf[F[_], A](name: String, encode: A => Json) extends Prepared[F, A]
 
   final case class PositionalError(position: PrepCursor, caret: Option[Caret], message: String)
@@ -224,15 +226,13 @@ object PreparedQuery {
       val ss = gqlField.selectionSet.value
       val selCaret = gqlField.selectionSet.caret
 
-      val prepF: F[Prepared[G, Any]] =
-        (tpe, ss) match {
+      def typePrep(t: Output[G, Any]): F[Prepared[G, Any]] =
+        (t, ss) match {
+          case (Arr(inner), _) => typePrep(inner).map(PreparedList(_))
+          case (Opt(inner), _) => typePrep(inner).map(PreparedOption(_))
           case (ol: ObjLike[G, Any], Some(ss)) =>
             prepareSelections[F, G](ol, ss, variableMap, fragments)
               .map(Selection(_))
-          case (Arr(ol: ObjLike[G, Any]), Some(ss)) =>
-            prepareSelections[F, G](ol, ss, variableMap, fragments)
-              .map(Selection(_))
-              .map(x => PreparedList(x).asInstanceOf[Prepared[G, Any]])
           case (e: Enum[G, Any], None) =>
             F.pure(PreparedLeaf(e.name, x => Json.fromString(e.encoder(x).get)))
           case (s: Scalar[G, Any], None) =>
@@ -240,6 +240,8 @@ object PreparedQuery {
           case (o, Some(_)) => raise(s"type ${friendlyName[G, Any](o)} cannot have selections", Some(selCaret))
           case (o, None)    => raise(s"object like type ${friendlyName[G, Any](o)} must have a selection", Some(selCaret))
         }
+
+      val prepF: F[Prepared[G, Any]] = typePrep(tpe)
 
       prepF.flatMap(p =>
         nextId[F].map(id => PreparedDataField(id, gqlField.name, resolve, p, underlyingOutputTypename(field.output.value)))

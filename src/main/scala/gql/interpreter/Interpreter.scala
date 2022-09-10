@@ -35,8 +35,8 @@ object Interpreter {
         }
     }
 
-  def combineSplit(fails: Chain[EvalFailure], succs: Chain[EvalNode[Json]]): Chain[(CursorGroup, Option[Json])] =
-    fails.flatMap(_.paths).map(m => (m, None)) ++ succs.map(n => (n.cursorGroup, Some(n.value)))
+  def combineSplit(fails: Chain[EvalFailure], succs: Chain[EvalNode[Json]]): Chain[(CursorGroup, Json)] =
+    fails.flatMap(_.paths).map(m => (m, Json.Null)) ++ succs.map(n => (n.cursorGroup, n.value))
 
   def constructStream[F[_]: Statistics](
       rootInput: Any,
@@ -112,8 +112,7 @@ object Interpreter {
 
                             val all = combineSplit(newFails, newSuccs)
                             // group -> results
-                            val l: List[(BigInt, List[(CursorGroup, Option[Json])])] =
-                              all.toList.groupBy { case (m, _) => m.id }.toList
+                            val l = all.toList.groupBy { case (m, _) => m.id }.toList
 
                             val prepped =
                               l.map { case (group, results) =>
@@ -375,6 +374,17 @@ object Interpreter {
                     inner.mapWithIndex { case (v, i) => nv.succeed(v, _.index(i)) }
                   }
                 evalSel(of, partitioned)
+              case PreparedOption(of) =>
+                val (nulls, continuations) =
+                  in.partitionEither { nv =>
+                    val inner = nv.value.asInstanceOf[Option[Any]]
+
+                    inner match {
+                      case None    => Left(nv.setValue(Json.Null))
+                      case Some(v) => Right(nv.setValue(v))
+                    }
+                  }
+                evalSel(of, continuations).map(_ ++ nulls)
             }
           }
 
@@ -490,18 +500,18 @@ object Interpreter {
     }
   }
 
-  def reconstructField[F[_]](p: Prepared[F, Any], cursors: List[(Cursor, Option[Json])]): Json = {
+  def reconstructField[F[_]](p: Prepared[F, Any], cursors: List[(Cursor, Json)]): Json = {
     // We first need to determine if the result is just null
     // To do so, there must be one path, and it must be empty
     val m = groupNodeValues2(cursors)
     val terminal = m.get(None)
     terminal match {
-      case Some(t) if m.size == 1 && t.size == 1 && t.exists { case (_, o) => o.isEmpty } => Json.Null
+      // case Some(t) if m.size == 1 && t.size == 1 && t.exists { case (_, o) => o.isEmpty } => Json.Null
       case _ =>
         p match {
           case PreparedLeaf(_, _) =>
             cursors
-              .collectFirst { case (_, Some(x)) => x }
+              .collectFirst { case (_, x) if !x.isNull => x }
               .getOrElse(Json.Null)
           case PreparedList(of) =>
             Json.fromValues(
@@ -510,15 +520,22 @@ object Interpreter {
                 .sortBy { case (i, _) => i }
                 .map { case (_, tl) => reconstructField[F](of, tl) }
             )
+          case PreparedOption(of) =>
+            terminal match {
+              case Some(t) if m.size == 1 && t.forall { case (_, o) => o.isNull } =>
+                Json.Null
+              case _ =>
+                reconstructField[F](of, cursors)
+            }
           case Selection(fields) => _reconstructSelection(cursors, fields, m).asJson
         }
     }
   }
 
   def _reconstructSelection[F[_]](
-      levelCursors: List[(Cursor, Option[Json])],
+      levelCursors: List[(Cursor, Json)],
       sel: NonEmptyList[PreparedField[F, Any]],
-      m: Map[Option[GraphArc], List[(Cursor, Option[Json])]]
+      m: Map[Option[GraphArc], List[(Cursor, Json)]]
   ): JsonObject = {
     sel
       .map { pf =>
@@ -535,7 +552,7 @@ object Interpreter {
   }
 
   def reconstructSelection[F[_]](
-      levelCursors: List[(Cursor, Option[Json])],
+      levelCursors: List[(Cursor, Json)],
       sel: NonEmptyList[PreparedField[F, Any]]
   ): JsonObject =
     _reconstructSelection(levelCursors, sel, groupNodeValues2(levelCursors))

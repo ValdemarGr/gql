@@ -10,6 +10,7 @@ import gql.PreparedQuery.PreparedDataField
 import gql.PreparedQuery.PreparedFragField
 import gql.PreparedQuery.PreparedLeaf
 import gql.PreparedQuery.PreparedList
+import gql.PreparedQuery.PreparedOption
 import gql.PreparedQuery.Selection
 import cats.Monad
 import cats.mtl.Stateful
@@ -79,6 +80,7 @@ object Planner {
                     Node(id, nodeName, batchName, end, s.initialCost, s.extraElementCost, nel.toList)
                   }
                 case PreparedList(of) => handleSelection(of)
+                case PreparedOption(of) => handleSelection(of)
               }
 
             handleSelection(selection).map(NonEmptyList.one(_))

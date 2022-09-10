@@ -268,7 +268,7 @@ query withNestedFragments {
 
   implicit def stringType[F[_]]: Scalar[F, String] = Scalar("String", Encoder.encodeString)
 
-  // implicit def listTypeForSome[F[_], A](implicit of: Output[F, A]): Output[F, Vector[A]] = Output.Arr(of)
+  implicit def listTypeForSome[F[_], A](implicit of: Output[F, A]): Output[F, Vector[A]] = Arr(of)
   implicit def seqTypeForAny[F[_], A](implicit of: Output[F, A]): Output[F, Seq[A]] = Arr(of)
 
   implicit def optTypeForSome[F[_], A](implicit of: Output[F, A]): Output[F, Option[A]] = Opt(of)
@@ -340,6 +340,7 @@ query withNestedFragments {
               "b" -> f(eff(_.b)),
               "sd" -> f(serverDataBatcher.traverse(x => IorT.liftF(x.b.map(i => Seq(i, i + 1, i * 2))))),
               "c" -> f(eff(_.c.map(_.toSeq))),
+              "doo" -> f(pur(_ => Vector.empty[String])),
               "nestedSignal" ->
                 f(
                   nameStreamReference[F, Data[F], Data[F]](eff { case (i, _) => i.c.map(_.head) })(_ => IorT.pure(()))(i =>
@@ -507,6 +508,7 @@ fragment F2 on Data {
 query withNestedFragments {
   getData {
     dep
+    doo
     nestedSignal2 {
       a
     }
