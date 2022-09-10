@@ -63,10 +63,3 @@ object EvalNode {
 
   def empty[A](value: A, cursorGroup: BigInt) = startAt(value, cursorGroup, Cursor.empty)
 }
-
-final case class EvalFailure(
-    cursorGroups: Chain[CursorGroup],
-    error: Option[String],
-    internal: String,
-    throwable: Option[Throwable]
-)

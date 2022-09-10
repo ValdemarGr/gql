@@ -19,54 +19,6 @@ import gql._
 import gql.out._
 
 object Interpreter {
-  type BatchKey = Any
-  type BatchValue = Any
-  type BatchResult = Any
-
-  final case class PartiallyAppliedError(val closure: Either[Throwable, String] => ErrorType) extends AnyVal {
-    def apply(err: Either[Throwable, String]): ErrorType = closure(err)
-  }
-
-  sealed trait ErrorType { def paths: Chain[CursorGroup] }
-  object ErrorType {
-    final case class SignalHeadResolutionError(
-        path: CursorGroup,
-        error: Either[Throwable, String],
-        input: Any
-    ) extends ErrorType { lazy val paths = Chain(path) }
-    final case class SignalTailResolutionError(
-        path: CursorGroup,
-        error: Either[Throwable, String],
-        input: Any
-    ) extends ErrorType { lazy val paths = Chain(path) }
-    final case class BatchResolutionError(
-        paths: Chain[CursorGroup],
-        exception: Throwable,
-        keys: Set[Any]
-    ) extends ErrorType
-    final case class BatchPostProcessingError(
-        path: CursorGroup,
-        error: Either[Throwable, String],
-        resultMap: Chain[(BatchKey, BatchValue)]
-    ) extends ErrorType { lazy val paths = Chain(path) }
-    final case class BatchMissingKeyError(
-        path: CursorGroup,
-        resultMap: Map[BatchKey, BatchValue],
-        expectedKeys: List[BatchKey],
-        conflictingKey: BatchKey
-    ) extends ErrorType { lazy val paths = Chain(path) }
-    final case class BatchPartitioningError(
-        path: CursorGroup,
-        error: Either[Throwable, String],
-        input: Any
-    ) extends ErrorType { lazy val paths = Chain(path) }
-    final case class EffectResolutionError(
-        path: CursorGroup,
-        error: Either[Throwable, String],
-        input: Any
-    ) extends ErrorType { lazy val paths = Chain(path) }
-  }
-
   def run[F[_]: Async: Statistics](
       rootInput: Any,
       rootSel: NonEmptyList[PreparedField[F, Any]],
@@ -101,8 +53,8 @@ object Interpreter {
         }
     }
 
-  // TODO also handle the rest of the ErrorType structure
-  def combineSplit(fails: Chain[ErrorType], succs: Chain[EvalNode[Json]]): Chain[(CursorGroup, Json)] =
+  // TODO also handle the rest of the EvalFailure structure
+  def combineSplit(fails: Chain[EvalFailure], succs: Chain[EvalNode[Json]]): Chain[(CursorGroup, Json)] =
     fails.flatMap(_.paths).map(m => (m, Json.Null)) ++ succs.map(n => (n.cursorGroup, n.value))
 
   def constructStream[F[_]: Statistics](
@@ -110,14 +62,14 @@ object Interpreter {
       rootSel: NonEmptyList[PreparedField[F, Any]],
       schemaState: SchemaState[F],
       streamResourceAlg: Option[SubscriptionSupervisor[F]]
-  )(implicit F: Async[F]): fs2.Stream[F, (Chain[ErrorType], JsonObject)] = {
+  )(implicit F: Async[F]): fs2.Stream[F, (Chain[EvalFailure], JsonObject)] = {
     val changeLog = fs2.Stream.fromOption(streamResourceAlg).flatMap(_.changeLog)
 
     val accumulatorF = streamResourceAlg.traverse(implicit alg => SignalMetadataAccumulator[F])
 
     def runStreamIt(
         root: NonEmptyList[(PreparedField[F, Any], Chain[EvalNode[Any]])]
-    ): F[(Chain[ErrorType], Chain[EvalNode[Json]], Batching[F], Map[BigInt, (Cursor, Any, PreparedDataField[F, Any, Any])])] =
+    ): F[(Chain[EvalFailure], Chain[EvalNode[Json]], Batching[F], Map[BigInt, (Cursor, Any, PreparedDataField[F, Any, Any])])] =
       accumulatorF.flatMap { accumulatorOpt =>
         val rootFields = root.map { case (k, _) => k }
         for {
@@ -216,7 +168,7 @@ object Interpreter {
       rootInput: Any,
       rootSel: NonEmptyList[PreparedField[F, Any]],
       schemaState: SchemaState[F]
-  )(implicit F: Async[F]): fs2.Stream[F, (Chain[ErrorType], JsonObject)] =
+  )(implicit F: Async[F]): fs2.Stream[F, (Chain[EvalFailure], JsonObject)] =
     SubscriptionSupervisor[F](schemaState).flatMap { streamResouceAlg =>
       constructStream[F](rootInput, rootSel, schemaState, Some(streamResouceAlg))
     }
@@ -225,7 +177,7 @@ object Interpreter {
       rootInput: Any,
       rootSel: NonEmptyList[PreparedField[F, Any]],
       schemaState: SchemaState[F]
-  ): F[(Chain[ErrorType], JsonObject)] =
+  ): F[(Chain[EvalFailure], JsonObject)] =
     constructStream[F](rootInput, rootSel, schemaState, None).take(1).compile.lastOrError
 
   def computeToRemove(nodes: List[(Cursor, BigInt)], s: Set[BigInt]): Set[BigInt] = {
@@ -265,17 +217,17 @@ object Interpreter {
       executionDeps: Batching[F],
       schemaState: SchemaState[F],
       signalSubmission: Option[SignalMetadataAccumulator[F]] = None
-  )(implicit F: Async[F], stats: Statistics[F]): WriterT[F, Chain[ErrorType], Chain[EvalNode[Json]]] = {
-    type W[A] = WriterT[F, Chain[ErrorType], A]
+  )(implicit F: Async[F], stats: Statistics[F]): WriterT[F, Chain[EvalFailure], Chain[EvalNode[Json]]] = {
+    type W[A] = WriterT[F, Chain[EvalFailure], A]
     val W = Async[W]
     type E = Chain[EvalNode[Any]]
-    val lift: F ~> W = WriterT.liftK[F, Chain[ErrorType]]
+    val lift: F ~> W = WriterT.liftK[F, Chain[EvalFailure]]
 
     val nameMap = executionDeps.dataFieldMap.view.mapValues(_.name).toMap
 
-    def failM[A](e: ErrorType)(implicit M: Monoid[A]): W[A] = WriterT.put(M.empty)(Chain.one(e))
+    def failM[A](e: EvalFailure)(implicit M: Monoid[A]): W[A] = WriterT.put(M.empty)(Chain.one(e))
 
-    def attemptUser[A](fa: IorT[F, String, A], constructor: Either[Throwable, String] => ErrorType)(implicit
+    def attemptUser[A](fa: IorT[F, String, A], constructor: Either[Throwable, String] => EvalFailure)(implicit
         M: Monoid[A]
     ): W[A] =
       lift(fa.value).attempt.flatMap {
@@ -285,7 +237,7 @@ object Interpreter {
         case Right(Ior.Right(r))   => WriterT.put(r)(Chain.empty)
       }
 
-    def attemptUserE(fa: IorT[F, String, E], constructor: Either[Throwable, String] => ErrorType): W[E] =
+    def attemptUserE(fa: IorT[F, String, E], constructor: Either[Throwable, String] => EvalFailure): W[E] =
       attemptUser[E](fa, constructor)
 
     Supervisor[F].mapK(lift).use { sup =>
@@ -321,12 +273,12 @@ object Interpreter {
                 case None =>
                   attemptUserE(
                     headChainF,
-                    ErrorType.SignalHeadResolutionError(in.cursorGroup, _, in.value)
+                    EvalFailure.SignalHeadResolution(in.cursorGroup, _, in.value)
                   )
                 case Some(ss) =>
                   attemptUser(
                     sf.tail(in.value).map(Chain(_)),
-                    ErrorType.SignalTailResolutionError(in.cursorGroup, _, in.value)
+                    EvalFailure.SignalTailResolution(in.cursorGroup, _, in.value)
                   )
                     .flatMap(_.flatTraverse { dst =>
                       val df2 = df.copy(resolve = sf.resolver.contramap[Any]((in.value, _)))
@@ -346,7 +298,7 @@ object Interpreter {
 
                         attemptUserE(
                           handledHeadF.map(Chain(_)),
-                          ErrorType.SignalHeadResolutionError(in.cursorGroup, _, in.value)
+                          EvalFailure.SignalHeadResolution(in.cursorGroup, _, in.value)
                         )
                       }
                     })
@@ -375,7 +327,7 @@ object Interpreter {
                       val out = Chain(EvalNode(next, v))
                       submit(n.name, dur, 1) as out
                     },
-                    ErrorType.EffectResolutionError(next, _, in.value)
+                    EvalFailure.EffectResolution(next, _, in.value)
                   )
                 }
                 .map(Left(_))
@@ -387,7 +339,7 @@ object Interpreter {
 
                 attemptUser[Chain[(CursorGroup, Batch[F, Any, Any, Any])]](
                   partition(in.value).map(b => Chain((next, b))),
-                  ErrorType.BatchPartitioningError(next, _, in.value)
+                  EvalFailure.BatchPartitioning(next, _, in.value)
                 )
               }
 
@@ -466,7 +418,7 @@ object Interpreter {
                       .toIterable
                       .toSet
 
-                    val resolvedF: F[WriterT[F, Chain[ErrorType], Chain[EvalNode[Json]]]] =
+                    val resolvedF: F[WriterT[F, Chain[EvalFailure], Chain[EvalNode[Json]]]] =
                       b.resolve(keys)
                         .map { (resultLookup: Map[BatchKey, BatchValue]) =>
                           nec.toChain.parFlatTraverse { case (df, bn) =>
@@ -476,7 +428,7 @@ object Interpreter {
                                 resultLookup.get(k) match {
                                   case None =>
                                     failM[Chain[(BatchKey, BatchValue)]](
-                                      ErrorType.BatchMissingKeyError(c, resultLookup, b.keys, k)
+                                      EvalFailure.BatchMissingKey(c, resultLookup, b.keys, k)
                                     )
                                   case Some(x) => W.pure(Chain(k -> x))
                                 }
@@ -485,7 +437,7 @@ object Interpreter {
                               lookupsF.flatMap { keys =>
                                 attemptUserE(
                                   b.post(keys.toList).map(res => Chain(EvalNode(c, res))),
-                                  ErrorType.BatchPostProcessingError(c, _, keys)
+                                  EvalFailure.BatchPostProcessing(c, _, keys)
                                 )
                               }
                             }
@@ -500,7 +452,7 @@ object Interpreter {
                           val posses =
                             nec.toChain.flatMap { case (_, bn) => bn.inputs.map { case (nm, _) => nm } }
                           WriterT.put(Chain.empty[EvalNode[Json]])(
-                            Chain(ErrorType.BatchResolutionError(posses, ex, keys))
+                            Chain(EvalFailure.BatchResolution(posses, ex, keys))
                           )
                         case Right(fa) => fa
                       }

@@ -12,7 +12,7 @@ object ResultEmitter {
     exceptions: Chain[Throwable],
   )
 
-  def formatErrors(xs: Chain[Interpreter.ErrorType]) =
+  def formatErrors(xs: Chain[EvalFailure]) =
     Json.arr(
       // xs.flatMap { ef =>
       //   ef.meta.map { nm =>
