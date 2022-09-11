@@ -552,6 +552,14 @@ object Interpreter {
   ): JsonObject =
     _reconstructSelection(levelCursors, sel, groupNodeValues2(levelCursors))
 
+  trait Hook[F[_]] {
+    def onBatched(
+        id: Null,
+        keys: List[BatchKey],
+        post: List[BatchValue] => F[BatchValue]
+    ): F[Unit]
+  }
+
   // def interpret2[F[_]](
   //     rootSel: NonEmptyList[(PreparedField[F, Any], Chain[EvalNode[Any]])],
   //     executionDeps: Batching[F],

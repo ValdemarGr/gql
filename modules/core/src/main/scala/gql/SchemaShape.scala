@@ -10,7 +10,9 @@ final case class SchemaShape[F[_], Q](
     query: Obj[F, Q]
     // mutation: Output.Obj[F, M],
     // subscription: Output.Obj[F, M],
-)
+) {
+  lazy val discover = SchemaShape.discover[F, Q](this)
+}
 
 object SchemaShape {
   final case class DiscoveryState[F[_]](
