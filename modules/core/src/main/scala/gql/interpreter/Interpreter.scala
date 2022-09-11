@@ -24,7 +24,7 @@ object Interpreter {
       case None => subTree
       case Some((p, tl)) =>
         p match {
-          case GraphArc.Field(name) =>
+          case GraphArc.Field(_, name) =>
             val oldObj = oldTree.asObject.get
             val oldValue = oldObj(name).get
             val newSubTree = stitchInto(oldValue, subTree, tl)
@@ -32,6 +32,8 @@ object Interpreter {
           case GraphArc.Index(index) =>
             val oldArr = oldTree.asArray.get
             oldArr.updated(index, stitchInto(oldArr(index), subTree, tl)).asJson
+          case GraphArc.Fragment(_, _) =>
+            stitchInto(oldTree, subTree, tl)
         }
     }
 
@@ -85,7 +87,7 @@ object Interpreter {
                     val s = activeChanges.toList.map { case (k, _) => k }.toSet
                     val allSigNodes = activeSigs.toList.map { case (k, (cursor, _, df)) =>
                       // The cursor is to the parent, traversing the arc for df.name will get us to the changed node
-                      (cursor.field(df.name), k)
+                      (cursor.field(df.id, df.name), k)
                     }
                     val meta = computeMetadata(allSigNodes, s)
 
@@ -123,7 +125,7 @@ object Interpreter {
                                 val rec = reconstructField(df.selection, tailResults)
 
                                 // Left is the object, right is the position to replace
-                                (rec, rootCursor.field(df.name))
+                                (rec, rootCursor.field(df.id, df.name))
                               }
 
                             // fold every group's result together
@@ -206,6 +208,23 @@ object Interpreter {
   def groupNodeValues2[A](nvs: List[(Cursor, A)]): Map[Option[GraphArc], List[(Cursor, A)]] =
     nvs.groupMap { case (c, _) => c.headOption } { case (c, v) => (c.tail, v) }
 
+  // final case class ArcGrouping[A](
+  //     field: Map[Int, List[(Cursor, A)]],
+  //     arr: Map[Int, List[(Cursor, A)]],
+  //     frag: Map[Int, List[(Cursor, A)]],
+  //     terminal: List[A]
+  // )
+  // def groupNodeValues3[A](nvs: List[(Cursor, A)]) = {
+  //   nvs.foldLeft(ArcGrouping(Map.empty, Map.empty, Map.empty, List.empty)) { case (acc, (c, v)) =>
+  //     c.headOption match {
+  //       case Some(GraphArc.Field(id, _))    => acc.copy(field = acc.field + (id -> acc)))
+  //       // case Some(GraphArc.Index(idx))      => acc.copy(arr = acc.arr.updated(idx, (c.tail, v) :: acc.arr.getOrElse(idx, Nil)))
+  //       // case Some(GraphArc.Fragment(id, _)) => acc.copy(frag = acc.frag.updated(0, (c.tail, v) :: acc.frag.getOrElse(0, Nil)))
+  //       // case None                           => acc.copy(terminal = v :: acc.terminal)
+  //     }
+  //   }
+  // }
+
   def interpret[F[_]](
       rootSel: NonEmptyList[(PreparedField[F, Any], Chain[EvalNode[Any]])],
       executionDeps: Batching[F],
@@ -261,7 +280,7 @@ object Interpreter {
 
               val headChainF = hdF.map(Chain(_))
 
-              val debugCursor = in.cursorGroup.field(df.name)
+              val debugCursor = in.cursorGroup.field(df.id, df.name)
 
               signalSubmission match {
                 case None =>
@@ -314,7 +333,7 @@ object Interpreter {
             case EffectResolver(resolve) =>
               inputs
                 .parFlatTraverse { in =>
-                  val next = in.cursorGroup.field(df.name)
+                  val next = in.cursorGroup.field(df.id, df.name)
 
                   attemptUser(
                     resolve(in.value).timed.semiflatMap { case (dur, v) =>
@@ -329,7 +348,7 @@ object Interpreter {
               val impl = schemaState.batchers(batcher.id)
 
               val partitioned: W[Chain[(CursorGroup, Batch[F, Any, Any, Any])]] = inputs.parFlatTraverse { in =>
-                val next = in.cursorGroup.field(df.name)
+                val next = in.cursorGroup.field(df.id, df.name)
 
                 attemptUser[Chain[(CursorGroup, Batch[F, Any, Any, Any])]](
                   partition(in.value).map(b => Chain((next, b))),
@@ -356,8 +375,11 @@ object Interpreter {
 
         def runFields(dfs: NonEmptyList[PreparedField[F, Any]], in: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] =
           Chain.fromSeq(dfs.toList).parFlatTraverse {
-            case PreparedFragField(id, _, specify, selection) =>
-              runFields(selection.fields, in.flatMap(x => Chain.fromOption(specify(x.value)).map(y => x.succeed(y, _.fragment(id)))))
+            case PreparedFragField(id, typename, specify, selection) =>
+              runFields(
+                selection.fields,
+                in.flatMap(x => Chain.fromOption(specify(x.value)).map(y => x.succeed(y, _.fragment(id, typename))))
+              )
             case df @ PreparedDataField(id, name, _, _, _) => runDataField(df, in)
           }
 
@@ -534,16 +556,16 @@ object Interpreter {
     sel
       .map { pf =>
         pf match {
-          case PreparedFragField(id, _, _, selection) =>
-            m.get(Some(GraphArc.Fragment(id)))
+          case PreparedFragField(id, typename, _, selection) =>
+            m.get(Some(GraphArc.Fragment(id, typename)))
               .map { lc =>
                 val m2 = groupNodeValues2(lc)
                 _reconstructSelection(selection.fields, m2)
               }
               .getOrElse(JsonObject.empty)
-          case df @ PreparedDataField(_, name, _, selection, _) =>
+          case df @ PreparedDataField(id, name, _, selection, _) =>
             JsonObject(
-              name -> reconstructField(selection, m.get(Some(GraphArc.Field(name))).toList.flatten)
+              name -> reconstructField(selection, m.get(Some(GraphArc.Field(id, name))).toList.flatten)
             )
         }
       }

@@ -5,7 +5,7 @@ lazy val sharedSettings = Seq(
   autoCompilerPlugins := true,
   libraryDependencies ++= Seq(
     "org.typelevel" %% "cats-effect" % "3.3.14",
-    /* "org.typelevel" %% "cats-collections-core" % "0.9.3", */
+    "org.typelevel" %% "cats-collections-core" % "0.9.4",
     "org.typelevel" %% "cats-mtl" % "1.3.0",
     "co.fs2" %% "fs2-core" % "3.2.14",
     "co.fs2" %% "fs2-io" % "3.2.14",

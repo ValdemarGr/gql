@@ -76,8 +76,9 @@ object Execute {
       Json.obj(
         "message" -> Json.fromString(err.message),
         "path" -> err.path.absolutePath.path.map {
-          case GraphArc.Field(name) => Json.fromString(name)
-          case GraphArc.Index(idx)  => Json.fromInt(idx)
+          case GraphArc.Field(_, name)    => Json.fromString(name)
+          case GraphArc.Index(idx)        => Json.fromInt(idx)
+          case GraphArc.Fragment(_, name) => Json.fromString(s"fragment:$name")
         }.asJson
       )
     }.asJson

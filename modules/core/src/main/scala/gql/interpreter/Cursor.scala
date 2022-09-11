@@ -1,22 +1,20 @@
 package gql.interpreter
 
 import cats.data._
-import cats.instances.stream
-import cats.kernel.Order
 
 sealed trait GraphArc
 object GraphArc {
-  final case class Field(name: String) extends GraphArc
+  final case class Field(id: Int, name: String) extends GraphArc
   final case class Index(index: Int) extends GraphArc
-  final case class Fragment(id: Int) extends GraphArc
+  final case class Fragment(id: Int, name: String) extends GraphArc
 }
 
 final case class Cursor(path: Chain[GraphArc]) {
   def add(next: GraphArc): Cursor = Cursor(path :+ next)
 
   def index(idx: Int) = add(GraphArc.Index(idx))
-  def field(name: String) = add(GraphArc.Field(name))
-  def fragment(id: Int) = add(GraphArc.Fragment(id))
+  def field(id: Int, name: String) = add(GraphArc.Field(id, name))
+  def fragment(id: Int, name: String) = add(GraphArc.Fragment(id, name))
 
   def headOption = path.headOption
 
@@ -45,8 +43,8 @@ final case class CursorGroup(
   lazy val absolutePath = Cursor(startPosition.path ++ relativePath.path)
 
   def index(i: Int): CursorGroup = CursorGroup(startPosition, relativePath.index(i), id)
-  def field(name: String): CursorGroup = CursorGroup(startPosition, relativePath.field(name), id)
-  def fragment(id: Int): CursorGroup = CursorGroup(startPosition, relativePath.fragment(id), id)
+  def field(id: Int, name: String): CursorGroup = CursorGroup(startPosition, relativePath.field(id, name), id)
+  def fragment(id: Int, name: String): CursorGroup = CursorGroup(startPosition, relativePath.fragment(id, name), id)
 }
 
 object CursorGroup {
