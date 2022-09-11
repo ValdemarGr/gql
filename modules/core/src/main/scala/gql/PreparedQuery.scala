@@ -200,12 +200,13 @@ object PreparedQuery {
             case None => raiseOpt[F, Any](arg.default, s"missing argument ${arg.name}", Some(caret))
             case Some(x) =>
               parserValueToValue(x, variableMap, caret)
-                .flatMap{j => 
+                .flatMap { j =>
                   raiseEither[F, Any](
-                    arg
-                      .input
-                      .decode(j)
-                , Some(caret))}
+                    arg.input
+                      .decode(j),
+                    Some(caret)
+                  )
+                }
           }
         }
         .map(_.toList)
@@ -337,8 +338,7 @@ object PreparedQuery {
   ): F[FragmentDefinition[G, Any]] =
     D.defer {
       S.get.flatMap {
-        case c if c.cycleSet(f.value.name) =>
-          raise(s"fragment by name ${f.value.name} is cyclic, discovered through path ${c.cycleSet.mkString(" -> ")}", Some(f.caret))
+        case c if c.cycleSet(f.value.name) => raise(s"fragment by name ${f.value.name} is cyclic", Some(f.caret))
         case _ =>
           val beforeF: F[Unit] = S.modify(s => s.copy(cycleSet = s.cycleSet + f.value.name))
           val afterF: F[Unit] = S.modify(s => s.copy(cycleSet = s.cycleSet - f.value.name))
@@ -392,8 +392,17 @@ object PreparedQuery {
           variableMap,
           frags.map(f => f.value.name -> f).toMap
         )
-      // TODO decode variables
-      case P.OperationDefinition.Detailed(ot, _, _, _, sel) =>
+      case P.OperationDefinition.Detailed(ot, _, vdsO, _, sel) =>
+        vdsO match {
+          case None => variableMap
+          case Some(vars) =>
+            val vds = vars.nel
+            // vds.traverse{ vd =>
+            //   ???
+            // }
+            vds.map(_.defaultValue)
+        }
+        // TODO decode variables
         // TODO handle other things than query
         ot match {
           case P.OperationType.Query =>

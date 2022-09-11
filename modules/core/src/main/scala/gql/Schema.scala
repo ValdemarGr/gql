@@ -1,14 +1,11 @@
 package gql
 
+import cats.implicits._
 import cats.data._
 import alleycats.Empty
 import gql.out._
-
-final case class SchemaShape[F[_], Q](
-    query: Obj[F, Q]
-    // mutation: Output.Obj[F, M],
-    // subscription: Output.Obj[F, M],
-)
+import cats.mtl._
+import cats._
 
 final case class Schema[F[_], Q](
     shape: SchemaShape[F, Q],

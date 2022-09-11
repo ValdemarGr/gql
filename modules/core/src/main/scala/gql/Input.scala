@@ -7,8 +7,12 @@ import Value._
 import cats._
 import scala.reflect.ClassTag
 
-sealed trait Input[A] {
+sealed trait Input[+A] {
   def decode(value: Value): Either[String, A]
+}
+
+sealed trait ToplevelInput[A] extends Input[A] {
+  def name: String
 }
 
 object Input {
@@ -31,7 +35,7 @@ object Input {
   final case class Obj[A](
       name: String,
       fields: Arg[A]
-  ) extends Input[A] {
+  ) extends ToplevelInput[A] {
     def decode(value: Value): Either[String, A] = {
       value match {
         case JsonValue(jo) if jo.isObject =>
@@ -104,12 +108,12 @@ object Input {
     )
   }
 
-  final case class Scalar[A](name: String, dec: Decoder[A]) extends Input[A] {
+  final case class Scalar[A](name: String, dec: Decoder[A]) extends ToplevelInput[A] {
     override def decode(value: Value): Either[String, A] =
       dec.decodeJson(value.asJson).leftMap(_.show)
   }
 
-  final case class Enum[A](name: String, fields: NonEmptyMap[String, A]) extends Input[A] {
+  final case class Enum[A](name: String, fields: NonEmptyMap[String, A]) extends ToplevelInput[A] {
     def decodeString(s: String): Either[String, A] =
       fields.lookup(s) match {
         case Some(a) => Right(a)
