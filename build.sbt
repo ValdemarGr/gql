@@ -32,10 +32,12 @@ lazy val core = project
 
 lazy val http4s = project
   .in(file("modules/http4s"))
+  .dependsOn(core)
   .settings(sharedSettings)
   .settings(
     libraryDependencies ++= Seq(
       "org.http4s" %% "http4s-server" % "1.0.0-M36",
+      "org.http4s" %% "http4s-blaze-server" % "1.0.0-M36",
       "org.http4s" %% "http4s-circe" % "1.0.0-M36",
       "org.http4s" %% "http4s-dsl" % "1.0.0-M36",
     ),

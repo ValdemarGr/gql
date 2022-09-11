@@ -197,8 +197,15 @@ object PreparedQuery {
         .traverse { arg =>
           providedMap
             .get(arg.name) match {
-            case None    => raiseOpt[F, Any](arg.default, s"missing argument ${arg.name}", Some(caret))
-            case Some(x) => parserValueToValue(x, variableMap, caret).flatMap(j => raiseEither[F, Any](arg.input.decode(j), Some(caret)))
+            case None => raiseOpt[F, Any](arg.default, s"missing argument ${arg.name}", Some(caret))
+            case Some(x) =>
+              parserValueToValue(x, variableMap, caret)
+                .flatMap{j => 
+                  raiseEither[F, Any](
+                    arg
+                      .input
+                      .decode(j)
+                , Some(caret))}
           }
         }
         .map(_.toList)
