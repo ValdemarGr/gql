@@ -15,6 +15,7 @@ import gql.PreparedQuery.Selection
 import cats.Monad
 import cats.mtl.Stateful
 import cats.Eval
+import scala.collection.immutable.TreeSet
 
 object Planner {
   final case class Node(
@@ -79,7 +80,7 @@ object Planner {
                   constructCostTree[F](end, fields, Some(tn)).map { nel =>
                     Node(id, nodeName, batchName, end, s.initialCost, s.extraElementCost, nel.toList)
                   }
-                case PreparedList(of) => handleSelection(of)
+                case PreparedList(of)   => handleSelection(of)
                 case PreparedOption(of) => handleSelection(of)
               }
 
@@ -114,7 +115,7 @@ object Planner {
 
     // go through every node sorted by end decending
     // if the node has a batching name, move node to lastest possible batch (frees up most space for parents to move)
-    def go(remaining: List[Node], handled: List[Node]): List[Node] =
+    def go(remaining: List[Node], handled: Map[Int, Node], batchMap: Map[String, Eval[TreeSet[Double]]]): Map[Int, Node] =
       remaining match {
         case Nil     => handled
         case r :: rs =>
@@ -125,45 +126,49 @@ object Planner {
               // use the already resolved if possible
               val children = NonEmptyList(x, xs)
 
-              // TODO this is very inefficient
-              children
-                .map(c => handled.find(_.id == c.id).getOrElse(c).start)
-                .minimum
+              children.map(c => handled.get(c.id).getOrElse(c).start).minimum
           }
 
-          val newEnd =
+          val (newEnd, newMap) =
             r.batchName match {
               // No batching, free up as much space as possible for parents to move
-              case None     => maxEnd
+              case None     => (maxEnd, batchMap)
               case Some(bn) =>
-                // TODO use a grouped map or something to make this an order or so asymptotically faster
-
                 // Find nodes that we may move to:
                 // All nodes that end no later than the earliest of our children but end later than us
-                val compatible =
-                  handled
-                    .filter(h => h.batchName.contains(bn) && r.end <= h.end && h.end <= maxEnd)
-                    .maximumByOption(_.end)
+                val compat =
+                  batchMap
+                    .get(bn)
+                    .flatMap(_.value.maxBefore(maxEnd * 1.02).filter(_ >= r.end))
+                    .getOrElse(maxEnd)
 
-                compatible.map(_.end).getOrElse(maxEnd)
+                val newSet =
+                  batchMap.get(bn) match {
+                    case None    => Eval.now(TreeSet(r.end))
+                    case Some(s) => s.map(_ + r.end)
+                  }
+                val newMap = batchMap + (bn -> newSet)
+
+                (compat, newMap)
             }
 
-          go(rs, r.copy(end = newEnd) :: handled)
+          go(rs, handled + (r.id -> r.copy(end = newEnd)), newMap)
       }
 
-    val planned = go(orderedFlatNodes.toList, Nil)
+    val plannedMap = go(orderedFlatNodes.toList, Map.empty, Map.empty)
 
-    val plannedMap = planned.map(n => n.id -> n).toMap
-
-    def reConstruct(ns: NonEmptyList[Int]): NonEmptyList[Node] =
-      ns.map { n =>
+    def reConstruct(ns: NonEmptyList[Int]): Eval[NonEmptyList[Node]] = Eval.defer {
+      ns.traverse { n =>
         val newN = plannedMap(n)
         newN.children match {
-          case Nil     => newN
-          case x :: xs => newN.copy(children = reConstruct(NonEmptyList(x, xs).map(_.id)).toList)
+          case Nil => Eval.now(newN)
+          case x :: xs =>
+            val newChildrenF = reConstruct(NonEmptyList(x, xs).map(_.id)).map(_.toList)
+            newChildrenF.map(x => newN.copy(children = x))
         }
       }
+    }
 
-    reConstruct(nodes.map(_.id))
+    reConstruct(nodes.map(_.id)).value
   }
 }
