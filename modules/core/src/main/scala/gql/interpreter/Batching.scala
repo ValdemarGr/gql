@@ -28,8 +28,8 @@ final case class Batching[F[_]](
       .map(_.toMap)
 }
 object Batching {
-  def plan[F[_]](rootSel: NonEmptyList[PreparedField[F, Any]], plan: NonEmptyList[Planner.Node]): Batching[F] = {
-    val flat = Planner.flattenNodeTree(plan)
+  def plan[F[_]](rootSel: NonEmptyList[PreparedField[F, Any]], plan: Planner.NodeTree): Batching[F] = {
+    val flat = plan.flattened
 
     def unpackPrep(prep: Prepared[F, Any]): Eval[List[(Int, PreparedDataField[F, Any, Any])]] = Eval.defer {
       prep match {

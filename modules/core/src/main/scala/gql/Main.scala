@@ -58,7 +58,7 @@ object Main extends App {
   }
 
   def showDiff(fa: NonEmptyList[Planner.Node], fb: NonEmptyList[Planner.Node]) = {
-    val me = Planner.flattenNodeTree(fa).maximumBy(_.end).end
+    val me = Planner.NodeTree(fa).flattened.maximumBy(_.end).end
     AnsiColor.RED_B + "old field schedule" + AnsiColor.RESET + "\n" +
       AnsiColor.GREEN_B + "new field schedule" + AnsiColor.RESET + "\n" +
       AnsiColor.BLUE_B + "new field offset (deferral of execution)" + AnsiColor.RESET + "\n" +
@@ -66,7 +66,7 @@ object Main extends App {
   }
 
   def planCost(nodes: NonEmptyList[Planner.Node]): Double = {
-    val fnt = Planner.flattenNodeTree(nodes)
+    val fnt = Planner.NodeTree(nodes).flattened
 
     fnt
       .groupBy(_.name)
@@ -529,7 +529,7 @@ query withNestedFragments {
     F.fromOption(parseAndPrep(qn), new Exception(":((")).flatMap { x =>
       Statistics[F].flatMap { implicit stats =>
         Planner.costTree[F](x).flatMap { costTree =>
-          println(showTree(0, costTree))
+          println(showTree(0, costTree.root))
 
           interpreter.Interpreter
             .runSync[F]((), x, schema.state)
@@ -540,7 +540,7 @@ query withNestedFragments {
       F.fromOption(parseAndPrep(qsig), new Exception(":((")).flatMap { x =>
         Statistics[F].flatMap { implicit stats =>
           Planner.costTree[F](x).flatMap { costTree =>
-            println(showTree(0, costTree))
+            println(showTree(0, costTree.root))
 
             interpreter.Interpreter
               .runStreamed[F]((), x, schema.state)

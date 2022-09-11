@@ -18,6 +18,21 @@ import cats.Eval
 import scala.collection.immutable.TreeSet
 
 object Planner {
+  final case class NodeTree(
+      root: NonEmptyList[Node]
+  ) {
+    lazy val flattened: NonEmptyList[Node] = {
+      def go(xs: NonEmptyList[Node]): Eval[NonEmptyList[Node]] = Eval.defer {
+        xs.flatTraverse {
+          case n @ Node(_, _, _, _, _, _, Nil)     => Eval.now(NonEmptyList.one(n))
+          case n @ Node(_, _, _, _, _, _, x :: xs) => go(NonEmptyList(x, xs)).map(ns => NonEmptyList.one(n).concatNel(ns))
+        }
+      }
+
+      go(root).value
+    }
+  }
+
   final case class Node(
       id: Int,
       name: String,
@@ -92,22 +107,11 @@ object Planner {
 
   def costTree[F[_]: Monad](
       prepared: NonEmptyList[PreparedQuery.PreparedField[F, Any]]
-  )(implicit stats: Statistics[F]): F[NonEmptyList[Node]] =
-    constructCostTree[F](0d, prepared, None)
+  )(implicit stats: Statistics[F]): F[NodeTree] =
+    constructCostTree[F](0d, prepared, None).map(NodeTree(_))
 
-  def flattenNodeTree(root: NonEmptyList[Node]): NonEmptyList[Node] = {
-    def go(xs: NonEmptyList[Node]): Eval[NonEmptyList[Node]] = Eval.defer {
-      xs.flatTraverse {
-        case n @ Node(_, _, _, _, _, _, Nil)     => Eval.now(NonEmptyList.one(n))
-        case n @ Node(_, _, _, _, _, _, x :: xs) => go(NonEmptyList(x, xs)).map(ns => NonEmptyList.one(n).concatNel(ns))
-      }
-    }
-
-    go(root).value
-  }
-
-  def plan(nodes: NonEmptyList[Node]): NonEmptyList[Node] = {
-    val flatNodes = flattenNodeTree(nodes)
+  def plan(tree: NodeTree): NodeTree = {
+    val flatNodes = tree.flattened
 
     val orderedFlatNodes = flatNodes.sortBy(_.end).reverse
 
@@ -169,6 +173,6 @@ object Planner {
       }
     }
 
-    reConstruct(nodes.map(_.id)).value
+    NodeTree(reConstruct(tree.root.map(_.id)).value)
   }
 }
