@@ -16,9 +16,7 @@ import cats.effect.std.Random
 import cats.parse.Parser
 import cats.parse.Parser.Expectation._
 import scala.io.AnsiColor
-import fetch.Fetch
 import scala.concurrent.ExecutionContext
-import fetch.Unfetch
 import alleycats.Empty
 import gql.resolver.BatchResolver
 import gql.resolver.BatcherReference
