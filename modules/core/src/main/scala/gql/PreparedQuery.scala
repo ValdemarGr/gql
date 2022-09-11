@@ -140,13 +140,33 @@ object PreparedQuery {
       S.modify(_.copy(cursor = c.add(path))) *> fa <* S.modify(_.copy(cursor = c))
     }
 
-  def prepareSelections[F[_], G[_]](
+  def prepareSelections[F[_], G[_]: Applicative](
       ol: ObjLike[G, Any],
       s: P.SelectionSet,
       variableMap: Map[String, Json],
       fragments: Map[String, Pos[P.FragmentDefinition]]
   )(implicit S: Stateful[F, Prep], F: MonadError[F, PositionalError], D: Defer[F]): F[NonEmptyList[PreparedField[G, Any]]] = D.defer {
-    val schemaMap = ol.fieldMap
+    // TODO this code shares much with the subtype interfaces below in matchType
+    def collectLeafPrisms(inst: Instance[G, Any, Any]): Chain[(SimplePrism[Any, Any], String)] =
+      inst.ol match {
+        case Obj(name, _)           => Chain((inst.specify, name))
+        case Union(_, types)        => Chain.fromIterableOnce(types.toIterable).flatMap(collectLeafPrisms)
+        case Interface(_, types, _) => Chain.fromIterableOnce(types.values).flatMap(collectLeafPrisms)
+      }
+
+    val allPrisms: Chain[(SimplePrism[Any, Any], String)] = collectLeafPrisms(Instance(ol)(Some(_)))
+
+    val syntheticTypename =
+      Field[G, Any, String, Unit](
+        Applicative[Arg].unit,
+        EffectResolver[G, (Any, Unit), String] { case (input, _) =>
+          val x = allPrisms.collectFirstSome { case (p, name) => p(input).as(name) }
+          IorT.fromOption[G](x, "typename could not be determined, this is an implementation error")
+        },
+        Eval.now(Scalar("String", io.circe.Encoder.encodeString))
+      )
+
+    val schemaMap = ol.fieldMap + ("__typename" -> syntheticTypename)
     s.selections.traverse[F, PreparedField[G, Any]] {
       case Pos(caret, P.Selection.FieldSelection(field)) =>
         ambientPath(field.name) {
@@ -218,7 +238,7 @@ object PreparedQuery {
     }
   }
 
-  def prepareField[F[_], G[_]](
+  def prepareField[F[_], G[_]: Applicative](
       gqlField: P.Field,
       caret: Caret,
       field: Field[G, Any, Any, Any],
@@ -260,7 +280,7 @@ object PreparedQuery {
   // name is the type in the pattern match case
   // sel is the type we match on
   // sel match { case x if x.name == name  => ... }
-  def matchType[F[_], G[_]](
+  def matchType[F[_], G[_]: Applicative](
       name: String,
       sel: ObjLike[G, Any],
       caret: Caret
@@ -306,8 +326,9 @@ object PreparedQuery {
        AFrag resolves matches on B and picks that implementation.
        */
       sel match {
-        case Obj(n, _) => raise(s"tried to match with type $name on type object type $n", Some(caret))
+        case Obj(n, _)                       => raise(s"tried to match with type $name on type object type $n", Some(caret))
         case Interface(n, instances, fields) =>
+          // TODO follow sub-interfaces that occur in `instances`
           raiseOpt(
             instances
               .get(name)
@@ -326,7 +347,7 @@ object PreparedQuery {
       }
     }
 
-  def prepareFragment[F[_], G[_]](
+  def prepareFragment[F[_], G[_]: Applicative](
       ol: ObjLike[G, Any],
       f: Pos[P.FragmentDefinition],
       variableMap: Map[String, Json],
@@ -345,16 +366,16 @@ object PreparedQuery {
 
           val programF: F[FragmentDefinition[G, Any]] =
             matchType[F, G](f.value.typeCnd, ol, f.caret)
-              .flatMap { case (t, specialize) =>
+              .flatMap { case (t, specify) =>
                 prepareSelections[F, G](t, f.value.selectionSet, variableMap, fragments)
-                  .map(FragmentDefinition(f.value.name, f.value.typeCnd, specialize, _))
+                  .map(FragmentDefinition(f.value.name, f.value.typeCnd, specify, _))
               }
 
           beforeF *> programF <* afterF
       }
     }
 
-  def prepareParts[F[_], G[_], Q](
+  def prepareParts[F[_], G[_]: Applicative, Q](
       ops: List[P.OperationDefinition],
       frags: List[Pos[P.FragmentDefinition]],
       schema: Schema[G, Q],
@@ -416,7 +437,7 @@ object PreparedQuery {
     }
   }
 
-  def prepare[F[_], Q](
+  def prepare[F[_]: Applicative, Q](
       executabels: NonEmptyList[P.ExecutableDefinition],
       schema: Schema[F, Q],
       variableMap: Map[String, Json]
