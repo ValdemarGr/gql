@@ -69,6 +69,15 @@ abstract class OutputSyntax {
   def effect[F[_]: Applicative, I, T](resolver: I => F[T])(implicit tpe: => Output[F, T]): Field[F, I, T, Unit] =
     effect[F, I, T, Unit](Applicative[Arg].unit) { case (i, _) => resolver(i) }(implicitly, tpe)
 
+  def full2[F[_]: Applicative, I, T](resolver: I => IorT[F, String, T])(implicit
+      tpe: => Output[F, T]
+  ): Field[F, I, T, Unit] =
+    Field[F, I, T, Unit](
+      Applicative[Arg].unit,
+      EffectResolver { case (i, _) => resolver(i) },
+      Eval.later(tpe)
+    )
+
   def effect[F[_]: Applicative, I, T, A](arg: Arg[A])(resolver: (I, A) => F[T])(implicit
       tpe: => Output[F, T]
   ): Field[F, I, T, A] =

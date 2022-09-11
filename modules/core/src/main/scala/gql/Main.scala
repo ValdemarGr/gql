@@ -404,7 +404,8 @@ query withNestedFragments {
         }
         final case class C(a: String, d: String) extends A with D
         object C {
-          implicit def t: Obj[F, C] = obj[F, C]("C", "a" -> pure(_ => "C"), "d" -> pure(_ => "D"))
+          implicit def t: Obj[F, C] =
+            obj[F, C]("C", "a" -> pure(_ => "C"), "d" -> pure(_ => "D"), "fail" -> full2(_ => IorT.leftT[F, String]("im dead")))
         }
 
         SchemaShape[F, Unit](
@@ -448,6 +449,7 @@ fragment F3 on A {
   }
   ... on C {
     a
+    fail
   }
 }
 
@@ -527,7 +529,9 @@ query withNestedFragments {
 
           interpreter.Interpreter
             .runSync[F]((), x, schema.state)
-            .flatMap(x => C.println(x))
+            .flatMap { case (failures, x) =>
+              C.println(Execute.formatErrors(failures)) >> C.println(x)
+            }
         }
       }
     } /*>>
