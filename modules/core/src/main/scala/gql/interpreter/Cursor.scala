@@ -38,13 +38,13 @@ object Cursor {
 final case class CursorGroup(
     startPosition: Cursor,
     relativePath: Cursor,
-    id: BigInt
+    groupId: BigInt
 ) {
   lazy val absolutePath = Cursor(startPosition.path ++ relativePath.path)
 
-  def index(i: Int): CursorGroup = CursorGroup(startPosition, relativePath.index(i), id)
-  def field(id: Int, name: String): CursorGroup = CursorGroup(startPosition, relativePath.field(id, name), id)
-  def fragment(id: Int, name: String): CursorGroup = CursorGroup(startPosition, relativePath.fragment(id, name), id)
+  def index(i: Int): CursorGroup = CursorGroup(startPosition, relativePath.index(i), groupId)
+  def field(id: Int, name: String): CursorGroup = CursorGroup(startPosition, relativePath.field(id, name), groupId)
+  def fragment(id: Int, name: String): CursorGroup = CursorGroup(startPosition, relativePath.fragment(id, name), groupId)
 }
 
 object CursorGroup {

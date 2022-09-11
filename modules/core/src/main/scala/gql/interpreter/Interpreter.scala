@@ -114,7 +114,7 @@ object Interpreter {
 
                             val all = combineSplit(newFails, newSuccs)
                             // group -> results
-                            val l = all.toList.groupBy { case (m, _) => m.id }.toList
+                            val l = all.toList.groupBy { case (m, _) => m.groupId }.toList
 
                             val prepped =
                               l.map { case (group, results) =>

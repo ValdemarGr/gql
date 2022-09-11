@@ -434,6 +434,12 @@ query withNestedFragments {
 
   val qn = """
 query withNestedFragments {
+   getDatas {
+     ... Frag
+   }
+   getData {
+     ... F2
+   }
   getInterface {
     ... F3
   }
@@ -534,7 +540,7 @@ query withNestedFragments {
             }
         }
       }
-    } /*>>
+    } >>
       F.fromOption(parseAndPrep(qsig), new Exception(":((")).flatMap { x =>
         Statistics[F].flatMap { implicit stats =>
           Planner.costTree[F](x).flatMap { costTree =>
@@ -553,7 +559,7 @@ query withNestedFragments {
               .drain
           }
         }
-      }*/
+      }
   }
 
   mainProgram[D].run(Deps("hey")).unsafeRunSync()
