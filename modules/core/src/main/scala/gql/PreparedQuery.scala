@@ -29,6 +29,7 @@ object PreparedQuery {
 
   final case class PreparedFragField[F[_], A](
       id: Int,
+      typename: String,
       specify: Any => Option[A],
       selection: Selection[F, A]
   ) extends PreparedField[F, A]
@@ -182,7 +183,7 @@ object PreparedQuery {
             matchType[F, G](typeCnd, ol, caret).flatMap { case (ol, specialize) =>
               prepareSelections[F, G](ol, f.selectionSet, variableMap, fragments)
                 .map(Selection(_))
-                .flatMap[PreparedField[G, Any]](s => nextId[F].map(id => PreparedFragField(id, specialize, s)))
+                .flatMap[PreparedField[G, Any]](s => nextId[F].map(id => PreparedFragField(id, typeCnd, specialize, s)))
             }
         }
       case Pos(caret, P.Selection.FragmentSpreadSelection(f)) =>
@@ -191,7 +192,9 @@ object PreparedQuery {
             case None => raise(s"unknown fragment name ${f.fragmentName}", Some(caret))
             case Some(fd) =>
               prepareFragment[F, G](ol, fd, variableMap, fragments)
-                .flatMap[PreparedField[G, Any]](fd => nextId[F].map(id => PreparedFragField(id, fd.specify, Selection(fd.fields))))
+                .flatMap[PreparedField[G, Any]] { fd =>
+                  nextId[F].map(id => PreparedFragField(id, fd.typeCondition, fd.specify, Selection(fd.fields)))
+                }
           }
         }
     }

@@ -356,8 +356,8 @@ object Interpreter {
 
         def runFields(dfs: NonEmptyList[PreparedField[F, Any]], in: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] =
           Chain.fromSeq(dfs.toList).parFlatTraverse {
-            case PreparedFragField(id, specify, selection) =>
-              runFields(selection.fields, in.flatMap(x => Chain.fromOption(specify(x.value)).map(y => x.setValue(y))))
+            case PreparedFragField(id, _, specify, selection) =>
+              runFields(selection.fields, in.flatMap(x => Chain.fromOption(specify(x.value)).map(y => x.succeed(y, _.fragment(id)))))
             case df @ PreparedDataField(id, name, _, _, _) => runDataField(df, in)
           }
 
@@ -511,7 +511,7 @@ object Interpreter {
       case Some(t) if m.size == 1 && t.forall { case (_, o) => o.isNull } => Json.Null
       case _ =>
         p match {
-          case PreparedLeaf(_, _) =>
+          case PreparedLeaf(name, _) =>
             cursors.collectFirst { case (_, x) if !x.isNull => x }.get
           case PreparedList(of) =>
             m.toVector
@@ -522,21 +522,25 @@ object Interpreter {
           case PreparedOption(of) =>
             reconstructField[F](of, cursors)
           case Selection(fields) =>
-            _reconstructSelection(cursors, fields, m).asJson
+            _reconstructSelection(fields, m).asJson
         }
     }
   }
 
   def _reconstructSelection[F[_]](
-      levelCursors: List[(Cursor, Json)],
       sel: NonEmptyList[PreparedField[F, Any]],
       m: Map[Option[GraphArc], List[(Cursor, Json)]]
   ): JsonObject = {
     sel
       .map { pf =>
         pf match {
-          case PreparedFragField(id, _, selection) =>
-            _reconstructSelection(levelCursors, selection.fields, m)
+          case PreparedFragField(id, _, _, selection) =>
+            m.get(Some(GraphArc.Fragment(id)))
+              .map { lc =>
+                val m2 = groupNodeValues2(lc)
+                _reconstructSelection(selection.fields, m2)
+              }
+              .getOrElse(JsonObject.empty)
           case df @ PreparedDataField(_, name, _, selection, _) =>
             JsonObject(
               name -> reconstructField(selection, m.get(Some(GraphArc.Field(name))).toList.flatten)
@@ -550,5 +554,5 @@ object Interpreter {
       levelCursors: List[(Cursor, Json)],
       sel: NonEmptyList[PreparedField[F, Any]]
   ): JsonObject =
-    _reconstructSelection(levelCursors, sel, groupNodeValues2(levelCursors))
+    _reconstructSelection(sel, groupNodeValues2(levelCursors))
 }

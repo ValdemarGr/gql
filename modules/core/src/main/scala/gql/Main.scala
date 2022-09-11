@@ -433,14 +433,8 @@ query withNestedFragments {
 
   val qn = """
 query withNestedFragments {
-  getDatas {
-    ... Frag
-  }
-  getData {
-    ... F2
-  }
   getInterface {
-    ... F4
+    ... F3
   }
 }
 
@@ -536,7 +530,7 @@ query withNestedFragments {
             .flatMap(x => C.println(x))
         }
       }
-    } >>
+    } /*>>
       F.fromOption(parseAndPrep(qsig), new Exception(":((")).flatMap { x =>
         Statistics[F].flatMap { implicit stats =>
           Planner.costTree[F](x).flatMap { costTree =>
@@ -555,8 +549,103 @@ query withNestedFragments {
               .drain
           }
         }
-      }
+      }*/
   }
 
   mainProgram[D].run(Deps("hey")).unsafeRunSync()
+
+  // SangriaTest.run
 }
+
+// object SangriaTest {
+//   import sangria.schema._
+
+//   trait A {
+//     def a: String
+//   }
+//   implicit lazy val atype: InterfaceType[Unit, A] =
+//     InterfaceType(
+//       "A",
+//       fields[Unit, A](
+//         Field("a", StringType, resolve = _ => "A")
+//       )
+//     )
+
+//   trait B extends A {
+//     def a: String
+//     def b: Int
+//   }
+//   implicit lazy val btype: InterfaceType[Unit, B] =
+//     InterfaceType(
+//       "B",
+//       fields[Unit, B](
+//         Field("a", StringType, resolve = _ => "B"),
+//         Field("b", IntType, resolve = _ => 2)
+//       ),
+//       interfaces[Unit, B](atype)
+//     )
+
+//   case class C(a: String, b: Int, c: Double) extends B
+//   val ctype =
+//     ObjectType(
+//       "C",
+//       interfaces[Unit, C](btype),
+//       fields[Unit, C](
+//         Field("a", StringType, resolve = _.value.a),
+//         Field("b", IntType, resolve = _.value.b),
+//         Field("c", FloatType, resolve = _.value.c)
+//       )
+//     )
+
+//   case class D(a: String, b: Int, c: Double) extends B
+
+//   val test =
+//     ObjectType(
+//       "Query",
+//       fields[Unit, Unit](
+//         Field(
+//           "getData",
+//           atype,
+//           resolve = _ => C("hey", 2, 3.0)
+//         ),
+//         Field(
+//           "getData2",
+//           atype,
+//           resolve = _ => D("hey", 2, 3.0)
+//         ),
+//         Field(
+//           "cfill",
+//           ctype,
+//           resolve = _ => C("hey", 2, 3.0)
+//         )
+//       )
+//     )
+
+//   import sangria.macros._
+//   val query =
+//     graphql"""
+//       query {
+//         getData2 {
+//           ... on B {
+//             __typename
+//             a
+//           }
+//         }
+//         getData {
+//           ... on C {
+//             __typename
+//             a
+//           }
+//           # __typename
+//           # a
+//           # b
+//           # c
+//         }
+//       }
+//     """
+
+//   import scala.concurrent.ExecutionContext.Implicits.global
+//   def qr = sangria.execution.Executor.execute(sangria.schema.Schema(test), query)
+
+//   def run = println(scala.concurrent.Await.ready(qr, scala.concurrent.duration.Duration.Inf))
+// }

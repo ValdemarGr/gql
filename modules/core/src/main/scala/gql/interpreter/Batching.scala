@@ -47,7 +47,7 @@ object Batching {
             case df @ PreparedDataField(id, name, resolve, selection, batchName) =>
               val hd = id -> df
               unpackPrep(selection).map(tl => NonEmptyList(hd, tl))
-            case PreparedFragField(_, _, selection) => flattenDataFieldMap(selection.fields)
+            case PreparedFragField(_, _, _, selection) => flattenDataFieldMap(selection.fields)
           }
         }
       }

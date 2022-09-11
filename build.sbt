@@ -21,6 +21,7 @@ lazy val sharedSettings = Seq(
     /* "ch.qos.logback" % "logback-classic" % "1.2.11", */
     "org.typelevel" %% "log4cats-core" % "2.4.0",
     "org.typelevel" %% "log4cats-slf4j" % "2.4.0",
+    "org.sangria-graphql" %% "sangria" % "3.2.0",
   ),
   addCompilerPlugin("org.typelevel" % "kind-projector" % "0.13.2" cross CrossVersion.full),
   addCompilerPlugin("com.olegpy" %% "better-monadic-for" % "0.3.1")

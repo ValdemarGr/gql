@@ -8,12 +8,15 @@ sealed trait GraphArc
 object GraphArc {
   final case class Field(name: String) extends GraphArc
   final case class Index(index: Int) extends GraphArc
+  final case class Fragment(id: Int) extends GraphArc
 }
 
 final case class Cursor(path: Chain[GraphArc]) {
   def add(next: GraphArc): Cursor = Cursor(path :+ next)
+
   def index(idx: Int) = add(GraphArc.Index(idx))
   def field(name: String) = add(GraphArc.Field(name))
+  def fragment(id: Int) = add(GraphArc.Fragment(id))
 
   def headOption = path.headOption
 
@@ -43,6 +46,7 @@ final case class CursorGroup(
 
   def index(i: Int): CursorGroup = CursorGroup(startPosition, relativePath.index(i), id)
   def field(name: String): CursorGroup = CursorGroup(startPosition, relativePath.field(name), id)
+  def fragment(id: Int): CursorGroup = CursorGroup(startPosition, relativePath.fragment(id), id)
 }
 
 object CursorGroup {

@@ -101,7 +101,8 @@ object Planner {
 
             handleSelection(selection).map(NonEmptyList.one(_))
           }
-      case PreparedFragField(_, _, selection) => constructCostTree[F](currentCost, selection.fields, parentTypename)
+      case PreparedFragField(_, typename, _, selection) =>
+        constructCostTree[F](currentCost, selection.fields, Some(typename))
     }
   }
 
