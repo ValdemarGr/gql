@@ -90,4 +90,7 @@ object SchemaShape {
 
     goOutput[State[DiscoveryState[F], *]](shape.query).runS(DiscoveryState(Map.empty, Map.empty, Map.empty)).value
   }
+
+  def validate[F[_], Q](schema: SchemaShape[F, Q]) = {
+  }
 }
