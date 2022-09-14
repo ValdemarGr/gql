@@ -75,9 +75,9 @@ object Render {
         |enum $name {
         ${encoder.toList.map(x => s"|  $x").mkString("\n")}
         |}""".stripMargin)
-    case Union(name, types) =>
+    case u @ Union(name, types) =>
       F.pure(s"""
-        |union $name = ${types.keys.mkString_(" | ")}""".stripMargin) <*
+        |union $name = ${u.instanceMap.keySet.mkString(" | ")}""".stripMargin) <*
         types.toList.traverse_(inst => maybeAdd[F, G](inst.ol))
     case Interface(name, instances, fields) =>
       val impls = interfaceInstances.get(name).map(_.mkString_("implements ", " & ", " ")).mkString
@@ -86,7 +86,7 @@ object Render {
             |interface $name $impls{
             ${fields.map(x => s"|  $x").mkString_(",\n")}
             |}""".stripMargin
-      } <* instances.toList.traverse_ { case (_, inst) => maybeAdd[F, G](inst.ol) }
+      } <* instances.toList.traverse_(inst => maybeAdd[F, G](inst.ol))
     case Obj(name, fields) =>
       val impls = interfaceInstances.get(name).map(_.mkString_("implements ", " & ", " ")).mkString
       renderFields[F, G](fields).map { fields =>
@@ -126,8 +126,8 @@ object Render {
       else {
         S.set(InterfaceDiscovery(cc + x.name)) >> {
           x match {
-            case Interface(name, instances, fields) =>
-              val here = Chain.fromSeq(instances.keySet.map(inst => inst -> name).toSeq)
+            case i @ Interface(name, instances, fields) =>
+              val here = Chain.fromSeq(i.instanceMap.keySet.map(inst => inst -> name).toSeq)
               Chain
                 .fromSeq(fields.toList)
                 .map { case (_, f) => f.output.value }

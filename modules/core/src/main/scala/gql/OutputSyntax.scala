@@ -51,16 +51,15 @@ abstract class OutputSyntax {
       tl: Instance[F, A, _]*
   ) = Union[F, A](
     name,
-    NonEmptyList(hd, tl.toList).map(x => x.ol.name -> x.asInstanceOf[Instance[F, A, Any]]).toNem
+    NonEmptyList(hd, tl.toList).asInstanceOf[NonEmptyList[Instance[F, A, Any]]]
   )
 
   def interface[F[_], A](
       o: Obj[F, A],
-      hd: Instance[F, A, _],
-      tl: Instance[F, A, _]*
+      xs: Instance[F, A, _]*
   ) = Interface[F, A](
     o.name,
-    NonEmptyList(hd, tl.toList).map(x => x.ol.name -> x.asInstanceOf[Instance[F, A, Any]]).toList.toMap,
+    xs.toList.asInstanceOf[List[Instance[F, A, Any]]],
     o.fields
   )
 

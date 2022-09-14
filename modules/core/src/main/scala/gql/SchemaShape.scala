@@ -56,7 +56,7 @@ object SchemaShape {
               case o @ gql.out.Interface(_, instances, _) =>
                 S.modify { s =>
                   val newMap =
-                    instances.keySet.toList.foldLeft(s.interfaceImplementations) { case (m, instance) =>
+                    o.instanceMap.keySet.toList.foldLeft(s.interfaceImplementations) { case (m, instance) =>
                       val y = m.get(instance) match {
                         case None    => Set(o.name)
                         case Some(x) => x + o.name
@@ -66,7 +66,7 @@ object SchemaShape {
                   s.copy(interfaceImplementations = newMap)
                 } >>
                   handleFields(o) >>
-                  instances.values.toList.traverse_(inst => handleFields(inst.ol))
+                  instances.traverse_(inst => handleFields(inst.ol))
               case gql.out.Union(_, instances) =>
                 instances.toList.traverse_(inst => goOutput[G](inst.ol))
               case _ => G.unit
@@ -92,5 +92,38 @@ object SchemaShape {
   }
 
   def validate[F[_], Q](schema: SchemaShape[F, Q]) = {
+    def allUnique[G[_]](xs: List[String]): G[Unit] = ???
+
+    def validateTypeName[G[_]](name: String): G[Unit] = ???
+
+    def validateFields[G[_]](name: NonEmptyList[(String, Field[F, Any, _, _])]): G[Unit] = ???
+
+    def validateToplevel[G[_]: Monad](tl: gql.out.Toplevel[F, Any]): G[Unit] = {
+      validateTypeName[G](tl.name) >> {
+        tl match {
+          case gql.out.Obj(_, fields) => validateFields[G](fields)
+          case gql.out.Union(_, types) =>
+            val ols = types.toList.map(_.ol)
+
+            allUnique[G](ols.map(_.name)) >> ols.traverse_(validateOutput[G])
+          case gql.out.Interface(_, instances, fields) =>
+            val insts = instances
+
+            val ols = insts.toList.map(_.ol)
+            allUnique[G](ols.map(_.name)) >> ols.traverse_(validateOutput[G]) >>
+              validateFields[G](fields)
+          // allUnique(instances.keySet.toList) >>
+          // instances.values.toList.traverse_ { inst =>
+          //   validateOutput[G](inst.ol)
+          // }
+        }
+      }
+    }
+
+    def validateOutput[G[_]: Monad](tl: Output[F, Any]): G[Unit] =
+      tl match {
+        case x: gql.out.Toplevel[F, Any] => validateToplevel[G](x)
+      }
+
   }
 }

@@ -151,8 +151,8 @@ object PreparedQuery {
     def collectLeafPrisms(inst: Instance[G, Any, Any]): Chain[(SimplePrism[Any, Any], String)] =
       inst.ol match {
         case Obj(name, _)           => Chain((inst.specify, name))
-        case Union(_, types)        => Chain.fromIterableOnce(types.toIterable).flatMap(collectLeafPrisms)
-        case Interface(_, types, _) => Chain.fromIterableOnce(types.values).flatMap(collectLeafPrisms)
+        case Union(_, types)        => Chain.fromSeq(types.toList).flatMap(collectLeafPrisms)
+        case Interface(_, types, _) => Chain.fromSeq(types).flatMap(collectLeafPrisms)
       }
 
     val allPrisms: Chain[(SimplePrism[Any, Any], String)] = collectLeafPrisms(Instance(ol)(Some(_)))
@@ -329,22 +329,22 @@ object PreparedQuery {
        AFrag resolves matches on B and picks that implementation.
        */
       sel match {
-        case Obj(n, _)                       => raise(s"tried to match with type $name on type object type $n", Some(caret))
-        case Interface(n, instances, fields) =>
+        case Obj(n, _)                           => raise(s"tried to match with type $name on type object type $n", Some(caret))
+        case i @ Interface(n, instances, fields) =>
           // TODO follow sub-interfaces that occur in `instances`
           raiseOpt(
-            instances
+            i.instanceMap
               .get(name)
               .map(i => (i.ol, i.specify)),
-            s"$name does not implement interface $n, possible implementations are ${instances.keySet.mkString(", ")}",
+            s"$name does not implement interface $n, possible implementations are ${i.instanceMap.keySet.mkString(", ")}",
             caret.some
           )
-        case Union(n, types) =>
+        case u @ Union(n, types) =>
           raiseOpt(
-            types
-              .lookup(name)
+            u.instanceMap
+              .get(name)
               .map(i => (i.ol, i.specify)),
-            s"$name is not a member of the union $n, possible members are ${types.keys.mkString_(", ")}",
+            s"$name is not a member of the union $n, possible members are ${u.instanceMap.keySet.mkString(", ")}",
             caret.some
           )
       }

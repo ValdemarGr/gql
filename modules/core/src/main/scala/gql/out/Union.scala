@@ -6,12 +6,12 @@ import cats.data._
 
 final case class Union[F[_], A](
     name: String,
-    types: NonEmptyMap[String, Instance[F, A, Any]]
+    types: NonEmptyList[Instance[F, A, Any]]
 ) extends ObjLike[F, A] {
   override def contramap[B](f: B => A): Union[F, B] =
     Union(name, types.map(_.contramap(f)))
 
-  lazy val instances = types.toSortedMap.toMap
+  lazy val instanceMap = types.map(i => i.ol.name -> i).toList.toMap
 
   lazy val fieldMap = Map.empty
 
