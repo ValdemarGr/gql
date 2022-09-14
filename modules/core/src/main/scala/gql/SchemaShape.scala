@@ -92,6 +92,18 @@ object SchemaShape {
   }
 
   def validate[F[_], Q](schema: SchemaShape[F, Q]) = {
+    sealed trait ValidationEdge
+    object ValidationEdge {
+      final case class Field(name: String) extends ValidationEdge
+      final case class Type(name: String) extends ValidationEdge
+      final case class Arg(name: String) extends ValidationEdge
+    }
+
+    final case class Problem(
+      message: String,
+      path: Chain[ValidationEdge]
+    )
+
     def allUnique[G[_]](xs: List[String]): G[Unit] = ???
 
     def validateTypeName[G[_]](name: String): G[Unit] = ???
