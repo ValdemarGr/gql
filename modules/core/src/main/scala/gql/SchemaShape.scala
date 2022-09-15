@@ -98,8 +98,6 @@ object SchemaShape {
   object ValidationEdge {
     final case class Field(name: String) extends ValidationEdge
     final case class OutputType(name: String) extends ValidationEdge
-    case object Args extends ValidationEdge
-    case object Fields extends ValidationEdge
     final case class Arg(name: String) extends ValidationEdge
     final case class InputType(name: String) extends ValidationEdge
   }
@@ -113,8 +111,6 @@ object SchemaShape {
         .map {
           case ValidationEdge.Field(name)      => s".$name"
           case ValidationEdge.OutputType(name) => s":$name"
-          case ValidationEdge.Args             => ""
-          case ValidationEdge.Fields           => ""
           case ValidationEdge.Arg(name)        => s".$name"
           case ValidationEdge.InputType(name)  => s":$name"
         }
@@ -176,12 +172,12 @@ object SchemaShape {
         }
       }
 
-    def allUnique[G[_]](xs: List[String])(implicit G: Applicative[G], S: Stateful[G, ValidationState]): G[Unit] =
+    def allUnique[G[_]](context: String, xs: List[String])(implicit G: Applicative[G], S: Stateful[G, ValidationState]): G[Unit] =
       xs
         .groupBy(identity)
         .toList
         .collect { case (name, xs) if xs.size > 1 => name }
-        .traverse_(name => raise(s"duplicate name: $name"))
+        .traverse_(name => raise(s"$context: $name"))
 
     def validateTypeName[G[_]](name: String)(implicit G: Monad[G], S: Stateful[G, ValidationState]): G[Unit] =
       QueryParser.name.parseAll(name) match {
@@ -209,28 +205,24 @@ object SchemaShape {
     }
 
     def validateArg[G[_]: Monad](arg: Arg[_])(implicit S: Stateful[G, ValidationState]): G[Unit] =
-      useEdge(ValidationEdge.Args) {
-        allUnique[G](arg.entries.toList.map(_.name)) >>
-          arg.entries.traverse_ { entry =>
-            useEdge(ValidationEdge.Arg(entry.name)) {
-              validateFieldName[G](entry.name) >> validateInput[G](entry.input)
-            }
+      allUnique[G]("duplicate arg", arg.entries.toList.map(_.name)) >>
+        arg.entries.traverse_ { entry =>
+          useEdge(ValidationEdge.Arg(entry.name)) {
+            validateFieldName[G](entry.name) >> validateInput[G](entry.input)
           }
-      }
+        }
 
     def validateFields[G[_]: Monad](fields: NonEmptyList[(String, Field[F, Any, _, _])])(implicit
         S: Stateful[G, ValidationState]
     ): G[Unit] =
-      useEdge(ValidationEdge.Fields) {
-        allUnique[G](fields.toList.map { case (name, _) => name }) >>
-          fields.traverse_ { case (name, field) =>
-            useEdge(ValidationEdge.Field(name)) {
-              validateFieldName[G](name) >>
-                validateArg[G](field.args) >>
-                validateOutput[G](field.output.value)
-            }
+      allUnique[G]("duplicate field", fields.toList.map { case (name, _) => name }) >>
+        fields.traverse_ { case (name, field) =>
+          useEdge(ValidationEdge.Field(name)) {
+            validateFieldName[G](name) >>
+              validateArg[G](field.args) >>
+              validateOutput[G](field.output.value)
           }
-      }
+        }
 
     def validateToplevel[G[_]: Monad](tl: gql.out.Toplevel[F, Any])(implicit S: Stateful[G, ValidationState]): G[Unit] = {
       useOutputEdge[G](tl) {
@@ -240,12 +232,12 @@ object SchemaShape {
             case gql.out.Union(_, types) =>
               val ols = types.toList.map(_.ol)
 
-              allUnique[G](ols.map(_.name)) >> ols.traverse_(validateOutput[G])
+              allUnique[G]("duplicate union instance", ols.map(_.name)) >> ols.traverse_(validateOutput[G])
             case gql.out.Interface(_, instances, fields) =>
               val insts = instances
 
               val ols = insts.toList.map(_.ol)
-              allUnique[G](ols.map(_.name)) >> ols.traverse_(validateOutput[G]) >>
+              allUnique[G]("duplicate interface instance", ols.map(_.name)) >> ols.traverse_(validateOutput[G]) >>
                 validateFields[G](fields)
             case Enum(name, _)   => validateTypeName[G](name)
             case Scalar(name, _) => validateTypeName[G](name)

@@ -307,8 +307,9 @@ query withNestedFragments {
           (
             (
               arg[Int]("num", Some(42)),
-              arg[Int]("num2", Some(9))
-            ).mapN(_ + _),
+              arg[Int]("num2", Some(9)),
+              arg[Int]("num", Some(99)),
+            ).mapN(_ + _ + _),
             arg[String]("text"),
             arg[Vector[String]]("xs", Vector.empty.some)
           ).tupled
@@ -329,13 +330,13 @@ query withNestedFragments {
             "value" -> pure(_.value)
           )
 
-        implicit lazy val dataType: Obj[F, Data[F]] =
+        implicit def dataType: Obj[F, Data[F]] =
           obj2[F, Data[F]]("Data") { f =>
             fields(
               "dep" -> f(eff(_ => Ask.reader(_.v))),
               "a" -> f(full(x => IorT.bothT[F]("Oh no, an error!", "Hahaa"))),
               "a2" -> f(arg[Int]("num")(intInput))(pur { case (i, _) => i.a }),
-              "2b" -> f(eff(_.b)),
+              "b" -> f(eff(_.b)),
               "sd" -> f(serverDataBatcher.traverse(x => IorT.liftF(x.b.map(i => Seq(i, i + 1, i * 2))))),
               "c" -> f(eff(_.c.map(_.toSeq))),
               "doo" -> f(pur(_ => Vector(Vector(Vector.empty[String])))),
