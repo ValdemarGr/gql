@@ -13,6 +13,8 @@ final case class SchemaShape[F[_], Q](
     // subscription: Output.Obj[F, M],
 ) {
   lazy val discover = SchemaShape.discover[F, Q](this)
+
+  lazy val validate = SchemaShape.validate[F, Q](this)
 }
 
 object SchemaShape {
@@ -97,6 +99,7 @@ object SchemaShape {
     final case class Field(name: String) extends ValidationEdge
     final case class OutputType(name: String) extends ValidationEdge
     case object Args extends ValidationEdge
+    case object Fields extends ValidationEdge
     final case class Arg(name: String) extends ValidationEdge
     final case class InputType(name: String) extends ValidationEdge
   }
@@ -206,12 +209,15 @@ object SchemaShape {
     def validateFields[G[_]: Monad](fields: NonEmptyList[(String, Field[F, Any, _, _])])(implicit
         S: Stateful[G, ValidationState]
     ): G[Unit] =
-      fields.traverse_ { case (name, field) =>
-        useEdge(ValidationEdge.Field(name)) {
-          validateFieldName[G](name) >>
-            validateArg[G](field.args) >>
-            validateOutput[G](field.output.value)
-        }
+      useEdge(ValidationEdge.Fields) {
+        allUnique[G](fields.toList.map { case (name, _) => name }) >>
+          fields.traverse_ { case (name, field) =>
+            useEdge(ValidationEdge.Field(name)) {
+              validateFieldName[G](name) >>
+                validateArg[G](field.args) >>
+                validateOutput[G](field.output.value)
+            }
+          }
       }
 
     def validateToplevel[G[_]: Monad](tl: gql.out.Toplevel[F, Any])(implicit S: Stateful[G, ValidationState]): G[Unit] = {
@@ -245,6 +251,7 @@ object SchemaShape {
 
     validateOutput[State[ValidationState, *]](schema.query)
       .runS(ValidationState(Chain.empty, Chain.empty, Map.empty, Map.empty))
-      .map(_.problems)
+      .value
+      .problems
   }
 }
