@@ -91,50 +91,145 @@ object SchemaShape {
     goOutput[State[DiscoveryState[F], *]](shape.query).runS(DiscoveryState(Map.empty, Map.empty, Map.empty)).value
   }
 
+  // TODO has really bad running time on some inputs
+  // since it doesn't remember what references it has seen
   def validate[F[_], Q](schema: SchemaShape[F, Q]) = {
     sealed trait ValidationEdge
     object ValidationEdge {
       final case class Field(name: String) extends ValidationEdge
-      final case class Type(name: String) extends ValidationEdge
+      final case class OutputType(name: String) extends ValidationEdge
+      case object Args extends ValidationEdge
       final case class Arg(name: String) extends ValidationEdge
+      final case class InputType(name: String) extends ValidationEdge
     }
 
     final case class Problem(
-      message: String,
-      path: Chain[ValidationEdge]
+        message: String,
+        path: Chain[ValidationEdge]
     )
 
-    def allUnique[G[_]](xs: List[String]): G[Unit] = ???
+    final case class ValidationState(
+        problems: Chain[Problem],
+        currentPath: Chain[ValidationEdge],
+        seenOutputs: Map[String, gql.out.Toplevel[F, Any]],
+        seenInputs: Map[String, ToplevelInput[_]]
+    )
 
-    def validateTypeName[G[_]](name: String): G[Unit] = ???
+    def raise[G[_]](msg: String)(implicit S: Stateful[G, ValidationState]): G[Unit] =
+      S.modify(s => s.copy(problems = s.problems :+ Problem(msg, s.currentPath)))
 
-    def validateFields[G[_]](name: NonEmptyList[(String, Field[F, Any, _, _])]): G[Unit] = ???
+    def useEdge[G[_], A](edge: ValidationEdge)(
+        fa: G[A]
+    )(implicit G: Monad[G], S: Stateful[G, ValidationState]): G[A] =
+      S.get.flatMap { s =>
+        S.set(s.copy(currentPath = s.currentPath :+ edge)) *>
+          fa <*
+          S.modify(_.copy(currentPath = s.currentPath))
+      }
 
-    def validateToplevel[G[_]: Monad](tl: gql.out.Toplevel[F, Any]): G[Unit] = {
-      validateTypeName[G](tl.name) >> {
-        tl match {
-          case gql.out.Obj(_, fields) => validateFields[G](fields)
-          case gql.out.Union(_, types) =>
-            val ols = types.toList.map(_.ol)
+    def useOutputEdge[G[_]](ot: gql.out.Toplevel[F, Any])(
+        fa: G[Unit]
+    )(implicit G: Monad[G], S: Stateful[G, ValidationState]): G[Unit] =
+      useEdge(ValidationEdge.OutputType(ot.name)) {
+        S.get.flatMap { s =>
+          s.seenOutputs.get(ot.name) match {
+            case Some(o) if (o eq ot) => G.unit
+            case Some(o) =>
+              raise(s"cyclic type ${ot.name} is not reference equal use lazy val or `cats.Eval` to declare this type")
+            case None =>
+              S.set(s.copy(seenOutputs = s.seenOutputs + (ot.name -> ot))) *>
+                fa <*
+                S.modify(_.copy(seenOutputs = s.seenOutputs))
+          }
+        }
+      }
 
-            allUnique[G](ols.map(_.name)) >> ols.traverse_(validateOutput[G])
-          case gql.out.Interface(_, instances, fields) =>
-            val insts = instances
+    def useInputEdge[G[_]](it: ToplevelInput[_])(
+        fa: G[Unit]
+    )(implicit G: Monad[G], S: Stateful[G, ValidationState]): G[Unit] =
+      useEdge(ValidationEdge.InputType(it.name)) {
+        S.get.flatMap { s =>
+          s.seenInputs.get(it.name) match {
+            case Some(i) if (i eq it) => G.unit
+            case Some(i) =>
+              raise(s"cyclic input type ${it.name} is not reference equal use lazy val or `cats.Eval` to declare this type")
+            case None =>
+              S.set(s.copy(seenInputs = s.seenInputs + (it.name -> it))) *>
+                fa <*
+                S.modify(_.copy(seenInputs = s.seenInputs))
+          }
+        }
+      }
 
-            val ols = insts.toList.map(_.ol)
-            allUnique[G](ols.map(_.name)) >> ols.traverse_(validateOutput[G]) >>
-              validateFields[G](fields)
-          // allUnique(instances.keySet.toList) >>
-          // instances.values.toList.traverse_ { inst =>
-          //   validateOutput[G](inst.ol)
-          // }
+    def allUnique[G[_]](xs: List[String])(implicit G: Applicative[G], S: Stateful[G, ValidationState]): G[Unit] =
+      xs
+        .groupBy(identity)
+        .toList
+        .collect { case (name, xs) if xs.size > 1 => name }
+        .traverse_(name => raise(s"duplicate name: $name"))
+
+    def validateTypeName[G[_]](name: String)(implicit S: Stateful[G, ValidationState]): G[Unit] = ???
+
+    def validateFieldName[G[_]](name: String)(implicit S: Stateful[G, ValidationState]): G[Unit] = ???
+
+    def validateInput[G[_]: Monad](input: Input[_])(implicit S: Stateful[G, ValidationState]): G[Unit] = {
+      input match {
+        case Input.Arr(of) => validateInput[G](of)
+        case Input.Opt(of) => validateInput[G](of)
+        case t @ Input.Obj(name, fields) =>
+          validateTypeName[G](name) *>
+            useInputEdge(t)(validateArg[G](fields))
+        case Input.Enum(name, _)     => validateTypeName[G](name)
+        case Input.Scalar(name, dec) => validateTypeName[G](name)
+      }
+    }
+
+    def validateArg[G[_]: Monad](arg: Arg[_])(implicit S: Stateful[G, ValidationState]): G[Unit] =
+      useEdge(ValidationEdge.Args) {
+        allUnique[G](arg.entries.toList.map(_.name)) >>
+          arg.entries.traverse_ { entry =>
+            useEdge(ValidationEdge.Arg(entry.name)) {
+              validateFieldName[G](entry.name) >> validateInput[G](entry.input)
+            }
+          }
+      }
+
+    def validateFields[G[_]: Monad](fields: NonEmptyList[(String, Field[F, Any, _, _])])(implicit
+        S: Stateful[G, ValidationState]
+    ): G[Unit] =
+      fields.traverse_ { case (name, field) =>
+        validateFieldName[G](name) >>
+          validateArg[G](field.args) >>
+          validateOutput[G](field.output.value)
+      }
+
+    def validateToplevel[G[_]: Monad](tl: gql.out.Toplevel[F, Any])(implicit S: Stateful[G, ValidationState]): G[Unit] = {
+      useOutputEdge[G](tl) {
+        validateTypeName[G](tl.name) >> {
+          tl match {
+            case gql.out.Obj(_, fields) => validateFields[G](fields)
+            case gql.out.Union(_, types) =>
+              val ols = types.toList.map(_.ol)
+
+              allUnique[G](ols.map(_.name)) >> ols.traverse_(validateOutput[G])
+            case gql.out.Interface(_, instances, fields) =>
+              val insts = instances
+
+              val ols = insts.toList.map(_.ol)
+              allUnique[G](ols.map(_.name)) >> ols.traverse_(validateOutput[G]) >>
+                validateFields[G](fields)
+          }
         }
       }
     }
 
-    def validateOutput[G[_]: Monad](tl: Output[F, Any]): G[Unit] =
+    def validateOutput[G[_]: Monad](tl: Output[F, Any])(implicit S: Stateful[G, ValidationState]): G[Unit] =
       tl match {
         case x: gql.out.Toplevel[F, Any] => validateToplevel[G](x)
+        case Arr(of)                     => validateOutput[G](of)
+        case Opt(of)                     => validateOutput[G](of)
+        case Enum(name, _)               => validateTypeName[G](name)
+        case Scalar(name, _)             => validateTypeName[G](name)
       }
 
   }
