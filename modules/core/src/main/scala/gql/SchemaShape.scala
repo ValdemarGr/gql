@@ -107,7 +107,19 @@ object SchemaShape {
   final case class Problem(
       message: String,
       path: Chain[ValidationEdge]
-  )
+  ) {
+    override def toString() =
+      s"$message at ${path
+        .map {
+          case ValidationEdge.Field(name)      => s".$name"
+          case ValidationEdge.OutputType(name) => s":$name"
+          case ValidationEdge.Args             => ""
+          case ValidationEdge.Fields           => ""
+          case ValidationEdge.Arg(name)        => s".$name"
+          case ValidationEdge.InputType(name)  => s":$name"
+        }
+        .mkString_("")}"
+  }
   // TODO has really bad running time on some inputs
   // since it doesn't remember what references it has seen
   def validate[F[_], Q](schema: SchemaShape[F, Q]) = {

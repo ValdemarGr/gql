@@ -335,7 +335,7 @@ query withNestedFragments {
               "dep" -> f(eff(_ => Ask.reader(_.v))),
               "a" -> f(full(x => IorT.bothT[F]("Oh no, an error!", "Hahaa"))),
               "a2" -> f(arg[Int]("num")(intInput))(pur { case (i, _) => i.a }),
-              "b" -> f(eff(_.b)),
+              "2b" -> f(eff(_.b)),
               "sd" -> f(serverDataBatcher.traverse(x => IorT.liftF(x.b.map(i => Seq(i, i + 1, i * 2))))),
               "c" -> f(eff(_.c.map(_.toSeq))),
               "doo" -> f(pur(_ => Vector(Vector(Vector.empty[String])))),
@@ -492,6 +492,8 @@ fragment F2 on Data {
 
   def mainProgram[F[_]](implicit F: Async[F], A: Ask[F, Deps], C: std.Console[F]): F[Unit] = {
     val schema = Schema.stateful[F, Unit](testSchemaShape[F])
+
+    println(schema.shape.validate.map(_.toString).mkString_("\n"))
 
     def parseAndPrep(q: String): Option[NonEmptyList[PreparedQuery.PreparedField[F, Any]]] =
       ParserUtil.parse(q).map(PreparedQuery.prepare(_, schema, Map.empty)) match {
