@@ -5,6 +5,7 @@ import cats.implicits._
 import cats.mtl._
 import cats.data._
 import gql.out._
+import gql.parser.QueryParser
 
 final case class SchemaShape[F[_], Q](
     query: Obj[F, Q]
@@ -91,23 +92,22 @@ object SchemaShape {
     goOutput[State[DiscoveryState[F], *]](shape.query).runS(DiscoveryState(Map.empty, Map.empty, Map.empty)).value
   }
 
+  sealed trait ValidationEdge
+  object ValidationEdge {
+    final case class Field(name: String) extends ValidationEdge
+    final case class OutputType(name: String) extends ValidationEdge
+    case object Args extends ValidationEdge
+    final case class Arg(name: String) extends ValidationEdge
+    final case class InputType(name: String) extends ValidationEdge
+  }
+
+  final case class Problem(
+      message: String,
+      path: Chain[ValidationEdge]
+  )
   // TODO has really bad running time on some inputs
   // since it doesn't remember what references it has seen
   def validate[F[_], Q](schema: SchemaShape[F, Q]) = {
-    sealed trait ValidationEdge
-    object ValidationEdge {
-      final case class Field(name: String) extends ValidationEdge
-      final case class OutputType(name: String) extends ValidationEdge
-      case object Args extends ValidationEdge
-      final case class Arg(name: String) extends ValidationEdge
-      final case class InputType(name: String) extends ValidationEdge
-    }
-
-    final case class Problem(
-        message: String,
-        path: Chain[ValidationEdge]
-    )
-
     final case class ValidationState(
         problems: Chain[Problem],
         currentPath: Chain[ValidationEdge],
@@ -168,17 +168,26 @@ object SchemaShape {
         .collect { case (name, xs) if xs.size > 1 => name }
         .traverse_(name => raise(s"duplicate name: $name"))
 
-    def validateTypeName[G[_]](name: String)(implicit S: Stateful[G, ValidationState]): G[Unit] = ???
+    def validateTypeName[G[_]](name: String)(implicit G: Monad[G], S: Stateful[G, ValidationState]): G[Unit] =
+      QueryParser.name.parseAll(name) match {
+        case Left(_)  => raise(s"invalid type name $name, must match /[_A-Za-z][_0-9A-Za-z]*/")
+        case Right(_) => G.unit
+      }
 
-    def validateFieldName[G[_]](name: String)(implicit S: Stateful[G, ValidationState]): G[Unit] = ???
+    def validateFieldName[G[_]](name: String)(implicit G: Monad[G], S: Stateful[G, ValidationState]): G[Unit] =
+      QueryParser.name.parseAll(name) match {
+        case Left(_)  => raise(s"invalid field name $name, must match /[_A-Za-z][_0-9A-Za-z]*/")
+        case Right(_) => G.unit
+      }
 
     def validateInput[G[_]: Monad](input: Input[_])(implicit S: Stateful[G, ValidationState]): G[Unit] = {
       input match {
         case Input.Arr(of) => validateInput[G](of)
         case Input.Opt(of) => validateInput[G](of)
         case t @ Input.Obj(name, fields) =>
-          validateTypeName[G](name) *>
-            useInputEdge(t)(validateArg[G](fields))
+          useInputEdge(t) {
+            validateTypeName[G](name) *> validateArg[G](fields)
+          }
         case Input.Enum(name, _)     => validateTypeName[G](name)
         case Input.Scalar(name, dec) => validateTypeName[G](name)
       }
@@ -198,9 +207,11 @@ object SchemaShape {
         S: Stateful[G, ValidationState]
     ): G[Unit] =
       fields.traverse_ { case (name, field) =>
-        validateFieldName[G](name) >>
-          validateArg[G](field.args) >>
-          validateOutput[G](field.output.value)
+        useEdge(ValidationEdge.Field(name)) {
+          validateFieldName[G](name) >>
+            validateArg[G](field.args) >>
+            validateOutput[G](field.output.value)
+        }
       }
 
     def validateToplevel[G[_]: Monad](tl: gql.out.Toplevel[F, Any])(implicit S: Stateful[G, ValidationState]): G[Unit] = {
@@ -218,6 +229,8 @@ object SchemaShape {
               val ols = insts.toList.map(_.ol)
               allUnique[G](ols.map(_.name)) >> ols.traverse_(validateOutput[G]) >>
                 validateFields[G](fields)
+            case Enum(name, _)   => validateTypeName[G](name)
+            case Scalar(name, _) => validateTypeName[G](name)
           }
         }
       }
@@ -228,9 +241,10 @@ object SchemaShape {
         case x: gql.out.Toplevel[F, Any] => validateToplevel[G](x)
         case Arr(of)                     => validateOutput[G](of)
         case Opt(of)                     => validateOutput[G](of)
-        case Enum(name, _)               => validateTypeName[G](name)
-        case Scalar(name, _)             => validateTypeName[G](name)
       }
 
+    validateOutput[State[ValidationState, *]](schema.query)
+      .runS(ValidationState(Chain.empty, Chain.empty, Map.empty, Map.empty))
+      .map(_.problems)
   }
 }
