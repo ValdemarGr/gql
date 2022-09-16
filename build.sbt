@@ -18,6 +18,8 @@ lazy val sharedSettings = Seq(
     "org.typelevel" %% "kittens" % "2.3.0",
     "org.tpolecat" %% "natchez-core" % "0.1.4",
     "org.tpolecat" %% "natchez-noop" % "0.1.4",
+    "org.tpolecat" %% "typename" % "1.0.0",
+    "org.tpolecat" %% "sourcepos" % "1.0.1",
     /* "ch.qos.logback" % "logback-classic" % "1.2.11", */
     "org.typelevel" %% "log4cats-core" % "2.4.0",
     "org.typelevel" %% "log4cats-slf4j" % "2.4.0",
