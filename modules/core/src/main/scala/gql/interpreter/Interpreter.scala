@@ -538,8 +538,9 @@ object Interpreter {
           case PreparedList(of) =>
             m.toVector
               .collect { case (Some(GraphArc.Index(i)), tl) => i -> tl }
+              .map { case (i, tl) => i -> reconstructField[F](of, tl) }
               .sortBy { case (i, _) => i }
-              .map { case (_, tl) => reconstructField[F](of, tl) }
+              .map{ case (_, v) => v }
               .asJson
           case PreparedOption(of) =>
             reconstructField[F](of, cursors)
