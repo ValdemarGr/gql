@@ -24,7 +24,8 @@ object PreparedQuery {
       name: String,
       resolve: Resolver[F, I, T],
       selection: Prepared[F, T],
-      typename: String
+      typename: String,
+      alias: Option[String]
   ) extends PreparedField[F, I]
 
   final case class PreparedFragField[F[_], A](
@@ -275,7 +276,7 @@ object PreparedQuery {
       val prepF: F[Prepared[G, Any]] = typePrep(tpe)
 
       prepF.flatMap(p =>
-        nextId[F].map(id => PreparedDataField(id, gqlField.name, resolve, p, underlyingOutputTypename(field.output.value)))
+        nextId[F].map(id => PreparedDataField(id, gqlField.name, resolve, p, underlyingOutputTypename(field.output.value), gqlField.alias))
       )
     }
   }

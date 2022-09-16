@@ -511,6 +511,7 @@ fragment F2 on Data {
 query withNestedFragments {
   getData {
     dep
+    d2lol: dep
     doo
     nestedSignal2 {
       a
