@@ -23,6 +23,7 @@ import cats.mtl._
 import gql.out._
 import cats.instances.unit
 import gql.parser.ParserUtil
+import gql.in
 
 object Main extends App {
   def showTree(indent: Int, nodes: NonEmptyList[Planner.Node]): String = {
@@ -257,7 +258,6 @@ query withNestedFragments {
     )
 
   import gql.syntax.out._
-  import gql.syntax._
   implicit def intType[F[_]]: Scalar[F, Int] = Scalar("Int", Encoder.encodeInt)
 
   implicit def stringType[F[_]]: Scalar[F, String] = Scalar("String", Encoder.encodeString)
@@ -267,11 +267,11 @@ query withNestedFragments {
 
   implicit def optTypeForSome[F[_], A](implicit of: Output[F, A]): Output[F, Option[A]] = Opt(of)
 
-  implicit lazy val intInput: Input.Scalar[Int] = Input.Scalar("Int", Decoder.decodeInt)
+  implicit lazy val intInput: in.Scalar[Int] = in.Scalar("Int", Decoder.decodeInt)
 
-  implicit lazy val stringInput: Input.Scalar[String] = Input.Scalar("String", Decoder.decodeString)
+  implicit lazy val stringInput: in.Scalar[String] = in.Scalar("String", Decoder.decodeString)
 
-  implicit def listInputType[A](implicit tpe: Input[A]): Input[Vector[A]] = Input.Arr(tpe)
+  implicit def listInputType[A](implicit tpe: in.Input[A]): in.Input[Vector[A]] = in.Arr(tpe)
 
   final case class Deps(v: String)
 
@@ -290,7 +290,7 @@ query withNestedFragments {
     StreamRef[F, String, Unit](k => Resource.pure(fs2.Stream(k).repeat.lift[F].metered((if (k == "John") 200 else 500).millis).as(())))
       .flatMap { nameRef =>
         BatcherReference[F, Int, ServerData](xs => F.pure(xs.map(x => x -> ServerData(x)).toMap)).map { serverDataBatcher =>
-          implicit val inputDataType: Input[InputData] = in.obj[InputData](
+          implicit val inputDataType: in.Input[InputData] = InputSyntax.obj[InputData](
             "InputData",
             (
               arg[Int]("value", Some(42)),

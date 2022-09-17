@@ -2,11 +2,12 @@ package gql
 
 import cats._
 import cats.implicits._
-import gql.out._
+import gql.out
+import gql.in
 
 final case class ArgParam[A](
     name: String,
-    input: Input[A],
+    input: in.Input[A],
     default: Option[A] = None
 )
 
@@ -14,8 +15,8 @@ final case class Arg[A](
     entries: Vector[ArgParam[_]],
     decode: List[_] => (List[_], A)
 ) {
-  def apply[F[_], I, O](f: Field[F, (I, A), O, Unit]): Field[F, I, O, A] =
-    Field(
+  def apply[F[_], I, O](f: out.Field[F, (I, A), O, Unit]): out.Field[F, I, O, A] =
+    out.Field(
       f.args *> this,
       f.resolve.contramap[(I, A)] { case (i, ag) => ((i, ag), ()) },
       f.output

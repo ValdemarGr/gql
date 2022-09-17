@@ -105,7 +105,7 @@ abstract class OutputSyntax {
       Eval.later(tpe)
     )
 
-  def arg[A](name: String, default: Option[A] = None)(implicit tpe: Input[A]): Arg[A] =
+  def arg[A](name: String, default: Option[A] = None)(implicit tpe: in.Input[A]): Arg[A] =
     Arg.initial[A](ArgParam(name, tpe, default))
 }
 

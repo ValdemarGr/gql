@@ -7,15 +7,15 @@ import Value._
 import cats._
 import scala.reflect.ClassTag
 
-sealed trait Input[+A] {
-  def decode(value: Value): Either[String, A]
-}
+package object in {
+  sealed trait Input[+A] {
+    def decode(value: Value): Either[String, A]
+  }
 
-sealed trait ToplevelInput[A] extends Input[A] {
-  def name: String
-}
+  sealed trait Toplevel[A] extends Input[A] {
+    def name: String
+  }
 
-object Input {
   final case class Arr[A](of: Input[A]) extends Input[Vector[A]] {
     def decode(value: Value): Either[String, Vector[A]] =
       value match {
@@ -35,7 +35,7 @@ object Input {
   final case class Obj[A](
       name: String,
       fields: Arg[A]
-  ) extends ToplevelInput[A] {
+  ) extends Toplevel[A] {
     def decode(value: Value): Either[String, A] = {
       value match {
         case JsonValue(jo) if jo.isObject =>
@@ -74,46 +74,13 @@ object Input {
       }
     }
   }
-  object Obj {
-    final case class Fields[A](
-        fields: NonEmptyVector[Field[_]],
-        decoder: List[_] => (List[_], A)
-    )
-    object Fields {
-      def apply[A](field: Field[A]): Fields[A] =
-        Fields(
-          NonEmptyVector.one(field),
-          { s => (s.tail, s.head.asInstanceOf[A]) }
-        )
-    }
-    implicit lazy val applyForFields = new Apply[Fields] {
-      override def map[A, B](fa: Fields[A])(f: A => B): Fields[B] =
-        Fields(fa.fields, fa.decoder andThen { case (s, a) => (s, f(a)) })
 
-      override def ap[A, B](ff: Fields[A => B])(fa: Fields[A]): Fields[B] =
-        Fields(
-          ff.fields ++: fa.fields,
-          { s1 =>
-            val (s2, f) = ff.decoder(s1)
-            val (s3, a) = fa.decoder(s2)
-            (s3, f(a))
-          }
-        )
-    }
-
-    final case class Field[A](
-        name: String,
-        tpe: Input[A],
-        default: Option[A] = None
-    )
-  }
-
-  final case class Scalar[A](name: String, dec: Decoder[A]) extends ToplevelInput[A] {
+  final case class Scalar[A](name: String, dec: Decoder[A]) extends Toplevel[A] {
     override def decode(value: Value): Either[String, A] =
       dec.decodeJson(value.asJson).leftMap(_.show)
   }
 
-  final case class Enum[A](name: String, fields: NonEmptyMap[String, A]) extends ToplevelInput[A] {
+  final case class Enum[A](name: String, fields: NonEmptyMap[String, A]) extends Toplevel[A] {
     def decodeString(s: String): Either[String, A] =
       fields.lookup(s) match {
         case Some(a) => Right(a)
