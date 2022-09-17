@@ -5,14 +5,15 @@ import cats.data._
 import gql._
 import cats.effect._
 
-trait StreamRef[F[_], I, O] { self =>
+trait StreamRef[F[_], I, +O] { self =>
   type M
 
   type K
 
   def ref: I => Int
 
-  def filterMapping: (I, M) => OptionT[ResultF[F, *], O]
+  // def filterMapping: (I, M) => OptionT[ResultF[F, *], O]
+  def filterMapping: (I, M) => Option[O]
 
   def getKey: I => ResultF[F, K]
 
@@ -26,7 +27,7 @@ trait StreamRef[F[_], I, O] { self =>
       def getKey = f andThen self.getKey
     }
 
-  def filterMapF[O2](f: (I, O) => OptionT[ResultF[F, *], O2])(implicit F: Monad[F]): StreamRef[F, I, O2] =
+  def filterMap[O2](f: (I, O) => Option[O2])(implicit F: Monad[F]): StreamRef[F, I, O2] =
     new StreamRef[F, I, O2] {
       type M = self.M
       type K = self.K
@@ -36,11 +37,21 @@ trait StreamRef[F[_], I, O] { self =>
       def getKey = self.getKey
     }
 
-  def filterMapR[O2](f: (I, O) => Result[Option[O2]])(implicit F: Monad[F]): StreamRef[F, I, O2] =
-    filterMapF[O2] { case (i, o) => OptionT(IorT.apply(F.pure(f(i, o)))) }
+  // def filterMapF[O2](f: (I, O) => OptionT[ResultF[F, *], O2])(implicit F: Monad[F]): StreamRef[F, I, O2] =
+  //   new StreamRef[F, I, O2] {
+  //     type M = self.M
+  //     type K = self.K
 
-  def filterMap[O2](f: (I, O) => Option[O2])(implicit F: Monad[F]): StreamRef[F, I, O2] =
-    filterMapR[O2] { case (i, o) => Ior.right(f(i, o)) }
+  //     def ref = self.ref
+  //     def filterMapping = (i, m) => self.filterMapping(i, m).flatMap(f(i, _))
+  //     def getKey = self.getKey
+  //   }
+
+  // def filterMapR[O2](f: (I, O) => Result[Option[O2]])(implicit F: Monad[F]): StreamRef[F, I, O2] =
+  //   filterMapF[O2] { case (i, o) => OptionT(IorT.apply(F.pure(f(i, o)))) }
+
+  // def filterMap[O2](f: (I, O) => Option[O2])(implicit F: Monad[F]): StreamRef[F, I, O2] =
+  //   filterMapR[O2] { case (i, o) => Ior.right(f(i, o)) }
 
   def mapK[G[_]](fk: F ~> G): StreamRef[G, I, O] =
     new StreamRef[G, I, O] {
@@ -48,7 +59,8 @@ trait StreamRef[F[_], I, O] { self =>
       type K = self.K
 
       def ref = self.ref
-      def filterMapping = (i, m) => OptionT(self.filterMapping(i, m).value.mapK(fk))
+      // def filterMapping = (i, m) => OptionT(self.filterMapping(i, m).value.mapK(fk))
+      def filterMapping = self.filterMapping
       def getKey = i => self.getKey(i).mapK(fk)
     }
 }
@@ -66,7 +78,8 @@ object StreamRef {
 
         def getKey = IorT.pure[F, String](_)
 
-        def filterMapping = (_, m) => OptionT(IorT.pure[F, String](Some(m)))
+        def filterMapping = (_, m) => Some(m)
+        // def filterMapping = (_, m) => OptionT(IorT.pure[F, String](Some(m)))
       }
       (s.copy(streams = s.streams + (id -> entry)), sr)
     }

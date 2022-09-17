@@ -7,11 +7,6 @@ import cats.effect._
 import cats.implicits._
 import cats._
 
-sealed trait StateSubmissionOutcome
-final case class FinalSubmission(accumulatedInputs: Map[Int, Chain[EvalNode[Any]]]) extends StateSubmissionOutcome
-case object NoState extends StateSubmissionOutcome
-case object NotFinalSubmission extends StateSubmissionOutcome
-
 final case class BatchExecutionState(remainingInputs: Set[Int], inputMap: Map[Int, Chain[EvalNode[Any]]])
 
 final case class Batching[F[_]](

@@ -40,6 +40,13 @@ object Interpreter {
   def combineSplit(fails: Chain[EvalFailure], succs: Chain[EvalNode[Json]]): Chain[(CursorGroup, Json)] =
     fails.flatMap(_.paths).map(m => (m, Json.Null)) ++ succs.map(n => (n.cursorGroup, n.value))
 
+  final case class SignalMetadata[F[_]](
+      cursor: Cursor,
+      initialValue: Any,
+      df: PreparedDataField[F, Any, Any],
+      mapFilter: Any => Option[Any]
+  )
+
   def constructStream[F[_]: Statistics](
       rootInput: Any,
       rootSel: NonEmptyList[PreparedField[F, Any]],
@@ -48,11 +55,11 @@ object Interpreter {
   )(implicit F: Async[F]): fs2.Stream[F, (Chain[EvalFailure], JsonObject)] = {
     val changeLog = fs2.Stream.fromOption(streamResourceAlg).flatMap(_.changeLog)
 
-    val accumulatorF = streamResourceAlg.traverse(implicit alg => SignalMetadataAccumulator[F])
+    val accumulatorF = streamResourceAlg.traverse(implicit alg => SignalMetadataAccumulator[F, SignalMetadata[F]])
 
     def runStreamIt(
         root: NonEmptyList[(PreparedField[F, Any], Chain[EvalNode[Any]])]
-    ): F[(Chain[EvalFailure], Chain[EvalNode[Json]], Batching[F], Map[BigInt, (Cursor, Any, PreparedDataField[F, Any, Any])])] =
+    ): F[(Chain[EvalFailure], Chain[EvalNode[Json]], Batching[F], Map[BigInt, SignalMetadata[F]])] =
       accumulatorF.flatMap { accumulatorOpt =>
         val rootFields = root.map { case (k, _) => k }
         for {
@@ -62,7 +69,7 @@ object Interpreter {
           (fails, succs) <- interpret[F](root, executionDeps, schemaState, accumulatorOpt).run
           s <- accumulatorOpt match {
             case Some(x) => x.getState
-            case None    => F.pure(Map.empty[BigInt, (Cursor, Any, PreparedDataField[F, Any, Any])])
+            case None    => F.pure(Map.empty[BigInt, SignalMetadata[F]])
           }
         } yield (fails, succs, executionDeps, s)
       }
@@ -79,27 +86,28 @@ object Interpreter {
               .evalMapAccumulate((initialOutput, initialSignals)) { case ((prevOutput, activeSigs), changes) =>
                 // remove dead nodes (concurrent access can cause dead updates to linger)
                 changes
-                  .filter { case (k, _) => activeSigs.contains(k) }
+                  .map { case (k, v) => activeSigs.get(k).flatMap(meta => meta.mapFilter(v).map((k, _, meta))) }
+                  .collect { case Some(x) => x }
                   .toNel
                   .flatTraverse { activeChanges =>
                     // The hcsa algorithm can most likely be optimized
                     // It takes atleast n time currently
-                    val s = activeChanges.toList.map { case (k, _) => k }.toSet
-                    val allSigNodes = activeSigs.toList.map { case (k, (cursor, _, df)) =>
+                    val s = activeChanges.toList.map { case (k, _, _) => k }.toSet
+                    val allSigNodes = activeSigs.toList.map { case (k, SignalMetadata(cursor, _, df, _)) =>
                       // The cursor is to the parent, traversing the arc for df.name will get us to the changed node
                       (cursor.field(df.id, df.name), k)
                     }
                     val meta = computeMetadata(allSigNodes, s)
 
                     // The root nodes are the highest common signal ancestors
-                    val rootNodes: List[(BigInt, Any)] = activeChanges.filter { case (k, _) => meta.hcsa.contains(k) }
+                    val rootNodes = activeChanges.filter { case (k, _, _) => meta.hcsa.contains(k) }
 
                     // Partition every HCSA node into it's own cursor group (for efficient re-association later)
                     // We cannot use the field name to group them, since two changed fields can have the same name
                     // The property of field uniqueness is lost since we are starting at n different non-root nodes
                     val prepaedRoots =
-                      rootNodes.mapWithIndex { case ((id, input), idx) =>
-                        val (cursor, _, field) = activeSigs(id)
+                      rootNodes.mapWithIndex { case ((id, input, _), idx) =>
+                        val SignalMetadata(cursor, _, field, _) = activeSigs(id)
                         val cursorGroup = BigInt(idx)
                         (field, cursor, Chain(EvalNode.startAt(input, cursorGroup, cursor)), cursorGroup)
                       }
@@ -208,28 +216,11 @@ object Interpreter {
   def groupNodeValues2[A](nvs: List[(Cursor, A)]): Map[Option[GraphArc], List[(Cursor, A)]] =
     nvs.groupMap { case (c, _) => c.headOption } { case (c, v) => (c.tail, v) }
 
-  // final case class ArcGrouping[A](
-  //     field: Map[Int, List[(Cursor, A)]],
-  //     arr: Map[Int, List[(Cursor, A)]],
-  //     frag: Map[Int, List[(Cursor, A)]],
-  //     terminal: List[A]
-  // )
-  // def groupNodeValues3[A](nvs: List[(Cursor, A)]) = {
-  //   nvs.foldLeft(ArcGrouping(Map.empty, Map.empty, Map.empty, List.empty)) { case (acc, (c, v)) =>
-  //     c.headOption match {
-  //       case Some(GraphArc.Field(id, _))    => acc.copy(field = acc.field + (id -> acc)))
-  //       // case Some(GraphArc.Index(idx))      => acc.copy(arr = acc.arr.updated(idx, (c.tail, v) :: acc.arr.getOrElse(idx, Nil)))
-  //       // case Some(GraphArc.Fragment(id, _)) => acc.copy(frag = acc.frag.updated(0, (c.tail, v) :: acc.frag.getOrElse(0, Nil)))
-  //       // case None                           => acc.copy(terminal = v :: acc.terminal)
-  //     }
-  //   }
-  // }
-
   def interpret[F[_]](
       rootSel: NonEmptyList[(PreparedField[F, Any], Chain[EvalNode[Any]])],
       executionDeps: Batching[F],
       schemaState: SchemaState[F],
-      signalSubmission: Option[SignalMetadataAccumulator[F]] = None
+      signalSubmission: Option[SignalMetadataAccumulator[F, SignalMetadata[F]]] = None
   )(implicit F: Async[F], stats: Statistics[F]): WriterT[F, Chain[EvalFailure], Chain[EvalNode[Json]]] = {
     type W[A] = WriterT[F, Chain[EvalFailure], A]
     val W = Async[W]
@@ -253,6 +244,11 @@ object Interpreter {
 
     Supervisor[F].mapK(lift).use { sup =>
       executionDeps.batchExecutionState[W].flatMap { batchStateMap =>
+        sealed trait StateSubmissionOutcome
+        final case class FinalSubmission(accumulatedInputs: Map[Int, Chain[EvalNode[Any]]]) extends StateSubmissionOutcome
+        case object NoState extends StateSubmissionOutcome
+        case object NotFinalSubmission extends StateSubmissionOutcome
+
         def submitAndMaybeStart(nodeId: Int, input: Chain[EvalNode[Any]]): W[StateSubmissionOutcome] =
           batchStateMap
             .get(nodeId)
@@ -295,25 +291,37 @@ object Interpreter {
                   )
                     .flatMap(_.flatTraverse { key =>
                       val df2 = df.copy(resolve = sf.resolver.contramap[Any]((in.value, _)))
-                      lift(ss.add(in.cursorGroup.absolutePath, in.value, df2, sf.ref.ref(in.value), key)).flatMap { id =>
-                        // if hd fails, then unsubscribe again
-                        // note that if any parent changes, this (unsubscription) will happen automatically, so this
-                        // can be viewed as an optimization
-                        val handledHeadF =
-                          IorT {
-                            hdF.value
-                              .attemptTap {
-                                case Left(_)            => ss.remove(id)
-                                case Right(Ior.Left(_)) => ss.remove(id)
-                                case _                  => F.unit
-                              }
-                          }
-
-                        attemptUserE(
-                          handledHeadF.map(Chain(_)),
-                          EvalFailure.SignalHeadResolution(debugCursor, _, in.value)
+                      lift(
+                        ss.add(
+                          SignalMetadata(
+                            in.cursorGroup.absolutePath,
+                            in.value,
+                            df2,
+                            m => sf.ref.filterMapping(in.value, m.asInstanceOf[sf.ref.M])
+                          ),
+                          sf.ref.ref(in.value),
+                          key
                         )
-                      }
+                      )
+                        .flatMap { id =>
+                          // if hd fails, then unsubscribe again
+                          // note that if any parent changes, this (unsubscription) will happen automatically, so this
+                          // can be viewed as an optimization
+                          val handledHeadF =
+                            IorT {
+                              hdF.value
+                                .attemptTap {
+                                  case Left(_)            => ss.remove(id)
+                                  case Right(Ior.Left(_)) => ss.remove(id)
+                                  case _                  => F.unit
+                                }
+                            }
+
+                          attemptUserE(
+                            handledHeadF.map(Chain(_)),
+                            EvalFailure.SignalHeadResolution(debugCursor, _, in.value)
+                          )
+                        }
                     })
               }
             }
