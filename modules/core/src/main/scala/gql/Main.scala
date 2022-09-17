@@ -18,11 +18,7 @@ import cats.parse.Parser.Expectation._
 import scala.io.AnsiColor
 import scala.concurrent.ExecutionContext
 import alleycats.Empty
-import gql.resolver.BatchResolver
-import gql.resolver.BatcherReference
-import gql.resolver.StreamReference
-import gql.resolver.SignalResolver
-import gql.resolver.EffectResolver
+import gql.resolver._
 import cats.mtl._
 import gql.out._
 import cats.instances.unit
@@ -291,7 +287,7 @@ query withNestedFragments {
 
     final case class DataIds(ids: List[Int])
 
-    StreamReference[F, String, Unit](k =>
+    StreamRef[F, String, Unit](k =>
       Resource.pure(fs2.Stream(k).repeat.lift[F].metered((if (k == "John") 200 else 500).millis).as(()))
     ).flatMap { nameStreamReference =>
       BatcherReference[F, Int, ServerData](xs => F.pure(xs.map(x => x -> ServerData(x)).toMap)).map { serverDataBatcher =>
@@ -340,19 +336,19 @@ query withNestedFragments {
               "sd" -> f(serverDataBatcher.traverse(x => IorT.liftF(x.b.map(i => Seq(i, i + 1, i * 2))))),
               "c" -> f(eff(_.c.map(_.toSeq))),
               "doo" -> f(pur(_ => Vector(Vector(Vector.empty[String])))),
-              "nestedSignal" ->
-                f(
-                  nameStreamReference[F, Data[F], Data[F]](eff { case (i, _) => i.c.map(_.head) })(_ => IorT.pure(()))(i =>
-                    // IorT.liftF(F.pure(i.a))
-                    IorT.leftT[F, String]("Hahaaaa, Nested signal errrorrororor!")
-                  )
-                ),
-              "nestedSignal2" ->
-                f(
-                  nameStreamReference[F, Data[F], Data[F]](eff { case (i, _) => i.c.map(_.head) })(_ => IorT.pure(()))(i =>
-                    IorT.liftF(F.pure(i.a))
-                  )
-                )
+              // "nestedSignal" ->
+              //   f(
+              //     nameStreamReference[F, Data[F], Data[F]](eff { case (i, _) => i.c.map(_.head) })(_ => IorT.pure(()))(i =>
+              //       // IorT.liftF(F.pure(i.a))
+              //       IorT.leftT[F, String]("Hahaaaa, Nested signal errrorrororor!")
+              //     )
+              //   ),
+              // "nestedSignal2" ->
+              //   f(
+              //     nameStreamReference[F, Data[F], Data[F]](eff { case (i, _) => i.c.map(_.head) })(_ => IorT.pure(()))(i =>
+              //       IorT.liftF(F.pure(i.a))
+              //     )
+              //   )
             )
           }
 

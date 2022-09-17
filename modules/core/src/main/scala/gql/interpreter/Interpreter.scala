@@ -272,7 +272,7 @@ object Interpreter {
         def submit(name: String, duration: FiniteDuration, size: Int): F[Unit] =
           sup.supervise(stats.updateStats(name, duration, size)).void
 
-        def runSignal(df: PreparedDataField[F, Any, Any], sf: SignalResolver[F, Any, Any, Any, Any], inputs: Chain[EvalNode[Any]]) =
+        def runSignal(df: PreparedDataField[F, Any, Any], sf: SignalResolver[F, Any, Any, Any], inputs: Chain[EvalNode[Any]]) =
           inputs
             .parFlatTraverse { in =>
               val hdF: IorT[F, String, EvalNode[Any]] =
@@ -290,12 +290,12 @@ object Interpreter {
                   )
                 case Some(ss) =>
                   attemptUser(
-                    sf.tail(in.value).map(Chain(_)),
+                    sf.ref.getKey(in.value).map(Chain(_)),
                     EvalFailure.SignalTailResolution(debugCursor, _, in.value)
                   )
-                    .flatMap(_.flatTraverse { dst =>
+                    .flatMap(_.flatTraverse { key =>
                       val df2 = df.copy(resolve = sf.resolver.contramap[Any]((in.value, _)))
-                      lift(ss.add(in.cursorGroup.absolutePath, in.value, df2, dst.ref, dst.key)).flatMap { id =>
+                      lift(ss.add(in.cursorGroup.absolutePath, in.value, df2, sf.ref.ref(in.value), key)).flatMap { id =>
                         // if hd fails, then unsubscribe again
                         // note that if any parent changes, this (unsubscription) will happen automatically, so this
                         // can be viewed as an optimization
@@ -540,7 +540,7 @@ object Interpreter {
               .collect { case (Some(GraphArc.Index(i)), tl) => i -> tl }
               .map { case (i, tl) => i -> reconstructField[F](of, tl) }
               .sortBy { case (i, _) => i }
-              .map{ case (_, v) => v }
+              .map { case (_, v) => v }
               .asJson
           case PreparedOption(of) =>
             reconstructField[F](of, cursors)

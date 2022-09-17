@@ -10,7 +10,7 @@ trait SignalMetadataAccumulator[F[_]] {
       cursor: Cursor,
       initialValue: Any,
       field: PreparedDataField[F, Any, Any],
-      ref: StreamReference[Any, Any],
+      ref: Int,
       key: Any
   ): F[BigInt]
 
@@ -27,7 +27,7 @@ object SignalMetadataAccumulator {
             cursor: Cursor,
             initialValue: Any,
             field: PreparedDataField[F, Any, Any],
-            ref: StreamReference[Any, Any],
+            ref: Int,
             key: Any
         ): F[BigInt] =
           sigAlg.subscribe(ref, key).flatMap(id => state.update(_ + (id -> (cursor, initialValue, field))).as(id))

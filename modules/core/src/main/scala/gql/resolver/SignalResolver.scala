@@ -11,29 +11,29 @@ import cats.data._
  * A the output type
  * T the intermediate type that the stream emits and is transformed to A
  */
-final case class SignalResolver[F[_]: MonadCancelThrow, I, K, A, T](
-    resolver: LeafResolver[F, (I, T), A],
-    head: I => IorT[F, String, T],
-    tail: I => IorT[F, String, SignalResolver.DataStreamTail[K, T]]
+final case class SignalResolver[F[_]: MonadCancelThrow, I, R, A](
+    resolver: LeafResolver[F, (I, R), A],
+    head: I => IorT[F, String, R],
+    ref: StreamRef[F, I, R]
 ) extends Resolver[F, I, A] {
-  def mapK[G[_]: MonadCancelThrow](fk: F ~> G): SignalResolver[G, I, K, A, T] =
+  def mapK[G[_]: MonadCancelThrow](fk: F ~> G): SignalResolver[G, I, R, A] =
     SignalResolver(
       resolver.mapK(fk),
       i => head(i).mapK(fk),
-      i => tail(i).mapK(fk)
+      ref.mapK(fk)
     )
 
-  def contramap[C](g: C => I): SignalResolver[F, C, K, A, T] =
+  def contramap[C](g: C => I): SignalResolver[F, C, R, A] =
     SignalResolver(
-      resolver.contramap[(C, T)] { case (c, t) => (g(c), t) },
+      resolver.contramap[(C, R)] { case (c, t) => (g(c), t) },
       i => head(g(i)),
-      i => tail(g(i)).map(dst => dst.copy(ref = StreamReference(dst.ref.id)))
+      ref.contramap[C](g)
     )
 }
 
 object SignalResolver {
-  final case class DataStreamTail[K, T](
-      ref: StreamReference[K, T],
-      key: K
-  )
+  def apply[F[_]: MonadCancelThrow, I, R, A](sr: StreamRef[F, I, R])(hd: I => IorT[F, String, R])(
+      resolver: LeafResolver[F, (I, R), A]
+  ): SignalResolver[F, I, R, A] =
+    SignalResolver(resolver, hd, sr)
 }

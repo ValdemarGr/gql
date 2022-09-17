@@ -10,7 +10,7 @@ import cats.effect.std._
 import fs2.Chunk
 
 trait SubscriptionSupervisor[F[_]] {
-  def subscribe(ref: StreamReference[Any, Any], key: Any): F[BigInt]
+  def subscribe(ref: Int, key: Any): F[BigInt]
 
   def remove(id: BigInt): F[Unit]
 
@@ -146,8 +146,8 @@ object SubscriptionSupervisor {
             }.flatten
 
           new SubscriptionSupervisor[F] {
-            override def subscribe(ref: StreamReference[Any, Any], key: Any): F[BigInt] =
-              reserveResourceF(ref.id, key)
+            override def subscribe(ref: Int, key: Any): F[BigInt] =
+              reserveResourceF(ref, key)
 
             override def remove(id: BigInt): F[Unit] =
               releaseSubscriptionF(id)
