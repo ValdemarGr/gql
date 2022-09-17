@@ -74,7 +74,7 @@ trait Character {
 }
 object Character {
   implicit def gqlType[F[_]]: out.Interface[F, Character] =
-    out.interface(
+    interface(
       "Character",
       "id" -> pure(_.id),
       "name" -> pure(_.name),
@@ -129,7 +129,7 @@ trait Repository[F[_]] {
 }
 
 def schema[F[_]](implicit repo: Repository[F]) =  SchemaShape[F, Unit](
-  out.obj(
+  obj(
     "Query",
     "hero"      -> effect(arg[Episode]("episode")){ case (_, episode) => repo.getHero(episode) },
     "character" -> effect(arg[ID[String]]("id")){ case (_, id) => repo.getCharacter(id) },
@@ -139,3 +139,19 @@ def schema[F[_]](implicit repo: Repository[F]) =  SchemaShape[F, Unit](
 )
 ```
 TODO show simple example
+
+```scala mdoc
+import gql._
+import gql.dsl._
+import cats.implicits._
+
+val firstArg = arg[Int]("first")
+val secondAndThirdArg: Arg[Int] = (arg[Int]("second", Some(42)), arg[Int]("third")).mapN(_ + _)
+
+obj[F, Uni](
+  "Query",
+  "args" -> pure((firstArg, secondAndThirdArg).tupled){ 
+    case (_, (first, secondAndThird)) => first + secondAndThird 
+  }
+)
+```
