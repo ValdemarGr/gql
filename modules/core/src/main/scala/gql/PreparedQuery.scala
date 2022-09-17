@@ -149,14 +149,14 @@ object PreparedQuery {
       fragments: Map[String, Pos[P.FragmentDefinition]]
   )(implicit S: Stateful[F, Prep], F: MonadError[F, PositionalError], D: Defer[F]): F[NonEmptyList[PreparedField[G, Any]]] = D.defer {
     // TODO this code shares much with the subtype interfaces below in matchType
-    def collectLeafPrisms(inst: Instance[G, Any, Any]): Chain[(SimplePrism[Any, Any], String)] =
+    def collectLeafPrisms(inst: Instance[G, Any, Any]): Chain[(Any => Option[Any], String)] =
       inst.ol match {
         case Obj(name, _)           => Chain((inst.specify, name))
         case Union(_, types)        => Chain.fromSeq(types.toList).flatMap(collectLeafPrisms)
         case Interface(_, types, _) => Chain.fromSeq(types).flatMap(collectLeafPrisms)
       }
 
-    val allPrisms: Chain[(SimplePrism[Any, Any], String)] = collectLeafPrisms(Instance(ol)(Some(_)))
+    val allPrisms: Chain[(Any => Option[Any], String)] = collectLeafPrisms(Instance(ol)(Some(_)))
 
     val syntheticTypename =
       Field[G, Any, String, Unit](

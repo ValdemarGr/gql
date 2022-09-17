@@ -126,11 +126,11 @@ package object out {
 
   final case class Instance[F[_], A, B](
       ol: ObjLike[F, B]
-  )(implicit val specify: PartialFunction[A, B]) {
+  )(implicit val specify: A => Option[B]) {
     def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Instance[G, A, B] =
       Instance(ol.mapK(fk))
 
     def contramap[C](g: C => A): Instance[F, C, B] =
-      Instance[F, C, B](ol)(PartialFunction.fromFunction(g).andThen(specify))
+      Instance[F, C, B](ol)(c => specify(g(c)))
   }
 }

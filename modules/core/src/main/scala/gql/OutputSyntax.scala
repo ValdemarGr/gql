@@ -112,6 +112,6 @@ abstract class OutputSyntax {
 object OutputSyntax {
   case class PartiallyAppliedContra[B](val dummy: Boolean = false) extends AnyVal {
     def apply[F[_], A](pf: PartialFunction[A, B])(implicit ol: ObjLike[F, B]): Instance[F, A, B] =
-      Instance[F, A, B](ol)(a => pf.lift(a))
+      Instance[F, A, B](ol)(pf.lift)
   }
 }
