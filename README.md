@@ -38,3 +38,11 @@ object Data {
 
 def makeData[F[_]]: Data[F] = ???
 ```
+
+# Getting started
+## Intro
+### Deps
+...
+
+## Example
+
