@@ -4,8 +4,7 @@ title: Example
 
 ```scala mdoc
 import gql._
-import gql.out
-import gql.in
+import gql.ast._
 import gql.dsl._
 
 sealed trait Episode
@@ -15,7 +14,8 @@ object Episode {
   case object Jedi extends Episode
 
   implicit lazy val gqlType = 
-    enumType(
+    enum(
+      "Episode"
       NewHope -> "NEWHOPE",
       Empire -> "EMPIRE",
       Jedi -> "JEDI"
@@ -29,7 +29,7 @@ trait Character {
   def appearsIn: Option[List[Episode]]
 }
 object Character {
-  implicit def gqlType[F[_]]: out.Interface[F, Character] =
+  implicit def gqlType[F[_]]: Interface[F, Character] =
     interface(
       "Character",
       "id" -> pure(_.id),
@@ -50,7 +50,7 @@ final case class Human(
   homePlanet: Option[String]
 ) extends Character
 object Human {
-  implicit def gqlType[F[_]]: out.Obj[F, Human] =
+  implicit def gqlType[F[_]]: Type[F, Human] =
     obj(
       "Human",
       "homePlanet" -> pure(_.homePlanet),
@@ -66,7 +66,7 @@ final case class Droid(
   primaryFunction: Option[String]
 ) extends Character
 object Human {
-  implicit def gqlType[F[_]]: out.Obj[F, Droid] =
+  implicit def gqlType[F[_]]: Type[F, Droid] =
     obj(
       "Droid",
       "primaryFunction" -> pure(_.primaryFunction),
