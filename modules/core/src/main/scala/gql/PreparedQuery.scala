@@ -10,7 +10,7 @@ import cats._
 import io.circe._
 import gql.parser.{QueryParser => P, Pos}
 import P.Value._
-import gql.out._
+import gql.ast._
 import gql.resolver._
 import cats.parse.Caret
 
@@ -105,7 +105,7 @@ object PreparedQuery {
               .traverse { a =>
                 m
                   .get(a.name)
-                  .map(x => a.input.decode(gql.Value.JsonValue(x))) match {
+                  .map(x => decodeInput(a.input, gql.Value.JsonValue(x))) match {
                   case Some(outcome) => outcome
                   case None          => a.default.toRight(s"missing field ${a.name} in input object $name")
                 }
@@ -120,7 +120,7 @@ object PreparedQuery {
               .traverse { a =>
                 xs
                   .get(a.name)
-                  .map(x => a.input.decode(x)) match {
+                  .map(decodeInput(a.input, _)) match {
                   case Some(outcome) => outcome
                   case None          => a.default.toRight(s"missing field ${a.name} in input object $name")
                 }
@@ -134,24 +134,24 @@ object PreparedQuery {
         }
     }
 
-  def underlyingOutputTypename[G[_]](ot: Output[G, Any]): String = ot match {
+  def underlyingOutputTypename[G[_]](ot: Out[G, Any]): String = ot match {
     case Enum(name, _)         => name
     case Union(name, _)        => name
     case Interface(name, _, _) => name
-    case Obj(name, _)          => name
+    case Type(name, _)         => name
     case Scalar(name, _)       => name
-    case Opt(of)               => underlyingOutputTypename(of)
-    case Arr(of)               => underlyingOutputTypename(of)
+    case OutOpt(of)            => underlyingOutputTypename(of)
+    case OutArr(of)            => underlyingOutputTypename(of)
   }
 
-  def friendlyName[G[_], A](ot: Output[G, A]): String = ot match {
+  def friendlyName[G[_], A](ot: Out[G, A]): String = ot match {
     case Scalar(name, _)       => name
     case Enum(name, _)         => name
-    case Obj(name, _)          => name
+    case Type(name, _)         => name
     case Union(name, _)        => name
     case Interface(name, _, _) => name
-    case x: Opt[G, _]          => s"(${friendlyName[G, Any](x.of.asInstanceOf[Output[G, Any]])} | null)"
-    case x: Arr[G, _]          => s"[${friendlyName[G, Any](x.of.asInstanceOf[Output[G, Any]])}]"
+    case x: OutOpt[G, _]       => s"(${friendlyName[G, Any](x.of.asInstanceOf[Out[G, Any]])} | null)"
+    case x: OutArr[G, _]       => s"[${friendlyName[G, Any](x.of.asInstanceOf[Out[G, Any]])}]"
   }
 
   def parserValueToValue[F[_]](value: P.Value, variableMap: Map[String, Json], caret: Caret)(implicit
@@ -210,7 +210,7 @@ object PreparedQuery {
     }
 
   def prepareSelections[F[_], G[_]: Applicative](
-      ol: ObjLike[G, Any],
+      ol: Selectable[G, Any],
       s: P.SelectionSet,
       variableMap: Map[String, Json],
       fragments: Map[String, Pos[P.FragmentDefinition]]
@@ -218,7 +218,7 @@ object PreparedQuery {
     // TODO this code shares much with the subtype interfaces below in matchType
     def collectLeafPrisms(inst: Instance[G, Any, Any]): Chain[(Any => Option[Any], String)] =
       inst.ol match {
-        case Obj(name, _)           => Chain((inst.specify, name))
+        case Type(name, _)          => Chain((inst.specify, name))
         case Union(_, types)        => Chain.fromSeq(types.toList).flatMap(collectLeafPrisms)
         case Interface(_, types, _) => Chain.fromSeq(types).flatMap(collectLeafPrisms)
       }
@@ -232,7 +232,7 @@ object PreparedQuery {
           val x = allPrisms.collectFirstSome { case (p, name) => p(input).as(name) }
           IorT.fromOption[G](x, "typename could not be determined, this is an implementation error")
         },
-        Eval.now(Scalar("String", io.circe.Encoder.encodeString))
+        Eval.now(Scalar("String", Codec.from(Decoder.decodeString, Encoder.encodeString)))
       )
 
     val schemaMap = ol.fieldMap + ("__typename" -> syntheticTypename)
@@ -291,13 +291,7 @@ object PreparedQuery {
             case None => raiseOpt[F, Any](arg.default, s"missing argument ${arg.name}", Some(caret))
             case Some(x) =>
               parserValueToValue(x, variableMap, caret)
-                .flatMap { j =>
-                  raiseEither[F, Any](
-                    arg.input
-                      .decode(j),
-                    Some(caret)
-                  )
-                }
+                .flatMap(j => raiseEither[F, Any](decodeInput(arg.input, j), Some(caret)))
           }
         }
         .map(_.toList)
@@ -325,17 +319,17 @@ object PreparedQuery {
       val ss = gqlField.selectionSet.value
       val selCaret = gqlField.selectionSet.caret
 
-      def typePrep(t: Output[G, Any]): F[Prepared[G, Any]] =
+      def typePrep(t: Out[G, Any]): F[Prepared[G, Any]] =
         (t, ss) match {
-          case (Arr(inner), _) => typePrep(inner).map(PreparedList(_))
-          case (Opt(inner), _) => typePrep(inner).map(PreparedOption(_))
-          case (ol: ObjLike[G, Any], Some(ss)) =>
+          case (OutArr(inner), _) => typePrep(inner).map(PreparedList(_))
+          case (OutOpt(inner), _) => typePrep(inner).map(PreparedOption(_))
+          case (ol: Selectable[G, Any], Some(ss)) =>
             prepareSelections[F, G](ol, ss, variableMap, fragments)
               .map(Selection(_))
           case (e: Enum[G, Any], None) =>
-            F.pure(PreparedLeaf(e.name, x => Json.fromString(e.encoder(x).get)))
+            F.pure(PreparedLeaf(e.name, x => Json.fromString(e.revm(x))))
           case (s: Scalar[G, Any], None) =>
-            F.pure(PreparedLeaf(s.name, s.encoder.apply))
+            F.pure(PreparedLeaf(s.name, (s.codec: Encoder[Any]).apply))
           case (o, Some(_)) => raise(s"type ${friendlyName[G, Any](o)} cannot have selections", Some(selCaret))
           case (o, None)    => raise(s"object like type ${friendlyName[G, Any](o)} must have a selection", Some(selCaret))
         }
@@ -353,9 +347,9 @@ object PreparedQuery {
   // sel match { case x if x.name == name  => ... }
   def matchType[F[_], G[_]: Applicative](
       name: String,
-      sel: ObjLike[G, Any],
+      sel: Selectable[G, Any],
       caret: Caret
-  )(implicit F: MonadError[F, PositionalError], S: Stateful[F, Prep]): F[(ObjLike[G, Any], Any => Option[Any])] =
+  )(implicit F: MonadError[F, PositionalError], S: Stateful[F, Prep]): F[(Selectable[G, Any], Any => Option[Any])] =
     if (sel.name == name) F.pure((sel, Some(_)))
     else {
       /*
@@ -397,7 +391,8 @@ object PreparedQuery {
        AFrag resolves matches on B and picks that implementation.
        */
       sel match {
-        case Obj(n, _)                           => raise(s"tried to match with type $name on type object type $n", Some(caret))
+        case Type(n, _) =>
+          raise(s"tried to match with type $name on type object type $n", Some(caret))
         case i @ Interface(n, instances, fields) =>
           // TODO follow sub-interfaces that occur in `instances`
           raiseOpt(
@@ -419,7 +414,7 @@ object PreparedQuery {
     }
 
   def prepareFragment[F[_], G[_]: Applicative](
-      ol: ObjLike[G, Any],
+      ol: Selectable[G, Any],
       f: Pos[P.FragmentDefinition],
       variableMap: Map[String, Json],
       fragments: Map[String, Pos[P.FragmentDefinition]]
@@ -479,7 +474,7 @@ object PreparedQuery {
     op.flatMap {
       case P.OperationDefinition.Simple(sel) =>
         prepareSelections[F, G](
-          schema.shape.query.asInstanceOf[ObjLike[G, Any]],
+          schema.shape.query.asInstanceOf[Selectable[G, Any]],
           sel,
           variableMap,
           frags.map(f => f.value.name -> f).toMap
@@ -499,7 +494,7 @@ object PreparedQuery {
         ot match {
           case P.OperationType.Query =>
             prepareSelections[F, G](
-              schema.shape.query.asInstanceOf[ObjLike[G, Any]],
+              schema.shape.query.asInstanceOf[Selectable[G, Any]],
               sel,
               variableMap,
               frags.map(f => f.value.name -> f).toMap

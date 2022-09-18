@@ -3,9 +3,9 @@ package gql
 import cats.implicits._
 import cats.data._
 import alleycats.Empty
-import gql.out._
 import cats.mtl._
 import cats._
+import gql.ast._
 
 final case class Schema[F[_], Q](
     shape: SchemaShape[F, Q],
@@ -13,7 +13,7 @@ final case class Schema[F[_], Q](
 )
 
 object Schema {
-  def simple[F[_], Q](query: Obj[F, Q]) =
+  def simple[F[_], Q](query: Type[F, Q]) =
     Schema(SchemaShape(query), Empty[SchemaState[F]].empty)
 
   def stateful[F[_], Q](fa: State[SchemaState[F], SchemaShape[F, Q]]) = {

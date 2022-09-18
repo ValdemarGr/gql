@@ -4,13 +4,13 @@ import cats._
 import cats.implicits._
 import cats.mtl._
 import cats.data._
-import gql.out._
+import gql.ast._
 import gql.parser.QueryParser
 
 final case class SchemaShape[F[_], Q](
-    query: Obj[F, Q]
-    // mutation: Output.Obj[F, M],
-    // subscription: Output.Obj[F, M],
+    query: Type[F, Q]
+    // mutation: Output.Type[F, M],
+    // subscription: Output.Type[F, M],
 ) {
   lazy val discover = SchemaShape.discover[F, Q](this)
 
@@ -19,15 +19,15 @@ final case class SchemaShape[F[_], Q](
 
 object SchemaShape {
   final case class DiscoveryState[F[_]](
-      inputs: Map[String, in.Toplevel[Any]],
-      outputs: Map[String, out.Toplevel[F, Any]],
+      inputs: Map[String, InToplevel[Any]],
+      outputs: Map[String, OutToplevel[F, Any]],
       // Key is the type, values are the interfaces it implements
       interfaceImplementations: Map[String, Set[String]]
   )
 
   def discover[F[_], Q](shape: SchemaShape[F, Q]): DiscoveryState[F] = {
     def inputNotSeen[G[_], A](
-        tl: in.Toplevel[Any]
+        tl: InToplevel[Any]
     )(ga: G[A])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]], M: Monoid[A]): G[A] =
       S.get.flatMap { s =>
         if (s.inputs.contains(tl.name)) G.pure(M.empty)
@@ -35,28 +35,28 @@ object SchemaShape {
       }
 
     def outputNotSeen[G[_], A](
-        tl: gql.out.Toplevel[F, Any]
+        tl: OutToplevel[F, Any]
     )(ga: G[A])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]], M: Monoid[A]): G[A] =
       S.get.flatMap { s =>
         if (s.outputs.contains(tl.name)) G.pure(M.empty)
         else S.modify(_.copy(outputs = s.outputs + (tl.name -> tl))) *> ga
       }
 
-    def goOutput[G[_]](out: Output[F, Any])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]]): G[Unit] =
+    def goOutput[G[_]](out: Out[F, Any])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]]): G[Unit] =
       out match {
-        case gql.out.Arr(of) => goOutput[G](of)
-        case gql.out.Opt(of) => goOutput[G](of)
-        case t: gql.out.Toplevel[F, Any] =>
+        case OutArr(of) => goOutput[G](of)
+        case OutOpt(of) => goOutput[G](of)
+        case t: OutToplevel[F, Any] =>
           outputNotSeen(t) {
-            def handleFields(o: ObjLike[F, Any]): G[Unit] =
+            def handleFields(o: Selectable[F, Any]): G[Unit] =
               o.fieldsList.traverse_ { case (_, x) =>
                 goOutput[G](x.output.value) >>
-                  x.args.entries.traverse_(x => goInput[G](x.input.asInstanceOf[in.Input[Any]]))
+                  x.args.entries.traverse_(x => goInput[G](x.input.asInstanceOf[In[Any]]))
               }
 
             t match {
-              case o @ gql.out.Obj(_, _) => handleFields(o)
-              case o @ gql.out.Interface(_, instances, _) =>
+              case o @ Type(_, _) => handleFields(o)
+              case o @ Interface(_, instances, _) =>
                 S.modify { s =>
                   val newMap =
                     o.instanceMap.keySet.toList.foldLeft(s.interfaceImplementations) { case (m, instance) =>
@@ -70,22 +70,22 @@ object SchemaShape {
                 } >>
                   handleFields(o) >>
                   instances.traverse_(inst => handleFields(inst.ol))
-              case gql.out.Union(_, instances) =>
+              case Union(_, instances) =>
                 instances.toList.traverse_(inst => goOutput[G](inst.ol))
               case _ => G.unit
             }
           }
       }
 
-    def goInput[G[_]](inp: in.Input[Any])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]]): G[Unit] =
+    def goInput[G[_]](inp: In[Any])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]]): G[Unit] =
       inp match {
-        case in.Arr(of) => goInput[G](of)
-        case in.Opt(of) => goInput[G](of)
-        case t: in.Toplevel[Any] =>
+        case InArr(of) => goInput[G](of)
+        case InOpt(of) => goInput[G](of)
+        case t: InToplevel[Any] =>
           inputNotSeen(t) {
             t match {
-              case in.Obj(_, fields) =>
-                fields.entries.traverse_(x => goInput[G](x.input.asInstanceOf[in.Input[Any]]))
+              case Input(_, fields) =>
+                fields.entries.traverse_(x => goInput[G](x.input.asInstanceOf[In[Any]]))
               case _ => G.unit
             }
           }
@@ -122,8 +122,8 @@ object SchemaShape {
     final case class ValidationState(
         problems: Chain[Problem],
         currentPath: Chain[ValidationEdge],
-        seenOutputs: Map[String, out.Toplevel[F, Any]],
-        seenInputs: Map[String, in.Toplevel[_]]
+        seenOutputs: Map[String, OutToplevel[F, Any]],
+        seenInputs: Map[String, InToplevel[_]]
     )
 
     def raise[G[_]](msg: String)(implicit S: Stateful[G, ValidationState]): G[Unit] =
@@ -138,7 +138,7 @@ object SchemaShape {
           S.modify(_.copy(currentPath = s.currentPath))
       }
 
-    def useOutputEdge[G[_]](ot: gql.out.Toplevel[F, Any])(
+    def useOutputEdge[G[_]](ot: OutToplevel[F, Any])(
         fa: G[Unit]
     )(implicit G: Monad[G], S: Stateful[G, ValidationState]): G[Unit] =
       useEdge(ValidationEdge.OutputType(ot.name)) {
@@ -155,7 +155,7 @@ object SchemaShape {
         }
       }
 
-    def useInputEdge[G[_]](it: in.Toplevel[_])(
+    def useInputEdge[G[_]](it: InToplevel[_])(
         fa: G[Unit]
     )(implicit G: Monad[G], S: Stateful[G, ValidationState]): G[Unit] =
       useEdge(ValidationEdge.InputType(it.name)) {
@@ -191,16 +191,16 @@ object SchemaShape {
         case Right(_) => G.unit
       }
 
-    def validateInput[G[_]: Monad](input: in.Input[_])(implicit S: Stateful[G, ValidationState]): G[Unit] = {
+    def validateInput[G[_]: Monad](input: In[_])(implicit S: Stateful[G, ValidationState]): G[Unit] = {
       input match {
-        case in.Arr(of) => validateInput[G](of)
-        case in.Opt(of) => validateInput[G](of)
-        case t @ in.Obj(name, fields) =>
+        case InArr(of) => validateInput[G](of)
+        case InOpt(of) => validateInput[G](of)
+        case t @ Input(name, fields) =>
           useInputEdge(t) {
             validateTypeName[G](name) *> validateArg[G](fields)
           }
-        case in.Enum(name, _)     => validateTypeName[G](name)
-        case in.Scalar(name, dec) => validateTypeName[G](name)
+        case Enum(name, _)     => validateTypeName[G](name)
+        case Scalar(name, dec) => validateTypeName[G](name)
       }
     }
 
@@ -224,33 +224,33 @@ object SchemaShape {
           }
         }
 
-    def validateToplevel[G[_]: Monad](tl: gql.out.Toplevel[F, Any])(implicit S: Stateful[G, ValidationState]): G[Unit] = {
+    def validateToplevel[G[_]: Monad](tl: OutToplevel[F, Any])(implicit S: Stateful[G, ValidationState]): G[Unit] = {
       useOutputEdge[G](tl) {
         validateTypeName[G](tl.name) >> {
           tl match {
-            case out.Obj(_, fields) => validateFields[G](fields)
-            case out.Union(_, types) =>
+            case Type(_, fields) => validateFields[G](fields)
+            case Union(_, types) =>
               val ols = types.toList.map(_.ol)
 
               allUnique[G]("duplicate union instance", ols.map(_.name)) >> ols.traverse_(validateOutput[G])
-            case out.Interface(_, instances, fields) =>
+            case Interface(_, instances, fields) =>
               val insts = instances
 
               val ols = insts.toList.map(_.ol)
               allUnique[G]("duplicate interface instance", ols.map(_.name)) >> ols.traverse_(validateOutput[G]) >>
                 validateFields[G](fields)
-            case out.Enum(name, _)   => validateTypeName[G](name)
-            case out.Scalar(name, _) => validateTypeName[G](name)
+            case Enum(name, _)   => validateTypeName[G](name)
+            case Scalar(name, _) => validateTypeName[G](name)
           }
         }
       }
     }
 
-    def validateOutput[G[_]: Monad](tl: Output[F, Any])(implicit S: Stateful[G, ValidationState]): G[Unit] =
+    def validateOutput[G[_]: Monad](tl: Out[F, Any])(implicit S: Stateful[G, ValidationState]): G[Unit] =
       tl match {
-        case x: out.Toplevel[F, Any] => validateToplevel[G](x)
-        case out.Arr(of)             => validateOutput[G](of)
-        case out.Opt(of)             => validateOutput[G](of)
+        case x: OutToplevel[F, Any] => validateToplevel[G](x)
+        case OutArr(of)             => validateOutput[G](of)
+        case OutOpt(of)             => validateOutput[G](of)
       }
 
     validateOutput[State[ValidationState, *]](schema.query)

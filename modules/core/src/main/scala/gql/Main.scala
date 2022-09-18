@@ -20,10 +20,9 @@ import scala.concurrent.ExecutionContext
 import alleycats.Empty
 import gql.resolver._
 import cats.mtl._
-import gql.out._
 import cats.instances.unit
 import gql.parser.ParserUtil
-import gql.in
+import gql.ast._
 
 object Main extends App {
   def showTree(indent: Int, nodes: NonEmptyList[Planner.Node]): String = {
@@ -258,20 +257,16 @@ query withNestedFragments {
     )
 
   import gql.syntax.out._
-  implicit def intType[F[_]]: Scalar[F, Int] = Scalar("Int", Encoder.encodeInt)
+  implicit def intType[F[_]]: Scalar[F, Int] = Scalar("Int", Codec.from(Decoder.decodeInt, Encoder.encodeInt))
 
-  implicit def stringType[F[_]]: Scalar[F, String] = Scalar("String", Encoder.encodeString)
+  implicit def stringType[F[_]]: Scalar[F, String] = Scalar("String", Codec.from(Decoder.decodeString, Encoder.encodeString))
 
-  implicit def listTypeForSome[F[_], A](implicit of: Output[F, A]): Output[F, Vector[A]] = Arr(of)
-  implicit def seqTypeForAny[F[_], A](implicit of: Output[F, A]): Output[F, Seq[A]] = Arr(of)
+  implicit def listTypeForSome[F[_], A](implicit of: Out[F, A]): Out[F, Vector[A]] = OutArr(of)
+  implicit def seqTypeForAny[F[_], A](implicit of: Out[F, A]): Out[F, Seq[A]] = OutArr(of)
 
-  implicit def optTypeForSome[F[_], A](implicit of: Output[F, A]): Output[F, Option[A]] = Opt(of)
+  implicit def optTypeForSome[F[_], A](implicit of: Out[F, A]): Out[F, Option[A]] = OutOpt(of)
 
-  implicit lazy val intInput: in.Scalar[Int] = in.Scalar("Int", Decoder.decodeInt)
-
-  implicit lazy val stringInput: in.Scalar[String] = in.Scalar("String", Decoder.decodeString)
-
-  implicit def listInputType[A](implicit tpe: in.Input[A]): in.Input[Vector[A]] = in.Arr(tpe)
+  implicit def listInputType[A](implicit tpe: In[A]): In[Vector[A]] = InArr(tpe)
 
   final case class Deps(v: String)
 
@@ -290,7 +285,7 @@ query withNestedFragments {
     StreamRef[F, String, Unit](k => Resource.pure(fs2.Stream(k).repeat.lift[F].metered((if (k == "John") 200 else 500).millis).as(())))
       .flatMap { nameRef =>
         BatcherReference[F, Int, ServerData](xs => F.pure(xs.map(x => x -> ServerData(x)).toMap)).map { serverDataBatcher =>
-          implicit val inputDataType: in.Input[InputData] = InputSyntax.obj[InputData](
+          implicit val inputDataType: In[InputData] = InputSyntax.obj[InputData](
             "InputData",
             (
               arg[Int]("value", Some(42)),
@@ -311,7 +306,7 @@ query withNestedFragments {
 
           val inputDataArg = arg[InputData]("input")
 
-          implicit def identityDataType: Obj[F, IdentityData] =
+          implicit def identityDataType: Type[F, IdentityData] =
             obj[F, IdentityData](
               "IdentityData",
               "value" -> effect((valueArgs, inputDataArg).tupled) { case (x, ((y, z, hs), i)) =>
@@ -319,18 +314,18 @@ query withNestedFragments {
               }
             )
 
-          implicit def serverData: Obj[F, ServerData] =
+          implicit def serverData: Type[F, ServerData] =
             obj[F, ServerData](
               "ServerData",
               "value" -> pure(_.value)
             )
 
-          implicit def dataType: Obj[F, Data[F]] =
+          implicit def dataType: Type[F, Data[F]] =
             obj2[F, Data[F]]("Data") { f =>
               fields(
                 "dep" -> f(eff(_ => Ask.reader(_.v))),
                 "a" -> f(full(x => IorT.bothT[F]("Oh no, an error!", "Hahaa"))),
-                "a2" -> f(arg[Int]("num")(intInput))(pur { case (i, _) => i.a }),
+                "a2" -> f(arg[Int]("num")(intType))(pur { case (i, _) => i.a }),
                 "b" -> f(eff(_.b)),
                 "sd" -> f(serverDataBatcher.traverse(x => IorT.liftF(x.b.map(i => Seq(i, i + 1, i * 2))))),
                 "c" -> f(eff(_.c.map(_.toSeq))),
@@ -348,7 +343,7 @@ query withNestedFragments {
               )
             }
 
-          implicit def otherDataType: Obj[F, OtherData[F]] =
+          implicit def otherDataType: Type[F, OtherData[F]] =
             obj[F, OtherData[F]](
               "OtherData",
               "value" -> pure(_.value),
@@ -393,11 +388,11 @@ query withNestedFragments {
 
           final case class B(a: String) extends A
           object B {
-            implicit def t: Obj[F, B] = obj[F, B]("B", "a" -> pure(_ => "B"), "b" -> pure(_ => Option("BO")))
+            implicit def t: Type[F, B] = obj[F, B]("B", "a" -> pure(_ => "B"), "b" -> pure(_ => Option("BO")))
           }
           final case class C(a: String, d: String) extends A with D
           object C {
-            implicit def t: Obj[F, C] =
+            implicit def t: Type[F, C] =
               obj[F, C]("C", "a" -> pure(_ => "C"), "d" -> pure(_ => "D"), "fail" -> full2(_ => IorT.leftT[F, String]("im dead")))
           }
 

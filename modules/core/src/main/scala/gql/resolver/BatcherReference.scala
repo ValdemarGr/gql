@@ -3,9 +3,7 @@ package gql.resolver
 import cats.implicits._
 import cats._
 import cats.data._
-import gql.SchemaState
-import gql.out._
-import gql.Arg
+import gql._
 
 final case class BatcherReference[K, T](id: Int) {
   def full[F[_], I, A](keys: I => IorT[F, String, Batch[F, K, A, T]])(implicit F: Applicative[F]) =

@@ -15,11 +15,15 @@ object ast {
 
   sealed trait In[+A]
 
-  sealed trait Toplevel[A] {
+  sealed trait Toplevel[+A] {
     def name: String
   }
 
-  sealed trait Selectable[F[_], A] extends Toplevel[A] with Out[F, A] {
+  sealed trait OutToplevel[F[_], +A] extends Out[F, A] with Toplevel[A]
+
+  sealed trait InToplevel[+A] extends In[A] with Toplevel[A]
+
+  sealed trait Selectable[F[_], A] extends OutToplevel[F, A] {
     def fieldsList: List[(String, Field[F, A, _, _])]
 
     def fieldMap: Map[String, Field[F, A, _, _]]
@@ -44,7 +48,7 @@ object ast {
       Type(name, fields.map { case (k, v) => k -> v.mapK(fk) })
   }
 
-  final case class Input[A](name: String, fields: Arg[A]) extends Toplevel[A] with In[A]
+  final case class Input[A](name: String, fields: Arg[A]) extends InToplevel[A]
 
   final case class Union[F[_], A](
       name: String,
@@ -91,16 +95,18 @@ object ast {
       )
   }
 
-  final case class Scalar[F[_], A](name: String, codec: Codec[A]) extends Toplevel[A] with Out[F, A] with In[A] {
+  final case class Scalar[F[_], A](name: String, codec: Codec[A]) extends OutToplevel[F, A] with InToplevel[A] {
     override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Scalar[G, A] =
       Scalar(name, codec)
   }
 
-  final case class Enum[F[_], A](name: String, mappings: NonEmptyList[(String, A)]) extends Toplevel[A] with Out[F, A] with In[A] {
+  final case class Enum[F[_], A](name: String, mappings: NonEmptyList[(String, A)]) extends OutToplevel[F, A] with InToplevel[A] {
     override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Out[G, A] =
       Enum(name, mappings)
 
     lazy val m = mappings.toNem
+
+    lazy val revm = mappings.map(_.swap).toList.toMap
   }
 
   final case class Field[F[_], I, T, A](

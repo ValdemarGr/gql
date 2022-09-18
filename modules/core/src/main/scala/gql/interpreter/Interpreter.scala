@@ -16,7 +16,6 @@ import fs2.concurrent.Signal
 import cats.effect.std.Queue
 import fs2.Chunk
 import gql._
-import gql.out._
 
 object Interpreter {
   def stitchInto(oldTree: Json, subTree: Json, path: Cursor): Json =
