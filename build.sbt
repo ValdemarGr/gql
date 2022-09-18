@@ -48,7 +48,10 @@ lazy val http4s = project
 
 lazy val docs = project
   .in(file("modules/docs"))
-  .settings(moduleName := "gql-docs")
+  .settings(
+    moduleName := "gql-docs",
+    mdocOut := file("website/docs")
+  )
   .dependsOn(core)
   .dependsOn(http4s)
   .enablePlugins(MdocPlugin, DocusaurusPlugin)
