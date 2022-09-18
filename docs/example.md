@@ -16,9 +16,9 @@ object Episode {
   implicit lazy val gqlType = 
     enum(
       "Episode"
-      NewHope -> "NEWHOPE",
-      Empire -> "EMPIRE",
-      Jedi -> "JEDI"
+      "NEWHOPE" -> NewHope,
+      "EMPIRE" -> Empire,
+      "JEDI" -> Jedi
     )
 }
 
