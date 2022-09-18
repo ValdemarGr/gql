@@ -67,6 +67,73 @@ object PreparedQuery {
       cursor: PrepCursor
   )
 
+  // TODO use validated
+  def decodeInput[A](in: ast.In[A], value: Value): Either[String, A] =
+    in match {
+      case ast.InOpt(inner) =>
+        if (value.asJson.isNull) Right(None)
+        else decodeInput(inner, value).map(Some(_))
+      case ast.InArr(inner) =>
+        value match {
+          case gql.Value.JsonValue(ja) if ja.isArray =>
+            ja.asArray.get.traverse(j => decodeInput(inner, Value.JsonValue(j)))
+          case gql.Value.ArrayValue(v) => v.traverse(decodeInput(inner, _))
+          case _                       => Left(s"expected array type, get ${value.name}")
+        }
+      case ast.Scalar(_, codec) =>
+        codec.decodeJson(value.asJson).leftMap(_.show)
+      case e @ ast.Enum(name, mappings) =>
+        def decodeString(s: String): Either[String, A] =
+          e.m.lookup(s) match {
+            case Some(a) => Right(a)
+            case None    => Left(s"unknown value $s for enum $name")
+          }
+
+        value match {
+          case gql.Value.JsonValue(v) if v.isString => decodeString(v.asString.get)
+          case gql.Value.EnumValue(s)               => decodeString(s)
+          case _                                    => Left(s"expected enum $name, got ${value.name}")
+        }
+      // TODO unify this and arg decoding
+      // Look into free applicatives
+      case ast.Input(name, fields) =>
+        value match {
+          case gql.Value.JsonValue(jo) if jo.isObject =>
+            val m = jo.asObject.get.toMap
+
+            fields.entries
+              .traverse { a =>
+                m
+                  .get(a.name)
+                  .map(x => a.input.decode(gql.Value.JsonValue(x))) match {
+                  case Some(outcome) => outcome
+                  case None          => a.default.toRight(s"missing field ${a.name} in input object $name")
+                }
+              }
+              .map(_.toList)
+              .map { xs =>
+                val (_, o) = fields.decode(xs.asInstanceOf[List[Any]])
+                o
+              }
+          case gql.Value.ObjectValue(xs) =>
+            fields.entries
+              .traverse { a =>
+                xs
+                  .get(a.name)
+                  .map(x => a.input.decode(x)) match {
+                  case Some(outcome) => outcome
+                  case None          => a.default.toRight(s"missing field ${a.name} in input object $name")
+                }
+              }
+              .map(_.toList)
+              .map { xs =>
+                val (_, o) = fields.decode(xs.asInstanceOf[List[Any]])
+                o
+              }
+          case _ => Left(s"expected object for $name, got ${value.name}")
+        }
+    }
+
   def underlyingOutputTypename[G[_]](ot: Output[G, Any]): String = ot match {
     case Enum(name, _)         => name
     case Union(name, _)        => name

@@ -11,6 +11,7 @@ final case class ArgParam[A](
     default: Option[A] = None
 )
 
+// TODO Look into free applicatives, I think they might do the same
 final case class Arg[A](
     entries: Vector[ArgParam[_]],
     decode: List[_] => (List[_], A)
