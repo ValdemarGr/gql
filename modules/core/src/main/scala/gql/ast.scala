@@ -19,7 +19,7 @@ object ast {
     def name: String
   }
 
-  trait Selectable[F[_], A] extends Toplevel[A] with Out[F, A] {
+  sealed trait Selectable[F[_], A] extends Toplevel[A] with Out[F, A] {
     def fieldsList: List[(String, Field[F, A, _, _])]
 
     def fieldMap: Map[String, Field[F, A, _, _]]
