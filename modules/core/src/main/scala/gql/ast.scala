@@ -57,7 +57,7 @@ object ast extends AstImplicits.Implicits {
     override def contramap[B](f: B => A): Union[F, B] =
       Union(name, types.map(_.contramap(f)))
 
-    lazy val instanceMap = types.map(i => i.ol.name -> i).toList.toMap
+    lazy val instanceMap = types.map(i => i.ol.value.name -> i).toList.toMap
 
     lazy val fieldMap = Map.empty
 
@@ -85,7 +85,7 @@ object ast extends AstImplicits.Implicits {
 
     lazy val fieldMap = fields.toNem.toSortedMap.toMap
 
-    lazy val instanceMap = instances.map(x => x.ol.name -> x).toMap
+    lazy val instanceMap = instances.map(x => x.ol.value.name -> x).toMap
 
     def contramap[B](g: B => A): Interface[F, B] =
       Interface(
@@ -129,9 +129,9 @@ object ast extends AstImplicits.Implicits {
       )
   }
 
-  final case class Instance[F[_], A, B](ol: Selectable[F, B])(implicit val specify: A => Option[B]) {
+  final case class Instance[F[_], A, B](ol: Eval[Selectable[F, B]])(implicit val specify: A => Option[B]) {
     def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Instance[G, A, B] =
-      Instance(ol.mapK(fk))
+      Instance(ol.map(_.mapK(fk)))
 
     def contramap[C](g: C => A): Instance[F, C, B] =
       Instance[F, C, B](ol)(c => specify(g(c)))

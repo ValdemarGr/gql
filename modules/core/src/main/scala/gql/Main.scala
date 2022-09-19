@@ -559,6 +559,9 @@ object Example {
   import gql._
   import gql.ast._
   import gql.dsl._
+  import gql.interpreter._
+  import gql.parser._
+  import cats.implicits._
 
   sealed trait Episode
   object Episode {
@@ -638,7 +641,7 @@ object Example {
   }
 
   def schema[F[_]: Applicative](implicit repo: Repository[F]) = {
-    SchemaShape[F, Unit](
+    Schema.simple[F, Unit](
       tpe(
         "Query",
         "hero" -> eff(arg[Episode]("episode")) { case (_, episode) => repo.getHero(episode) },
@@ -650,13 +653,53 @@ object Example {
   }
 
   import cats.effect._
+  import cats.effect.unsafe.implicits.global
+
   implicit def repo = new Repository[IO] {
-    def getHero(episode: Episode): IO[Character] = ???
+    def getHero(episode: Episode): IO[Character] =
+      IO.pure {
+        episode match {
+          case Episode.NewHope => Droid("1000", Some("R2-D2"), None, Some(List(Episode.NewHope)), Some("Astromech"))
+          case Episode.Empire =>
+            Human("1002", Some("Luke Skywalker"), None, Some(List(Episode.NewHope, Episode.Empire, Episode.Jedi)), Some("Tatooine"))
+          case Episode.Jedi =>
+            Human("1003", Some("Leia Organa"), None, Some(List(Episode.NewHope, Episode.Empire, Episode.Jedi)), Some("Alderaan"))
+        }
+      }
     def getCharacter(id: String): IO[Character] = ???
     def getHuman(id: String): IO[Human] = ???
     def getDroid(id: String): IO[Droid] = ???
   }
-  schema[IO]
+  def s = schema[IO]
+
+  val query = """
+    query HeroNameQuery {
+      hero(episode: NEWHOPE) {
+        id
+        name
+        ... on Droid {
+          primaryFunction
+        }
+        ... HumanDetails
+      }
+    }
+
+    fragment HumanDetails on Human {
+      homePlanet
+    }
+  """
+
+  Statistics[IO]
+    .flatMap { implicit stats =>
+      IO.fromEither(ParserUtil.parse(query).leftMap(x => new Exception(x.prettyError.value)))
+        .flatMap { q =>
+          val p = PreparedQuery.prepare(q, s, variableMap = Map.empty).toOption.get
+          Interpreter
+            .runSync((), p, s.state)
+            .map { case (errors, output) => output }
+        }
+    }
+    .unsafeRunSync()
 }
 
 // object SangriaTest {

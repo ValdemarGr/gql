@@ -40,8 +40,8 @@ object dsl {
   def enum[F[_], A](name: String, hd: (String, A), tl: (String, A)*) = Enum[F, A](name, NonEmptyList(hd, tl.toList))
 
   final case class PartiallyAppliedInstance[B](val dummy: Boolean = false) extends AnyVal {
-    def apply[F[_], A](pf: PartialFunction[A, B])(implicit s: Selectable[F, B]): Instance[F, A, B] =
-      Instance[F, A, B](s)(pf.lift)
+    def apply[F[_], A](pf: PartialFunction[A, B])(implicit s: => Selectable[F, B]): Instance[F, A, B] =
+      Instance[F, A, B](Eval.later(s))(pf.lift)
   }
 
   def instance[B]: PartiallyAppliedInstance[B] = PartiallyAppliedInstance[B]()

@@ -217,13 +217,13 @@ object PreparedQuery {
   )(implicit S: Stateful[F, Prep], F: MonadError[F, PositionalError], D: Defer[F]): F[NonEmptyList[PreparedField[G, Any]]] = D.defer {
     // TODO this code shares much with the subtype interfaces below in matchType
     def collectLeafPrisms(inst: Instance[G, Any, Any]): Chain[(Any => Option[Any], String)] =
-      inst.ol match {
+      inst.ol.value match {
         case Type(name, _)          => Chain((inst.specify, name))
         case Union(_, types)        => Chain.fromSeq(types.toList).flatMap(collectLeafPrisms)
         case Interface(_, types, _) => Chain.fromSeq(types).flatMap(collectLeafPrisms)
       }
 
-    val allPrisms: Chain[(Any => Option[Any], String)] = collectLeafPrisms(Instance(ol)(Some(_)))
+    val allPrisms: Chain[(Any => Option[Any], String)] = collectLeafPrisms(Instance(Eval.now(ol))(Some(_)))
 
     val syntheticTypename =
       Field[G, Any, String, Unit](
@@ -398,7 +398,7 @@ object PreparedQuery {
           raiseOpt(
             i.instanceMap
               .get(name)
-              .map(i => (i.ol, i.specify)),
+              .map(i => (i.ol.value, i.specify)),
             s"$name does not implement interface $n, possible implementations are ${i.instanceMap.keySet.mkString(", ")}",
             caret.some
           )
@@ -406,7 +406,7 @@ object PreparedQuery {
           raiseOpt(
             u.instanceMap
               .get(name)
-              .map(i => (i.ol, i.specify)),
+              .map(i => (i.ol.value, i.specify)),
             s"$name is not a member of the union $n, possible members are ${u.instanceMap.keySet.mkString(", ")}",
             caret.some
           )

@@ -111,7 +111,7 @@ abstract class OutputSyntax {
 
 object OutputSyntax {
   case class PartiallyAppliedContra[B](val dummy: Boolean = false) extends AnyVal {
-    def apply[F[_], A](pf: PartialFunction[A, B])(implicit s: Selectable[F, B]): Instance[F, A, B] =
-      Instance[F, A, B](s)(pf.lift)
+    def apply[F[_], A](pf: PartialFunction[A, B])(implicit s: => Selectable[F, B]): Instance[F, A, B] =
+      Instance[F, A, B](Eval.later(s))(pf.lift)
   }
 }

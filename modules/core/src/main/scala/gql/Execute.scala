@@ -24,20 +24,19 @@ object Execute {
   def executor[F[_]: Statistics, Q, M, S](
       query: NonEmptyList[P.ExecutableDefinition],
       schema: Schema[F, Q],
-      variables: Map[String, Json],
-      schemaState: SchemaState[F]
+      variables: Map[String, Json]
   )(implicit F: Async[F]): ExecutorOutcome[F, Q, M, S] = {
     PreparedQuery.prepare2(query, schema, variables) match {
       case Left(err) => ExecutorOutcome.ValidationError(err)
       case Right(x) =>
         x match {
           case PreparedQuery.OperationType.Query(rootFields) =>
-            ExecutorOutcome.Query[F, Q, M, S](Interpreter.runSync(_, rootFields, schemaState))
+            ExecutorOutcome.Query[F, Q, M, S](Interpreter.runSync(_, rootFields, schema.state))
           case PreparedQuery.OperationType.Mutation(rootFields) =>
-            ExecutorOutcome.Mutation[F, Q, M, S](Interpreter.runSync(_, rootFields, schemaState))
+            ExecutorOutcome.Mutation[F, Q, M, S](Interpreter.runSync(_, rootFields, schema.state))
           case PreparedQuery.OperationType.Subscription(dataStream, root) =>
             ExecutorOutcome.Stream[F, Q, M, S] { s =>
-              dataStream(s).switchMap(Interpreter.runStreamed[F](_, NonEmptyList.one(root), schemaState))
+              dataStream(s).switchMap(Interpreter.runStreamed[F](_, NonEmptyList.one(root), schema.state))
             }
         }
     }

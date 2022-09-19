@@ -69,9 +69,9 @@ object SchemaShape {
                   s.copy(interfaceImplementations = newMap)
                 } >>
                   handleFields(o) >>
-                  instances.traverse_(inst => handleFields(inst.ol))
+                  instances.traverse_(inst => handleFields(inst.ol.value))
               case Union(_, instances) =>
-                instances.toList.traverse_(inst => goOutput[G](inst.ol))
+                instances.toList.traverse_(inst => goOutput[G](inst.ol.value))
               case _ => G.unit
             }
           }
@@ -232,12 +232,14 @@ object SchemaShape {
             case Union(_, types) =>
               val ols = types.toList.map(_.ol)
 
-              allUnique[G]("duplicate union instance", ols.map(_.name)) >> ols.traverse_(validateOutput[G])
+              allUnique[G]("duplicate union instance", ols.map(_.value.name)) >>
+                ols.traverse_(x => validateOutput[G](x.value))
             case Interface(_, instances, fields) =>
               val insts = instances
 
               val ols = insts.toList.map(_.ol)
-              allUnique[G]("duplicate interface instance", ols.map(_.name)) >> ols.traverse_(validateOutput[G]) >>
+              allUnique[G]("duplicate interface instance", ols.map(_.value.name)) >>
+                ols.traverse_(x => validateOutput[G](x.value)) >>
                 validateFields[G](fields)
             case Enum(name, _)   => validateTypeName[G](name)
             case Scalar(name, _) => validateTypeName[G](name)
