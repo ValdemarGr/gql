@@ -9,7 +9,7 @@ import gql.resolver._
 import gql.Value._
 
 object ast extends AstImplicits.Implicits {
-  sealed trait Out[F[_], +A] {
+  sealed trait Out[F[_], -A] {
     def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Out[G, A]
   }
 
@@ -19,7 +19,7 @@ object ast extends AstImplicits.Implicits {
     def name: String
   }
 
-  sealed trait OutToplevel[F[_], +A] extends Out[F, A] with Toplevel[A]
+  sealed trait OutToplevel[F[_], A] extends Out[F, A] with Toplevel[A]
 
   sealed trait InToplevel[+A] extends In[A] with Toplevel[A]
 
@@ -140,9 +140,23 @@ object ast extends AstImplicits.Implicits {
   final case class OutOpt[F[_], A](of: Out[F, A]) extends Out[F, Option[A]] {
     def mapK[G[_]: MonadCancelThrow](fk: F ~> G): OutOpt[G, A] = OutOpt(of.mapK(fk))
   }
+  object OutOpt {
+    def unapply[G[_], A](p: Out[G, A]): Option[Out[G, A]] =
+      p.asInstanceOf[Out[G, Option[A]]] match {
+        case x: OutOpt[G, A] => Some(x.of.asInstanceOf[Out[G, A]])
+        case _               => None
+      }
+  }
 
-  final case class OutArr[F[_], A, C[x] <: Seq[x]](of: Out[F, A]) extends Out[F, C[A]] {
-    def mapK[G[_]: MonadCancelThrow](fk: F ~> G): OutArr[G, A, C] = OutArr(of.mapK(fk))
+  final case class OutArr[F[_], A](of: Out[F, A]) extends Out[F, Seq[A]] {
+    def mapK[G[_]: MonadCancelThrow](fk: F ~> G): OutArr[G, A] = OutArr(of.mapK(fk))
+  }
+  object OutArr {
+    def unapply[G[_], A](p: Out[G, A]): Option[Out[G, A]] =
+      p.asInstanceOf[Out[G, Seq[A]]] match {
+        case x: OutArr[G, A] => Some(x.of.asInstanceOf[Out[G, A]])
+        case _               => None
+      }
   }
 
   final case class InOpt[A](of: In[A]) extends In[Option[A]]
@@ -178,7 +192,7 @@ object AstImplicits {
   }
 
   trait LowPriorityImplicits {
-    implicit def gqlOutSeq[F[_], A, G[_] <: Seq[_]](implicit tpe: Out[F, A]): Out[F, G[A]] = OutArr(tpe)
-    implicit def gqlSeq[A, G[_] <: Seq[_]](implicit tpe: In[A]): In[G[A]] = InArr(tpe)
+    implicit def gqlOutSeq[F[_], A](implicit tpe: Out[F, A]): Out[F, Seq[A]] = OutArr(tpe)
+    implicit def gqlSeq[A](implicit tpe: In[A]): In[Seq[A]] = InArr(tpe)
   }
 }

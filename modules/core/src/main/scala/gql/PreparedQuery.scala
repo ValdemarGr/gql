@@ -134,7 +134,7 @@ object PreparedQuery {
         }
     }
 
-  def underlyingOutputTypename[G[_]](ot: Out[G, Any]): String = ot match {
+  def underlyingOutputTypename[G[_]](ot: Out[G, _]): String = ot match {
     case Enum(name, _)         => name
     case Union(name, _)        => name
     case Interface(name, _, _) => name
@@ -150,8 +150,8 @@ object PreparedQuery {
     case Type(name, _)         => name
     case Union(name, _)        => name
     case Interface(name, _, _) => name
-    case x: OutOpt[G, _]       => s"(${friendlyName[G, Any](x.of.asInstanceOf[Out[G, Any]])} | null)"
-    case x: OutArr[_, _, _]    => s"[${friendlyName[G, Any](x.of.asInstanceOf[Out[G, Any]])}]"
+    case OutOpt(of)            => s"(${friendlyName(of)} | null)"
+    case OutArr(of)            => s"[${friendlyName(of)}]"
   }
 
   def parserValueToValue[F[_]](value: P.Value, variableMap: Map[String, Json], caret: Caret)(implicit
@@ -478,7 +478,7 @@ object PreparedQuery {
           sel,
           variableMap,
           frags.map(f => f.value.name -> f).toMap
-        )
+        ).map(OperationType.Query(_))
       case P.OperationDefinition.Detailed(ot, _, vdsO, _, sel) =>
         vdsO match {
           case None => variableMap
@@ -498,7 +498,7 @@ object PreparedQuery {
               sel,
               variableMap,
               frags.map(f => f.value.name -> f).toMap
-            )
+            ).map(OperationType.Query(_))
         }
     }
   }
@@ -516,7 +516,7 @@ object PreparedQuery {
 
     type G[A] = StateT[EitherT[Eval, PositionalError, *], Prep, A]
 
-    val o = prepareParts[G, F, Q](ops, frags, schema, variableMap)
+    val o = prepareParts[G, F, Q](ops, frags, schema, variableMap).map(_.rootFields)
 
     o
       .runA(Prep(Set.empty, 1, PrepCursor.empty))
@@ -534,9 +534,24 @@ object PreparedQuery {
     ) extends OperationType[F]
   }
 
-  def prepare2[F[_], Q, M, S](
+  def prepare2[F[_]: Applicative, Q, M, S](
       executabels: NonEmptyList[P.ExecutableDefinition],
       schema: Schema[F, Q],
       variableMap: Map[String, Json]
-  ): Either[String, OperationType[F]] = ???
+  ): Either[PositionalError, OperationType[F]] = {
+    val (ops, frags) =
+      executabels.toList.partitionEither {
+        case P.ExecutableDefinition.Operation(op)  => Left(op)
+        case P.ExecutableDefinition.Fragment(frag) => Right(frag)
+      }
+
+    type G[A] = StateT[EitherT[Eval, PositionalError, *], Prep, A]
+
+    val o = prepareParts[G, F, Q](ops, frags, schema, variableMap)
+
+    o
+      .runA(Prep(Set.empty, 1, PrepCursor.empty))
+      .value
+      .value
+  }
 }

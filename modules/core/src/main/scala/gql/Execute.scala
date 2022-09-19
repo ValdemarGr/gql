@@ -15,7 +15,7 @@ object Execute {
 
   sealed trait ExecutorOutcome[F[_], Q, M, S]
   object ExecutorOutcome {
-    final case class ValidationError[F[_], Q, M, S](msg: String) extends ExecutorOutcome[F, Q, M, S]
+    final case class ValidationError[F[_], Q, M, S](msg: PreparedQuery.PositionalError) extends ExecutorOutcome[F, Q, M, S]
     final case class Query[F[_], Q, M, S](run: Q => F[Output]) extends ExecutorOutcome[F, Q, M, S]
     final case class Mutation[F[_], Q, M, S](run: M => F[Output]) extends ExecutorOutcome[F, Q, M, S]
     final case class Stream[F[_], Q, M, S](run: S => fs2.Stream[F, Output]) extends ExecutorOutcome[F, Q, M, S]

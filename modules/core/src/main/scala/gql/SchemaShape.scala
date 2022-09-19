@@ -19,8 +19,8 @@ final case class SchemaShape[F[_], Q](
 
 object SchemaShape {
   final case class DiscoveryState[F[_]](
-      inputs: Map[String, InToplevel[Any]],
-      outputs: Map[String, OutToplevel[F, Any]],
+      inputs: Map[String, InToplevel[_]],
+      outputs: Map[String, OutToplevel[F, _]],
       // Key is the type, values are the interfaces it implements
       interfaceImplementations: Map[String, Set[String]]
   )
@@ -35,18 +35,18 @@ object SchemaShape {
       }
 
     def outputNotSeen[G[_], A](
-        tl: OutToplevel[F, Any]
+        tl: OutToplevel[F, _]
     )(ga: G[A])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]], M: Monoid[A]): G[A] =
       S.get.flatMap { s =>
         if (s.outputs.contains(tl.name)) G.pure(M.empty)
         else S.modify(_.copy(outputs = s.outputs + (tl.name -> tl))) *> ga
       }
 
-    def goOutput[G[_]](out: Out[F, Any])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]]): G[Unit] =
+    def goOutput[G[_]](out: Out[F, _])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]]): G[Unit] =
       out match {
         case OutArr(of) => goOutput[G](of)
         case OutOpt(of) => goOutput[G](of)
-        case t: OutToplevel[F, Any] =>
+        case t: OutToplevel[F, _] =>
           outputNotSeen(t) {
             def handleFields(o: Selectable[F, _]): G[Unit] =
               o.fieldsList.traverse_ { case (_, x) =>
@@ -122,7 +122,7 @@ object SchemaShape {
     final case class ValidationState(
         problems: Chain[Problem],
         currentPath: Chain[ValidationEdge],
-        seenOutputs: Map[String, OutToplevel[F, Any]],
+        seenOutputs: Map[String, OutToplevel[F, _]],
         seenInputs: Map[String, InToplevel[_]]
     )
 
@@ -138,7 +138,7 @@ object SchemaShape {
           S.modify(_.copy(currentPath = s.currentPath))
       }
 
-    def useOutputEdge[G[_]](ot: OutToplevel[F, Any])(
+    def useOutputEdge[G[_]](ot: OutToplevel[F, _])(
         fa: G[Unit]
     )(implicit G: Monad[G], S: Stateful[G, ValidationState]): G[Unit] =
       useEdge(ValidationEdge.OutputType(ot.name)) {
@@ -224,7 +224,7 @@ object SchemaShape {
           }
         }
 
-    def validateToplevel[G[_]: Monad](tl: OutToplevel[F, Any])(implicit S: Stateful[G, ValidationState]): G[Unit] = {
+    def validateToplevel[G[_]: Monad](tl: OutToplevel[F, _])(implicit S: Stateful[G, ValidationState]): G[Unit] = {
       useOutputEdge[G](tl) {
         validateTypeName[G](tl.name) >> {
           tl match {
@@ -248,9 +248,9 @@ object SchemaShape {
       }
     }
 
-    def validateOutput[G[_]: Monad](tl: Out[F, Any])(implicit S: Stateful[G, ValidationState]): G[Unit] =
+    def validateOutput[G[_]: Monad](tl: Out[F, _])(implicit S: Stateful[G, ValidationState]): G[Unit] =
       tl match {
-        case x: OutToplevel[F, Any] => validateToplevel[G](x)
+        case x: OutToplevel[F, _] => validateToplevel[G](x)
         case OutArr(of)             => validateOutput[G](of)
         case OutOpt(of)             => validateOutput[G](of)
       }

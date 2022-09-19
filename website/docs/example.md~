@@ -83,7 +83,7 @@ def schema[F[_]: Applicative] = {
       "Character",
       "id" -> pure(_.id),
       "name" -> pure(_.name),
-      "friends" -> pure(_.friends),
+      //"friends" -> pure(_.friends),
       "appearsIn" -> pure(_.appearsIn)
     )(
       instance[Human] { case x: Human => x },

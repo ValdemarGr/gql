@@ -33,7 +33,7 @@ object Http4sMain extends IOApp {
                   .flatMap { jo =>
                     val query = jo("query").get.asString.get
                     val variabels = jo("variables").flatMap(_.asObject).map(_.toMap).getOrElse(Map.empty)
-                    ParserUtil.parse(query) match {
+                    gql.parser.parse(query) match {
                       case Left(err) =>
                         println(err.prettyError.value)
                         BadRequest(

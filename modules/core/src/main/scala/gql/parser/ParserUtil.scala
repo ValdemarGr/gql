@@ -6,11 +6,6 @@ import cats.data._
 import cats.implicits._
 
 object ParserUtil {
-  final case class ParseError(
-      caret: Caret,
-      prettyError: Eval[String]
-  )
-
   def showExpectation(e: Parser.Expectation): Eval[Chain[String]] = {
     import Parser.Expectation._
     Eval.defer {
@@ -92,22 +87,5 @@ object ParserUtil {
     AnsiColor.BLUE +
       s"failed at offset ${e.failedAtOffset} on line $ln with code ${conflictingCharacter.toInt}\n${niceError}\nin query:\n$msg" +
       AnsiColor.RESET
-  }
-
-  def parse(str: String): Either[ParseError, NonEmptyList[QueryParser.ExecutableDefinition]] = {
-    QueryParser.executableDefinition.rep
-      .parseAll(str)
-      .leftMap { err =>
-        val offset = err.failedAtOffset
-        val left = str.take(offset)
-        val nls = left.split("\n")
-        val line = nls.size
-        val col = nls.last.size
-
-        ParseError(
-          Caret(line, col, offset),
-          Eval.later(errorMessage(str, err))
-        )
-      }
   }
 }
