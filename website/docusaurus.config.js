@@ -9,7 +9,7 @@ const config = {
   title: 'gql',
   tagline: 'A GraphQL DSL for Scala',
   url: 'https://github.com',
-  baseUrl: '/',
+  baseUrl: '/gql/',
   onBrokenLinks: 'throw',
   onBrokenMarkdownLinks: 'warn',
   favicon: 'img/favicon.ico',
