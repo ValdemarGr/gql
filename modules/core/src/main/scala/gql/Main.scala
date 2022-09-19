@@ -647,6 +647,52 @@ object Example {
       )
     )
   }
+
+  import cats.effect._
+  import cats.effect.unsafe.implicits.global
+
+  implicit def repo = new Repository[IO] {
+    def getHero(episode: Episode): IO[Character] =
+      IO.pure {
+        episode match {
+          case Episode.NewHope => Droid("1000", Some("R2-D2"), None, Some(List(Episode.NewHope)), Some("Astromech"))
+          case Episode.Empire =>
+            Human("1002", Some("Luke Skywalker"), None, Some(List(Episode.NewHope, Episode.Empire, Episode.Jedi)), Some("Tatooine"))
+          case Episode.Jedi =>
+            Human("1003", Some("Leia Organa"), None, Some(List(Episode.NewHope, Episode.Empire, Episode.Jedi)), Some("Alderaan"))
+        }
+      }
+    def getCharacter(id: String): IO[Character] = ???
+    def getHuman(id: String): IO[Human] = ???
+    def getDroid(id: String): IO[Droid] = ???
+  }
+
+  def s = schema[IO]
+
+  def query = """
+   query HeroNameQuery {
+     hero(episode: NEWHOPE) {
+       id
+       name
+       ... on Droid {
+         primaryFunction
+       }
+       ... HumanDetails
+     }
+   }
+ 
+   fragment HumanDetails on Human {
+     homePlanet
+   }
+ """
+
+  def program = Statistics[IO].flatMap { implicit stats =>
+    IO.fromEither(gql.parser.parse(query).leftMap(x => new Exception(x.prettyError.value)))
+      .map(Execute.executor(_, s, Map.empty))
+      .flatMap { case Execute.ExecutorOutcome.Query(run) => run(()).map { case (_, output) => output } }
+  }
+
+  program.unsafeRunSync()
 }
 
 // object SangriaTest {
