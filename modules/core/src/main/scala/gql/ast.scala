@@ -8,7 +8,7 @@ import cats.data._
 import gql.resolver._
 import gql.Value._
 
-object ast {
+object ast extends AstImplicits.Implicits {
   sealed trait Out[F[_], +A] {
     def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Out[G, A]
   }
@@ -95,7 +95,7 @@ object ast {
       )
   }
 
-  final case class Scalar[F[_], A](name: String, codec: Codec[A]) extends OutToplevel[F, A] with InToplevel[A] {
+  final case class Scalar[F[_], A](name: String, codec: Codec[A]) extends OutToplevel[F, A] with In[A] with InToplevel[A] {
     override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Scalar[G, A] =
       Scalar(name, codec)
   }
@@ -109,7 +109,7 @@ object ast {
     lazy val revm = mappings.map(_.swap).toList.toMap
   }
 
-  final case class Field[F[_], I, T, A](
+  final case class Field[F[_], -I, T, A](
       args: Arg[A],
       resolve: Resolver[F, (I, A), T],
       output: Eval[Out[F, T]]
@@ -141,11 +141,44 @@ object ast {
     def mapK[G[_]: MonadCancelThrow](fk: F ~> G): OutOpt[G, A] = OutOpt(of.mapK(fk))
   }
 
-  final case class OutArr[F[_], A](of: Out[F, A]) extends Out[F, Vector[A]] {
-    def mapK[G[_]: MonadCancelThrow](fk: F ~> G): OutArr[G, A] = OutArr(of.mapK(fk))
+  final case class OutArr[F[_], A, C[x] <: Seq[x]](of: Out[F, A]) extends Out[F, C[A]] {
+    def mapK[G[_]: MonadCancelThrow](fk: F ~> G): OutArr[G, A, C] = OutArr(of.mapK(fk))
   }
 
   final case class InOpt[A](of: In[A]) extends In[Option[A]]
 
-  final case class InArr[A](of: In[A]) extends In[Vector[A]]
+  final case class InArr[A, G[_] <: Seq[_]](of: In[A]) extends In[G[A]]
+
+  final case class ID[+A](value: A) extends AnyVal
+  implicit def idTpe[F[_], A](implicit s: Scalar[F, A]): In[ID[A]] =
+    Scalar("ID", s.codec.imap(ID(_))(_.value))
+
+  object Scalar {
+    def fromCirce[F[_], A](name: String)(implicit enc: Encoder[A], dec: Decoder[A]): Scalar[F, A] =
+      Scalar(name, Codec.from(dec, enc))
+  }
+}
+
+object AstImplicits {
+  import ast._
+
+  trait Implicits extends LowPriorityImplicits {
+    implicit def stringScalar[F[_]]: Scalar[F, String] = Scalar.fromCirce[F, String]("String")
+    implicit def intScalar[F[_]]: Scalar[F, Int] = Scalar.fromCirce[F, Int]("Int")
+    implicit def longScalar[F[_]]: Scalar[F, Long] = Scalar.fromCirce[F, Long]("Long")
+    implicit def floatScalar[F[_]]: Scalar[F, Float] = Scalar.fromCirce[F, Float]("Float")
+    implicit def doubleScalar[F[_]]: Scalar[F, Double] = Scalar.fromCirce[F, Double]("Double")
+    implicit def bigIntScalar[F[_]]: Scalar[F, BigInt] = Scalar.fromCirce[F, BigInt]("BigInt")
+    implicit def bigDecimalScalar[F[_]]: Scalar[F, BigDecimal] = Scalar.fromCirce[F, BigDecimal]("BigDecimal")
+    implicit def booleanScalar[F[_]]: Scalar[F, Boolean] = Scalar.fromCirce[F, Boolean]("Boolean")
+
+    implicit def gqlOutOption[F[_], A](implicit tpe: Out[F, A]): Out[F, Option[A]] = OutOpt(tpe)
+
+    implicit def gqlInOption[A](implicit tpe: In[A]): In[Option[A]] = InOpt(tpe)
+  }
+
+  trait LowPriorityImplicits {
+    implicit def gqlOutSeq[F[_], A, G[_] <: Seq[_]](implicit tpe: Out[F, A]): Out[F, G[A]] = OutArr(tpe)
+    implicit def gqlSeq[A, G[_] <: Seq[_]](implicit tpe: In[A]): In[G[A]] = InArr(tpe)
+  }
 }

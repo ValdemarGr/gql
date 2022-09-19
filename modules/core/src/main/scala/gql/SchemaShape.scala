@@ -48,7 +48,7 @@ object SchemaShape {
         case OutOpt(of) => goOutput[G](of)
         case t: OutToplevel[F, Any] =>
           outputNotSeen(t) {
-            def handleFields(o: Selectable[F, Any]): G[Unit] =
+            def handleFields(o: Selectable[F, _]): G[Unit] =
               o.fieldsList.traverse_ { case (_, x) =>
                 goOutput[G](x.output.value) >>
                   x.args.entries.traverse_(x => goInput[G](x.input.asInstanceOf[In[Any]]))
@@ -212,7 +212,7 @@ object SchemaShape {
           }
         }
 
-    def validateFields[G[_]: Monad](fields: NonEmptyList[(String, Field[F, Any, _, _])])(implicit
+    def validateFields[G[_]: Monad](fields: NonEmptyList[(String, Field[F, _, _, _])])(implicit
         S: Stateful[G, ValidationState]
     ): G[Unit] =
       allUnique[G]("duplicate field", fields.toList.map { case (name, _) => name }) >>

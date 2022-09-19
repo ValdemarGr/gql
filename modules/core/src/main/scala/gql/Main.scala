@@ -257,16 +257,6 @@ query withNestedFragments {
     )
 
   import gql.syntax.out._
-  implicit def intType[F[_]]: Scalar[F, Int] = Scalar("Int", Codec.from(Decoder.decodeInt, Encoder.encodeInt))
-
-  implicit def stringType[F[_]]: Scalar[F, String] = Scalar("String", Codec.from(Decoder.decodeString, Encoder.encodeString))
-
-  implicit def listTypeForSome[F[_], A](implicit of: Out[F, A]): Out[F, Vector[A]] = OutArr(of)
-  implicit def seqTypeForAny[F[_], A](implicit of: Out[F, A]): Out[F, Seq[A]] = OutArr(of)
-
-  implicit def optTypeForSome[F[_], A](implicit of: Out[F, A]): Out[F, Option[A]] = OutOpt(of)
-
-  implicit def listInputType[A](implicit tpe: In[A]): In[Vector[A]] = InArr(tpe)
 
   final case class Deps(v: String)
 
@@ -325,7 +315,7 @@ query withNestedFragments {
               fields(
                 "dep" -> f(eff(_ => Ask.reader(_.v))),
                 "a" -> f(full(x => IorT.bothT[F]("Oh no, an error!", "Hahaa"))),
-                "a2" -> f(arg[Int]("num")(intType))(pur { case (i, _) => i.a }),
+                "a2" -> f(arg[Int]("num"))(pur { case (i, _) => i.a }),
                 "b" -> f(eff(_.b)),
                 "sd" -> f(serverDataBatcher.traverse(x => IorT.liftF(x.b.map(i => Seq(i, i + 1, i * 2))))),
                 "c" -> f(eff(_.c.map(_.toSeq))),
@@ -562,6 +552,111 @@ query withNestedFragments {
   mainProgram[D].run(Deps("hey")).unsafeRunSync()
 
   // SangriaTest.run
+}
+
+object Example {
+  import cats._
+  import gql._
+  import gql.ast._
+  import gql.dsl._
+
+  sealed trait Episode
+  object Episode {
+    case object NewHope extends Episode
+    case object Empire extends Episode
+    case object Jedi extends Episode
+
+    implicit def gqlType[F[_]]: Enum[F, Episode] =
+      enum(
+        "Episode",
+        "NEWHOPE" -> NewHope,
+        "EMPIRE" -> Empire,
+        "JEDI" -> Jedi
+      )
+  }
+
+  trait Character {
+    def id: String
+    def name: Option[String]
+    def friends: Option[List[Character]]
+    def appearsIn: Option[List[Episode]]
+  }
+  object Character {
+    implicit def gqlType[F[_]: Applicative]: Interface[F, Character] =
+      interface[F, Character](
+        "Character",
+        "id" -> pure(_.id),
+        "name" -> pure(_.name),
+        "friends" -> pure(_.friends),
+        "appearsIn" -> pure(_.appearsIn)
+      )(
+        instance[Human] { case x: Human => x },
+        instance[Droid] { case x: Droid => x }
+      )
+  }
+
+  final case class Human(
+      id: String,
+      name: Option[String],
+      friends: Option[List[Character]],
+      appearsIn: Option[List[Episode]],
+      homePlanet: Option[String]
+  ) extends Character
+  object Human {
+    implicit def gqlType[F[_]: Applicative]: Type[F, Human] =
+      tpe(
+        "Human",
+        "homePlanet" -> pure(_.homePlanet),
+        Character.gqlType[F].fields.toList: _*
+      )
+  }
+
+  final case class Droid(
+      id: String,
+      name: Option[String],
+      friends: Option[List[Character]],
+      appearsIn: Option[List[Episode]],
+      primaryFunction: Option[String]
+  ) extends Character
+  object Droid {
+    implicit def gqlType[F[_]: Applicative]: Type[F, Droid] =
+      tpe(
+        "Droid",
+        "primaryFunction" -> pure(_.primaryFunction),
+        Character.gqlType[F].fields.toList: _*
+      )
+  }
+
+  trait Repository[F[_]] {
+    def getHero(episode: Episode): F[Character]
+
+    def getCharacter(id: String): F[Character]
+
+    def getHuman(id: String): F[Human]
+
+    def getDroid(id: String): F[Droid]
+  }
+
+  def schema[F[_]: Applicative](implicit repo: Repository[F]) = {
+    SchemaShape[F, Unit](
+      tpe(
+        "Query",
+        "hero" -> eff(arg[Episode]("episode")) { case (_, episode) => repo.getHero(episode) },
+        "character" -> eff(arg[ID[String]]("id")) { case (_, id) => repo.getCharacter(id.value) },
+        "human" -> eff(arg[ID[String]]("id")) { case (_, id) => repo.getHuman(id.value) },
+        "droid" -> eff(arg[ID[String]]("id")) { case (_, id) => repo.getDroid(id.value) }
+      )
+    )
+  }
+
+  import cats.effect._
+  implicit def repo = new Repository[IO] {
+    def getHero(episode: Episode): IO[Character] = ???
+    def getCharacter(id: String): IO[Character] = ???
+    def getHuman(id: String): IO[Human] = ???
+    def getDroid(id: String): IO[Droid] = ???
+  }
+  schema[IO]
 }
 
 // object SangriaTest {

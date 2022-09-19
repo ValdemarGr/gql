@@ -151,7 +151,7 @@ object PreparedQuery {
     case Union(name, _)        => name
     case Interface(name, _, _) => name
     case x: OutOpt[G, _]       => s"(${friendlyName[G, Any](x.of.asInstanceOf[Out[G, Any]])} | null)"
-    case x: OutArr[G, _]       => s"[${friendlyName[G, Any](x.of.asInstanceOf[Out[G, Any]])}]"
+    case x: OutArr[_, _, _]    => s"[${friendlyName[G, Any](x.of.asInstanceOf[Out[G, Any]])}]"
   }
 
   def parserValueToValue[F[_]](value: P.Value, variableMap: Map[String, Json], caret: Caret)(implicit

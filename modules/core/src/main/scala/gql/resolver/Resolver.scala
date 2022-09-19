@@ -4,7 +4,7 @@ import cats.effect._
 import cats._
 import cats.data._
 
-trait Resolver[F[_], I, A] {
+trait Resolver[F[_], -I, A] {
   def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Resolver[G, I, A]
 
   def contramap[B](g: B => I): Resolver[F, B, A]
