@@ -9,7 +9,7 @@ import gql.resolver._
 import gql.Value._
 
 object ast extends AstImplicits.Implicits {
-  sealed trait Out[F[_], -A] {
+  sealed trait Out[F[_], A] {
     def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Out[G, A]
   }
 
@@ -148,14 +148,14 @@ object ast extends AstImplicits.Implicits {
       }
   }
 
-  final case class OutArr[F[_], A](of: Out[F, A]) extends Out[F, Seq[A]] {
-    def mapK[G[_]: MonadCancelThrow](fk: F ~> G): OutArr[G, A] = OutArr(of.mapK(fk))
+  final case class OutArr[F[_], A, C[_] <: Seq[_]](of: Out[F, A]) extends Out[F, C[A]] {
+    def mapK[G[_]: MonadCancelThrow](fk: F ~> G): OutArr[G, A, C] = OutArr(of.mapK(fk))
   }
   object OutArr {
     def unapply[G[_], A](p: Out[G, A]): Option[Out[G, A]] =
       p.asInstanceOf[Out[G, Seq[A]]] match {
-        case x: OutArr[G, A] => Some(x.of.asInstanceOf[Out[G, A]])
-        case _               => None
+        case x: OutArr[G, _, Seq] => Some(x.of.asInstanceOf[Out[G, A]])
+        case _                    => None
       }
   }
 
@@ -163,7 +163,7 @@ object ast extends AstImplicits.Implicits {
 
   final case class InArr[A, G[_] <: Seq[_]](of: In[A]) extends In[G[A]]
 
-  final case class ID[+A](value: A) extends AnyVal
+  final case class ID[A](value: A) extends AnyVal
   implicit def idTpe[F[_], A](implicit s: Scalar[F, A]): In[ID[A]] =
     Scalar("ID", s.codec.imap(ID(_))(_.value))
 
@@ -192,7 +192,7 @@ object AstImplicits {
   }
 
   trait LowPriorityImplicits {
-    implicit def gqlOutSeq[F[_], A](implicit tpe: Out[F, A]): Out[F, Seq[A]] = OutArr(tpe)
+    implicit def gqlOutSeq[F[_], A, G[_] <: Seq[_]](implicit tpe: Out[F, A]): Out[F, G[A]] = OutArr(tpe)
     implicit def gqlSeq[A](implicit tpe: In[A]): In[Seq[A]] = InArr(tpe)
   }
 }

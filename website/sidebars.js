@@ -19,6 +19,9 @@ const sidebars = {
     "Overview": [
       "example",
       "test"
+    ],
+    "Extensions": [
+      "context"
     ]
   }
 

@@ -251,8 +251,8 @@ object SchemaShape {
     def validateOutput[G[_]: Monad](tl: Out[F, _])(implicit S: Stateful[G, ValidationState]): G[Unit] =
       tl match {
         case x: OutToplevel[F, _] => validateToplevel[G](x)
-        case OutArr(of)             => validateOutput[G](of)
-        case OutOpt(of)             => validateOutput[G](of)
+        case OutArr(of)           => validateOutput[G](of)
+        case OutOpt(of)           => validateOutput[G](of)
       }
 
     validateOutput[State[ValidationState, *]](schema.query)
