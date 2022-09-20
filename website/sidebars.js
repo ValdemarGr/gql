@@ -20,7 +20,8 @@ const sidebars = {
       "example",
       "test"
     ],
-    "Extensions": [
+    "Schema": [
+      "output_types",
       "context"
     ]
   }
