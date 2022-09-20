@@ -5,8 +5,7 @@ title: Context
 Many GraphQL implementations provide some method to pass query-wide parameters around in the graph.
 gql has no such concept, it is rather a by-product of being written in tagless style.
 We can emulate context by using a `ReaderT`/`Kleisli` monad transformer from `cats`.
-Writing `ReaderT`/`Kleisli` everywhere is tedious, instead consider opting for `cats.mtl.Ask`~
-
+Writing `ReaderT`/`Kleisli` everywhere is tedious, instead consider opting for `cats.mtl.Ask`:
 ```scala mdoc
 import gql._
 import gql.dsl._

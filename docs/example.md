@@ -163,10 +163,11 @@ implicit lazy val stats = Statistics[IO].unsafeRunSync()
 
 Now we can parse, plan and evaluate the query:
 ```scala mdoc
-def program = 
-  IO.fromEither(gql.parser.parse(query).leftMap(x => new Exception(x.prettyError.value)))
-    .map(Execute.executor(_, s, Map.empty))
-    .flatMap { case Execute.ExecutorOutcome.Query(run) => run(()).map { case (_, output) => output } }
+def parsed = gql.parser.parse(query).toOption.get
+
+def program = Execute.executor(parsed, s, Map.empty) match {
+  case Execute.ExecutorOutcome.Query(run) => run(()).map { case (_, output) => output }
+}
 
 println(program.unsafeRunSync())
 ```
