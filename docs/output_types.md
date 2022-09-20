@@ -12,12 +12,15 @@ gql comes with a few predefined scalars, but you can also define your own.
 For instance, the `ID` type is defined for any `Scalar` as follows:
 ```scala mdoc
 import cats.implicits._
+import cats._
 
 import gql.ast.{stringScalar, Scalar}
 
 final case class ID[A](value: A)
 implicit def idScalar[F[_], A](implicit inner: Scalar[F, A]): Scalar[F, ID[A]] =
   Scalar("ID", inner.codec.imap(ID(_))(_.value))
+  
+implicitly[Scalar[Id, ID[String]]]
 ```
 
 ## Enum
