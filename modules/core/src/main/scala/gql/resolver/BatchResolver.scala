@@ -13,7 +13,7 @@ import cats.data._
  */
 final case class BatchResolver[F[_], I, K, A, T](
     batcher: BatcherReference[K, T],
-    partition: I => IorT[F, String, Batch[F, K, A, T]]
+    partition: I => F[Ior[String, Batch[F, K, A, T]]]
 ) extends LeafResolver[F, I, A] {
   // def flatMapF[B](f: A => F[B])(implicit F: FlatMap[F]) =
   //   BatchResolver(batcher, partition.andThen(_.map(_.flatMapF(f))))
@@ -22,5 +22,5 @@ final case class BatchResolver[F[_], I, K, A, T](
     BatchResolver(batcher, g.andThen(partition))
 
   def mapK[G[_]: MonadCancelThrow](fk: F ~> G): BatchResolver[G, I, K, A, T] =
-    BatchResolver(batcher, partition.andThen(_.mapK(fk).map(bp => bp.copy(post = bp.post.andThen(_.mapK(fk))))))
+    BatchResolver(batcher, partition.andThen(fa => fk(fa).map(_.map(bp => bp.copy(post = bp.post.andThen(_.mapK(fk)))))))
 }

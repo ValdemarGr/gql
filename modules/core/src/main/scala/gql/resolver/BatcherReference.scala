@@ -7,7 +7,7 @@ import gql._
 
 final case class BatcherReference[K, T](id: Int) {
   def full[F[_], I, A](keys: I => IorT[F, String, Batch[F, K, A, T]])(implicit F: Applicative[F]) =
-    BatchResolver[F, I, K, A, T](this, keys)
+    BatchResolver[F, I, K, A, T](this, keys.andThen(_.value))
 
   def traverse[F[_], G[_]: Traverse, I](keys: I => IorT[F, String, G[K]])(implicit F: Applicative[F]) =
     full[F, I, G[T]] { i =>

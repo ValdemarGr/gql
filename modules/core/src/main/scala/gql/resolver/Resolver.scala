@@ -16,9 +16,9 @@ trait LeafResolver[F[_], I, A] extends Resolver[F, I, A] {
   override def contramap[B](g: B => I): LeafResolver[F, B, A]
 }
 
-final case class EffectResolver[F[_], I, A](resolve: I => IorT[F, String, A]) extends LeafResolver[F, I, A] {
+final case class EffectResolver[F[_], I, A](resolve: I => F[Ior[String, A]]) extends LeafResolver[F, I, A] {
   def mapK[G[_]: MonadCancelThrow](fk: F ~> G): EffectResolver[G, I, A] =
-    EffectResolver(resolve.andThen(_.mapK(fk)))
+    EffectResolver(resolve.andThen(fk.apply))
 
   def contramap[B](g: B => I): EffectResolver[F, B, A] =
     EffectResolver(g andThen resolve)

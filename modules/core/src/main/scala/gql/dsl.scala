@@ -1,6 +1,7 @@
 package gql
 
 import cats._
+import cats.implicits._
 import gql.ast._
 import gql.resolver._
 import cats.data._
@@ -18,22 +19,23 @@ object dsl {
   def pure[F[_]: Applicative, I, T](resolver: I => T)(implicit tpe: => Out[F, T]): Field[F, I, T, Unit] =
     pure[F, I, T, Unit](Applicative[Arg].unit) { case (i, _) => resolver(i) }(implicitly, tpe)
 
-  def pure[F[_]: Applicative, I, T, A](arg: Arg[A])(resolver: (I, A) => T)(implicit tpe: => Out[F, T]): Field[F, I, T, A] =
+  def pure[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => T)(implicit F: Applicative[F], tpe: => Out[F, T]): Field[F, I, T, A] =
     Field[F, I, T, A](
       arg,
-      EffectResolver { case (i, a) => IorT.pure(resolver(i, a)) },
+      EffectResolver { case (i, a) => F.pure(resolver(i, a).rightIor) },
       Eval.later(tpe)
     )
 
   def eff[F[_]: Applicative, I, T](resolver: I => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T, Unit] =
     eff[F, I, T, Unit](Applicative[Arg].unit) { case (i, _) => resolver(i) }(implicitly, tpe)
 
-  def eff[F[_]: Applicative, I, T, A](arg: Arg[A])(resolver: (I, A) => F[T])(implicit
+  def eff[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => F[T])(implicit
+      F: Applicative[F],
       tpe: => Out[F, T]
   ): Field[F, I, T, A] =
     Field[F, I, T, A](
       arg,
-      EffectResolver { case (i, a) => IorT.liftF(resolver(i, a)) },
+      EffectResolver { case (i, a) => resolver(i, a).map(_.rightIor) },
       Eval.later(tpe)
     )
 

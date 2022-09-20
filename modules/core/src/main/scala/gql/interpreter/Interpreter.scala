@@ -343,7 +343,7 @@ object Interpreter {
                   val next = in.cursorGroup.field(df.id, df.name)
 
                   attemptUser(
-                    resolve(in.value).timed.semiflatMap { case (dur, v) =>
+                    IorT(resolve(in.value)).timed.semiflatMap { case (dur, v) =>
                       val out = Chain(EvalNode(next, v))
                       submit(n.name, dur, 1) as out
                     },
@@ -358,7 +358,7 @@ object Interpreter {
                 val next = in.cursorGroup.field(df.id, df.name)
 
                 attemptUser[Chain[(CursorGroup, Batch[F, Any, Any, Any])]](
-                  partition(in.value).map(b => Chain((next, b))),
+                  IorT(partition(in.value)).map(b => Chain((next, b))),
                   EvalFailure.BatchPartitioning(next, _, in.value)
                 )
               }

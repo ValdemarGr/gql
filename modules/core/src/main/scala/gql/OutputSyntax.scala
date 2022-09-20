@@ -68,40 +68,42 @@ abstract class OutputSyntax {
   def effect[F[_]: Applicative, I, T](resolver: I => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T, Unit] =
     effect[F, I, T, Unit](Applicative[Arg].unit) { case (i, _) => resolver(i) }(implicitly, tpe)
 
-  def full2[F[_]: Applicative, I, T](resolver: I => IorT[F, String, T])(implicit
+  def full2[F[_], I, T](resolver: I => IorT[F, String, T])(implicit
+      F: Applicative[F],
       tpe: => Out[F, T]
   ): Field[F, I, T, Unit] =
     Field[F, I, T, Unit](
       Applicative[Arg].unit,
-      EffectResolver { case (i, _) => resolver(i) },
+      EffectResolver { case (i, _) => resolver(i).value },
       Eval.later(tpe)
     )
 
-  def effect[F[_]: Applicative, I, T, A](arg: Arg[A])(resolver: (I, A) => F[T])(implicit
+  def effect[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => F[T])(implicit
+      F: Applicative[F],
       tpe: => Out[F, T]
   ): Field[F, I, T, A] =
     Field[F, I, T, A](
       arg,
-      EffectResolver { case (i, a) => IorT.liftF(resolver(i, a)) },
+      EffectResolver { case (i, a) => resolver(i, a).map(_.rightIor) },
       Eval.later(tpe)
     )
 
   def full[F[_], I, T](resolver: I => IorT[F, String, T]) =
-    EffectResolver[F, I, T](resolver)
+    EffectResolver[F, I, T](resolver.andThen(_.value))
 
   def eff[F[_]: Applicative, I, T](resolver: I => F[T]) =
-    EffectResolver[F, I, T](x => IorT.liftF(resolver(x)))
+    EffectResolver[F, I, T](x => resolver(x).map(_.rightIor))
 
   def pur[F[_], I, T](resolver: I => T)(implicit F: Applicative[F]) =
-    EffectResolver[F, I, T](resolver.andThen(IorT.pure(_)))
+    EffectResolver[F, I, T](resolver.andThen(x => F.pure(x.rightIor)))
 
   def pure[F[_]: Applicative, I, T](resolver: I => T)(implicit tpe: => Out[F, T]): Field[F, I, T, Unit] =
     pure[F, I, T, Unit](Applicative[Arg].unit) { case (i, _) => resolver(i) }(implicitly, tpe)
 
-  def pure[F[_]: Applicative, I, T, A](arg: Arg[A])(resolver: (I, A) => T)(implicit tpe: => Out[F, T]): Field[F, I, T, A] =
+  def pure[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => T)(implicit F: Applicative[F], tpe: => Out[F, T]): Field[F, I, T, A] =
     Field[F, I, T, A](
       arg,
-      EffectResolver { case (i, a) => IorT.pure(resolver(i, a)) },
+      EffectResolver { case (i, a) => F.pure(resolver(i, a).rightIor) },
       Eval.later(tpe)
     )
 

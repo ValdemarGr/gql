@@ -209,12 +209,17 @@ object PreparedQuery {
       S.modify(_.copy(cursor = c.add(path))) *> fa <* S.modify(_.copy(cursor = c))
     }
 
-  def prepareSelections[F[_], G[_]: Applicative](
+  def prepareSelections[F[_], G[_]](
       ol: Selectable[G, Any],
       s: P.SelectionSet,
       variableMap: Map[String, Json],
       fragments: Map[String, Pos[P.FragmentDefinition]]
-  )(implicit S: Stateful[F, Prep], F: MonadError[F, PositionalError], D: Defer[F]): F[NonEmptyList[PreparedField[G, Any]]] = D.defer {
+  )(implicit
+      G: Applicative[G],
+      S: Stateful[F, Prep],
+      F: MonadError[F, PositionalError],
+      D: Defer[F]
+  ): F[NonEmptyList[PreparedField[G, Any]]] = D.defer {
     // TODO this code shares much with the subtype interfaces below in matchType
     def collectLeafPrisms(inst: Instance[G, Any, Any]): Chain[(Any => Option[Any], String)] =
       inst.ol.value match {
@@ -230,7 +235,7 @@ object PreparedQuery {
         Applicative[Arg].unit,
         EffectResolver[G, (Any, Unit), String] { case (input, _) =>
           val x = allPrisms.collectFirstSome { case (p, name) => p(input).as(name) }
-          IorT.fromOption[G](x, "typename could not be determined, this is an implementation error")
+          G.pure(x.toRightIor("typename could not be determined, this is an implementation error"))
         },
         Eval.now(Scalar("String", Codec.from(Decoder.decodeString, Encoder.encodeString)))
       )
