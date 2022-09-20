@@ -7,7 +7,7 @@ gql has no such concept, it is rather a by-product of being written in tagless s
 We can emulate context by using a `ReaderT`/`Kleisli` monad transformer from `cats`.
 Writing `ReaderT`/`Kleisli` everywhere is tedious, instead consider opting for `cats.mtl.Ask`~
 
-```scala
+```scala mdoc
 import gql._
 import gql.dsl._
 import gql.ast._
@@ -43,15 +43,14 @@ def query = """
   }
 """
   
-def parsed = gql.parser.parse(query).toOption.get
- 
 implicit lazy val stats = 
   Statistics[IO].unsafeRunSync().mapK(Kleisli.liftK[IO, Context])
 
-def queryResult = Execute.executor(parsed, s, Map.empty) match {
-  case Execute.ExecutorOutcome.Query(run) => run(()).map { case (_, output) => output } 
-}
+val queryResult = 
+  Kleisli.liftF{
+    IO.fromEither(gql.parser.parse(query).leftMap(x => new Exception(x.prettyError.value)))
+      .map(Execute.executor(_, s, Map.empty))
+  }.flatMap { case Execute.ExecutorOutcome.Query(run) => run(()).map { case (_, output) => output } }
 
 queryResult.run(Context("john_doe")).unsafeRunSync()
-// res0: JsonObject = object[me -> "john_doe"]
 ```

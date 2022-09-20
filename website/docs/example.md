@@ -9,7 +9,7 @@ But also some unique features such as, herustic query planning and signals.
 The most important goals of gql is to be simple, predictable and composable.
 
 For this showcase, Star Wars will be out domain of choice:
-```scala
+```scala mdoc
 sealed trait Episode
 object Episode {
   case object NewHope extends Episode
@@ -44,13 +44,13 @@ final case class Droid(
 To construct the schema, we need to import the `ast` and `dsl`.
 The `ast` is an adt representation of the GraphQL schema language.
 The `dsl` is a thin collection of smart constructors for the `ast`:
-```scala
+```scala mdoc
 import gql.dsl._
 import gql.ast._
 ```
 
 With the `dsl` smart constructors in scope; we can now construct the schema:
-```scala
+```scala mdoc
 import cats._
 import cats.implicits._
 import gql._
@@ -115,7 +115,7 @@ def schema[F[_]: Applicative](implicit repo: Repository[F]) = {
 ```
 
 Lets construct a simple in-memory repository and query:
-```scala
+```scala mdoc
 import cats.effect._
 import cats.effect.unsafe.implicits.global
 
@@ -157,21 +157,16 @@ def query = """
 
 Before running the query, we need to allocate a `Statistics` instance.
 The `Statistics` algebra serves as the backbone of query planning.
-```scala
+```scala mdoc
 implicit lazy val stats = Statistics[IO].unsafeRunSync()
 ```
 
 Now we can parse, plan and evaluate the query:
-```scala
+```scala mdoc
 def program = 
   IO.fromEither(gql.parser.parse(query).leftMap(x => new Exception(x.prettyError.value)))
     .map(Execute.executor(_, s, Map.empty))
     .flatMap { case Execute.ExecutorOutcome.Query(run) => run(()).map { case (_, output) => output } }
 
 println(program.unsafeRunSync())
-// object[hero -> {
-//   "primaryFunction" : "Astromech",
-//   "name" : "R2-D2",
-//   "id" : "1000"
-// }]
 ```

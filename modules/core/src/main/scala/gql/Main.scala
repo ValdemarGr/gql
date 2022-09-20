@@ -695,6 +695,41 @@ object Example {
   program.unsafeRunSync()
 }
 
+object Test2 {
+  import gql._
+  import gql.dsl._
+  import gql.ast._
+  import cats._
+  import cats.data._
+  import cats.implicits._
+
+  final case class Context(
+      userId: String
+  )
+
+  trait ContextAlg[F[_]] {
+    def get: F[Context]
+  }
+
+  implicit def contextAlgForKleisli[F[_]: Applicative] = new ContextAlg[Kleisli[F, Context, *]] {
+    def get: Kleisli[F, Context, Context] = Kleisli.ask[F, Context]
+  }
+
+  def getSchema[F[_]: Applicative](implicit ctx: ContextAlg[F]) = {
+    def schema: Schema[F, Unit] = Schema.simple[F, Unit](
+      tpe(
+        "Query",
+        "me" -> eff(_ => ctx.get.map(_.userId))
+      )
+    )
+
+    schema
+  }
+
+  type G[A] = Kleisli[cats.effect.IO, Context, A]
+  getSchema[G]
+}
+
 // object SangriaTest {
 //   import sangria.schema._
 
