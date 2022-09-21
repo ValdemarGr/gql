@@ -238,7 +238,7 @@ implicit def node[F[_]: Applicative] =
     instance[Company]{ case x: Company => x }
   )
 ```
-:::info
+:::note
 In most GraphQL implementations types define the interfaces they implement, 
 but in gql the interfaces define the types that extends it.
 Defining interface implementations the other way around is ambiguous,

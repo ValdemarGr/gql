@@ -30,7 +30,7 @@ implicit def idScalar[F[_], A](implicit inner: Scalar[F, A]): Scalar[F, ID[A]] =
 implicitly[Scalar[Id, ID[String]]]
 // res0: Scalar[Id, ID[String]] = Scalar(
 //   name = "ID",
-//   codec = io.circe.Codec$$anon$4@ebb16c3
+//   codec = io.circe.Codec$$anon$4@6968b821
 // )
 ```
 
@@ -242,7 +242,7 @@ implicit def node[F[_]: Applicative] =
     instance[Company]{ case x: Company => x }
   )
 ```
-:::info
+:::note
 In most GraphQL implementations types define the interfaces they implement, 
 but in gql the interfaces define the types that extends it.
 Defining interface implementations the other way around is ambiguous,

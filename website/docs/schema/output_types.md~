@@ -246,5 +246,6 @@ since the same type may appear two places in the schema, which raises the questi
 An important goal of gql is to be predictable, so such a design choice is not possible whilst maintaining predictability.
 
 Furthermore, referencing implementations this way also ensures that all types in the schema can be discovered.
-Inverting the relationship 
+Inverting the relationship cloud lead to types that are not discoverable.
+For the curious, draw a tree of a schema where types define the interfaces they implement and consider the implications.
 :::
