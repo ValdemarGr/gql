@@ -461,7 +461,7 @@ object Interpreter {
                     val (_, b) = nec.head
 
                     val keys: Set[BatchKey] = nec.toChain
-                      .flatMap { case (_, bn) => bn.inputs.flatMap { case (_, b) => Chain.fromSeq(b.keys) } }
+                      .flatMap { case (_, bn) => bn.inputs.flatMap { case (_, b) => Chain.fromSeq(b.keys.toSeq) } }
                       .toIterable
                       .toSet
 
@@ -471,7 +471,7 @@ object Interpreter {
                           nec.toChain.parFlatTraverse { case (df, bn) =>
                             val mappedValuesF: W[Chain[EvalNode[Any]]] = bn.inputs.parFlatTraverse { case (c, b) =>
                               // find all results for this key
-                              val lookupsF: W[Chain[(BatchKey, BatchValue)]] = Chain.fromSeq(b.keys).flatTraverse { (k: BatchKey) =>
+                              val lookupsF: W[Chain[(BatchKey, BatchValue)]] = Chain.fromSeq(b.keys.toSeq).flatTraverse { (k: BatchKey) =>
                                 resultLookup.get(k) match {
                                   case None =>
                                     failM[Chain[(BatchKey, BatchValue)]](
@@ -483,7 +483,7 @@ object Interpreter {
 
                               lookupsF.flatMap { keys =>
                                 attemptUserE(
-                                  b.post(keys.toList).map(res => Chain(EvalNode(c, res))),
+                                  b.post(keys.toList.toMap).map(res => Chain(EvalNode(c, res))),
                                   EvalFailure.BatchPostProcessing(c, _, keys)
                                 )
                               }

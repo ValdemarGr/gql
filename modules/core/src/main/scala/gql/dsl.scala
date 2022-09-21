@@ -61,4 +61,11 @@ object dsl {
       instanceHd.asInstanceOf[Instance[F, A, Any]] :: instanceTl.toList.asInstanceOf[List[Instance[F, A, Any]]],
       NonEmptyList(hd, tl.toList)
     )
+
+  def batchFull[F[_]: Functor, I, K, A, T](br: BatcherReference[K, T])(keys: I => F[Ior[String, Set[K]]])(
+      reasscociate: (I, Map[K, T]) => F[Ior[String, A]]
+  )(implicit tpe: => Out[F, T]) =
+    BatchResolver[F, I, K, A, T](br, i => keys(i).map(_.map(xs => Batch(xs, m => IorT(reasscociate(i, m))))))
+
+    // def batchTraverse[F[_], G[_], I, K, T](br: BatcherReference[K, T])(keys: I => F[Ior[String, G[K]]])
 }

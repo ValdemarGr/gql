@@ -11,22 +11,7 @@ final case class BatcherReference[K, T](id: Int) {
     BatchResolver[F, I, K, A, T](this, keys.andThen(_.value))
 
   def traverse[F[_], G[_]: Traverse, I](keys: I => IorT[F, String, G[K]])(implicit F: Applicative[F]) =
-    full[F, I, G[T]] { i =>
-      keys(i).map { gk =>
-        Batch(
-          gk.toList,
-          { xs =>
-            val arr = xs.toVector
-            IorT.pure {
-              gk.mapWithIndex { case (_, i) =>
-                val (_, v) = xs(i)
-                v
-              }
-            }
-          }
-        )
-      }
-    }
+    full[F, I, G[T]](keys(_).map(gk => Batch(gk.toList.toSet, m => IorT.pure(gk.map(m.apply)))))
 
   def simple[F[_], I](key: I => IorT[F, String, K])(implicit F: Applicative[F]) =
     traverse[F, Id, I](key)
