@@ -50,4 +50,14 @@ object dsl {
       instanceHd.asInstanceOf[Instance[F, A, Any]] :: instanceTl.toList.asInstanceOf[List[Instance[F, A, Any]]],
       NonEmptyList(hd, tl.toList)
     )
+
+  def union[F[_], A](
+      name: String,
+      instanceHd: Instance[F, A, _],
+      instanceTl: Instance[F, A, _]*
+  ) =
+    Union(
+      name,
+      NonEmptyList(instanceHd.asInstanceOf[Instance[F, A, Any]], instanceTl.toList.asInstanceOf[List[Instance[F, A, Any]]])
+    )
 }

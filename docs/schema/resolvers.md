@@ -25,6 +25,8 @@ The base-case implementation for `BatchResolver` has `K = Set[I]` and `T = Map[I
 
 :::note
 The resolver will automatically construct a GraphQL error if any of the keys are missing.
+To avoid this, you must pad all missing keys.
+For instance, you could map all values to `Some` and pad all missing values with `None`.
 :::
  
 The `BatchResolver` must also have an implementation of `Set[K] => F[Map[K, T]]`, which is constructed globally.
