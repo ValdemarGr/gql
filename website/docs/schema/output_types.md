@@ -1,7 +1,8 @@
 ---
 title: Output types
 ---
-An output type `Out[F[_], A]` is a node in the graph that can take some `A` as input and produce a graphql value in `F`.
+An output type `Out[F[_], A]` is an ast node that can take some `A` as input and produce a graphql value in `F`.
+Output types act as continuations of their input types, such that a schema effectively is a tree of continuations.
 The output types of gql are defined in `gql.ast` and are named after their respective GraphQL types.
 
 ## Scalar
@@ -23,7 +24,7 @@ implicit def idScalar[F[_], A](implicit inner: Scalar[F, A]): Scalar[F, ID[A]] =
 implicitly[Scalar[Id, ID[String]]]
 // res0: Scalar[Id, ID[String]] = Scalar(
 //   name = "ID",
-//   codec = io.circe.Codec$$anon$4@55e07c0f
+//   codec = io.circe.Codec$$anon$4@6ed4d7c8
 // )
 ```
 
@@ -66,3 +67,13 @@ implicit def untypedEnum[F[_]] =
     )
   )
 ```
+
+## Field
+`Field` is a type that represents a field in a graphql `type` or `interface`.
+A `Field[F, I, T, A]` has arguments `Arg[A]`, a continuation `Out[F, T]` and a resolver that takes `(I, A)` to `F[T]`.
+Field also lazily captures `Out[F, T]`, to allow recursive types.
+
+## Type (object)
+`Type` is the gql equivalent of `type` in GraphQL parlance.
+A `Type` consists of a name and a non-empty list of fields.
+
