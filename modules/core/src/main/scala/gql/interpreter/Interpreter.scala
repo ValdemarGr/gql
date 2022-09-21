@@ -390,38 +390,47 @@ object Interpreter {
             case df @ PreparedDataField(id, name, _, _, _, _) => runDataField(df, in)
           }
 
-        def startNext(df: PreparedDataField[F, Any, Any], outputs: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] = {
-          def evalSel(s: Prepared[F, Any], in: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] = W.defer {
-            s match {
-              case PreparedLeaf(name, enc) => W.pure(in.map(en => en.setValue(enc(en.value))))
-              case Selection(fields)       => runFields(fields, in)
-              case PreparedList(of) =>
-                val (emties, continuations) =
-                  in.partitionEither { nv =>
-                    val inner = Chain.fromSeq(nv.value.asInstanceOf[Seq[Any]])
+        def startNext(s: Prepared[F, Any], in: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] = W.defer {
+          s match {
+            case PreparedLeaf(name, enc) => W.pure(in.map(en => en.setValue(enc(en.value))))
+            case Selection(fields)       => runFields(fields, in)
+            // case PreparedList2(of, resolver) =>
+            //   val (emties, continuations) =
+            //     in.partitionEither { nv =>
+            //       val inner = Chain.fromSeq(nv.value.asInstanceOf[Seq[Any]])
 
-                    NonEmptyChain.fromChain(inner) match {
-                      case None      => Left(nv.setValue(Json.arr()))
-                      case Some(nec) => Right(nec.mapWithIndex { case (v, i) => nv.succeed(v, _.index(i)) })
-                    }
+            //       NonEmptyChain.fromChain(inner) match {
+            //         case None      => Left(nv.setValue(Json.arr()))
+            //         case Some(nec) => Right(nec.mapWithIndex { case (v, i) => nv.succeed(v, _.index(i)) })
+            //       }
+            //     }
+
+            //   // runDataInputs(continuations.flatMap(_.toChain))
+            //   evalSel(of, continuations.flatMap(_.toChain)).map(_ ++ emties)
+            case PreparedList(of) =>
+              val (emties, continuations) =
+                in.partitionEither { nv =>
+                  val inner = Chain.fromSeq(nv.value.asInstanceOf[Seq[Any]])
+
+                  NonEmptyChain.fromChain(inner) match {
+                    case None      => Left(nv.setValue(Json.arr()))
+                    case Some(nec) => Right(nec.mapWithIndex { case (v, i) => nv.succeed(v, _.index(i)) })
                   }
+                }
 
-                evalSel(of, continuations.flatMap(_.toChain)).map(_ ++ emties)
-              case PreparedOption(of) =>
-                val (nulls, continuations) =
-                  in.partitionEither { nv =>
-                    val inner = nv.value.asInstanceOf[Option[Any]]
+              startNext(of, continuations.flatMap(_.toChain)).map(_ ++ emties)
+            case PreparedOption(of) =>
+              val (nulls, continuations) =
+                in.partitionEither { nv =>
+                  val inner = nv.value.asInstanceOf[Option[Any]]
 
-                    inner match {
-                      case None    => Left(nv.setValue(Json.Null))
-                      case Some(v) => Right(nv.setValue(v))
-                    }
+                  inner match {
+                    case None    => Left(nv.setValue(Json.Null))
+                    case Some(v) => Right(nv.setValue(v))
                   }
-                evalSel(of, continuations).map(_ ++ nulls)
-            }
+                }
+              startNext(of, continuations).map(_ ++ nulls)
           }
-
-          evalSel(df.selection, outputs)
         }
 
         /*
@@ -443,7 +452,7 @@ object Interpreter {
 
           partitioned
             .flatMap { case (trivial, batched) =>
-              val trivialF = trivial.parFlatTraverse { case (df, fas) => startNext(df, fas) }
+              val trivialF = trivial.parFlatTraverse { case (df, fas) => startNext(df.selection, fas) }
 
               val batchedF =
                 NonEmptyChain
@@ -480,7 +489,7 @@ object Interpreter {
                               }
                             }
 
-                            mappedValuesF.flatMap(startNext(df, _))
+                            mappedValuesF.flatMap(startNext(df.selection, _))
                           }
                         }
 

@@ -46,6 +46,11 @@ object PreparedQuery {
 
   final case class PreparedList[F[_], A](of: Prepared[F, A]) extends Prepared[F, A]
 
+  // final case class PreparedList2[F[_]](
+  //     of: Prepared[F, Any],
+  //     resolver: Resolver[F, Any, Any]
+  // ) extends Prepared[F, Any]
+
   final case class PreparedOption[F[_], A](of: Prepared[F, A]) extends Prepared[F, A]
 
   final case class PreparedLeaf[F[_], A](name: String, encode: A => Json) extends Prepared[F, A]

@@ -148,6 +148,14 @@ object ast extends AstImplicits.Implicits {
       }
   }
 
+  // final case class OutArr2[F[_], A, B, C[_]: Traverse](
+  //     resolve: Resolver[F, A, B],
+  //     of: Out[F, B]
+  // ) extends Out[F, C[A]] {
+  //   def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Out[G, C[A]] =
+  //     OutArr2(resolve.mapK(fk), of.mapK(fk))
+  // }
+
   final case class OutArr[F[_], A, C[_] <: Seq[_]](of: Out[F, A]) extends Out[F, C[A]] {
     def mapK[G[_]: MonadCancelThrow](fk: F ~> G): OutArr[G, A, C] = OutArr(of.mapK(fk))
   }
