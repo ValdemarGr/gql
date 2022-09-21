@@ -5,22 +5,38 @@ import cats._
 import cats.effect._
 import cats.data._
 
-/*
- * I input type
- * K the batching key
- * A the output type
- * T the intermediate type which is converted to A
- */
-final case class BatchResolver[F[_], I, K, A, T](
-    batcher: BatcherReference[K, T],
-    partition: I => F[Ior[String, Batch[F, K, A, T]]]
-) extends LeafResolver[F, I, A] {
-  // def flatMapF[B](f: A => F[B])(implicit F: FlatMap[F]) =
-  //   BatchResolver(batcher, partition.andThen(_.map(_.flatMapF(f))))
+abstract case class BatchResolver[F[_], I, O](
+    id: Int,
+    run: I => F[Result[(Set[Any], Map[Any, Any] => F[Result[O]])]]
+) extends LeafResolver[F, I, O] {
+  override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): LeafResolver[G, I, O] =
+    new BatchResolver[G, I, O](id, i => fk(run(i)).map(_.map { case (ks, f) => (ks, m => fk(f(m))) })) {}
 
-  def contramap[B](g: B => I): BatchResolver[F, B, K, A, T] =
-    BatchResolver(batcher, g.andThen(partition))
+  def contramapF[B](g: B => F[Result[I]])(implicit F: Monad[F]): BatchResolver[F, B, O] =
+    new BatchResolver[F, B, O](id, b => IorT(g(b)).flatMap(i => IorT(run(i))).value) {}
 
-  def mapK[G[_]: MonadCancelThrow](fk: F ~> G): BatchResolver[G, I, K, A, T] =
-    BatchResolver(batcher, partition.andThen(fa => fk(fa).map(_.map(bp => bp.copy(post = bp.post.andThen(_.mapK(fk)))))))
+  override def contramap[B](g: B => I): BatchResolver[F, B, O] =
+    new BatchResolver[F, B, O](id, b => run(g(b))) {}
+
+  def map[O2](f: (I, O) => O2)(implicit F: Functor[F]): BatchResolver[F, I, O2] =
+    new BatchResolver[F, I, O2](id, i => run(i).map(_.map { case (ks, g) => (ks, g.andThen(_.map(_.map(o => f(i, o))))) })) {}
+}
+
+object BatchResolver {
+  def apply[F[_], K, T](
+      f: Set[K] => F[Map[K, T]]
+  )(implicit F: Monad[F]): State[gql.SchemaState[F], BatchResolver[F, Set[K], Map[K, T]]] =
+    State { s =>
+      val id = s.nextId
+      val r = new BatchResolver[F, Set[K], Map[K, T]](
+        id,
+        k =>
+          F.pure(
+            (k.asInstanceOf[Set[Any]], (m: Map[Any, Any]) => F.pure(m.asInstanceOf[Map[K, T]].rightIor[NonEmptyChain[String]]))
+              .rightIor[NonEmptyChain[String]]
+          )
+      ) {}
+      val entry = f.asInstanceOf[Set[Any] => F[Map[Any, Any]]]
+      (s.copy(nextId = id + 1, batchers = s.batchers + (id -> entry)), r)
+    }
 }

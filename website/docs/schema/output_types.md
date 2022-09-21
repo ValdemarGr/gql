@@ -24,7 +24,7 @@ implicit def idScalar[F[_], A](implicit inner: Scalar[F, A]): Scalar[F, ID[A]] =
 implicitly[Scalar[Id, ID[String]]]
 // res0: Scalar[Id, ID[String]] = Scalar(
 //   name = "ID",
-//   codec = io.circe.Codec$$anon$4@73f870a6
+//   codec = io.circe.Codec$$anon$4@5351004c
 // )
 ```
 
@@ -72,6 +72,9 @@ implicit def untypedEnum[F[_]] =
 `Field` is a type that represents a field in a graphql `type` or `interface`.
 A `Field[F, I, T, A]` has arguments `Arg[A]`, a continuation `Out[F, T]` and a resolver that takes `(I, A)` to `F[T]`.
 Field also lazily captures `Out[F, T]`, to allow recursive types.
+:::tip
+Check out the [resolver section](./resolvers) for more info on how resolvers work.
+:::
 
 ## Type (object)
 `Type` is the gql equivalent of `type` in GraphQL parlance.

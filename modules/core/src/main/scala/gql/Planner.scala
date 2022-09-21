@@ -45,7 +45,7 @@ object Planner {
     lazy val start = end - cost
   }
 
-  def makeBatchName(b: BatcherReference[Any, Any]) = s"batch_${b.id}"
+  def makeBatchName[F[_]](b: BatchResolver[F, Any, Any]) = s"batch_${b.id}"
 
   // TODO get stats for all occuring batch names in the graph before running the algorithm,
   // such that mutation during the algorithm is be avoided
@@ -60,8 +60,8 @@ object Planner {
     prepared.flatTraverse {
       case PreparedDataField(id, name, resolve, selection, tn, _) =>
         val batchName = resolve match {
-          case BatchResolver(batcher, _) => Some(makeBatchName(batcher))
-          case _                         => None
+          case br @ BatchResolver(_, _) => Some(makeBatchName(br))
+          case _                        => None
         }
         // Use parent typename + field as fallback name since this will be unique
         // it is of utmost importance that different resolvers don't get mixed into the same statistic
@@ -144,7 +144,10 @@ object Planner {
                 val compat =
                   batchMap
                     .get(bn)
-                    .flatMap(_.value.maxBefore(maxEnd * 1.02).filter(_ >= r.end))
+                    .flatMap { m =>
+                      val o = if (m.value.contains(maxEnd)) Some(maxEnd) else m.value.maxBefore(maxEnd)
+                      o.filter(_ >= r.end)
+                    }
                     .getOrElse(maxEnd)
 
                 val newSet =

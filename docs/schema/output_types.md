@@ -68,6 +68,9 @@ implicit def untypedEnum[F[_]] =
 `Field` is a type that represents a field in a graphql `type` or `interface`.
 A `Field[F, I, T, A]` has arguments `Arg[A]`, a continuation `Out[F, T]` and a resolver that takes `(I, A)` to `F[T]`.
 Field also lazily captures `Out[F, T]`, to allow recursive types.
+:::tip
+Check out the [resolver section](./resolvers) for more info on how resolvers work.
+:::
 
 ## Type (object)
 `Type` is the gql equivalent of `type` in GraphQL parlance.

@@ -5,7 +5,7 @@ import cats.data._
 import gql._
 import cats.effect._
 
-trait StreamRef[F[_], I, +O] { self =>
+sealed trait StreamRef[F[_], I, +O] { self =>
   type M
 
   type K
@@ -15,7 +15,7 @@ trait StreamRef[F[_], I, +O] { self =>
   // def filterMapping: (I, M) => OptionT[ResultF[F, *], O]
   def filterMapping: (I, M) => Option[O]
 
-  def getKey: I => ResultF[F, K]
+  def getKey: I => F[Result[K]]
 
   def contramap[I2](f: I2 => I): StreamRef[F, I2, O] =
     new StreamRef[F, I2, O] {
@@ -61,7 +61,7 @@ trait StreamRef[F[_], I, +O] { self =>
       def ref = self.ref
       // def filterMapping = (i, m) => OptionT(self.filterMapping(i, m).value.mapK(fk))
       def filterMapping = self.filterMapping
-      def getKey = i => self.getKey(i).mapK(fk)
+      def getKey = i => IorT(self.getKey(i)).mapK(fk).value
     }
 }
 
@@ -76,7 +76,7 @@ object StreamRef {
 
         def ref = _ => id
 
-        def getKey = IorT.pure[F, String](_)
+        def getKey = IorT.pure[F, NonEmptyChain[String]](_).value
 
         def filterMapping = (_, m) => Some(m)
         // def filterMapping = (_, m) => OptionT(IorT.pure[F, String](Some(m)))

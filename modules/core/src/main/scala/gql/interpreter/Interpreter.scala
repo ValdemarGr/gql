@@ -228,17 +228,17 @@ object Interpreter {
 
     def failM[A](e: EvalFailure)(implicit M: Monoid[A]): W[A] = WriterT.put(M.empty)(Chain.one(e))
 
-    def attemptUser[A](fa: IorT[F, String, A], constructor: Either[Throwable, String] => EvalFailure)(implicit
+    def attemptUser[A](fa: F[IorNec[String, A]], constructor: Either[Throwable, String] => EvalFailure)(implicit
         M: Monoid[A]
     ): W[A] =
-      lift(fa.value).attempt.flatMap {
+      lift(fa).attempt.flatMap {
         case Left(ex)              => WriterT.put(M.empty)(Chain(constructor(Left(ex))))
-        case Right(Ior.Both(l, r)) => WriterT.put(r)(Chain(constructor(Right(l))))
-        case Right(Ior.Left(l))    => WriterT.put(M.empty)(Chain(constructor(Right(l))))
+        case Right(Ior.Both(l, r)) => WriterT.put(r)(l.toChain.map(x => constructor(Right(x))))
+        case Right(Ior.Left(l))    => WriterT.put(M.empty)(l.toChain.map(x => constructor(Right(x))))
         case Right(Ior.Right(r))   => WriterT.put(r)(Chain.empty)
       }
 
-    def attemptUserE(fa: IorT[F, String, E], constructor: Either[Throwable, String] => EvalFailure): W[E] =
+    def attemptUserE(fa: F[IorNec[String, E]], constructor: Either[Throwable, String] => EvalFailure): W[E] =
       attemptUser[E](fa, constructor)
 
     Supervisor[F].mapK(lift).use { sup =>
@@ -259,11 +259,6 @@ object Interpreter {
             })
             .map(_.getOrElse(NoState))
 
-        final case class NodeBatch(
-            inputs: Chain[(CursorGroup, Batch[F, BatchKey, BatchValue, BatchResult])],
-            resolve: Set[BatchKey] => F[Map[BatchKey, BatchValue]]
-        )
-
         def submit(name: String, duration: FiniteDuration, size: Int): F[Unit] =
           sup.supervise(stats.updateStats(name, duration, size)).void
 
@@ -280,12 +275,13 @@ object Interpreter {
               signalSubmission match {
                 case None =>
                   attemptUserE(
-                    headChainF,
+                    headChainF.value.map(_.leftMap(NonEmptyChain.one)),
                     EvalFailure.SignalHeadResolution(debugCursor, _, in.value)
                   )
                 case Some(ss) =>
+                  val fa: F[IorNec[String, Any]] = sf.ref.getKey(in.value).asInstanceOf[F[IorNec[String, Any]]]
                   attemptUser(
-                    sf.ref.getKey(in.value).map(Chain(_)),
+                    fa.map(_.map(Chain(_))),
                     EvalFailure.SignalTailResolution(debugCursor, _, in.value)
                   )
                     .flatMap(_.flatTraverse { key =>
@@ -317,7 +313,7 @@ object Interpreter {
                             }
 
                           attemptUserE(
-                            handledHeadF.map(Chain(_)),
+                            handledHeadF.map(Chain(_)).value.map(_.leftMap(NonEmptyChain.one)),
                             EvalFailure.SignalHeadResolution(debugCursor, _, in.value)
                           )
                         }
@@ -330,10 +326,16 @@ object Interpreter {
               runInputs(df2, nvs)
             }
 
+        type Reassociate = Map[BatchKey, BatchValue] => F[IorNec[String, BatchResult]]
+        final case class Batch(
+            batcher: Int,
+            keys: Chain[(CursorGroup, (Set[BatchKey], Reassociate))]
+        )
+
         def runInputs(
             df: PreparedDataField[F, Any, Any],
             inputs: Chain[EvalNode[Any]]
-        ): W[Either[Chain[EvalNode[Any]], NodeBatch]] = {
+        ): W[Either[Chain[EvalNode[Any]], Batch]] = {
           val n = executionDeps.nodeMap(df.id)
 
           df.resolve match {
@@ -343,39 +345,29 @@ object Interpreter {
                   val next = in.cursorGroup.field(df.id, df.name)
 
                   attemptUser(
-                    IorT(resolve(in.value)).timed.semiflatMap { case (dur, v) =>
-                      val out = Chain(EvalNode(next, v))
-                      submit(n.name, dur, 1) as out
-                    },
+                    IorT(resolve(in.value)).timed
+                      .semiflatMap { case (dur, v) =>
+                        val out = Chain(EvalNode(next, v))
+                        submit(n.name, dur, 1) as out
+                      }
+                      .value
+                      .map(_.leftMap(NonEmptyChain.one)),
                     EvalFailure.EffectResolution(next, _, in.value)
                   )
                 }
                 .map(Left(_))
-            case BatchResolver(batcher, partition) =>
-              val impl = schemaState.batchers(batcher.id)
+            case BatchResolver(id, run) =>
+              val partitioned =
+                inputs.parFlatTraverse { in =>
+                  val next = in.cursorGroup.field(df.id, df.name)
 
-              val partitioned: W[Chain[(CursorGroup, Batch[F, Any, Any, Any])]] = inputs.parFlatTraverse { in =>
-                val next = in.cursorGroup.field(df.id, df.name)
-
-                attemptUser[Chain[(CursorGroup, Batch[F, Any, Any, Any])]](
-                  IorT(partition(in.value)).map(b => Chain((next, b))),
-                  EvalFailure.BatchPartitioning(next, _, in.value)
-                )
-              }
-
-              partitioned
-                .map { zs =>
-                  Right(
-                    NodeBatch(
-                      zs,
-                      xs =>
-                        impl(xs).timed
-                          .flatMap { case (dur, value) =>
-                            submit(Planner.makeBatchName(batcher), dur, xs.size) >> submit(n.name, dur, xs.size).as(value)
-                          }
-                    )
+                  attemptUser(
+                    run(in.value).map(_.map(b => Chain((next, b)))),
+                    EvalFailure.BatchPartitioning(next, _, in.value)
                   )
                 }
+
+              partitioned.map(p => Right(Batch(id, p)))
             case sr @ SignalResolver(_, _, _) => runSignal(df, sr, inputs)
           }
         }
@@ -394,19 +386,6 @@ object Interpreter {
           s match {
             case PreparedLeaf(name, enc) => W.pure(in.map(en => en.setValue(enc(en.value))))
             case Selection(fields)       => runFields(fields, in)
-            // case PreparedList2(of, resolver) =>
-            //   val (emties, continuations) =
-            //     in.partitionEither { nv =>
-            //       val inner = Chain.fromSeq(nv.value.asInstanceOf[Seq[Any]])
-
-            //       NonEmptyChain.fromChain(inner) match {
-            //         case None      => Left(nv.setValue(Json.arr()))
-            //         case Some(nec) => Right(nec.mapWithIndex { case (v, i) => nv.succeed(v, _.index(i)) })
-            //       }
-            //     }
-
-            //   // runDataInputs(continuations.flatMap(_.toChain))
-            //   evalSel(of, continuations.flatMap(_.toChain)).map(_ ++ emties)
             case PreparedList(of) =>
               val (emties, continuations) =
                 in.partitionEither { nv =>
@@ -460,34 +439,36 @@ object Interpreter {
                   .traverse { nec =>
                     val (_, b) = nec.head
 
-                    val keys: Set[BatchKey] = nec.toChain
-                      .flatMap { case (_, bn) => bn.inputs.flatMap { case (_, b) => Chain.fromSeq(b.keys.toSeq) } }
+                    val allKeys: Set[BatchKey] = nec.toChain
+                      .flatMap { case (_, bn) => bn.keys.flatMap { case (_, (ks, _)) => Chain.fromSeq(ks.toSeq) } }
                       .toIterable
                       .toSet
 
                     val resolvedF: F[WriterT[F, Chain[EvalFailure], Chain[EvalNode[Json]]]] =
-                      b.resolve(keys)
+                      schemaState
+                        .batchers(b.batcher)(allKeys)
                         .map { (resultLookup: Map[BatchKey, BatchValue]) =>
                           nec.toChain.parFlatTraverse { case (df, bn) =>
-                            val mappedValuesF: W[Chain[EvalNode[Any]]] = bn.inputs.parFlatTraverse { case (c, b) =>
-                              // find all results for this key
-                              val lookupsF: W[Chain[(BatchKey, BatchValue)]] = Chain.fromSeq(b.keys.toSeq).flatTraverse { (k: BatchKey) =>
-                                resultLookup.get(k) match {
+                            val mappedValuesF: W[Chain[EvalNode[Any]]] =
+                              bn.keys.flatTraverse { case (cg, (ks, reassoc)) =>
+                                val (missing, found) =
+                                  ks.toList.partitionMap[BatchKey, (BatchKey, BatchValue)](k =>
+                                    resultLookup.get(k) match {
+                                      case None    => Left(k)
+                                      case Some(x) => Right((k -> x))
+                                    }
+                                  )
+
+                                missing.toNel match {
+                                  case Some(nel) =>
+                                    failM[Chain[EvalNode[Any]]](EvalFailure.BatchMissingKey(cg, resultLookup, ks, nel.toList.toSet))
                                   case None =>
-                                    failM[Chain[(BatchKey, BatchValue)]](
-                                      EvalFailure.BatchMissingKey(c, resultLookup, b.keys, k)
+                                    attemptUserE(
+                                      reassoc(found.toMap).map(_.map(res => Chain(EvalNode(cg, res)))),
+                                      EvalFailure.BatchPostProcessing(cg, _, Chain.fromSeq(found))
                                     )
-                                  case Some(x) => W.pure(Chain(k -> x))
                                 }
                               }
-
-                              lookupsF.flatMap { keys =>
-                                attemptUserE(
-                                  b.post(keys.toList.toMap).map(res => Chain(EvalNode(c, res))),
-                                  EvalFailure.BatchPostProcessing(c, _, keys)
-                                )
-                              }
-                            }
 
                             mappedValuesF.flatMap(startNext(df.selection, _))
                           }
@@ -497,9 +478,9 @@ object Interpreter {
                       .flatMap {
                         case Left(ex) =>
                           val posses =
-                            nec.toChain.flatMap { case (_, bn) => bn.inputs.map { case (nm, _) => nm } }
+                            nec.toChain.flatMap { case (_, bn) => bn.keys.map { case (cg, (_, _)) => cg } }
                           WriterT.put(Chain.empty[EvalNode[Json]])(
-                            Chain(EvalFailure.BatchResolution(posses, ex, keys))
+                            Chain(EvalFailure.BatchResolution(posses, ex, allKeys))
                           )
                         case Right(fa) => fa
                       }

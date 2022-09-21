@@ -16,14 +16,8 @@ object dsl {
   def field[F[_], I, T, A](arg: Arg[A])(resolver: Resolver[F, (I, A), T])(implicit tpe: => Out[F, T]): Field[F, I, T, A] =
     Field[F, I, T, A](arg, resolver, Eval.later(tpe))
 
-  // def field[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => T)(implicit tpe: => Out[F, T], F: Applicative[F]): Field[F, I, T, A] =
-  //   Field[F, I, T, A](arg, EffectResolver { case (i, a) => F.pure(resolver(i, a).rightIor) }, Eval.later(tpe))
-
   def field[F[_], I, T](resolver: Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T, Unit] =
     Field[F, I, T, Unit](Applicative[Arg].unit, resolver.contramap[(I, Unit)] { case (i, _) => i }, Eval.later(tpe))
-
-  // def field[F[_], I, T](resolver: I => T)(implicit F: Applicative[F], tpe: => Out[F, T]): Field[F, I, T, Unit] =
-  //   Field[F, I, T, Unit](Applicative[Arg].unit, EffectResolver { case (i, a) => F.pure(resolver(i).rightIor) }, Eval.later(tpe))
 
   def arg[A](name: String, default: Option[A] = None)(implicit tpe: In[A]): Arg[A] =
     Arg.initial[A](ArgParam(name, tpe, default))
@@ -56,11 +50,4 @@ object dsl {
       instanceHd.asInstanceOf[Instance[F, A, Any]] :: instanceTl.toList.asInstanceOf[List[Instance[F, A, Any]]],
       NonEmptyList(hd, tl.toList)
     )
-
-  def batchFull[F[_]: Functor, I, K, A, T](br: BatcherReference[K, T])(keys: I => F[Ior[String, Set[K]]])(
-      reasscociate: (I, Map[K, T]) => F[Ior[String, A]]
-  )(implicit tpe: => Out[F, T]) =
-    BatchResolver[F, I, K, A, T](br, i => keys(i).map(_.map(xs => Batch(xs, m => IorT(reasscociate(i, m))))))
-
-  // def batchTraverse[F[_], G[_], I, K, T](br: BatcherReference[K, T])(keys: I => F[Ior[String, G[K]]])
 }

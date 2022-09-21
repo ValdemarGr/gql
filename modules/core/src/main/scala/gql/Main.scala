@@ -274,7 +274,7 @@ query withNestedFragments {
 
     StreamRef[F, String, Unit](k => Resource.pure(fs2.Stream(k).repeat.lift[F].metered((if (k == "John") 200 else 500).millis).as(())))
       .flatMap { nameRef =>
-        BatcherReference[F, Int, ServerData](xs => F.pure(xs.map(x => x -> ServerData(x)).toMap)).map { serverDataBatcher =>
+        BatchResolver[F, Int, ServerData](xs => F.pure(xs.map(x => x -> ServerData(x)).toMap)).map { serverDataBatcher =>
           implicit val inputDataType: In[InputData] = InputSyntax.obj[InputData](
             "InputData",
             (
@@ -317,7 +317,12 @@ query withNestedFragments {
                 "a" -> f(full(x => IorT.bothT[F]("Oh no, an error!", "Hahaa"))),
                 "a2" -> f(arg[Int]("num"))(pur { case (i, _) => i.a }),
                 "b" -> f(eff(_.b)),
-                "sd" -> f(serverDataBatcher.traverse(x => IorT.liftF(x.b.map(i => Seq(i, i + 1, i * 2))))),
+                "sd" -> f(
+                  serverDataBatcher
+                    .map { case (_, m) => m.values.toSeq }
+                    .contramapF(x => x.b.map(i => Set(i, i + 1, i * 2).rightIor))
+                ),
+                // "sd" -> f(eff(x => x.b.map(ServerData(_)))),
                 "c" -> f(eff(_.c.map(_.toSeq))),
                 "doo" -> f(pur(_ => Vector(Vector(Vector.empty[String])))),
                 "nestedSignal" -> f(
@@ -728,6 +733,29 @@ object Test2 {
 
   type G[A] = Kleisli[cats.effect.IO, Context, A]
   getSchema[G]
+}
+
+object Test3 {
+  import gql.resolver._
+  import cats.effect._
+
+  val brState = BatchResolver[IO, Int, Int](keys => IO.pure(keys.map(k => k -> k).toMap))
+  import gql._
+  import gql.dsl._
+  import cats._
+
+  val statefulSchema = brState.map { (br: BatchResolver[IO, Set[Int], Map[Int, Int]]) =>
+    val adjusted: BatchResolver[IO, Int, Int] = br
+      .contramap[Int](Set(_))
+      .map { case (_, m) => m.values.head }
+
+    SchemaShape[IO, Unit](
+      tpe(
+        "Query",
+        "field" -> field[IO, Unit, Int](adjusted.contramap(_ => 42))
+      )
+    )
+  }
 }
 
 // object SangriaTest {

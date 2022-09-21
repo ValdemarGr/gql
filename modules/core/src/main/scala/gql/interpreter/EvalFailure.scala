@@ -28,7 +28,7 @@ object EvalFailure {
       path: CursorGroup,
       resultMap: Map[BatchKey, BatchValue],
       expectedKeys: Set[BatchKey],
-      conflictingKey: BatchKey
+      conflictingKeys: Set[BatchKey]
   ) extends EvalFailure { lazy val paths = Chain(path) }
   final case class BatchPartitioning(
       path: CursorGroup,

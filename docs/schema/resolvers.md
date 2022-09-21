@@ -24,33 +24,32 @@ The resolver captures a the following steps in it's type:
 The resolver will automatically construct a GraphQL error if any of the keys are missing.
 :::
  
-The `BatchResolver` must also have an implementation of `Set[K] => F[Map[K, T]]`, which is referenced by a `BatcherReference[K, T]`.
+The `BatchResolver` must also have an implementation of `Set[K] => F[Map[K, T]]`, which is referenced by a `BatcherRef[K, T]`.
 :::info
 The `BatchResolver` cannot directly embed `Set[K] => F[Map[K, T]]`, since this would allow ambiguity.
 What if two `BatchResolver`'s were to have their keys merged, what resolver's `Set[K] => F[Map[K, T]]` should be used?
 :::
 
-A `BatcherReference[K, T]` is constructed as follows:
+A `BatcherRef[K, T]` is constructed as follows:
 ```scala mdoc
 import gql.resolver._
 import cats.effect._
 
-val brState = BatcherReference[IO, Int, Int](keys => IO.pure(keys.map(k => k -> k).toMap))
+val brState = BatcherRef[IO, Int, Int](keys => IO.pure(keys.map(k => k -> k).toMap))
 ```
 A `State` monad is used to keep track of the batchers that have been created and unique id generation.
 During schema construction, `State` can be composed using `Monad`ic operations.
-`Schema` contains a smart constructor `stateful` that runs the `State` monad.
+The `Schema` companion object contains a smart constructors that run the `State` monad.
 ```scala mdoc
 import gql._
 import gql.dsl._
 import cats._
 
-val statefulSchema = brState.map{ br =>
-  SchemaShape[Id, Unit](
+val statefulSchema = brState.map { br: BatcherRef[Set[Int], Map[Int, Int]] =>
+  SchemaShape[IO, Unit](
     tpe(
       "Query",
-      "field" -> field(pure(_ => "placeholder"))
-      // "field" -> batch(br)(_ => 42)(_.toString())
+      "field" -> field(batch(br.contramap[Unit](_ => Set(42)).map[Int] { case (_, m) => m(42) }))
     )
   )
 }
