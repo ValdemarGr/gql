@@ -127,6 +127,7 @@ implicit def domain2[F[_]: Applicative]: Type[F, Domain] =
 
 ## Union
 `Union` types allow unification of arbitary types.
+The `Union` type defines a set of `PartialFunction`s that can specify the the type.
 ```scala mdoc
 sealed trait Animal
 final case class Dog(name: String) extends Animal
@@ -141,6 +142,11 @@ implicit def animal[F[_]: Applicative] =
     instance[Cat]{ case x: Cat => x }
   )
 ```
+:::note
+A curious reader might cosider the possibilty of using a total function form the unifying type to the subtypes.
+This would also allow the scala compiler to catch non-exhaustive matches.
+This is not possible, since the gql type needs to be available at the time of schema construction, and the specification function acts in query time.
+:::
 :::caution
 Defining instances for `Animal` that are not referenced in the gql type is mostly safe, since any spread will simple give no fields.
 Most GraphQL clients also handle this case gracefully, for backwards compatibility reasons.
@@ -167,6 +173,28 @@ implicit def unification[F[_]: Applicative] =
     "Unification",
     instance[Entity1]{ case Unification.E1(value) => value },
     instance[Entity2]{ case Unification.E2(value) => value }
+  )
+```
+### For the daring
+Since the specify function is a `PartialFunction`, it is indeed possible to have no unifying type:
+```scala mdoc
+def untypedUnification[F[_]: Applicative] =
+  union[F, Any](
+    "AnyUnification",
+    instance[Entity1]{ case x: Entity1 => x },
+    instance[Entity2]{ case x: Entity2 => x }
+  )
+```
+And also complex routing logic:
+```scala mdoc
+def routedUnification[F[_]: Applicative] =
+  union[F, Unification](
+    "RoutedUnification",
+    instance[Entity1]{ case Unification.E1(x) if x.value == "Jane" => x },
+    instance[Entity2]{ 
+      case Unification.E1(x) => Entity2(x.value)
+      case Unification.E2(x) => x
+    },
   )
 ```
 
@@ -213,7 +241,10 @@ implicit def node[F[_]: Applicative] =
 :::info
 In most GraphQL implementations types define the interfaces they implement, 
 but in gql the interfaces define the types that extends it.
-An important goal of gql is to be predictable, so such a design choice is not possible whilst maintaining predictability.
 Defining interface implementations the other way around is ambiguous,
 since the same type may appear two places in the schema, which raises the question of which type to use.
+An important goal of gql is to be predictable, so such a design choice is not possible whilst maintaining predictability.
+
+Furthermore, referencing implementations this way also ensures that all types in the schema can be discovered.
+Inverting the relationship 
 :::

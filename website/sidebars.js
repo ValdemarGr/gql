@@ -34,7 +34,8 @@ const sidebars = {
         "schema/resolvers",
         "schema/context",
         "schema/composition",
-        "schema/error_handling"
+        "schema/error_handling",
+        "schema/graph_philosophy",
       ]
     }
   ]
