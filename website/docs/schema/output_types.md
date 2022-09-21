@@ -30,7 +30,7 @@ implicit def idScalar[F[_], A](implicit inner: Scalar[F, A]): Scalar[F, ID[A]] =
 implicitly[Scalar[Id, ID[String]]]
 // res0: Scalar[Id, ID[String]] = Scalar(
 //   name = "ID",
-//   codec = io.circe.Codec$$anon$4@60f72689
+//   codec = io.circe.Codec$$anon$4@25acbb2c
 // )
 ```
 
@@ -151,4 +151,73 @@ Most GraphQL clients also handle this case gracefully, for backwards compatibili
 The exception is `__typename`.
 If the interpreter cannot find an instance of the value when querying for `__typename`, a GraphQL error will be returned.
 :::
-In the true spirit of unification
+
+### Ad-hoc unions
+In the true spirit of unification, `Union` types can be constructed in a more ad-hoc fashion:
+```scala
+final case class Entity1(value: String)
+final case class Entity2(value: String)
+
+sealed trait Unification
+object Unification {
+  final case class E1(value: Entity1) extends Unification
+  final case class E2(value: Entity2) extends Unification
+}
+
+implicit def entity1[F[_]: Applicative]: Type[F, Entity1] = ???
+implicit def entity2[F[_]: Applicative]: Type[F, Entity2] = ???
+implicit def unification[F[_]: Applicative] =
+  union[F, Unification](
+    "Unification",
+    instance[Entity1]{ case Unification.E1(value) => value },
+    instance[Entity2]{ case Unification.E2(value) => value }
+  )
+```
+
+## Interface
+An interface is a combination of `Type` and `Union`.
+```scala
+sealed trait Node {
+ def id: String
+}
+
+final case class Person(
+  name: String,
+  id: String
+) extends Node
+
+final case class Company(
+  name: String,
+  id: String
+) extends Node
+
+implicit def person[F[_]: Applicative] = 
+  tpe[F, Person](
+    "Person",
+    "name" -> field(pure(_.name)),
+    "id" -> field(pure(x => ID(x.id)))
+  )
+  
+implicit def company[F[_]: Applicative] =
+  tpe[F, Company](
+    "Company",
+    "name" -> field(pure(_.name)),
+    "id" -> field(pure(x => ID(x.id)))
+  )
+  
+implicit def node[F[_]: Applicative] =
+  interface[F, Node](
+    "Node",
+    "id" -> field(pure(x => ID(x.id)))
+  )(
+    instance[Person]{ case x: Person => x },
+    instance[Company]{ case x: Company => x }
+  )
+```
+:::info
+In most GraphQL implementations types define the interfaces they implement, 
+but in gql the interfaces define the types that extends it.
+Defining interface implementations the other way around is ambiguous,
+since the same type may appear two places in the schema, which raises the question of which type to use.
+An important goal of gql is to be predictable, so such a design choice is not possible whilst maintaining predictability.
+:::
