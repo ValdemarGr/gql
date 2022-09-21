@@ -49,7 +49,7 @@ val statefulSchema = brState.map{ br =>
   SchemaShape[Id, Unit](
     tpe(
       "Query",
-      "field" -> pure(_ => "placeholder")
+      "field" -> field(pure(_ => "placeholder"))
       // "field" -> batch(br)(_ => 42)(_.toString())
     )
   )

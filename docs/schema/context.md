@@ -26,7 +26,7 @@ def getSchema[F[_]: Applicative](implicit A: Ask[F, Context]): Schema[F, Unit] =
   def schema: Schema[F, Unit] = Schema.simple[F, Unit](
     tpe(
       "Query",
-      "me" -> eff(_ => A.ask.map(_.userId))
+      "me" -> field(eff(_ => A.ask.map(_.userId)))
     )
   )
   

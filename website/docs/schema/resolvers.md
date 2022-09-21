@@ -36,7 +36,7 @@ import gql.resolver._
 import cats.effect._
 
 val brState = BatcherReference[IO, Int, Int](keys => IO.pure(keys.map(k => k -> k).toMap))
-// brState: cats.data.package.State[gql.SchemaState[IO], BatcherReference[Int, Int]] = cats.data.IndexedStateT@5556a9b1
+// brState: cats.data.package.State[gql.SchemaState[IO], BatcherReference[Int, Int]] = cats.data.IndexedStateT@c2cdbb4
 ```
 A `State` monad is used to keep track of the batchers that have been created and unique id generation.
 During schema construction, `State` can be composed using `Monad`ic operations.
@@ -50,10 +50,10 @@ val statefulSchema = brState.map{ br =>
   SchemaShape[Id, Unit](
     tpe(
       "Query",
-      "field" -> pure(_ => "placeholder")
+      "field" -> field(pure(_ => "placeholder"))
       // "field" -> batch(br)(_ => 42)(_.toString())
     )
   )
 }
-// statefulSchema: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], SchemaShape[Id, Unit]] = cats.data.IndexedStateT@3164e7da
+// statefulSchema: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], SchemaShape[Id, Unit]] = cats.data.IndexedStateT@76390b3e
 ```

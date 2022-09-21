@@ -65,7 +65,7 @@ trait Repository[F[_]] {
   def getDroid(id: String): F[Droid]
 }
 
-def schema[F[_]: Applicative](implicit repo: Repository[F]) = {
+def schema[F[_]: Applicative](implicit repo: Repository[F]): Schema[F, Unit] = {
   implicit val episode: Enum[F, Episode] = {
     import Episode._
     enum(
@@ -79,24 +79,24 @@ def schema[F[_]: Applicative](implicit repo: Repository[F]) = {
   implicit lazy val human: Type[F, Human] =
     tpe(
       "Human",
-      "homePlanet" -> pure(_.homePlanet),
+      "homePlanet" -> field(pure(_.homePlanet)),
       character.fields.toList: _*
     )
 
   implicit lazy val droid: Type[F, Droid] =
     tpe(
       "Droid",
-      "primaryFunction" -> pure(_.primaryFunction),
+      "primaryFunction" -> field(pure(_.primaryFunction)),
       character.fields.toList: _*
     )
 
   implicit lazy val character: Interface[F, Character] =
     interface[F, Character](
       "Character",
-      "id" -> pure(_.id),
-      "name" -> pure(_.name),
-      "friends" -> pure(_.friends),
-      "appearsIn" -> pure(_.appearsIn)
+      "id" -> field(pure(_.id)),
+      "name" -> field(pure(_.name)),
+      "friends" -> field(pure(_.friends)),
+      "appearsIn" -> field(pure(_.appearsIn))
     )(
       instance[Human] { case x: Human => x },
       instance[Droid] { case x: Droid => x }
@@ -105,10 +105,10 @@ def schema[F[_]: Applicative](implicit repo: Repository[F]) = {
   Schema.simple[F, Unit](
     tpe(
       "Query",
-      "hero" -> eff(arg[Episode]("episode")) { case (_, episode) => repo.getHero(episode) },
-      "character" -> eff(arg[ID[String]]("id")) { case (_, id) => repo.getCharacter(id.value) },
-      "human" -> eff(arg[ID[String]]("id")) { case (_, id) => repo.getHuman(id.value) },
-      "droid" -> eff(arg[ID[String]]("id")) { case (_, id) => repo.getDroid(id.value) }
+      "hero" -> field(arg[Episode]("episode"))(eff { case (_, episode) => repo.getHero(episode) }),
+      "character" -> field(arg[ID[String]]("id"))(eff { case (_, id) => repo.getCharacter(id.value) }),
+      "human" -> field(arg[ID[String]]("id"))(eff { case (_, id) => repo.getHuman(id.value) }),
+      "droid" -> field(arg[ID[String]]("id"))(eff { case (_, id) => repo.getDroid(id.value) })
     )
   )
 }
