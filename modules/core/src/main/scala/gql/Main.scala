@@ -739,7 +739,7 @@ object Test3 {
   import gql.resolver._
   import cats.effect._
 
-  val brState = BatchResolver[IO, Int, Int](keys => IO.pure(keys.map(k => k -> k).toMap))
+  val brState = BatchResolver[IO, Int, Int](keys => IO.pure(keys.map(k => k -> (k * 2)).toMap))
   import gql._
   import gql.dsl._
   import cats._
@@ -756,6 +756,25 @@ object Test3 {
       )
     )
   }
+
+  import cats.effect.unsafe.implicits.global
+  def s = Schema.stateful(statefulSchema)
+
+  val query = """
+    query {
+      field
+    }
+  """
+
+  implicit val stats = Statistics[IO].unsafeRunSync()
+
+  def parsed = gql.parser.parse(query).toOption.get
+
+  def program = Execute.executor(parsed, s, Map.empty) match {
+    case Execute.ExecutorOutcome.Query(run) => run(()).map { case (_, output) => output }
+  }
+
+  program.unsafeRunSync()
 }
 
 // object SangriaTest {
