@@ -379,7 +379,7 @@ object Interpreter {
                 selection.fields,
                 in.flatMap(x => Chain.fromOption(specify(x.value)).map(y => x.succeed(y, _.fragment(id, typename))))
               )
-            case df @ PreparedDataField(id, name, _, _, _, _) => runDataField(df, in)
+            case df @ PreparedDataField(id, name, _, _, _, _, _) => runDataField(df, in)
           }
 
         def startNext(s: Prepared[F, Any], in: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] = W.defer {
@@ -447,7 +447,9 @@ object Interpreter {
                     val resolvedF: F[WriterT[F, Chain[EvalFailure], Chain[EvalNode[Json]]]] =
                       schemaState
                         .batchers(b.batcher)(allKeys)
-                        .map { (resultLookup: Map[BatchKey, BatchValue]) =>
+                        .timed
+                        .flatTap { case (dur, m) => submit(Planner.makeBatchName[F](b.batcher), dur, allKeys.size) }
+                        .map { case (dur, resultLookup: Map[BatchKey, BatchValue]) =>
                           nec.toChain.parFlatTraverse { case (df, bn) =>
                             val mappedValuesF: W[Chain[EvalNode[Any]]] =
                               bn.keys.flatTraverse { case (cg, (ks, reassoc)) =>
@@ -463,10 +465,11 @@ object Interpreter {
                                   case Some(nel) =>
                                     failM[Chain[EvalNode[Any]]](EvalFailure.BatchMissingKey(cg, resultLookup, ks, nel.toList.toSet))
                                   case None =>
-                                    attemptUserE(
-                                      reassoc(found.toMap).map(_.map(res => Chain(EvalNode(cg, res)))),
-                                      EvalFailure.BatchPostProcessing(cg, _, Chain.fromSeq(found))
-                                    )
+                                    lift(submit(executionDeps.nodeMap(df.id).name, dur, allKeys.size)) >>
+                                      attemptUserE(
+                                        reassoc(found.toMap).map(_.map(res => Chain(EvalNode(cg, res)))),
+                                        EvalFailure.BatchPostProcessing(cg, _, Chain.fromSeq(found))
+                                      )
                                 }
                               }
 
@@ -561,7 +564,7 @@ object Interpreter {
                 _reconstructSelection(selection.fields, m2)
               }
               .getOrElse(JsonObject.empty)
-          case df @ PreparedDataField(id, name, _, selection, _, alias) =>
+          case df @ PreparedDataField(id, name, _, selection, _, alias, _) =>
             JsonObject(
               alias.getOrElse(name) -> reconstructField(selection, m.get(Some(GraphArc.Field(id, name))).toList.flatten)
             )

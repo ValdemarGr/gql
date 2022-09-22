@@ -13,11 +13,11 @@ object dsl {
       tl: (String, Field[F, A, _, _])*
   ) = Type[F, A](name, NonEmptyList(hd, tl.toList))
 
-  def field[F[_], I, T, A](arg: Arg[A])(resolver: Resolver[F, (I, A), T])(implicit tpe: => Out[F, T]): Field[F, I, T, A] =
-    Field[F, I, T, A](arg, resolver, Eval.later(tpe))
+  // def field[F[_], I, T, A](arg: Arg[A])(resolver: Resolver[F, (I, A), T])(implicit tpe: => Out[F, T]): Field[F, I, T, A] =
+  //   Field[F, I, T, A](arg, resolver, Eval.later(tpe))
 
-  def field[F[_], I, T](resolver: Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T, Unit] =
-    Field[F, I, T, Unit](Applicative[Arg].unit, resolver.contramap[(I, Unit)] { case (i, _) => i }, Eval.later(tpe))
+  // def field[F[_], I, T](resolver: Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T, Unit] =
+  //   Field[F, I, T, Unit](Applicative[Arg].unit, resolver.contramap[(I, Unit)] { case (i, _) => i }, Eval.later(tpe))
 
   def arg[A](name: String, default: Option[A] = None)(implicit tpe: In[A]): Arg[A] =
     Arg.initial[A](ArgParam(name, tpe, default))
@@ -27,6 +27,28 @@ object dsl {
 
   def eff[F[_], I, T](resolver: I => F[T])(implicit F: Applicative[F]): EffectResolver[F, I, T] =
     EffectResolver[F, I, T](i => resolver(i).map(_.rightIor))
+
+  def eff2[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => F[T])(implicit F: Applicative[F], tpe: => Out[F, T]): Field[F, I, T, A] =
+    Field[F, I, T, A](
+      arg,
+      EffectResolver[F, (I, A), T] { case (i, a) => resolver(i, a).map(_.rightIor) },
+      Eval.later(tpe)
+    )
+
+  def eff2[F[_], I, T](resolver: I => F[T])(implicit F: Applicative[F], tpe: => Out[F, T]): Field[F, I, T, Unit] = {
+    implicit lazy val t0 = tpe
+    eff2[F, I, T, Unit](Applicative[Arg].unit)((i, _) => resolver(i))
+  }
+
+  def pure2[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => T)(implicit F: Applicative[F], tpe: => Out[F, T]): Field[F, I, T, A] = {
+    implicit lazy val t0 = tpe
+    eff2[F, I, T, A](arg)((i, a) => F.pure(resolver(i, a)))
+  }
+
+  def pure2[F[_], I, T](resolver: I => T)(implicit F: Applicative[F], tpe: => Out[F, T]): Field[F, I, T, Unit] = {
+    implicit lazy val t0 = tpe
+    eff2[F, I, T](i => F.pure(resolver(i)))
+  }
 
   def enum[F[_], A](name: String, hd: (String, A), tl: (String, A)*) = Enum[F, A](name, NonEmptyList(hd, tl.toList))
 

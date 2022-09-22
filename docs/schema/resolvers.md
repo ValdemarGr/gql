@@ -65,6 +65,13 @@ def statefulSchema = brState.map { (br: BatchResolver[IO, Set[Int], Map[Int, Int
   )
 }
 ```
+:::note
+There are more formulations of batch resolvers that can be possible, but the chosen one has the least overhead for the developer.
+
+One could let the developer declare batch resolvers in-line and explicitly name them.
+This would impose the validation constraint that all batch resolvers with the same name must have the same function address, or else there would be ambiguity.
+Reasoning with function addreses is not very intuitive, so this is not the preferred formulation.
+:::
 
 Which we can finally run:
 ```scala mdoc
@@ -86,4 +93,26 @@ def program = Execute.executor(parsed, s, Map.empty) match {
 }
                                                                                         
 program.unsafeRunSync()
+```
+
+### Design patterns
+Since `State` itself is a monad, we can compose them into `case class`es for more ergonomic implementation at scale.
+```scala mdoc
+trait User
+trait UserId
+
+trait Company
+trait CompanyId
+
+final case cass DomainBatchers[F[_]](
+  userBatcher: BatchResolver[F, UserId, User],
+  companyBatcher: BatchResolver[F, CompanyId, Company]
+  doubleBatcher: BatchResolver[F, Int, Int]
+)
+
+(
+  BatchResolver[IO, UserId, User](_ => ???),
+  BatchResolver[IO, CompanyId, Company](_ => ???),
+  BatchResolver[IO, Int, Int](is => IO.pure(is.map(i => i -> (i * 2)).toMap))
+).mapN(DomainBatchers.apply)
 ```

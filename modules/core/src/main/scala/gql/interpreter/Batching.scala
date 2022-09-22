@@ -39,7 +39,7 @@ object Batching {
       Eval.defer {
         sel.flatTraverse { pf =>
           pf match {
-            case df @ PreparedDataField(id, name, resolve, selection, batchName, _) =>
+            case df @ PreparedDataField(id, name, resolve, selection, _, _, _) =>
               val hd = id -> df
               unpackPrep(selection).map(tl => NonEmptyList(hd, tl))
             case PreparedFragField(_, _, _, selection) => flattenDataFieldMap(selection.fields)

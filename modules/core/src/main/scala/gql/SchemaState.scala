@@ -7,7 +7,6 @@ final case class SchemaState[F[_]](
     nextId: Int,
     streams: Map[Int, Any => Resource[F, fs2.Stream[F, Any]]],
     batchers: Map[Int, Set[Any] => F[Map[Any, Any]]],
-    streams2: Map[Int, Any => fs2.Stream[F, Any]]
 )
 
 object SchemaState {
@@ -16,7 +15,6 @@ object SchemaState {
       nextId = 0,
       streams = Map.empty,
       batchers = Map.empty,
-      streams2 = Map.empty
     )
   )
 }

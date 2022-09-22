@@ -17,7 +17,7 @@ object Schema {
     Schema(SchemaShape(query), Empty[SchemaState[F]].empty)
 
   def stateful[F[_], Q](fa: State[SchemaState[F], SchemaShape[F, Q]]) = {
-    val (state, shape) = fa.run(SchemaState(0, Map.empty, Map.empty, Map.empty)).value
+    val (state, shape) = fa.run(SchemaState(0, Map.empty, Map.empty)).value
     Schema(shape, state)
   }
 }

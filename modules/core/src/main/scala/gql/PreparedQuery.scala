@@ -25,7 +25,8 @@ object PreparedQuery {
       resolve: Resolver[F, I, T],
       selection: Prepared[F, T],
       typename: String,
-      alias: Option[String]
+      alias: Option[String],
+      parentTypename: String
   ) extends PreparedField[F, I]
 
   final case class PreparedFragField[F[_], A](
@@ -218,7 +219,8 @@ object PreparedQuery {
       ol: Selectable[G, Any],
       s: P.SelectionSet,
       variableMap: Map[String, Json],
-      fragments: Map[String, Pos[P.FragmentDefinition]]
+      fragments: Map[String, Pos[P.FragmentDefinition]],
+      currentTypename: String
   )(implicit
       G: Applicative[G],
       S: Stateful[F, Prep],
@@ -250,8 +252,9 @@ object PreparedQuery {
       case Pos(caret, P.Selection.FieldSelection(field)) =>
         ambientPath(field.name) {
           schemaMap.get(field.name) match {
-            case None                             => raise(s"unknown field name ${field.name}", Some(caret))
-            case Some(f: Field[G, Any, Any, Any]) => prepareField[F, G](field, caret, f, variableMap, fragments)
+            case None => raise(s"unknown field name ${field.name}", Some(caret))
+            case Some(f: Field[G, Any, Any, Any]) =>
+              prepareField[F, G](field, caret, f, variableMap, fragments, currentTypename)
           }
         }
       case Pos(caret, P.Selection.InlineFragmentSelection(f)) =>
@@ -259,7 +262,7 @@ object PreparedQuery {
           case None => raise(s"inline fragment must have a type condition", Some(caret))
           case Some(typeCnd) =>
             matchType[F, G](typeCnd, ol, caret).flatMap { case (ol, specialize) =>
-              prepareSelections[F, G](ol, f.selectionSet, variableMap, fragments)
+              prepareSelections[F, G](ol, f.selectionSet, variableMap, fragments, typeCnd)
                 .map(Selection(_))
                 .flatMap[PreparedField[G, Any]](s => nextId[F].map(id => PreparedFragField(id, typeCnd, specialize, s)))
             }
@@ -269,7 +272,7 @@ object PreparedQuery {
           fragments.get(f.fragmentName) match {
             case None => raise(s"unknown fragment name ${f.fragmentName}", Some(caret))
             case Some(fd) =>
-              prepareFragment[F, G](ol, fd, variableMap, fragments)
+              prepareFragment[F, G](ol, fd, variableMap, fragments, fd.value.typeCnd)
                 .flatMap[PreparedField[G, Any]] { fd =>
                   nextId[F].map(id => PreparedFragField(id, fd.typeCondition, fd.specify, Selection(fd.fields)))
                 }
@@ -318,7 +321,8 @@ object PreparedQuery {
       caret: Caret,
       field: Field[G, Any, Any, Any],
       variableMap: Map[String, Json],
-      fragments: Map[String, Pos[P.FragmentDefinition]]
+      fragments: Map[String, Pos[P.FragmentDefinition]],
+      currentTypename: String
   )(implicit
       S: Stateful[F, Prep],
       F: MonadError[F, PositionalError],
@@ -329,12 +333,14 @@ object PreparedQuery {
       val ss = gqlField.selectionSet.value
       val selCaret = gqlField.selectionSet.caret
 
+      val tn = underlyingOutputTypename(field.output.value)
+
       def typePrep(t: Out[G, Any]): F[Prepared[G, Any]] =
         (t, ss) match {
           case (OutArr(inner), _) => typePrep(inner).map(PreparedList(_))
           case (OutOpt(inner), _) => typePrep(inner).map(PreparedOption(_))
           case (ol: Selectable[G, Any], Some(ss)) =>
-            prepareSelections[F, G](ol, ss, variableMap, fragments)
+            prepareSelections[F, G](ol, ss, variableMap, fragments, tn)
               .map(Selection(_))
           case (e: Enum[G, Any], None) =>
             F.pure(PreparedLeaf(e.name, x => Json.fromString(e.revm(x))))
@@ -347,7 +353,9 @@ object PreparedQuery {
       val prepF: F[Prepared[G, Any]] = typePrep(tpe)
 
       prepF.flatMap(p =>
-        nextId[F].map(id => PreparedDataField(id, gqlField.name, resolve, p, underlyingOutputTypename(field.output.value), gqlField.alias))
+        nextId[F].map { id =>
+          PreparedDataField(id, gqlField.name, resolve, p, tn, gqlField.alias, currentTypename)
+        }
       )
     }
   }
@@ -427,7 +435,8 @@ object PreparedQuery {
       ol: Selectable[G, Any],
       f: Pos[P.FragmentDefinition],
       variableMap: Map[String, Json],
-      fragments: Map[String, Pos[P.FragmentDefinition]]
+      fragments: Map[String, Pos[P.FragmentDefinition]],
+      currentTypename: String
   )(implicit
       S: Stateful[F, Prep],
       F: MonadError[F, PositionalError],
@@ -443,7 +452,7 @@ object PreparedQuery {
           val programF: F[FragmentDefinition[G, Any]] =
             matchType[F, G](f.value.typeCnd, ol, f.caret)
               .flatMap { case (t, specify) =>
-                prepareSelections[F, G](t, f.value.selectionSet, variableMap, fragments)
+                prepareSelections[F, G](t, f.value.selectionSet, variableMap, fragments, currentTypename)
                   .map(FragmentDefinition(f.value.name, f.value.typeCnd, specify, _))
               }
 
@@ -451,43 +460,51 @@ object PreparedQuery {
       }
     }
 
-  def prepareParts[F[_], G[_]: Applicative, Q](
+  def getOperationDefinition[F[_]](
       ops: List[P.OperationDefinition],
+      operationName: Option[String]
+  )(implicit F: MonadError[F, String]): F[P.OperationDefinition] =
+    (ops, operationName) match {
+      case (Nil, _)      => F.raiseError(s"no operations provided")
+      case (x :: Nil, _) => F.pure(x)
+      case (xs, _) if xs.exists {
+            case _: P.OperationDefinition.Simple => true
+            case _                               => false
+          } =>
+        F.raiseError(s"exactly one operation must be suplied for shorthand queries")
+      case (x :: y :: _, None) =>
+        F.raiseError(s"operation name must be supplied for multiple operations")
+      case (xs, Some(name)) =>
+        val o = xs.collectFirst { case d: P.OperationDefinition.Detailed if d.name.contains(name) => d }
+        F.fromOption(o, s"unable to find operation $name")
+    }
+
+  def prepareParts[F[_], G[_]: Applicative, Q](
+      op: P.OperationDefinition,
       frags: List[Pos[P.FragmentDefinition]],
       schema: Schema[G, Q],
-      variableMap: Map[String, Json],
-      operationName: Option[String] = None
+      variableMap: Map[String, Json]
   )(implicit
       S: Stateful[F, Prep],
       F: MonadError[F, PositionalError],
       D: Defer[F]
   ) = {
-    val op: F[P.OperationDefinition] =
-      (ops, operationName) match {
-        case (Nil, _)      => raise(s"no operations provided", None)
-        case (x :: Nil, _) => F.pure(x)
-        case (xs, _) if xs.exists {
-              case _: P.OperationDefinition.Simple => true
-              case _                               => false
-            } =>
-          raise(s"exactly one operation must be suplied for shorthand queries", None)
-        case (x :: y :: _, None) =>
-          raise(s"operation name must be supplied for multiple operations", None)
-        case (xs, Some(name)) =>
-          raiseOpt(
-            xs.collectFirst { case d: P.OperationDefinition.Detailed if d.name.contains(name) => d },
-            s"unable to find operation $name",
-            None
-          )
+    val rootTypename =
+      op match {
+        case P.OperationDefinition.Simple(_)                                          => "Query"
+        case P.OperationDefinition.Detailed(P.OperationType.Query, _, _, _, _)        => "Query"
+        case P.OperationDefinition.Detailed(P.OperationType.Mutation, _, _, _, _)     => "Mutation"
+        case P.OperationDefinition.Detailed(P.OperationType.Subscription, _, _, _, _) => "Subscription"
       }
 
-    op.flatMap {
+    op match {
       case P.OperationDefinition.Simple(sel) =>
         prepareSelections[F, G](
           schema.shape.query.asInstanceOf[Selectable[G, Any]],
           sel,
           variableMap,
-          frags.map(f => f.value.name -> f).toMap
+          frags.map(f => f.value.name -> f).toMap,
+          rootTypename
         ).map(OperationType.Query(_))
       case P.OperationDefinition.Detailed(ot, _, vdsO, _, sel) =>
         vdsO match {
@@ -507,7 +524,8 @@ object PreparedQuery {
               schema.shape.query.asInstanceOf[Selectable[G, Any]],
               sel,
               variableMap,
-              frags.map(f => f.value.name -> f).toMap
+              frags.map(f => f.value.name -> f).toMap,
+              rootTypename
             ).map(OperationType.Query(_))
         }
     }
@@ -526,12 +544,15 @@ object PreparedQuery {
 
     type G[A] = StateT[EitherT[Eval, PositionalError, *], Prep, A]
 
-    val o = prepareParts[G, F, Q](ops, frags, schema, variableMap).map(_.rootFields)
-
-    o
-      .runA(Prep(Set.empty, 1, PrepCursor.empty))
-      .value
-      .value
+    getOperationDefinition[Either[String, *]](ops, None) match {
+      case Left(e) => Left(PositionalError(PrepCursor.empty, None, e))
+      case Right(op) =>
+        prepareParts[G, F, Q](op, frags, schema, variableMap)
+          .map(_.rootFields)
+          .runA(Prep(Set.empty, 1, PrepCursor.empty))
+          .value
+          .value
+    }
   }
 
   sealed trait OperationType[F[_]]
@@ -549,19 +570,7 @@ object PreparedQuery {
       schema: Schema[F, Q],
       variableMap: Map[String, Json]
   ): Either[PositionalError, OperationType[F]] = {
-    val (ops, frags) =
-      executabels.toList.partitionEither {
-        case P.ExecutableDefinition.Operation(op)  => Left(op)
-        case P.ExecutableDefinition.Fragment(frag) => Right(frag)
-      }
-
-    type G[A] = StateT[EitherT[Eval, PositionalError, *], Prep, A]
-
-    val o = prepareParts[G, F, Q](ops, frags, schema, variableMap)
-
-    o
-      .runA(Prep(Set.empty, 1, PrepCursor.empty))
-      .value
-      .value
+    prepare[F, Q](executabels, schema, variableMap)
+      .map(OperationType.Query(_))
   }
 }

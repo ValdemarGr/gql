@@ -619,24 +619,24 @@ object Example {
     implicit lazy val human: Type[F, Human] =
       tpe(
         "Human",
-        "homePlanet" -> field(pure(_.homePlanet)),
+        "homePlanet" -> pure2(_.homePlanet),
         character.fields.toList: _*
       )
 
     implicit lazy val droid: Type[F, Droid] =
       tpe(
         "Droid",
-        "primaryFunction" -> field(pure(_.primaryFunction)),
+        "primaryFunction" -> pure2(_.primaryFunction),
         character.fields.toList: _*
       )
 
     implicit lazy val character: Interface[F, Character] =
       interface[F, Character](
         "Character",
-        "id" -> field(pure(_.id)),
-        "name" -> field(pure(_.name)),
-        "friends" -> field(pure(_.friends)),
-        "appearsIn" -> field(pure(_.appearsIn))
+        "id" -> pure2(_.id),
+        "name" -> pure2(_.name),
+        "friends" -> pure2(_.friends),
+        "appearsIn" -> pure2(_.appearsIn)
       )(
         instance[Human] { case x: Human => x },
         instance[Droid] { case x: Droid => x }
@@ -645,10 +645,10 @@ object Example {
     Schema.simple[F, Unit](
       tpe(
         "Query",
-        "hero" -> field(arg[Episode]("episode"))(eff { case (_, episode) => repo.getHero(episode) }),
-        "character" -> field(arg[ID[String]]("id"))(eff { case (_, id) => repo.getCharacter(id.value) }),
-        "human" -> field(arg[ID[String]]("id"))(eff { case (_, id) => repo.getHuman(id.value) }),
-        "droid" -> field(arg[ID[String]]("id"))(eff { case (_, id) => repo.getDroid(id.value) })
+        "hero" -> eff2(arg[Episode]("episode")) { case (_, episode) => repo.getHero(episode) },
+        "character" -> eff2(arg[ID[String]]("id")) { case (_, id) => repo.getCharacter(id.value) },
+        "human" -> eff2(arg[ID[String]]("id"))({ case (_, id) => repo.getHuman(id.value) }),
+        "droid" -> eff2(arg[ID[String]]("id")) { case (_, id) => repo.getDroid(id.value) }
       )
     )
   }
@@ -724,7 +724,7 @@ object Test2 {
     def schema: Schema[F, Unit] = Schema.simple[F, Unit](
       tpe(
         "Query",
-        "me" -> field(eff(_ => ctx.get.map(_.userId)))
+        "me" -> eff2(_ => ctx.get.map(_.userId))
       )
     )
 
@@ -739,6 +739,7 @@ object Test3 {
   import gql.resolver._
   import cats.effect._
 
+  def get(keys: Set[Int]): IO[Map[Int, Int]] = IO.pure(keys.map(k => k -> (k * 2)).toMap)
   val brState = BatchResolver[IO, Int, Int](keys => IO.pure(keys.map(k => k -> (k * 2)).toMap))
   import gql._
   import gql.dsl._
@@ -752,7 +753,8 @@ object Test3 {
     SchemaShape[IO, Unit](
       tpe(
         "Query",
-        "field" -> field[IO, Unit, Int](adjusted.contramap(_ => 42))
+        null
+        // "field" -> field[IO, Unit, Int](adjusted.contramap(_ => 42))
       )
     )
   }

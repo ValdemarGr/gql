@@ -45,28 +45,30 @@ object Planner {
     lazy val start = end - cost
   }
 
-  def makeBatchName[F[_]](b: BatchResolver[F, Any, Any]) = s"batch_${b.id}"
+  def makeBatchName[F[_]](b: Int) = s"batch_$b"
+
+  // Use parent typename + field as fallback name since this will be unique
+  // it is of utmost importance that different resolvers don't get mixed into the same statistic
+  // since this will destroy the prediction precision
+  def makeTypename[F[_]](df: PreparedDataField[F, _, _]): String =
+    s"${df.parentTypename}_${df.name}"
 
   // TODO get stats for all occuring batch names in the graph before running the algorithm,
   // such that mutation during the algorithm is be avoided
   def constructCostTree[F[_]](
       currentCost: Double,
-      prepared: NonEmptyList[PreparedQuery.PreparedField[F, Any]],
-      parentTypename: Option[String]
+      prepared: NonEmptyList[PreparedQuery.PreparedField[F, Any]]
   )(implicit
       F: Monad[F],
       stats: Statistics[F]
   ): F[NonEmptyList[Node]] = {
     prepared.flatTraverse {
-      case PreparedDataField(id, name, resolve, selection, tn, _) =>
+      case df @ PreparedDataField(id, name, resolve, selection, tn, _, _) =>
         val batchName = resolve match {
-          case br @ BatchResolver(_, _) => Some(makeBatchName(br))
+          case br @ BatchResolver(_, _) => Some(makeBatchName(br.id))
           case _                        => None
         }
-        // Use parent typename + field as fallback name since this will be unique
-        // it is of utmost importance that different resolvers don't get mixed into the same statistic
-        // since this will destroy the prediction precision
-        val nodeName = s"${parentTypename.getOrElse("Query")}_$name"
+        val nodeName = makeTypename(df)
 
         /*
          * We try to get by batch name first since this unifies a set of nodes that would otherwise have different names
@@ -92,7 +94,7 @@ object Planner {
                 case PreparedLeaf(_, _) =>
                   F.pure(Node(id, nodeName, batchName, end, s.initialCost, s.extraElementCost, Nil))
                 case Selection(fields) =>
-                  constructCostTree[F](end, fields, Some(tn)).map { nel =>
+                  constructCostTree[F](end, fields).map { nel =>
                     Node(id, nodeName, batchName, end, s.initialCost, s.extraElementCost, nel.toList)
                   }
                 case PreparedList(of)   => handleSelection(of)
@@ -101,15 +103,14 @@ object Planner {
 
             handleSelection(selection).map(NonEmptyList.one(_))
           }
-      case PreparedFragField(_, typename, _, selection) =>
-        constructCostTree[F](currentCost, selection.fields, Some(typename))
+      case PreparedFragField(_, typename, _, selection) => constructCostTree[F](currentCost, selection.fields)
     }
   }
 
   def costTree[F[_]: Monad](
       prepared: NonEmptyList[PreparedQuery.PreparedField[F, Any]]
   )(implicit stats: Statistics[F]): F[NodeTree] =
-    constructCostTree[F](0d, prepared, None).map(NodeTree(_))
+    constructCostTree[F](0d, prepared).map(NodeTree(_))
 
   def plan(tree: NodeTree): NodeTree = {
     val flatNodes = tree.flattened
