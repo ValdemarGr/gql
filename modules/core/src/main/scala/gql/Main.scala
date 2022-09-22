@@ -335,7 +335,8 @@ query withNestedFragments {
                     full(_ => IorT.leftT[F, Data[F]]("Hahaaaa, Nested signal errrorrororor!"))
                   }
                 ),
-                "nestedSignal3" -> gql.dsl.signal(nameRef.contramap[Data[F]](_.a)).pure(_ => ()) { case (i, a) => i }
+                // "nestedSignal3" -> gql.dsl.signal(nameRef.contramap[Data[F]](_.a))(_ => ()) { case (i, a) => i }
+                "nestedSignal3" -> gql.dsl.signal(nameRef.contramap[Data[F]](_.a)).pure(_ => ()).pure { case (i, a) => i }
               )
             }
 
