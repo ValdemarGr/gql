@@ -11,7 +11,7 @@ import cats.data._
  * A the output type
  * T the intermediate type that the stream emits and is transformed to A
  */
-final case class SignalResolver[F[_]: MonadCancelThrow, I, R, A](
+final case class SignalResolver[F[_], I, R, A](
     resolver: LeafResolver[F, (I, R), A],
     head: I => IorT[F, String, R],
     ref: StreamRef[F, I, R]
@@ -32,7 +32,7 @@ final case class SignalResolver[F[_]: MonadCancelThrow, I, R, A](
 }
 
 object SignalResolver {
-  def apply[F[_]: MonadCancelThrow, I, R, A](sr: StreamRef[F, I, R])(hd: I => IorT[F, String, R])(
+  def apply2[F[_]: MonadCancelThrow, I, R, A](sr: StreamRef[F, I, R])(hd: I => IorT[F, String, R])(
       resolver: LeafResolver[F, (I, R), A]
   ): SignalResolver[F, I, R, A] =
     SignalResolver(resolver, hd, sr)

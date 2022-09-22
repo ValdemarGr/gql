@@ -326,15 +326,16 @@ query withNestedFragments {
                 "c" -> f(eff(_.c.map(_.toSeq))),
                 "doo" -> f(pur(_ => Vector(Vector(Vector.empty[String])))),
                 "nestedSignal" -> f(
-                  SignalResolver(nameRef.contramap[Data[F]](_.a))(_ => IorT.pure(())) {
+                  SignalResolver.apply2(nameRef.contramap[Data[F]](_.a))(_ => IorT.pure(())) {
                     eff { case (i, _) => i.c.map(_.head) }
                   }
                 ),
                 "nestedSignal2" -> f(
-                  SignalResolver(nameRef.contramap[Data[F]](_.a))(_ => IorT.pure(())) {
+                  SignalResolver.apply2(nameRef.contramap[Data[F]](_.a))(_ => IorT.pure(())) {
                     full(_ => IorT.leftT[F, Data[F]]("Hahaaaa, Nested signal errrorrororor!"))
                   }
-                )
+                ),
+                "nestedSignal3" -> gql.dsl.signal(nameRef.contramap[Data[F]](_.a)).pure(_ => ()) { case (i, a) => i }
               )
             }
 
