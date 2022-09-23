@@ -338,7 +338,25 @@ query withNestedFragments {
                     eff { case (i, _) => i.c.map(_.head) },
                     k => fs2.Stream(k.a).repeat.lift[F].metered((if (k.a == "John") 200 else 500).millis).as(().rightIor)
                   )
-                )
+                ),
+                // "i" -> gql.dsl.stream(arg[Int]("num")) { case (i, a) =>
+                //   fs2.Stream(a)
+                // }
+                // "nestedSignal3" -> stream(arg) { k =>
+                //
+                // }
+                // "nestedSignal3" -> stream(arg).fallible { k =>
+                //
+                // }
+                // "nestedSignal3" -> stream(arg).with(br) { k =>
+                //
+                // }
+                // "nestedSignal3" -> stream(arg).withFallible(br) { k =>
+                //
+                // }
+                // "nestedSignal3" -> stream { k =>
+                //   fs2.Stream(k.a).repeat.lift[F].metered((if (k.a == "John") 200 else 500).millis).as(().rightIor)
+                // }
                 // f(
                 //   SignalResolver.apply2(nameRef.contramap[Data[F]](_.a))(_ => IorT.pure(())) {
                 //     eff { case (i, _) => i.c.map(_.head) }
