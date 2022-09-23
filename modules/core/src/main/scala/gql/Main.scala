@@ -621,24 +621,24 @@ object Example {
     implicit lazy val human: Type[F, Human] =
       tpe(
         "Human",
-        "homePlanet" -> pure2(_.homePlanet),
+        "homePlanet" -> pure(_.homePlanet),
         character.fields.toList: _*
       )
 
     implicit lazy val droid: Type[F, Droid] =
       tpe(
         "Droid",
-        "primaryFunction" -> pure2(_.primaryFunction),
+        "primaryFunction" -> pure(_.primaryFunction),
         character.fields.toList: _*
       )
 
     implicit lazy val character: Interface[F, Character] =
       interface[F, Character](
         "Character",
-        "id" -> pure2(_.id),
-        "name" -> pure2(_.name),
-        "friends" -> pure2(_.friends),
-        "appearsIn" -> pure2(_.appearsIn)
+        "id" -> pure(_.id),
+        "name" -> pure(_.name),
+        "friends" -> pure(_.friends),
+        "appearsIn" -> pure(_.appearsIn)
       )(
         instance[Human] { case x: Human => x },
         instance[Droid] { case x: Droid => x }
@@ -647,10 +647,10 @@ object Example {
     Schema.simple[F, Unit](
       tpe(
         "Query",
-        "hero" -> eff2(arg[Episode]("episode")) { case (_, episode) => repo.getHero(episode) },
-        "character" -> eff2(arg[ID[String]]("id")) { case (_, id) => repo.getCharacter(id.value) },
-        "human" -> eff2(arg[ID[String]]("id"))({ case (_, id) => repo.getHuman(id.value) }),
-        "droid" -> eff2(arg[ID[String]]("id")) { case (_, id) => repo.getDroid(id.value) }
+        "hero" -> eff(arg[Episode]("episode")) { case (_, episode) => repo.getHero(episode) },
+        "character" -> eff(arg[ID[String]]("id")) { case (_, id) => repo.getCharacter(id.value) },
+        "human" -> eff(arg[ID[String]]("id"))({ case (_, id) => repo.getHuman(id.value) }),
+        "droid" -> eff(arg[ID[String]]("id")) { case (_, id) => repo.getDroid(id.value) }
       )
     )
   }
@@ -726,7 +726,7 @@ object Test2 {
     def schema: Schema[F, Unit] = Schema.simple[F, Unit](
       tpe(
         "Query",
-        "me" -> eff2(_ => ctx.get.map(_.userId))
+        "me" -> eff(_ => ctx.get.map(_.userId))
       )
     )
 

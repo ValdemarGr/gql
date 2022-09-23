@@ -41,7 +41,7 @@ import gql.resolver._
 import cats.effect._
 
 val brState = BatchResolver[IO, Int, Int](keys => IO.pure(keys.map(k => k -> (k * 2)).toMap))
-// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@3f165173
+// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@11b49223
 ```
 A `State` monad is used to keep track of the batchers that have been created and unique id generation.
 During schema construction, `State` can be composed using `Monad`ic operations.
@@ -53,7 +53,7 @@ import gql._
 import gql.dsl._
 import cats._
 
-def statefulSchema = brState.map { (br: BatchResolver[IO, Set[Int], Map[Int, Int]]) =>
+def batchSchema = brState.map { (br: BatchResolver[IO, Set[Int], Map[Int, Int]]) =>
   val adjusted: BatchResolver[IO, Int, Option[Int]] = br
     .contramap[Int](Set(_))
     .map { case (_, m) => m.values.headOption }
@@ -66,11 +66,18 @@ def statefulSchema = brState.map { (br: BatchResolver[IO, Set[Int], Map[Int, Int
   )
 }
 ```
+:::note
+There are more formulations of batch resolvers that can be possible, but the chosen one has the least overhead for the developer.
+
+One could let the developer declare batch resolvers in-line and explicitly name them.
+This would impose the validation constraint that all batch resolvers with the same name must have the same function address, or else there would be ambiguity.
+Reasoning with function addreses is not very intuitive, so this is not the preferred formulation.
+:::
 
 Which we can finally run:
 ```scala
 import cats.effect.unsafe.implicits.global
-def s = Schema.stateful(statefulSchema)
+def s = Schema.stateful(batchSchema)
                                                                                         
 def query = """
   query {
@@ -89,3 +96,110 @@ def program = Execute.executor(parsed, s, Map.empty) match {
 program.unsafeRunSync()
 // res0: io.circe.JsonObject = object[field -> 84]
 ```
+:::tip
+The `BatchResolver` de-duplicates keys since it uses `Set` and `Map`.
+This means that even if no function exists that effeciently fetches your data, you can still use the `BatchResolver` to de-duplicates it.
+:::
+:::tip
+The `BatchResolver` does not maintain ordering internally, but this doesn't mean that the output values cannot maintain order.
+```scala
+def br: BatchResolver[IO, Set[Int], Map[Int, String]] = ???
+
+def orderedBr: BatchResolver[IO, List[Int], List[String]] =
+  br.contramap[List[Int]](_.toSet).map{ case (i, m) => i.map(m.apply) }
+```
+:::
+
+### Design patterns
+Since `State` itself is a monad, we can compose them into `case class`es for more ergonomic implementation at scale.
+```scala
+import cats.implicits._
+
+trait User
+trait UserId
+
+trait Company
+trait CompanyId
+
+final case class DomainBatchers[F[_]](
+  userBatcher: BatchResolver[F, Set[UserId], Map[UserId, User]],
+  companyBatcher: BatchResolver[F, Set[CompanyId], Map[CompanyId, Company]],
+  doubleSumBatcher: BatchResolver[F, Int, Int]
+)
+
+(
+  BatchResolver[IO, UserId, User](_ => ???),
+  BatchResolver[IO, CompanyId, Company](_ => ???),
+  BatchResolver[IO, Int, Int](is => IO.pure(is.map(i => i -> (i * 2)).toMap)).map(
+    _
+    .contramap[Int](Set(_))
+    .map[Int]{ case (_, m) => m.values.toList.combineAll }
+  )
+).mapN(DomainBatchers.apply)
+// res1: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], DomainBatchers[[A]IO[A]]] = cats.data.IndexedStateT@3a9ea520
+```
+
+## SignalResolver
+The `SignalResolver` is a special type of resolver that can update itself.
+A `SignalResolver[F, I, R, A]` contains:
+* A reference to a stream of `R` that can be subscribed to via `I` (think `I => Stream[R]`).
+* A function to get the initial value of the signal `I => F[R]`.
+* A resolver that takes `(I, R)` to `F[A]`.
+
+:::note
+The initial value and the stream could technically have seperate resolvers.
+If this need arises, please open an issue.
+:::
+:::info
+The `SignalResolver`'s property of updating, is only relevant in subscriptions.
+In queries and mutations, the stream part of the resolver is ignored.
+:::
+
+A `StreamRef` is a reference to a stream that can be subscribed to, it is the implementation of `I => Stream[R]`.
+A `StreamRef` is constructed by suppling a subscription function `I => Resource[F, fs2.Stream[F, O]]`:
+```scala
+import scala.concurrent.duration._
+
+val sr = 
+  StreamRef[IO, Int, Int](i => Resource.pure{
+    fs2.Stream(1).covary[IO].repeat.scan(i)(_ + _).metered(1.second)
+  })
+// sr: data.package.State[SchemaState[IO], StreamRef[IO, Int, Int]] = cats.data.IndexedStateT@2c6717a0
+```
+TODO subscription
+
+
+With a `StreamRef`, we can construct a `SignalResolver`:
+```scala
+def signalSchema = sr.map { s =>
+  val adjusted = 
+    s.contramap[(Unit, Int)]{ case (_, i) => i}
+
+  SchemaShape[IO, Unit](
+    tpe(
+      "Query",
+      "field" -> signal(arg[Int]("initial"), adjusted).pure(_ => 0).pure{ case (_, i) => i }
+    )
+  )
+}
+```
+
+A `SignalResolver` is id'ed much like a `BatchResolver`, but with the twist that the input value to the `StreamRef` also acts as a key.
+This means in the above example, any subscription to the same `i` will share the same stream, even latecomers.
+:::note
+If you need to specify both an input to your stream and a key as two seperate parameters then please open an issue.
+:::
+
+This also means that if multiple `SignalResolver`'s are subscribed to the same stream, then their resolvers will be evaluated in the same iteration.
+
+When a `SignalResolver` updates, it forgets it's entire sub-tree and resolves it again.
+That also means that a `SignalResolver` that occurs as a direct or transitive child of another `SignalResolver` which updates, will have its subscription terminated.
+If the same child `SignalResolver` occurs again in the same sub-tree, it will be re-subscribed to.
+New subscriptions are always performed before old ones are terminated, such that in the above case the stream will never be closed.
+
+:::tip
+The `Resource` in the `StreamRef` is opened before the initial value is fetched.
+This allows the caller to have full control over the order of operations.
+As such, complicated delivery schemes can be implemented such as at least once, at most once or even exactly once, if your data can implement it (versioned data).
+:::
+

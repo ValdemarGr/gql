@@ -1,5 +1,6 @@
 package gql.interpreter
 
+import cats.mtl._
 import gql.resolver._
 import cats.data._
 import gql.PreparedQuery._
@@ -46,57 +47,57 @@ object Interpreter {
       mapFilter: Any => Option[Any]
   )
 
+  final case class StreamMetadata[F[_]](
+      cursor: Cursor,
+      initialValue: Any,
+      df: PreparedDataField[F, Any, Any]
+  )
+
   def constructStream[F[_]: Statistics](
       rootInput: Any,
       rootSel: NonEmptyList[PreparedField[F, Any]],
       schemaState: SchemaState[F],
-      streamResourceAlg: Option[SubscriptionSupervisor[F]]
-  )(implicit F: Async[F]): fs2.Stream[F, (Chain[EvalFailure], JsonObject)] = {
-    val changeLog = fs2.Stream.fromOption(streamResourceAlg).flatMap(_.changeLog)
+      openTails: Boolean
+  )(implicit F: Async[F]): fs2.Stream[F, (Chain[EvalFailure], JsonObject)] =
+    StreamSupervisor[F, IorNec[String, Any]](openTails).flatMap { implicit streamSup =>
+      val changeStream = streamSup.changes
+        .map(_.toList.reverse.distinctBy { case (tok, _) => tok }.toNel)
+        .unNone
 
-    val accumulatorF = streamResourceAlg.traverse(implicit alg => SignalMetadataAccumulator[F, SignalMetadata[F]])
+      def runStreamIt(
+          root: NonEmptyList[(PreparedField[F, Any], Chain[EvalNode[Any]])]
+      ): F[(Chain[EvalFailure], Chain[EvalNode[Json]], Batching[F], Map[Unique.Token, StreamMetadata[F]])] =
+        StreamMetadataAccumulator[F, StreamMetadata[F], IorNec[String, Any]].flatMap { sma =>
+          val rootFields = root.map { case (k, _) => k }
+          for {
+            costTree <- Planner.costTree[F](rootFields)
+            plan = Planner.plan(costTree)
+            executionDeps = Batching.plan[F](rootFields, plan)
+            (fails, succs) <- interpret[F](root, executionDeps, schemaState, sma).run
+            smaState <- sma.getState
+          } yield (fails, succs, executionDeps, smaState)
+        }
 
-    def runStreamIt(
-        root: NonEmptyList[(PreparedField[F, Any], Chain[EvalNode[Any]])]
-    ): F[(Chain[EvalFailure], Chain[EvalNode[Json]], Batching[F], Map[BigInt, SignalMetadata[F]])] =
-      accumulatorF.flatMap { accumulatorOpt =>
-        val rootFields = root.map { case (k, _) => k }
-        for {
-          costTree <- Planner.costTree[F](rootFields)
-          plan = Planner.plan(costTree)
-          executionDeps = Batching.plan[F](rootFields, plan)
-          (fails, succs) <- interpret[F](root, executionDeps, schemaState, accumulatorOpt).run
-          s <- accumulatorOpt match {
-            case Some(x) => x.getState
-            case None    => F.pure(Map.empty[BigInt, SignalMetadata[F]])
-          }
-        } yield (fails, succs, executionDeps, s)
-      }
+      // first iteration
+      fs2.Stream
+        .eval(runStreamIt(rootSel.map((_, Chain(EvalNode.empty(rootInput, BigInt(1)))))))
+        .flatMap { case (initialFails, initialSuccs, deps, initialSM) =>
+          val c = combineSplit(initialFails, initialSuccs).toList.map { case (m, v) => m.absolutePath -> v }
 
-    // first iteration
-    fs2.Stream
-      .eval(runStreamIt(rootSel.map((_, Chain(EvalNode.empty(rootInput, BigInt(1)))))))
-      .flatMap { case (initialFails, initialSuccs, deps, initialSignals) =>
-        val c = combineSplit(initialFails, initialSuccs).toList.map { case (m, v) => m.absolutePath -> v }
-
-        fs2.Stream(reconstructSelection(c, rootSel)).flatMap { initialOutput =>
-          fs2.Stream.emit((initialFails, initialOutput)) ++
-            changeLog
-              .evalMapAccumulate((initialOutput, initialSignals)) { case ((prevOutput, activeSigs), changes) =>
-                // remove dead nodes (concurrent access can cause dead updates to linger)
+          fs2.Stream(reconstructSelection(c, rootSel)).flatMap { initialOutput =>
+            changeStream
+              .evalMapAccumulate((initialOutput, initialSM)) { case ((prevOutput, activeStreams), changes) =>
                 changes
-                  .map { case (k, v) => activeSigs.get(k).flatMap(meta => meta.mapFilter(v).map((k, _, meta))) }
+                  .map { case (k, v) => activeStreams.get(k).map((k, v, _)) }
                   .collect { case Some(x) => x }
                   .toNel
                   .flatTraverse { activeChanges =>
-                    // The hcsa algorithm can most likely be optimized
-                    // It takes atleast n time currently
                     val s = activeChanges.toList.map { case (k, _, _) => k }.toSet
-                    val allSigNodes = activeSigs.toList.map { case (k, SignalMetadata(cursor, _, df, _)) =>
+                    val allSigNodes = activeStreams.toList.map { case (k, StreamMetadata(cursor, _, df)) =>
                       // The cursor is to the parent, traversing the arc for df.name will get us to the changed node
                       (cursor.field(df.id, df.name), k)
                     }
-                    val meta = computeMetadata(allSigNodes, s)
+                    val meta = recompute(allSigNodes, s)
 
                     // The root nodes are the highest common signal ancestors
                     val rootNodes = activeChanges.filter { case (k, _, _) => meta.hcsa.contains(k) }
@@ -106,20 +107,35 @@ object Interpreter {
                     // The property of field uniqueness is lost since we are starting at n different non-root nodes
                     val prepaedRoots =
                       rootNodes.mapWithIndex { case ((id, input, _), idx) =>
-                        val SignalMetadata(cursor, _, field, _) = activeSigs(id)
+                        val StreamMetadata(cursor, _, field) = activeStreams(id)
                         val cursorGroup = BigInt(idx)
-                        (field, cursor, Chain(EvalNode.startAt(input, cursorGroup, cursor)), cursorGroup)
+                        val cg = CursorGroup.startAt(cursorGroup, cursor)
+                        val (errs, succs) =
+                          input match {
+                            case Left(ex) =>
+                              (Chain(EvalFailure.StreamTailResolution(cg, Left(ex))), Chain.empty)
+                            case Right(nec) =>
+                              (
+                                Chain.fromOption(nec.left).flatMap(_.toChain).map { msg =>
+                                  EvalFailure.StreamTailResolution(cg, Right(msg))
+                                },
+                                Chain.fromOption(nec.right).map(in => EvalNode(cg, in))
+                              )
+                          }
+                        (field, cursor, succs, errs, cursorGroup)
                       }
 
                     prepaedRoots.toNel
                       .traverse { newRootSel =>
-                        runStreamIt(newRootSel.map { case (df, _, inputs, _) => (df, inputs) })
-                          .flatMap { case (newFails, newSuccs, _, newSigs) =>
-                            // Mapping from group to start cursor and data field
+                        runStreamIt(newRootSel.map { case (df, _, inputs, _, _) => (df, inputs) })
+                          .flatMap { case (newFails, newSuccs, _, newStreams) =>
                             val groupIdMapping =
-                              newRootSel.toList.map { case (df, rootCursor, _, idx) => idx -> (rootCursor, df) }.toMap
+                              newRootSel.toList.map { case (df, rootCursor, _, _, idx) => idx -> (rootCursor, df) }.toMap
 
-                            val all = combineSplit(newFails, newSuccs)
+                            val all = combineSplit(
+                              newFails ++ Chain.fromSeq(newRootSel.toList).flatMap { case (_, _, _, errs, _) => errs },
+                              newSuccs
+                            )
                             // group -> results
                             val l = all.toList.groupBy { case (m, _) => m.groupId }.toList
 
@@ -143,7 +159,7 @@ object Interpreter {
                                   stitchInto(accum.asJson, patch, pos).asObject.get
                                 }
 
-                            val withNew = newSigs ++ activeSigs
+                            val withNew = newStreams ++ activeStreams
                             // All nodes that occured in the tree but are not in the HCSA are dead
                             val garbageCollected = withNew -- meta.toRemove
 
@@ -151,34 +167,61 @@ object Interpreter {
 
                             // Also remove the subscriptions
                             meta.toRemove.toList
-                              .traverse(x => streamResourceAlg.traverse_(_.remove(x)))
+                              .traverse(streamSup.release)
                               .as(o)
                           }
                       }
                   }
-                  .map(_.getOrElse(((initialOutput, activeSigs), None)))
+                  .map(_.getOrElse(((initialOutput, activeStreams), None)))
               }
               .map { case (_, x) => x }
               .unNone
+          }
         }
-      }
-  }
+    }
 
   def runStreamed[F[_]: Statistics](
       rootInput: Any,
       rootSel: NonEmptyList[PreparedField[F, Any]],
       schemaState: SchemaState[F]
   )(implicit F: Async[F]): fs2.Stream[F, (Chain[EvalFailure], JsonObject)] =
-    SubscriptionSupervisor[F](schemaState).flatMap { streamResouceAlg =>
-      constructStream[F](rootInput, rootSel, schemaState, Some(streamResouceAlg))
-    }
+    constructStream[F](rootInput, rootSel, schemaState, true)
 
   def runSync[F[_]: Async: Statistics](
       rootInput: Any,
       rootSel: NonEmptyList[PreparedField[F, Any]],
       schemaState: SchemaState[F]
   ): F[(Chain[EvalFailure], JsonObject)] =
-    constructStream[F](rootInput, rootSel, schemaState, None).take(1).compile.lastOrError
+    constructStream[F](rootInput, rootSel, schemaState, false).take(1).compile.lastOrError
+
+  def findToRemove[A](nodes: List[(Cursor, A)], s: Set[A]): Set[A] = {
+    import Chain._
+    val (children, nodeHere) = nodes
+      .partitionEither {
+        case (xs, y) if xs.path.isEmpty => Right(y)
+        case (xs, y)                    => Left((xs, y))
+      }
+
+    lazy val msg =
+      s"something went terribly wrong s=$s, nodeHere:${nodeHere}\niterates:\n${children.mkString("\n")}\nall nodes:\n${nodes.mkString("\n")}"
+
+    nodeHere match {
+      case x :: Nil if s.contains(x) => children.map { case (_, v) => v }.toSet
+      case _ :: Nil | Nil            => groupNodeValues(children).flatMap { case (_, v) => findToRemove(v, s) }.toSet
+      case _                         => throw new Exception(msg)
+    }
+  }
+
+  final case class StreamRecompute[A](
+      toRemove: Set[A],
+      hcsa: Set[A]
+  )
+
+  def recompute[A](nodes: List[(Cursor, A)], s: Set[A]): StreamRecompute[A] = {
+    val tr = findToRemove(nodes, s)
+    val hcsa = s -- tr
+    StreamRecompute(tr, hcsa)
+  }
 
   def computeToRemove(nodes: List[(Cursor, BigInt)], s: Set[BigInt]): Set[BigInt] = {
     import Chain._
@@ -219,7 +262,7 @@ object Interpreter {
       rootSel: NonEmptyList[(PreparedField[F, Any], Chain[EvalNode[Any]])],
       executionDeps: Batching[F],
       schemaState: SchemaState[F],
-      signalSubmission: Option[SignalMetadataAccumulator[F, SignalMetadata[F]]] = None
+      streamAccumulator: StreamMetadataAccumulator[F, StreamMetadata[F], IorNec[String, Any]]
   )(implicit F: Async[F], stats: Statistics[F]): WriterT[F, Chain[EvalFailure], Chain[EvalNode[Json]]] = {
     type W[A] = WriterT[F, Chain[EvalFailure], A]
     val W = Async[W]
@@ -261,70 +304,6 @@ object Interpreter {
 
         def submit(name: String, duration: FiniteDuration, size: Int): F[Unit] =
           sup.supervise(stats.updateStats(name, duration, size)).void
-
-        def runSignal(df: PreparedDataField[F, Any, Any], sf: SignalResolver[F, Any, Any, Any], inputs: Chain[EvalNode[Any]]) =
-          inputs
-            .parFlatTraverse { in =>
-              val hdF: IorT[F, String, EvalNode[Any]] =
-                sf.head(in.value).map(v => in.copy(value = (in.value, v).asInstanceOf[Any]))
-
-              val headChainF = hdF.map(Chain(_))
-
-              val debugCursor = in.cursorGroup.field(df.id, df.name)
-
-              signalSubmission match {
-                case None =>
-                  attemptUserE(
-                    headChainF.value.map(_.leftMap(NonEmptyChain.one)),
-                    EvalFailure.SignalHeadResolution(debugCursor, _, in.value)
-                  )
-                case Some(ss) =>
-                  val fa: F[IorNec[String, Any]] = sf.ref.getKey(in.value).asInstanceOf[F[IorNec[String, Any]]]
-                  attemptUser(
-                    fa.map(_.map(Chain(_))),
-                    EvalFailure.SignalTailResolution(debugCursor, _, in.value)
-                  )
-                    .flatMap(_.flatTraverse { key =>
-                      val df2 = df.copy(resolve = sf.resolver.contramap[Any]((in.value, _)))
-                      lift(
-                        ss.add(
-                          SignalMetadata(
-                            in.cursorGroup.absolutePath,
-                            in.value,
-                            df2,
-                            m => sf.ref.filterMapping(in.value, m.asInstanceOf[sf.ref.M])
-                          ),
-                          sf.ref.ref(in.value),
-                          key
-                        )
-                      )
-                        .flatMap { id =>
-                          // if hd fails, then unsubscribe again
-                          // note that if any parent changes, this (unsubscription) will happen automatically, so this
-                          // can be viewed as an optimization
-                          val handledHeadF =
-                            IorT {
-                              hdF.value
-                                .attemptTap {
-                                  case Left(_)            => ss.remove(id)
-                                  case Right(Ior.Left(_)) => ss.remove(id)
-                                  case _                  => F.unit
-                                }
-                            }
-
-                          attemptUserE(
-                            handledHeadF.map(Chain(_)).value.map(_.leftMap(NonEmptyChain.one)),
-                            EvalFailure.SignalHeadResolution(debugCursor, _, in.value)
-                          )
-                        }
-                    })
-              }
-            }
-            .flatMap { nvs =>
-              // we tupled the initial into nvs (head), cast since expects (Any, Any) but EvalNode contains Any
-              val df2 = df.copy(resolve = sf.resolver.asInstanceOf[Resolver[F, Any, Any]])
-              runInputs(df2, nvs)
-            }
 
         type Reassociate = Map[BatchKey, BatchValue] => F[IorNec[String, BatchResult]]
         final case class Batch(
@@ -368,7 +347,26 @@ object Interpreter {
                 }
 
               partitioned.map(p => Right(Batch(id, p)))
-            case sr @ SignalResolver(_, _, _) => runSignal(df, sr, inputs)
+            case StreamResolver(resolver, stream) =>
+              val fb: W[E] =
+                inputs.parFlatTraverse { in =>
+                  val df2 = df.copy(resolve = resolver.contramap[Any]((in.value, _)))
+
+                  attemptUserE(
+                    streamAccumulator
+                      .add(
+                        // TODO add stream as a path to distinguish between different streams
+                        StreamMetadata(in.cursorGroup.absolutePath, in.value, df2),
+                        stream(in.value)
+                      )
+                      .map { case (_, fb) => fb }
+                      .rethrow
+                      .map(_.map(hd => Chain(in.setValue((in, hd))))),
+                    EvalFailure.StreamHeadResolution(in.cursorGroup, _, in.value)
+                  )
+                }
+
+              fb.flatMap(runInputs(df.copy(resolve = resolver.contramap[Any](_.asInstanceOf[(Any, Any)])), _))
           }
         }
 

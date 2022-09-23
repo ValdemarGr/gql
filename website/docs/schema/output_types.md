@@ -30,7 +30,7 @@ implicit def idScalar[F[_], A](implicit inner: Scalar[F, A]): Scalar[F, ID[A]] =
 implicitly[Scalar[Id, ID[String]]]
 // res0: Scalar[Id, ID[String]] = Scalar(
 //   name = "ID",
-//   codec = io.circe.Codec$$anon$4@2b768846
+//   codec = io.circe.Codec$$anon$4@74cc0949
 // )
 ```
 
@@ -89,7 +89,7 @@ A `Field[F, I, T, A]` has arguments `Arg[A]`, a continuation `Out[F, T]` and a r
 Field also lazily captures `Out[F, T]`, to allow recursive types.
 The `dsl` lazily captures `Out[F, T]` definitions in the implicit scope.
 :::tip
-Check out the [resolver section](./resolvers) for more info on how resolvers work.
+Check out the [resolver section](./resolvers.md) for more info on how resolvers work.
 :::
 
 ## Type (object)
@@ -124,8 +124,8 @@ implicit def domain[F[_]](implicit F: Applicative[F]): Type[F, Domain] =
 implicit def domain2[F[_]: Applicative]: Type[F, Domain] =
   tpe(
     "Domain",
-    "name" -> field(pure(_.name)),
-    "amount" -> field(pure(_.amount))
+    "name" -> pure(_.name),
+    "amount" -> pure(_.amount)
   )
 ```
 
@@ -137,8 +137,8 @@ sealed trait Animal
 final case class Dog(name: String) extends Animal
 final case class Cat(name: String) extends Animal
 
-implicit def dog[F[_]: Applicative] = tpe[F, Dog]("Dog", "name" -> field(pure(_.name)))
-implicit def cat[F[_]: Applicative] = tpe[F, Cat]("Cat", "name" -> field(pure(_.name)))
+implicit def dog[F[_]: Applicative] = tpe[F, Dog]("Dog", "name" -> pure(_.name))
+implicit def cat[F[_]: Applicative] = tpe[F, Cat]("Cat", "name" -> pure(_.name))
 implicit def animal[F[_]: Applicative] =
   union[F, Animal](
     "Animal",
@@ -222,21 +222,21 @@ final case class Company(
 implicit def person[F[_]: Applicative] = 
   tpe[F, Person](
     "Person",
-    "name" -> field(pure(_.name)),
-    "id" -> field(pure(x => ID(x.id)))
+    "name" -> pure(_.name),
+    "id" -> pure(x => ID(x.id))
   )
   
 implicit def company[F[_]: Applicative] =
   tpe[F, Company](
     "Company",
-    "name" -> field(pure(_.name)),
-    "id" -> field(pure(x => ID(x.id)))
+    "name" -> pure(_.name),
+    "id" -> pure(x => ID(x.id))
   )
   
 implicit def node[F[_]: Applicative] =
   interface[F, Node](
     "Node",
-    "id" -> field(pure(x => ID(x.id)))
+    "id" -> pure(x => ID(x.id))
   )(
     instance[Person]{ case x: Person => x },
     instance[Company]{ case x: Company => x }

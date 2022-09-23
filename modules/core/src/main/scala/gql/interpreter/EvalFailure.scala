@@ -4,6 +4,15 @@ import cats.data._
 
 sealed trait EvalFailure { def paths: Chain[CursorGroup] }
 object EvalFailure {
+  final case class StreamHeadResolution(
+      path: CursorGroup,
+      error: Either[Throwable, String],
+      input: Any
+  ) extends EvalFailure { lazy val paths = Chain(path) }
+  final case class StreamTailResolution(
+      path: CursorGroup,
+      error: Either[Throwable, String]
+  ) extends EvalFailure { lazy val paths = Chain(path) }
   final case class SignalHeadResolution(
       path: CursorGroup,
       error: Either[Throwable, String],

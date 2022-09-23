@@ -72,32 +72,42 @@ object dsl {
   def signal[F[_], I, R](sr: StreamRef[F, I, R]): PartiallyAppliedSignalHead[F, I, I, R, Unit] =
     new PartiallyAppliedSignalHead[F, I, I, R, Unit](Applicative[Arg].unit, sr, (i, _) => i)
 
-  def pure[F[_], I, T](resolver: I => T)(implicit F: Applicative[F]): EffectResolver[F, I, T] =
-    EffectResolver[F, I, T](i => F.pure(resolver(i).rightIor))
+  // def pure[F[_], I, T](resolver: I => T)(implicit F: Applicative[F]): EffectResolver[F, I, T] =
+  //   EffectResolver[F, I, T](i => F.pure(resolver(i).rightIor))
 
-  def eff[F[_], I, T](resolver: I => F[T])(implicit F: Applicative[F]): EffectResolver[F, I, T] =
-    EffectResolver[F, I, T](i => resolver(i).map(_.rightIor))
+  // def eff[F[_], I, T](resolver: I => F[T])(implicit F: Applicative[F]): EffectResolver[F, I, T] =
+  //   EffectResolver[F, I, T](i => resolver(i).map(_.rightIor))
 
-  def eff2[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => F[T])(implicit F: Functor[F], tpe: => Out[F, T]): Field[F, I, T, A] =
+  def fallible[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => F[Ior[String, T]])(implicit tpe: => Out[F, T]): Field[F, I, T, A] =
     Field[F, I, T, A](
       arg,
-      EffectResolver[F, (I, A), T] { case (i, a) => resolver(i, a).map(_.rightIor) },
+      EffectResolver[F, (I, A), T] { case (i, a) => resolver(i, a) },
       Eval.later(tpe)
     )
 
-  def eff2[F[_], I, T](resolver: I => F[T])(implicit F: Functor[F], tpe: => Out[F, T]): Field[F, I, T, Unit] = {
+  def fallible[F[_], I, T](resolver: I => F[Ior[String, T]])(implicit F: Functor[F], tpe: => Out[F, T]): Field[F, I, T, Unit] = {
     implicit lazy val t0 = tpe
-    eff2[F, I, T, Unit](Applicative[Arg].unit)((i, _) => resolver(i))
+    fallible[F, I, T, Unit](Applicative[Arg].unit)((i, _) => resolver(i))
   }
 
-  def pure2[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => T)(implicit F: Applicative[F], tpe: => Out[F, T]): Field[F, I, T, A] = {
+  def eff[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => F[T])(implicit F: Functor[F], tpe: => Out[F, T]): Field[F, I, T, A] = {
     implicit lazy val t0 = tpe
-    eff2[F, I, T, A](arg)((i, a) => F.pure(resolver(i, a)))
+    fallible[F, I, T, A](arg)((i, a) => resolver(i, a).map(_.rightIor))
   }
 
-  def pure2[F[_], I, T](resolver: I => T)(implicit F: Applicative[F], tpe: => Out[F, T]): Field[F, I, T, Unit] = {
+  def eff[F[_], I, T](resolver: I => F[T])(implicit F: Functor[F], tpe: => Out[F, T]): Field[F, I, T, Unit] = {
     implicit lazy val t0 = tpe
-    eff2[F, I, T](i => F.pure(resolver(i)))
+    eff[F, I, T, Unit](Applicative[Arg].unit)((i, _) => resolver(i))
+  }
+
+  def pure[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => T)(implicit F: Applicative[F], tpe: => Out[F, T]): Field[F, I, T, A] = {
+    implicit lazy val t0 = tpe
+    eff[F, I, T, A](arg)((i, a) => F.pure(resolver(i, a)))
+  }
+
+  def pure[F[_], I, T](resolver: I => T)(implicit F: Applicative[F], tpe: => Out[F, T]): Field[F, I, T, Unit] = {
+    implicit lazy val t0 = tpe
+    eff[F, I, T](i => F.pure(resolver(i)))
   }
 
   // def fallible[F[_], I, T](resolver: I => F[T])(implicit F: Applicative[F], tpe: => Out[F, T]): Field[F, I, T, Unit] = {
