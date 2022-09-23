@@ -85,97 +85,98 @@ object Interpreter {
           val c = combineSplit(initialFails, initialSuccs).toList.map { case (m, v) => m.absolutePath -> v }
 
           fs2.Stream(reconstructSelection(c, rootSel)).flatMap { initialOutput =>
-            changeStream
-              .evalMapAccumulate((initialOutput, initialSM)) { case ((prevOutput, activeStreams), changes) =>
-                changes
-                  .map { case (k, v) => activeStreams.get(k).map((k, v, _)) }
-                  .collect { case Some(x) => x }
-                  .toNel
-                  .flatTraverse { activeChanges =>
-                    val s = activeChanges.toList.map { case (k, _, _) => k }.toSet
-                    val allSigNodes = activeStreams.toList.map { case (k, StreamMetadata(cursor, _, df)) =>
-                      // The cursor is to the parent, traversing the arc for df.name will get us to the changed node
-                      (cursor.field(df.id, df.name), k)
-                    }
-                    val meta = recompute(allSigNodes, s)
-
-                    // The root nodes are the highest common signal ancestors
-                    val rootNodes = activeChanges.filter { case (k, _, _) => meta.hcsa.contains(k) }
-
-                    // Partition every HCSA node into it's own cursor group (for efficient re-association later)
-                    // We cannot use the field name to group them, since two changed fields can have the same name
-                    // The property of field uniqueness is lost since we are starting at n different non-root nodes
-                    val prepaedRoots =
-                      rootNodes.mapWithIndex { case ((id, input, _), idx) =>
-                        val StreamMetadata(cursor, _, field) = activeStreams(id)
-                        val cursorGroup = BigInt(idx)
-                        val cg = CursorGroup.startAt(cursorGroup, cursor)
-                        val (errs, succs) =
-                          input match {
-                            case Left(ex) =>
-                              (Chain(EvalFailure.StreamTailResolution(cg, Left(ex))), Chain.empty)
-                            case Right(nec) =>
-                              (
-                                Chain.fromOption(nec.left).flatMap(_.toChain).map { msg =>
-                                  EvalFailure.StreamTailResolution(cg, Right(msg))
-                                },
-                                Chain.fromOption(nec.right).map(in => EvalNode(cg, in))
-                              )
-                          }
-                        (field, cursor, succs, errs, cursorGroup)
+            fs2.Stream.emit((initialFails, initialOutput)) ++
+              changeStream
+                .evalMapAccumulate((initialOutput, initialSM)) { case ((prevOutput, activeStreams), changes) =>
+                  changes
+                    .map { case (k, v) => activeStreams.get(k).map((k, v, _)) }
+                    .collect { case Some(x) => x }
+                    .toNel
+                    .flatTraverse { activeChanges =>
+                      val s = activeChanges.toList.map { case (k, _, _) => k }.toSet
+                      val allSigNodes = activeStreams.toList.map { case (k, StreamMetadata(cursor, _, df)) =>
+                        // The cursor is to the parent, traversing the arc for df.name will get us to the changed node
+                        (cursor.field(df.id, df.name), k)
                       }
+                      val meta = recompute(allSigNodes, s)
 
-                    prepaedRoots.toNel
-                      .traverse { newRootSel =>
-                        runStreamIt(newRootSel.map { case (df, _, inputs, _, _) => (df, inputs) })
-                          .flatMap { case (newFails, newSuccs, _, newStreams) =>
-                            val groupIdMapping =
-                              newRootSel.toList.map { case (df, rootCursor, _, _, idx) => idx -> (rootCursor, df) }.toMap
+                      // The root nodes are the highest common signal ancestors
+                      val rootNodes = activeChanges.filter { case (k, _, _) => meta.hcsa.contains(k) }
 
-                            val all = combineSplit(
-                              newFails ++ Chain.fromSeq(newRootSel.toList).flatMap { case (_, _, _, errs, _) => errs },
-                              newSuccs
-                            )
-                            // group -> results
-                            val l = all.toList.groupBy { case (m, _) => m.groupId }.toList
+                      // Partition every HCSA node into it's own cursor group (for efficient re-association later)
+                      // We cannot use the field name to group them, since two changed fields can have the same name
+                      // The property of field uniqueness is lost since we are starting at n different non-root nodes
+                      val prepaedRoots =
+                        rootNodes.mapWithIndex { case ((id, input, _), idx) =>
+                          val StreamMetadata(cursor, _, field) = activeStreams(id)
+                          val cursorGroup = BigInt(idx)
+                          val cg = CursorGroup.startAt(cursorGroup, cursor)
+                          val (errs, succs) =
+                            input match {
+                              case Left(ex) =>
+                                (Chain(EvalFailure.StreamTailResolution(cg, Left(ex))), Chain.empty)
+                              case Right(nec) =>
+                                (
+                                  Chain.fromOption(nec.left).flatMap(_.toChain).map { msg =>
+                                    EvalFailure.StreamTailResolution(cg, Right(msg))
+                                  },
+                                  Chain.fromOption(nec.right).map(in => EvalNode(cg, in))
+                                )
+                            }
+                          (field, cursor, succs, errs, cursorGroup)
+                        }
 
-                            val prepped =
-                              l.map { case (group, results) =>
-                                val (rootCursor, df) = groupIdMapping(group.toInt)
-                                // Before re-constructing, drop the head of the cursor
-                                // Since that edge will be where the result should be stitched into
-                                val tailResults = results.map { case (m, x) => m.relativePath.tail -> x }
-                                val rec = reconstructField(df.selection, tailResults)
+                      prepaedRoots.toNel
+                        .traverse { newRootSel =>
+                          runStreamIt(newRootSel.map { case (df, _, inputs, _, _) => (df, inputs) })
+                            .flatMap { case (newFails, newSuccs, _, newStreams) =>
+                              val groupIdMapping =
+                                newRootSel.toList.map { case (df, rootCursor, _, _, idx) => idx -> (rootCursor, df) }.toMap
 
-                                // Left is the object, right is the position to replace
-                                (rec, rootCursor.field(df.id, df.name))
-                              }
+                              val all = combineSplit(
+                                newFails ++ Chain.fromSeq(newRootSel.toList).flatMap { case (_, _, _, errs, _) => errs },
+                                newSuccs
+                              )
+                              // group -> results
+                              val l = all.toList.groupBy { case (m, _) => m.groupId }.toList
 
-                            // fold every group's result together
-                            // basecase is previous output
-                            val recombined =
-                              prepped
-                                .foldLeft(prevOutput) { case (accum, (patch, pos)) =>
-                                  stitchInto(accum.asJson, patch, pos).asObject.get
+                              val prepped =
+                                l.map { case (group, results) =>
+                                  val (rootCursor, df) = groupIdMapping(group.toInt)
+                                  // Before re-constructing, drop the head of the cursor
+                                  // Since that edge will be where the result should be stitched into
+                                  val tailResults = results.map { case (m, x) => m.relativePath.tail -> x }
+                                  val rec = reconstructField(df.selection, tailResults)
+
+                                  // Left is the object, right is the position to replace
+                                  (rec, rootCursor.field(df.id, df.name))
                                 }
 
-                            val withNew = newStreams ++ activeStreams
-                            // All nodes that occured in the tree but are not in the HCSA are dead
-                            val garbageCollected = withNew -- meta.toRemove
+                              // fold every group's result together
+                              // basecase is previous output
+                              val recombined =
+                                prepped
+                                  .foldLeft(prevOutput) { case (accum, (patch, pos)) =>
+                                    stitchInto(accum.asJson, patch, pos).asObject.get
+                                  }
 
-                            val o = ((recombined, garbageCollected), Some((newFails, recombined)))
+                              val withNew = newStreams ++ activeStreams
+                              // All nodes that occured in the tree but are not in the HCSA are dead
+                              val garbageCollected = withNew -- meta.toRemove
 
-                            // Also remove the subscriptions
-                            meta.toRemove.toList
-                              .traverse(streamSup.release)
-                              .as(o)
-                          }
-                      }
-                  }
-                  .map(_.getOrElse(((initialOutput, activeStreams), None)))
-              }
-              .map { case (_, x) => x }
-              .unNone
+                              val o = ((recombined, garbageCollected), Some((newFails, recombined)))
+
+                              // Also remove the subscriptions
+                              meta.toRemove.toList
+                                .traverse(streamSup.release)
+                                .as(o)
+                            }
+                        }
+                    }
+                    .map(_.getOrElse(((initialOutput, activeStreams), None)))
+                }
+                .map { case (_, x) => x }
+                .unNone
           }
         }
     }
@@ -361,7 +362,7 @@ object Interpreter {
                       )
                       .map { case (_, fb) => fb }
                       .rethrow
-                      .map(_.map(hd => Chain(in.setValue((in, hd))))),
+                      .map(_.map(hd => Chain(in.setValue((in.value, hd))))),
                     EvalFailure.StreamHeadResolution(in.cursorGroup, _, in.value)
                   )
                 }

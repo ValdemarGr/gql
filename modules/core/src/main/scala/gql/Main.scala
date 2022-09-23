@@ -325,18 +325,30 @@ query withNestedFragments {
                 // "sd" -> f(eff(x => x.b.map(ServerData(_)))),
                 "c" -> f(eff(_.c.map(_.toSeq))),
                 "doo" -> f(pur(_ => Vector(Vector(Vector.empty[String])))),
-                "nestedSignal" -> f(
-                  SignalResolver.apply2(nameRef.contramap[Data[F]](_.a))(_ => IorT.pure(())) {
-                    eff { case (i, _) => i.c.map(_.head) }
-                  }
+                "nestedSignal" -> field(
+                  StreamResolver[F, Data[F], Unit, Data[F]](
+                    eff { case (i, _) => i.c.map(_.head) },
+                    k => fs2.Stream(k.a).repeat.lift[F].metered((if (k.a == "John") 200 else 500).millis).as(().rightIor)
+                  )
                 ),
-                "nestedSignal2" -> f(
-                  SignalResolver.apply2(nameRef.contramap[Data[F]](_.a))(_ => IorT.pure(())) {
-                    full(_ => IorT.leftT[F, Data[F]]("Hahaaaa, Nested signal errrorrororor!"))
-                  }
-                ),
+                "nestedSignal2" -> field(
+                  StreamResolver[F, Data[F], Unit, Data[F]](
+                    eff { case (i, _) => i.c.map(_.head) },
+                    k => fs2.Stream(k.a).repeat.lift[F].metered((if (k.a == "John") 200 else 500).millis).as(().rightIor)
+                  )
+                )
+                // f(
+                //   SignalResolver.apply2(nameRef.contramap[Data[F]](_.a))(_ => IorT.pure(())) {
+                //     eff { case (i, _) => i.c.map(_.head) }
+                //   }
+                // // ),
+                // "nestedSignal2" -> f(
+                //   SignalResolver.apply2(nameRef.contramap[Data[F]](_.a))(_ => IorT.pure(())) {
+                //     full(_ => IorT.leftT[F, Data[F]]("Hahaaaa, Nested signal errrorrororor!"))
+                //   }
+                // ),
                 // "nestedSignal3" -> gql.dsl.signal(nameRef.contramap[Data[F]](_.a))(_ => ()) { case (i, a) => i }
-                "nestedSignal3" -> gql.dsl.signal(nameRef.contramap[Data[F]](_.a)).pure(_ => ()).pure { case (i, a) => i }
+                // "nestedSignal3" -> gql.dsl.signal(nameRef.contramap[Data[F]](_.a)).pure(_ => ()).pure { case (i, a) => i }
               )
             }
 

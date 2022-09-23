@@ -11,5 +11,6 @@ final case class StreamResolver[F[_], I, R, A](
 ) extends LeafResolver[F, I, A] {
   override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): LeafResolver[G, I, A] = ???
 
-  override def contramap[B](g: B => I): LeafResolver[F, B, A] = ???
+  override def contramap[B](g: B => I): LeafResolver[F, B, A] =
+    StreamResolver(resolver.contramap[(B, R)] { case (b, r) => (g(b), r) }, i => stream(g(i)))
 }
