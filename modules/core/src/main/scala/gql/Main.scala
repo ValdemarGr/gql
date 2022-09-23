@@ -272,94 +272,92 @@ query withNestedFragments {
 
     final case class DataIds(ids: List[Int])
 
-    StreamRef[F, String, Unit](k => Resource.pure(fs2.Stream(k).repeat.lift[F].metered((if (k == "John") 200 else 500).millis).as(())))
-      .flatMap { nameRef =>
-        BatchResolver[F, Int, ServerData](xs => F.pure(xs.map(x => x -> ServerData(x)).toMap)).map { serverDataBatcher =>
-          implicit val inputDataType: In[InputData] = InputSyntax.obj[InputData](
-            "InputData",
-            (
-              arg[Int]("value", Some(42)),
-              arg[String]("val2")
-            ).mapN(InputData.apply)
-          )
+    BatchResolver[F, Int, ServerData](xs => F.pure(xs.map(x => x -> ServerData(x)).toMap)).map { serverDataBatcher =>
+      implicit val inputDataType: In[InputData] = InputSyntax.obj[InputData](
+        "InputData",
+        (
+          arg[Int]("value", Some(42)),
+          arg[String]("val2")
+        ).mapN(InputData.apply)
+      )
 
-          val valueArgs: Arg[(Int, String, Seq[String])] =
-            (
-              (
-                arg[Int]("num", Some(42)),
-                arg[Int]("num2", Some(9)),
-                arg[Int]("num", Some(99))
-              ).mapN(_ + _ + _),
-              arg[String]("text"),
-              arg[Seq[String]]("xs", Seq.empty.some)
-            ).tupled
+      val valueArgs: Arg[(Int, String, Seq[String])] =
+        (
+          (
+            arg[Int]("num", Some(42)),
+            arg[Int]("num2", Some(9)),
+            arg[Int]("num", Some(99))
+          ).mapN(_ + _ + _),
+          arg[String]("text"),
+          arg[Seq[String]]("xs", Seq.empty.some)
+        ).tupled
 
-          val inputDataArg = arg[InputData]("input")
+      val inputDataArg = arg[InputData]("input")
 
-          implicit def identityDataType: Type[F, IdentityData] =
-            obj[F, IdentityData](
-              "IdentityData",
-              "value" -> effect((valueArgs, inputDataArg).tupled) { case (x, ((y, z, hs), i)) =>
-                F.pure(s"${x.value2} + $z - ${(x.value + y).toString()} - (${hs.mkString(",")}) - $i")
-              }
-            )
+      implicit def identityDataType: Type[F, IdentityData] =
+        obj[F, IdentityData](
+          "IdentityData",
+          "value" -> effect((valueArgs, inputDataArg).tupled) { case (x, ((y, z, hs), i)) =>
+            F.pure(s"${x.value2} + $z - ${(x.value + y).toString()} - (${hs.mkString(",")}) - $i")
+          }
+        )
 
-          implicit def serverData: Type[F, ServerData] =
-            obj[F, ServerData](
-              "ServerData",
-              "value" -> pure(_.value)
-            )
+      implicit def serverData: Type[F, ServerData] =
+        obj[F, ServerData](
+          "ServerData",
+          "value" -> pure(_.value)
+        )
 
-          implicit def dataType: Type[F, Data[F]] =
-            obj2[F, Data[F]]("Data") { f =>
-              fields(
-                "dep" -> f(eff(_ => Ask.reader(_.v))),
-                "a" -> f(full(x => IorT.bothT[F]("Oh no, an error!", x.a))),
-                "a2" -> f(arg[Int]("num"))(pur { case (i, _) => i.a }),
-                "b" -> f(eff(_.b)),
-                "sd" -> f(
-                  serverDataBatcher
-                    .map { case (_, m) => m.values.toSeq }
-                    .contramapF(x => x.b.map(i => Set(i, i + 1, i * 2).rightIor))
-                ),
-                // "sd" -> f(eff(x => x.b.map(ServerData(_)))),
-                "c" -> f(eff(_.c.map(_.toSeq))),
-                "doo" -> f(pur(_ => Vector(Vector(Vector.empty[String])))),
-                "nestedSignal" -> {
-                  import gql.dsl._
-                  field(stream { k =>
-                    fs2.Stream.eval(k.c.map(_.head)).repeat.metered((if (k.a == "John") 200 else 500).millis)
-                  })
-                },
-                "nestedSignal2" -> {
-                  import gql.dsl._
-                  field(stream { k =>
-                    fs2.Stream
-                      .eval(k.c.map(_.head))
-                      .map(_.copy(a = if (scala.util.Random.nextDouble() > 0.5) "Jane" else "John"))
-                      .repeat
-                      .metered((if (k.a == "John") 200 else 500).millis)
-                  })
-                }
+      implicit def dataType: Type[F, Data[F]] =
+        obj2[F, Data[F]]("Data") { f =>
+          fields(
+            "dep" -> f(eff(_ => Ask.reader(_.v))),
+            "a" -> f(full(x => IorT.bothT[F]("Oh no, an error!", x.a))),
+            "a2" -> f(arg[Int]("num"))(pur { case (i, _) => i.a }),
+            "b" -> f(eff(_.b)),
+            "sd" -> f(
+              serverDataBatcher
+                .map { case (_, m) => m.values.toSeq }
+                .contramapF(x => x.b.map(i => Set(i, i + 1, i * 2).rightIor))
+            ),
+            // "sd" -> f(eff(x => x.b.map(ServerData(_)))),
+            "c" -> f(eff(_.c.map(_.toSeq))),
+            "doo" -> f(pur(_ => Vector(Vector(Vector.empty[String])))),
+            "nestedSignal" -> {
+              import gql.dsl._
+              field(stream { k =>
+                fs2.Stream.eval(k.c.map(_.head)).repeat.metered((if (k.a == "John") 10 else 50).millis)
+              })
+            },
+            "nestedSignal2" -> {
+              import gql.dsl._
+              field(stream { k =>
+                fs2.Stream
+                  .eval(k.c.map(_.head))
+                  .map(_.copy(a = if (scala.util.Random.nextDouble() > 0.5) "Jane" else "John"))
+                  .repeat
+                  .metered((if (k.a == "John") 10 else 50).millis)
+              })
+            }
 
-                // "nestedSignal" -> field(
-                //   StreamResolver[F, Data[F], Unit, Data[F]](
-                //     eff { case (i, _) =>
-                //       i.c.map(_.head).map(x => x.copy(a = if (scala.util.Random.nextDouble() > 0.5) "Jane" else "John"))
-                //     },
-                //     k => fs2.Stream(k.a).repeat.lift[F].metered((if (k.a == "John") 200 else 500).millis).as(().rightIor)
-                //   )
-                // ),
-                // "nestedSignal2" -> field(
-                //   StreamResolver[F, Data[F], Unit, Data[F]](
-                //     eff { case (i, _) => i.c.map(_.head) },
-                //     k => fs2.Stream(k.a).repeat.lift[F].metered((if (k.a == "John") 200 else 500).millis).as(().rightIor)
-                //   )
-                // ),
+            // "nestedSignal" -> field(
+            //   StreamResolver[F, Data[F], Unit, Data[F]](
+            //     eff { case (i, _) =>
+            //       i.c.map(_.head).map(x => x.copy(a = if (scala.util.Random.nextDouble() > 0.5) "Jane" else "John"))
+            //     },
+            //     k => fs2.Stream(k.a).repeat.lift[F].metered((if (k.a == "John") 200 else 500).millis).as(().rightIor)
+            //   )
+            // ),
+            // "nestedSignal2" -> field(
+            //   StreamResolver[F, Data[F], Unit, Data[F]](
+            //     eff { case (i, _) => i.c.map(_.head) },
+            //     k => fs2.Stream(k.a).repeat.lift[F].metered((if (k.a == "John") 200 else 500).millis).as(().rightIor)
+            //   )
+            // ),
 
-                // "loll" -> gql.dsl.stream(arg[Int]("num")) { case (data, i) =>
-                //   fs2.Stream(s"${data.a}-$i")
-                // }
+            // "loll" -> gql.dsl.stream(arg[Int]("num")) { case (data, i) =>
+            //   fs2.Stream(s"${data.a}-$i")
+            // }
 
 //               "streamData" -> stream(arg) { case (i, a) => fs2.Stream(i.a).repeat },
 //               "streamData" -> stream(arg)(br) { case (i, a) => fs2.Stream(i.a).repeat },
@@ -373,104 +371,103 @@ query withNestedFragments {
 //               "streamData" -> fallibleStream { i => fs2.Stream(i.a).repeat },
 //               "streamData" -> fallibleStream(br) { i => fs2.Stream(i.a).repeat },
 
-                // "i" -> gql.dsl.stream(arg[Int]("num")) { case (i, a) =>
-                //   fs2.Stream(a)
-                // }
-                // "nestedSignal3" -> stream(arg) { k =>
-                //
-                // }
-                // "nestedSignal3" -> stream(arg).fallible { k =>
-                //
-                // }
-                // "nestedSignal3" -> stream(arg).with(br) { k =>
-                //
-                // }
-                // "nestedSignal3" -> stream(arg).withFallible(br) { k =>
-                //
-                // }
-                // "nestedSignal3" -> stream { k =>
-                //   fs2.Stream(k.a).repeat.lift[F].metered((if (k.a == "John") 200 else 500).millis).as(().rightIor)
-                // }
-                // f(
-                //   SignalResolver.apply2(nameRef.contramap[Data[F]](_.a))(_ => IorT.pure(())) {
-                //     eff { case (i, _) => i.c.map(_.head) }
-                //   }
-                // // ),
-                // "nestedSignal2" -> f(
-                //   SignalResolver.apply2(nameRef.contramap[Data[F]](_.a))(_ => IorT.pure(())) {
-                //     full(_ => IorT.leftT[F, Data[F]]("Hahaaaa, Nested signal errrorrororor!"))
-                //   }
-                // ),
-                // "nestedSignal3" -> gql.dsl.signal(nameRef.contramap[Data[F]](_.a))(_ => ()) { case (i, a) => i }
-                // "nestedSignal3" -> gql.dsl.signal(nameRef.contramap[Data[F]](_.a)).pure(_ => ()).pure { case (i, a) => i }
-              )
-            }
-
-          implicit def otherDataType: Type[F, OtherData[F]] =
-            obj[F, OtherData[F]](
-              "OtherData",
-              "value" -> pure(_.value),
-              "d1" -> effect(_.d1)
-            )
-
-          implicit def datasType: Union[F, Datas[F]] =
-            union[F, Datas[F]](
-              "Datas",
-              contra[Data[F]] { case Datas.Dat(d) => d },
-              contra[OtherData[F]] { case Datas.Other(o) => o }
-            )
-
-          trait A {
-            def a: String
-          }
-          object A {
-            implicit def t: Interface[F, A] =
-              interface[F, A](
-                obj(
-                  "A",
-                  "a" -> pure(_ => "A")
-                ),
-                contra[B] { case b: B => b },
-                contra[C] { case c: C => c }
-              )
-          }
-
-          trait D {
-            def d: String
-          }
-          object D {
-            implicit def t: Interface[F, D] =
-              interface[F, D](
-                obj(
-                  "D",
-                  "d" -> pure(_ => "D")
-                ),
-                contra[C] { case c: C => c }
-              )
-          }
-
-          final case class B(a: String) extends A
-          object B {
-            implicit def t: Type[F, B] = obj[F, B]("B", "a" -> pure(_ => "B"), "b" -> pure(_ => Option("BO")))
-          }
-          final case class C(a: String, d: String) extends A with D
-          object C {
-            implicit def t: Type[F, C] =
-              obj[F, C]("C", "a" -> pure(_ => "C"), "d" -> pure(_ => "D"), "fail" -> full2(_ => IorT.leftT[F, String]("im dead")))
-          }
-
-          SchemaShape[F, Unit](
-            obj[F, Unit](
-              "Query",
-              "getData" -> pure(_ => root[F]),
-              "getDatas" -> pure(_ => datasRoot[F]),
-              "getInterface" -> pure(_ => (C("hey", "tun"): A)),
-              "getOther" -> pure(_ => (C("hey", "tun"): D)),
-              "doIdentity" -> pure(_ => IdentityData(2, "hello"))
-            )
+            // "i" -> gql.dsl.stream(arg[Int]("num")) { case (i, a) =>
+            //   fs2.Stream(a)
+            // }
+            // "nestedSignal3" -> stream(arg) { k =>
+            //
+            // }
+            // "nestedSignal3" -> stream(arg).fallible { k =>
+            //
+            // }
+            // "nestedSignal3" -> stream(arg).with(br) { k =>
+            //
+            // }
+            // "nestedSignal3" -> stream(arg).withFallible(br) { k =>
+            //
+            // }
+            // "nestedSignal3" -> stream { k =>
+            //   fs2.Stream(k.a).repeat.lift[F].metered((if (k.a == "John") 200 else 500).millis).as(().rightIor)
+            // }
+            // f(
+            //   SignalResolver.apply2(nameRef.contramap[Data[F]](_.a))(_ => IorT.pure(())) {
+            //     eff { case (i, _) => i.c.map(_.head) }
+            //   }
+            // // ),
+            // "nestedSignal2" -> f(
+            //   SignalResolver.apply2(nameRef.contramap[Data[F]](_.a))(_ => IorT.pure(())) {
+            //     full(_ => IorT.leftT[F, Data[F]]("Hahaaaa, Nested signal errrorrororor!"))
+            //   }
+            // ),
+            // "nestedSignal3" -> gql.dsl.signal(nameRef.contramap[Data[F]](_.a))(_ => ()) { case (i, a) => i }
+            // "nestedSignal3" -> gql.dsl.signal(nameRef.contramap[Data[F]](_.a)).pure(_ => ()).pure { case (i, a) => i }
           )
         }
+
+      implicit def otherDataType: Type[F, OtherData[F]] =
+        obj[F, OtherData[F]](
+          "OtherData",
+          "value" -> pure(_.value),
+          "d1" -> effect(_.d1)
+        )
+
+      implicit def datasType: Union[F, Datas[F]] =
+        union[F, Datas[F]](
+          "Datas",
+          contra[Data[F]] { case Datas.Dat(d) => d },
+          contra[OtherData[F]] { case Datas.Other(o) => o }
+        )
+
+      trait A {
+        def a: String
       }
+      object A {
+        implicit def t: Interface[F, A] =
+          interface[F, A](
+            obj(
+              "A",
+              "a" -> pure(_ => "A")
+            ),
+            contra[B] { case b: B => b },
+            contra[C] { case c: C => c }
+          )
+      }
+
+      trait D {
+        def d: String
+      }
+      object D {
+        implicit def t: Interface[F, D] =
+          interface[F, D](
+            obj(
+              "D",
+              "d" -> pure(_ => "D")
+            ),
+            contra[C] { case c: C => c }
+          )
+      }
+
+      final case class B(a: String) extends A
+      object B {
+        implicit def t: Type[F, B] = obj[F, B]("B", "a" -> pure(_ => "B"), "b" -> pure(_ => Option("BO")))
+      }
+      final case class C(a: String, d: String) extends A with D
+      object C {
+        implicit def t: Type[F, C] =
+          obj[F, C]("C", "a" -> pure(_ => "C"), "d" -> pure(_ => "D"), "fail" -> full2(_ => IorT.leftT[F, String]("im dead")))
+      }
+
+      SchemaShape[F, Unit](
+        obj[F, Unit](
+          "Query",
+          "getData" -> pure(_ => root[F]),
+          "getDatas" -> pure(_ => datasRoot[F]),
+          "getInterface" -> pure(_ => (C("hey", "tun"): A)),
+          "getOther" -> pure(_ => (C("hey", "tun"): D)),
+          "doIdentity" -> pure(_ => IdentityData(2, "hello"))
+        )
+      )
+    }
   }
 
   def root[F[_]: Sync]: Data[F] = getData[F]("John")
