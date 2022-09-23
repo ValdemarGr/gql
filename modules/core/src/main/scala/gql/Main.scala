@@ -327,7 +327,9 @@ query withNestedFragments {
                 "doo" -> f(pur(_ => Vector(Vector(Vector.empty[String])))),
                 "nestedSignal" -> field(
                   StreamResolver[F, Data[F], Unit, Data[F]](
-                    eff { case (i, _) => i.c.map(_.head).map(x => x.copy(a = if (scala.util.Random.nextDouble() > 0.5) "Jane" else "John")) },
+                    eff { case (i, _) =>
+                      i.c.map(_.head).map(x => x.copy(a = if (scala.util.Random.nextDouble() > 0.5) "Jane" else "John"))
+                    },
                     k => fs2.Stream(k.a).repeat.lift[F].metered((if (k.a == "John") 200 else 500).millis).as(().rightIor)
                   )
                 ),
