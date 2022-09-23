@@ -314,7 +314,7 @@ query withNestedFragments {
             obj2[F, Data[F]]("Data") { f =>
               fields(
                 "dep" -> f(eff(_ => Ask.reader(_.v))),
-                "a" -> f(full(x => IorT.bothT[F]("Oh no, an error!", "Hahaa"))),
+                "a" -> f(full(x => IorT.bothT[F]("Oh no, an error!", x.a))),
                 "a2" -> f(arg[Int]("num"))(pur { case (i, _) => i.a }),
                 "b" -> f(eff(_.b)),
                 "sd" -> f(
@@ -327,7 +327,7 @@ query withNestedFragments {
                 "doo" -> f(pur(_ => Vector(Vector(Vector.empty[String])))),
                 "nestedSignal" -> field(
                   StreamResolver[F, Data[F], Unit, Data[F]](
-                    eff { case (i, _) => i.c.map(_.head) },
+                    eff { case (i, _) => i.c.map(_.head).map(x => x.copy(a = if (scala.util.Random.nextDouble() > 0.5) "Jane" else "John")) },
                     k => fs2.Stream(k.a).repeat.lift[F].metered((if (k.a == "John") 200 else 500).millis).as(().rightIor)
                   )
                 ),
@@ -554,8 +554,9 @@ query withNestedFragments {
 
             interpreter.Interpreter
               .runStreamed[F]((), x, schema.state)
-              .evalMap { case (failures, x) =>
-                C.println(s"got new subtree") >>
+              .zipWithIndex
+              .evalMap { case ((failures, x), i) =>
+                C.println(s"got new subtree $i") >>
                   C.println("errors:") >>
                   C.println(Execute.formatErrors(failures)) >>
                   C.println(x.toString())

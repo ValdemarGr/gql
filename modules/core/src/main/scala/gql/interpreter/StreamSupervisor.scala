@@ -21,29 +21,34 @@ trait StreamSupervisor[F[_], A] {
 object StreamSupervisor {
   def apply[F[_], A](openTail: Boolean)(implicit F: Concurrent[F]): Stream[F, StreamSupervisor[F, A]] = {
     fs2.Stream
-      .bracket(F.ref(Map.empty[Unique.Token, F[Unit]]))(_.get.flatMap(_.values.toList.parSequence_))
+      .bracket(F.ref(Map.empty[Unique.Token, F[Unit]]))(_.get.flatMap(_.values.toList.sequence_))
       .flatMap { state =>
         fs2.Stream.eval(Queue.bounded[F, Chunk[(Unique.Token, Either[Throwable, A])]](1024)).map { q =>
           new StreamSupervisor[F, A] {
             override def acquireAwait(stream: Stream[F, A]): F[(Unique.Token, Either[Throwable, A])] =
               for {
                 token <- F.unique
-                (head, close) <-
+                head <- F.deferred[Either[Throwable, A]]
+                close <-
+                  // Some danger here
+                  // We must NOT start the background stream outside of the main stream since that would escape the scope (as in fs2 `Scope`) the main stream
+                  // Instead we use the resource compiler to do so
                   stream.attempt.pull.uncons1
                     .flatMap {
                       case None => ???
                       case Some((hd, tl)) =>
-                        val fa =
-                          if (openTail) {
-                            val back = tl.map(e => (token, e)).enqueueUnterminatedChunks(q).compile.drain
-                            back.start.map(fib => (hd, fib.cancel))
-                          } else F.pure(hd, F.unit)
-
-                        fs2.Stream.eval(fa).pull.echo
+                        val back =
+                          if (openTail)
+                            tl.map(e => (token, e)).enqueueUnterminatedChunks(q).pull.echo
+                          else Pull.done
+                        Pull.eval(head.complete(hd)) >> back
                     }
                     .stream
                     .compile
-                    .lastOrError
+                    .drain
+                    .start
+                    .map(_.cancel)
+                head <- head.get
                 _ <- state.update(_ + (token -> close))
               } yield (token, head)
 

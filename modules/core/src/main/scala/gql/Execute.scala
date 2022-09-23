@@ -48,7 +48,10 @@ object Execute {
         path: CursorGroup
     )
     def formatEither(e: Either[Throwable, String]) =
-      e.swap.as("internal error").merge
+      e.swap.map { e =>
+        e.printStackTrace()
+        "internal error"
+      }.merge
 
     import EvalFailure._
     val errors =
@@ -68,7 +71,10 @@ object Execute {
             Chain(GQLError(formatEither(error), path))
           case BatchResolution(paths, exception, keys) =>
             paths.map(path => GQLError("internal error", path))
-
+          case StreamHeadResolution(path, err, _) =>
+            Chain(GQLError(formatEither(err), path))
+          case StreamTailResolution(path, err) =>
+            Chain(GQLError(formatEither(err), path))
         }
       }
     errors.map { err =>

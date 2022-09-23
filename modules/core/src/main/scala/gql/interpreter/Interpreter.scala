@@ -133,10 +133,9 @@ object Interpreter {
                               val groupIdMapping =
                                 newRootSel.toList.map { case (df, rootCursor, _, _, idx) => idx -> (rootCursor, df) }.toMap
 
-                              val all = combineSplit(
-                                newFails ++ Chain.fromSeq(newRootSel.toList).flatMap { case (_, _, _, errs, _) => errs },
-                                newSuccs
-                              )
+                              val allFails = newFails ++ Chain.fromSeq(newRootSel.toList).flatMap { case (_, _, _, errs, _) => errs }
+
+                              val all = combineSplit(allFails, newSuccs)
                               // group -> results
                               val l = all.toList.groupBy { case (m, _) => m.groupId }.toList
 
@@ -164,7 +163,7 @@ object Interpreter {
                               // All nodes that occured in the tree but are not in the HCSA are dead
                               val garbageCollected = withNew -- meta.toRemove
 
-                              val o = ((recombined, garbageCollected), Some((newFails, recombined)))
+                              val o = ((recombined, garbageCollected), Some((allFails, recombined)))
 
                               // Also remove the subscriptions
                               meta.toRemove.toList
