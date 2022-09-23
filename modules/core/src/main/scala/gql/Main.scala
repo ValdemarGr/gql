@@ -325,20 +325,54 @@ query withNestedFragments {
                 // "sd" -> f(eff(x => x.b.map(ServerData(_)))),
                 "c" -> f(eff(_.c.map(_.toSeq))),
                 "doo" -> f(pur(_ => Vector(Vector(Vector.empty[String])))),
-                "nestedSignal" -> field(
-                  StreamResolver[F, Data[F], Unit, Data[F]](
-                    eff { case (i, _) =>
-                      i.c.map(_.head).map(x => x.copy(a = if (scala.util.Random.nextDouble() > 0.5) "Jane" else "John"))
-                    },
-                    k => fs2.Stream(k.a).repeat.lift[F].metered((if (k.a == "John") 200 else 500).millis).as(().rightIor)
-                  )
-                ),
-                "nestedSignal2" -> field(
-                  StreamResolver[F, Data[F], Unit, Data[F]](
-                    eff { case (i, _) => i.c.map(_.head) },
-                    k => fs2.Stream(k.a).repeat.lift[F].metered((if (k.a == "John") 200 else 500).millis).as(().rightIor)
-                  )
-                ),
+                "nestedSignal" -> {
+                  import gql.dsl._
+                  field(stream { k =>
+                    fs2.Stream.eval(k.c.map(_.head)).repeat.metered((if (k.a == "John") 200 else 500).millis)
+                  })
+                },
+                "nestedSignal2" -> {
+                  import gql.dsl._
+                  field(stream { k =>
+                    fs2.Stream
+                      .eval(k.c.map(_.head))
+                      .map(_.copy(a = if (scala.util.Random.nextDouble() > 0.5) "Jane" else "John"))
+                      .repeat
+                      .metered((if (k.a == "John") 200 else 500).millis)
+                  })
+                }
+
+                // "nestedSignal" -> field(
+                //   StreamResolver[F, Data[F], Unit, Data[F]](
+                //     eff { case (i, _) =>
+                //       i.c.map(_.head).map(x => x.copy(a = if (scala.util.Random.nextDouble() > 0.5) "Jane" else "John"))
+                //     },
+                //     k => fs2.Stream(k.a).repeat.lift[F].metered((if (k.a == "John") 200 else 500).millis).as(().rightIor)
+                //   )
+                // ),
+                // "nestedSignal2" -> field(
+                //   StreamResolver[F, Data[F], Unit, Data[F]](
+                //     eff { case (i, _) => i.c.map(_.head) },
+                //     k => fs2.Stream(k.a).repeat.lift[F].metered((if (k.a == "John") 200 else 500).millis).as(().rightIor)
+                //   )
+                // ),
+
+                // "loll" -> gql.dsl.stream(arg[Int]("num")) { case (data, i) =>
+                //   fs2.Stream(s"${data.a}-$i")
+                // }
+
+//               "streamData" -> stream(arg) { case (i, a) => fs2.Stream(i.a).repeat },
+//               "streamData" -> stream(arg)(br) { case (i, a) => fs2.Stream(i.a).repeat },
+
+//               "streamData" -> stream { i => fs2.Stream(i.a).repeat },
+//               "streamData" -> stream(br) { i => fs2.Stream(i.a).repeat },
+
+//               "streamData" -> fallibleStream(arg) { case (i, a) => fs2.Stream(i.a).repeat },
+//               "streamData" -> fallibleStream(arg)(br) { case (i, a) => fs2.Stream(i.a).repeat },
+
+//               "streamData" -> fallibleStream { i => fs2.Stream(i.a).repeat },
+//               "streamData" -> fallibleStream(br) { i => fs2.Stream(i.a).repeat },
+
                 // "i" -> gql.dsl.stream(arg[Int]("num")) { case (i, a) =>
                 //   fs2.Stream(a)
                 // }
