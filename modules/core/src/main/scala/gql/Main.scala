@@ -308,6 +308,7 @@ query withNestedFragments {
           "value" -> pure(_.value)
         )
 
+      import gql.dsl.{stream, streamFallible, field}
       implicit def dataType: Type[F, Data[F]] =
         obj2[F, Data[F]]("Data") { f =>
           fields(
@@ -322,21 +323,26 @@ query withNestedFragments {
             ),
             "c" -> f(eff(_.c.map(_.toSeq))),
             "doo" -> f(pur(_ => Vector(Vector(Vector.empty[String])))),
-            "nestedSignal" -> {
-              import gql.dsl._
-              field(stream { k =>
-                fs2.Stream.eval(k.c.map(_.head)).repeat.metered((if (k.a == "John") 10 else 50).millis)
-              })
-            },
-            "nestedSignal2" -> {
-              import gql.dsl._
-              field(stream { k =>
-                fs2.Stream
-                  .eval(k.c.map(_.head))
-                  .map(_.copy(a = if (scala.util.Random.nextDouble() > 0.5) "Jane" else "John"))
-                  .repeat
-                  .metered((if (k.a == "John") 10 else 50).millis)
-              })
+            "nestedSignal" -> field(stream { k =>
+              fs2.Stream.eval(k.c.map(_.head)).repeat.metered((if (k.a == "John") 10 else 50).millis)
+            }),
+            "nestedSignal2" -> field(stream { k =>
+              fs2.Stream
+                .eval(k.c.map(_.head))
+                .map(_.copy(a = if (scala.util.Random.nextDouble() > 0.5) "Jane" else "John"))
+                .repeat
+                .metered((if (k.a == "John") 10 else 50).millis)
+            }),
+            "test" -> field(stream(k => fs2.Stream(0))),
+            "test" -> field(arg[Int]("num"))(stream { case (k, a) => fs2.Stream(0) }),
+            "test" -> field(streamFallible(k => fs2.Stream(NonEmptyChain("errrrr").leftIor[String]))),
+            "test" -> field(arg[Int]("num"))(streamFallible { case (k, a) =>
+              fs2.Stream(NonEmptyChain("errrrr").leftIor[String])
+            }),
+            "test" -> {
+              val a: Arg[(Int, Option[Int])] = (arg[Int]("numDice"), arg[Option[Int]]("numSides")).tupled
+              val r: BatchResolver[F, (Data[F], Int), String] = ???
+              field(stream(r)(k => fs2.Stream(0)))
             }
           )
         }
