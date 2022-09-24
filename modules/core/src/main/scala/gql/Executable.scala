@@ -1,5 +1,6 @@
 package gql
 
+import cats.Monoid
 import gql.parser._
 import gql.parser.{QueryParser => P}
 import fs2.Stream
@@ -11,25 +12,8 @@ import cats.data._
 import gql.interpreter._
 import gql.parser.ParserUtil
 
-final case class Executable[F[_]: Async, Q, M, S](
-    schema: Schema[F, Q],
-    statistics: Statistics[F]
-) {
-  def execute[O](query: NonEmptyList[P.ExecutableDefinition], variables: Map[String, Json]): ExecutableQuery[F, Q, M, S] = {
-    implicit lazy val s = statistics
-    ExecutableQuery.assemble[F, Q, M, S](query, schema, variables)
-  }
-
-  def execute[O](query: String, variables: Map[String, Json]): Either[ParseError, ExecutableQuery[F, Q, M, S]] =
-    parse(query).map(execute(_, variables))
-}
-
-object Executable {
-  def apply[F[_]: Async, Q, M, S](schema: Schema[F, Q]): F[Executable[F, Q, M, S]] =
-    Statistics[F].map(Executable(schema, _))
-}
-
 sealed trait ExecutableQuery[F[_], Q, M, S]
+
 object ExecutableQuery {
   case class Result(
       errors: Chain[EvalFailure],
@@ -49,7 +33,7 @@ object ExecutableQuery {
 
   def assemble[F[_]: Statistics, Q, M, S](
       query: NonEmptyList[P.ExecutableDefinition],
-      schema: Schema[F, Q],
+      schema: Schema[F, Q, M, S],
       variables: Map[String, Json]
   )(implicit F: Async[F]): ExecutableQuery[F, Q, M, S] = {
     PreparedQuery.prepare2(query, schema, variables) match {

@@ -41,7 +41,7 @@ import gql.resolver._
 import cats.effect._
 
 val brState = BatchResolver[IO, Int, Int](keys => IO.pure(keys.map(k => k -> (k * 2)).toMap))
-// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@36cc6118
+// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@7ca1259
 ```
 A `State` monad is used to keep track of the batchers that have been created and unique id generation.
 During schema construction, `State` can be composed using `Monad`ic operations.
@@ -58,11 +58,13 @@ def batchSchema = brState.map { (br: BatchResolver[IO, Set[Int], Map[Int, Int]])
     .contramap[Int](Set(_))
     .map { case (_, m) => m.values.headOption }
 
-  SchemaShape[IO, Unit](
-    tpe(
+  SchemaShape[IO, Unit, Unit, Unit](
+    tpe[IO, Unit](
       "Query",
       "field" -> field(adjusted.contramap(_ => 42))
-    )
+    ),
+    None,
+    None
   )
 }
 ```
@@ -77,24 +79,24 @@ Reasoning with function addreses is not very intuitive, so this is not the prefe
 Which we can finally run:
 ```scala
 import cats.effect.unsafe.implicits.global
-def s = Schema.stateful(batchSchema)
-                                                                                        
+import cats.implicits._
+
 def query = """
   query {
     field
   }
 """
-                                                                                        
-implicit def stats = Statistics[IO].unsafeRunSync()
-                                                                                        
-def parsed = gql.parser.parse(query).toOption.get
-                                                                                        
-def program = Execute.executor(parsed, s, Map.empty) match {
-  case Execute.ExecutorOutcome.Query(run) => run(()).map { case (_, output) => output }
-}
-                                                                                        
-program.unsafeRunSync()
-// res0: io.circe.JsonObject = object[field -> 84]
+
+Schema.stateful(batchSchema).flatMap{ sch =>
+  sch.assemble(query, variables = Map.empty)
+    .traverse { case ExecutableQuery.Query(run) => run(()).map(_.asGraphQL) }
+}.unsafeRunSync()
+// res0: Either[parser.package.ParseError, io.circe.JsonObject] = Right(
+//   value = object[errors -> [
+// ],data -> {
+//   "field" : 84
+// }]
+// )
 ```
 :::tip
 The `BatchResolver` de-duplicates keys since it uses `Set` and `Map`.
@@ -136,7 +138,7 @@ final case class DomainBatchers[F[_]](
     .map[Int]{ case (_, m) => m.values.toList.combineAll }
   )
 ).mapN(DomainBatchers.apply)
-// res1: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], DomainBatchers[[A]IO[A]]] = cats.data.IndexedStateT@6cf160b3
+// res1: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], DomainBatchers[[A]IO[A]]] = cats.data.IndexedStateT@17b89407
 ```
 
 ## StreamResolver
@@ -144,11 +146,13 @@ The `StreamResolver` is a very powerful resolver type, that can perform many dif
 First and foremost a `StreamResolver` can update a sub-tree of the schema via some provided stream:
 ```scala
 def streamSchema = 
-  SchemaShape[IO, Unit](
+  SchemaShape[IO, Unit, Unit, Unit](
     tpe(
       "Query",
       "stream" -> field(stream(_ => fs2.Stream(1).repeat.lift[IO].scan(0)(_ + _)))
-    )
+    ),
+    None,
+    None
   )
 ```
 

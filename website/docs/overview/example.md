@@ -51,7 +51,7 @@ import gql.ast._
 
 With the `dsl` smart constructors in scope; we can now construct the schema:
 ```scala
-import cats._
+import cats.effect._
 import cats.implicits._
 import gql._
 
@@ -65,7 +65,7 @@ trait Repository[F[_]] {
   def getDroid(id: String): F[Droid]
 }
 
-def schema[F[_]: Applicative](implicit repo: Repository[F]): Schema[F, Unit] = {
+def schema[F[_]: Async](implicit repo: Repository[F]) = {
   implicit val episode: Enum[F, Episode] = {
     import Episode._
     enum(
@@ -102,8 +102,8 @@ def schema[F[_]: Applicative](implicit repo: Repository[F]): Schema[F, Unit] = {
       instance[Droid] { case x: Droid => x }
     )
 
-  Schema.simple[F, Unit](
-    tpe(
+  Schema.query(
+    tpe[F, Unit](
       "Query",
       "hero" -> eff(arg[Episode]("episode")) { case (_, episode) => repo.getHero(episode) },
       "character" -> eff(arg[ID[String]]("id")) { case (_, id) => repo.getCharacter(id.value) },
@@ -135,8 +135,6 @@ implicit def repo = new Repository[IO] {
   def getDroid(id: String): IO[Droid] = ???
 }
 
-def s = schema[IO]
-
 def query = """
  query HeroNameQuery {
    hero(episode: NEWHOPE) {
@@ -155,24 +153,30 @@ def query = """
 """
 ```
 
-Before running the query, we need to allocate a `Statistics` instance.
-The `Statistics` algebra serves as the backbone of query planning.
-```scala
-implicit lazy val stats = Statistics[IO].unsafeRunSync()
-```
-
 Now we can parse, plan and evaluate the query:
 ```scala
-def parsed = gql.parser.parse(query).toOption.get
-
-def program = Execute.executor(parsed, s, Map.empty) match {
-  case Execute.ExecutorOutcome.Query(run) => run(()).map { case (_, output) => output }
-}
-
-println(program.unsafeRunSync())
-// object[hero -> {
-//   "primaryFunction" : "Astromech",
-//   "name" : "R2-D2",
-//   "id" : "1000"
-// }]
+schema[IO].map { sch =>
+  sch.assemble(query, variables = Map.empty)
+    .traverse { case ExecutableQuery.Query(run) => run(()).map(_.asGraphQL) }
+}.unsafeRunSync()
+// res0: IO[Either[parser.package.ParseError, io.circe.JsonObject]] = Map(
+//   ioe = Map(
+//     ioe = Map(
+//       ioe = FlatMap(
+//         ioe = Uncancelable(
+//           body = cats.effect.IO$$$Lambda$16051/0x00000001044d2840@6cadaf35,
+//           event = cats.effect.tracing.TracingEvent$StackTrace
+//         ),
+//         f = fs2.Stream$CompileOps$$Lambda$16052/0x00000001044d3840@50acebae,
+//         event = cats.effect.tracing.TracingEvent$StackTrace
+//       ),
+//       f = gql.ExecutableQuery$$$Lambda$16053/0x00000001044d4040@730fad8a,
+//       event = cats.effect.tracing.TracingEvent$StackTrace
+//     ),
+//     f = <function1>,
+//     event = cats.effect.tracing.TracingEvent$StackTrace
+//   ),
+//   f = cats.syntax.EitherOps$$$Lambda$16054/0x00000001044d5040@6c6ae9c4,
+//   event = cats.effect.tracing.TracingEvent$StackTrace
+// )
 ```

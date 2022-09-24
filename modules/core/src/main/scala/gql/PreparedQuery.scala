@@ -497,10 +497,10 @@ object PreparedQuery {
 
   // TODO add another phase after finding the OperationDefinition and before this,
   // that checks all that variables have been used
-  def prepareParts[F[_], G[_]: Applicative, Q](
+  def prepareParts[F[_], G[_]: Applicative](
       op: P.OperationDefinition,
       frags: List[Pos[P.FragmentDefinition]],
-      schema: Schema[G, Q],
+      schema: Schema[G, _, _, _],
       variableMap: Map[String, Json]
   )(implicit
       S: Stateful[F, Prep],
@@ -508,6 +508,13 @@ object PreparedQuery {
       D: Defer[F]
   ): F[(P.OperationType, NonEmptyList[PreparedField[G, Any]])] = {
     val ot = operationType(op)
+
+    val rootSchema: F[Type[G, _]] =
+      ot match {
+        case P.OperationType.Query        => F.pure(schema.shape.query)
+        case P.OperationType.Mutation     => raiseOpt(schema.shape.mutation, "no mutation defined in schema", None)
+        case P.OperationType.Subscription => raiseOpt(schema.shape.subscription, "no subscription defined in schema", None)
+      }
 
     val rootTypename =
       ot match {
@@ -530,20 +537,22 @@ object PreparedQuery {
       // (variableMap, sel)
     }
 
-    val fa = prepareSelections[F, G](
-      schema.shape.query.asInstanceOf[Selectable[G, Any]],
-      sel,
-      variableMap,
-      frags.map(f => f.value.name -> f).toMap,
-      rootTypename
-    )
+    val fa = rootSchema.flatMap { root =>
+      prepareSelections[F, G](
+        root.asInstanceOf[Type[G, Any]],
+        sel,
+        variableMap,
+        frags.map(f => f.value.name -> f).toMap,
+        rootTypename
+      )
+    }
 
     fa.tupleLeft(ot)
   }
 
-  def prepare[F[_]: Applicative, Q](
+  def prepare[F[_]: Applicative](
       executabels: NonEmptyList[P.ExecutableDefinition],
-      schema: Schema[F, Q],
+      schema: Schema[F, _, _, _],
       variableMap: Map[String, Json]
   ): Either[PositionalError, NonEmptyList[PreparedField[F, Any]]] = {
     val (ops, frags) =
@@ -557,7 +566,7 @@ object PreparedQuery {
     getOperationDefinition[Either[(String, List[Caret]), *]](ops, None) match {
       case Left((e, carets)) => Left(PositionalError(PrepCursor.empty, carets, e))
       case Right(op) =>
-        prepareParts[G, F, Q](op, frags, schema, variableMap)
+        prepareParts[G, F](op, frags, schema, variableMap)
           .map { case (_, x) => x }
           .runA(Prep(Set.empty, 1, PrepCursor.empty))
           .value
@@ -565,9 +574,9 @@ object PreparedQuery {
     }
   }
 
-  def prepare2[F[_]: Applicative, Q, M, S](
+  def prepare2[F[_]: Applicative](
       executabels: NonEmptyList[P.ExecutableDefinition],
-      schema: Schema[F, Q],
+      schema: Schema[F, _, _, _],
       variableMap: Map[String, Json]
   ): Either[PositionalError, (P.OperationType, NonEmptyList[PreparedField[F, Any]])] = {
     val (ops, frags) = executabels.toList.partitionEither {
@@ -580,7 +589,7 @@ object PreparedQuery {
     getOperationDefinition[Either[(String, List[Caret]), *]](ops, None) match {
       case Left((e, carets)) => Left(PositionalError(PrepCursor.empty, carets, e))
       case Right(op) =>
-        prepareParts[G, F, Q](op, frags, schema, variableMap)
+        prepareParts[G, F](op, frags, schema, variableMap)
           .runA(Prep(Set.empty, 1, PrepCursor.empty))
           .value
           .value

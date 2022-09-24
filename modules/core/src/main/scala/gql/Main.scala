@@ -260,7 +260,7 @@ query withNestedFragments {
 
   final case class Deps(v: String)
 
-  def testSchemaShape[F[_]](implicit F: Async[F], Ask: Ask[F, Deps]): State[SchemaState[F], SchemaShape[F, Unit]] = {
+  def testSchemaShape[F[_]](implicit F: Async[F], Ask: Ask[F, Deps]): State[SchemaState[F], SchemaShape[F, Unit, Unit, Unit]] = {
     final case class IdentityData(value: Int, value2: String)
 
     final case class InputData(
@@ -400,7 +400,7 @@ query withNestedFragments {
           obj[F, C]("C", "a" -> pure(_ => "C"), "d" -> pure(_ => "D"), "fail" -> full2(_ => IorT.leftT[F, String]("im dead")))
       }
 
-      SchemaShape[F, Unit](
+      SchemaShape[F, Unit, Unit, Unit](
         obj[F, Unit](
           "Query",
           "getData" -> pure(_ => root[F]),
@@ -408,7 +408,9 @@ query withNestedFragments {
           "getInterface" -> pure(_ => (C("hey", "tun"): A)),
           "getOther" -> pure(_ => (C("hey", "tun"): D)),
           "doIdentity" -> pure(_ => IdentityData(2, "hello"))
-        )
+        ),
+        None,
+        None
       )
     }
   }
@@ -482,22 +484,21 @@ fragment F2 on Data {
   type D[A] = Kleisli[IO, Deps, A]
 
   def mainProgram[F[_]](implicit F: Async[F], A: Ask[F, Deps], C: std.Console[F]): F[Unit] = {
-    val schema = Schema.stateful[F, Unit](testSchemaShape[F])
+    Schema.stateful(testSchemaShape[F]).flatMap { schema =>
+      println(schema.shape.validate.map(_.toString).mkString_("\n"))
 
-    println(schema.shape.validate.map(_.toString).mkString_("\n"))
+      def parseAndPrep(q: String): Option[NonEmptyList[PreparedQuery.PreparedField[F, Any]]] =
+        gql.parser.parse(q).map(PreparedQuery.prepare(_, schema, Map.empty)) match {
+          case Left(e) =>
+            println(e.prettyError.value)
+            None
+          case Right(Left(x)) =>
+            println(x)
+            None
+          case Right(Right(x)) => Some(x)
+        }
 
-    def parseAndPrep(q: String): Option[NonEmptyList[PreparedQuery.PreparedField[F, Any]]] =
-      gql.parser.parse(q).map(PreparedQuery.prepare(_, schema, Map.empty)) match {
-        case Left(e) =>
-          println(e.prettyError.value)
-          None
-        case Right(Left(x)) =>
-          println(x)
-          None
-        case Right(Right(x)) => Some(x)
-      }
-
-    val qsig = """
+      val qsig = """
 query withNestedFragments {
   getData {
     dep
@@ -528,39 +529,40 @@ query withNestedFragments {
 }
   """
 
-    F.fromOption(parseAndPrep(qn), new Exception(":((")).flatMap { x =>
-      Statistics[F].flatMap { implicit stats =>
-        Planner.costTree[F](x).flatMap { costTree =>
-          println(showTree(0, costTree.root))
-
-          interpreter.Interpreter
-            .runSync[F]((), x, schema.state)
-            .flatMap { case (failures, x) =>
-              C.println(failures.flatMap(_.asGraphQL)) >> C.println(x)
-            }
-        }
-      }
-    } >>
-      F.fromOption(parseAndPrep(qsig), new Exception(":((")).flatMap { x =>
+      F.fromOption(parseAndPrep(qn), new Exception(":((")).flatMap { x =>
         Statistics[F].flatMap { implicit stats =>
           Planner.costTree[F](x).flatMap { costTree =>
             println(showTree(0, costTree.root))
 
             interpreter.Interpreter
-              .runStreamed[F]((), x, schema.state)
-              .zipWithIndex
-              .evalMap { case ((failures, x), i) =>
-                C.println(s"got new subtree $i") >>
-                  C.println("errors:") >>
-                  C.println(failures.flatMap(_.asGraphQL)) >>
-                  C.println(x.toString())
+              .runSync[F]((), x, schema.state)
+              .flatMap { case (failures, x) =>
+                C.println(failures.flatMap(_.asGraphQL)) >> C.println(x)
               }
-              .take(10)
-              .compile
-              .drain
           }
         }
-      }
+      } >>
+        F.fromOption(parseAndPrep(qsig), new Exception(":((")).flatMap { x =>
+          Statistics[F].flatMap { implicit stats =>
+            Planner.costTree[F](x).flatMap { costTree =>
+              println(showTree(0, costTree.root))
+
+              interpreter.Interpreter
+                .runStreamed[F]((), x, schema.state)
+                .zipWithIndex
+                .evalMap { case ((failures, x), i) =>
+                  C.println(s"got new subtree $i") >>
+                    C.println("errors:") >>
+                    C.println(failures.flatMap(_.asGraphQL)) >>
+                    C.println(x.toString())
+                }
+                .take(10)
+                .compile
+                .drain
+            }
+          }
+        }
+    }
   }
 
   mainProgram[D].run(Deps("hey")).unsafeRunSync()
@@ -568,7 +570,7 @@ query withNestedFragments {
   // SangriaTest.run
 }
 
-object Example {
+object Test {
   sealed trait Episode
   object Episode {
     case object NewHope extends Episode
@@ -598,11 +600,10 @@ object Example {
       appearsIn: Option[List[Episode]],
       primaryFunction: Option[String]
   ) extends Character
-
-  import gql.dsl._
-  import gql.ast._
-
   import cats._
+  import cats.implicits._
+  import gql.dsl._
+  import gql._
 
   trait Repository[F[_]] {
     def getHero(episode: Episode): F[Character]
@@ -614,7 +615,7 @@ object Example {
     def getDroid(id: String): F[Droid]
   }
 
-  def schema[F[_]: Applicative](implicit repo: Repository[F]): Schema[F, Unit] = {
+  def schema[F[_]: Async](implicit repo: Repository[F]) = {
     implicit val episode: Enum[F, Episode] = {
       import Episode._
       enum(
@@ -651,17 +652,16 @@ object Example {
         instance[Droid] { case x: Droid => x }
       )
 
-    Schema.simple[F, Unit](
-      tpe(
+    Schema.query(
+      tpe[F, Unit](
         "Query",
         "hero" -> eff(arg[Episode]("episode")) { case (_, episode) => repo.getHero(episode) },
         "character" -> eff(arg[ID[String]]("id")) { case (_, id) => repo.getCharacter(id.value) },
-        "human" -> eff(arg[ID[String]]("id"))({ case (_, id) => repo.getHuman(id.value) }),
+        "human" -> eff(arg[ID[String]]("id")) { case (_, id) => repo.getHuman(id.value) },
         "droid" -> eff(arg[ID[String]]("id")) { case (_, id) => repo.getDroid(id.value) }
       )
     )
   }
-
   import cats.effect._
   import cats.effect.unsafe.implicits.global
 
@@ -681,111 +681,30 @@ object Example {
     def getDroid(id: String): IO[Droid] = ???
   }
 
-  def s = schema[IO]
-
   def query = """
-   query HeroNameQuery {
-     hero(episode: NEWHOPE) {
-       id
-       name
-       ... on Droid {
-         primaryFunction
-       }
-       ... HumanDetails
-     }
+query HeroNameQuery {
+ hero(episode: NEWHOPE) {
+   id
+   name
+   ... on Droid {
+     primaryFunction
    }
- 
-   fragment HumanDetails on Human {
-     homePlanet
-   }
- """
-
-  def program = Statistics[IO].flatMap { implicit stats =>
-    IO.fromEither(gql.parser.parse(query).leftMap(x => new Exception(x.prettyError.value)))
-      .map(ExecutableQuery.assemble(_, s, Map.empty))
-      .flatMap { case ExecutableQuery.Query(run) => run(()).map { case (_, output) => output } }
-  }
-
-  program.unsafeRunSync()
+   ... HumanDetails
+ }
 }
 
-object Test2 {
-  import gql._
-  import gql.dsl._
-  import gql.ast._
-  import cats._
-  import cats.data._
-  import cats.implicits._
-
-  final case class Context(
-      userId: String
-  )
-
-  trait ContextAlg[F[_]] {
-    def get: F[Context]
-  }
-
-  implicit def contextAlgForKleisli[F[_]: Applicative] = new ContextAlg[Kleisli[F, Context, *]] {
-    def get: Kleisli[F, Context, Context] = Kleisli.ask[F, Context]
-  }
-
-  def getSchema[F[_]: Applicative](implicit ctx: ContextAlg[F]) = {
-    def schema: Schema[F, Unit] = Schema.simple[F, Unit](
-      tpe(
-        "Query",
-        "me" -> eff(_ => ctx.get.map(_.userId))
-      )
-    )
-
-    schema
-  }
-
-  type G[A] = Kleisli[cats.effect.IO, Context, A]
-  getSchema[G]
+fragment HumanDetails on Human {
+ homePlanet
 }
+"""
 
-object Test3 {
-  import gql.resolver._
-  import cats.effect._
-
-  def get(keys: Set[Int]): IO[Map[Int, Int]] = IO.pure(keys.map(k => k -> (k * 2)).toMap)
-  val brState = BatchResolver[IO, Int, Int](keys => IO.pure(keys.map(k => k -> (k * 2)).toMap))
-  import gql._
-  import gql.dsl._
-  import cats._
-
-  val statefulSchema = brState.map { (br: BatchResolver[IO, Set[Int], Map[Int, Int]]) =>
-    val adjusted: BatchResolver[IO, Int, Int] = br
-      .contramap[Int](Set(_))
-      .map { case (_, m) => m.values.head }
-
-    SchemaShape[IO, Unit](
-      tpe(
-        "Query",
-        null
-        // "field" -> field[IO, Unit, Int](adjusted.contramap(_ => 42))
-      )
-    )
-  }
-
-  import cats.effect.unsafe.implicits.global
-  def s = Schema.stateful(statefulSchema)
-
-  val query = """
-    query {
-      field
+  schema[IO]
+    .map { sch =>
+      sch
+        .assemble(query, variables = Map.empty)
+        .traverse { case ExecutableQuery.Query(run) => run(()).map(_.asGraphQL) }
     }
-  """
-
-  implicit val stats = Statistics[IO].unsafeRunSync()
-
-  def parsed = gql.parser.parse(query).toOption.get
-
-  def program = ExecutableQuery.assemble(parsed, s, Map.empty) match {
-    case ExecutableQuery.Query(run) => run(()).map { case (_, output) => output }
-  }
-
-  program.unsafeRunSync()
+    .unsafeRunSync()
 }
 
 // object SangriaTest {

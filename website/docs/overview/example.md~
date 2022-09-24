@@ -51,7 +51,7 @@ import gql.ast._
 
 With the `dsl` smart constructors in scope; we can now construct the schema:
 ```scala mdoc
-import cats.effect._
+import cats._
 import cats.implicits._
 import gql._
 
@@ -65,7 +65,7 @@ trait Repository[F[_]] {
   def getDroid(id: String): F[Droid]
 }
 
-def schema[F[_]: Async](implicit repo: Repository[F]) = {
+def schema[F[_]: Applicative](implicit repo: Repository[F]): Schema[F, Unit] = {
   implicit val episode: Enum[F, Episode] = {
     import Episode._
     enum(
@@ -102,8 +102,8 @@ def schema[F[_]: Async](implicit repo: Repository[F]) = {
       instance[Droid] { case x: Droid => x }
     )
 
-  Schema.query(
-    tpe[F, Unit](
+  Schema.simple[F, Unit](
+    tpe(
       "Query",
       "hero" -> eff(arg[Episode]("episode")) { case (_, episode) => repo.getHero(episode) },
       "character" -> eff(arg[ID[String]]("id")) { case (_, id) => repo.getCharacter(id.value) },
@@ -135,6 +135,8 @@ implicit def repo = new Repository[IO] {
   def getDroid(id: String): IO[Droid] = ???
 }
 
+def s = schema[IO]
+
 def query = """
  query HeroNameQuery {
    hero(episode: NEWHOPE) {
@@ -155,8 +157,8 @@ def query = """
 
 Now we can parse, plan and evaluate the query:
 ```scala mdoc
-schema[IO].map { sch =>
-  sch.assemble(query, variables = Map.empty)
-    .traverse { case ExecutableQuery.Query(run) => run(()).map(_.asGraphQL) }
-}.unsafeRunSync()
+Gql(s)//.map(_.execute(query, variables=Map.empty))
+    // .traverse{ case ExecutableQuery.Query(run) => run(()).map(_.asGraphQL) }
+  // )
+  // .unsafeRunSync()
 ```

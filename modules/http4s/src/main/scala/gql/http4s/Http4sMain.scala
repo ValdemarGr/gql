@@ -16,71 +16,70 @@ trait InterpretationVisitor[F[_]] {
 }
 
 object Http4sMain extends IOApp {
-  override def run(args: List[String]): IO[ExitCode] =
-    gql.Statistics[IO].flatMap { stats =>
-      type G[A] = Kleisli[IO, Main.Deps, A]
-      implicit lazy val statsG = stats.mapK(Kleisli.liftK[IO, Main.Deps])
-      val s = gql.Schema.stateful(Main.testSchemaShape[G])
-
-      BlazeServerBuilder[IO]
-        .withHttpApp(
-          HttpRoutes
-            .of[IO] {
-              case req @ POST -> Root / "graphql" =>
-                req
-                  .as[Json]
-                  .map(_.asObject.get)
-                  .flatMap { jo =>
-                    val query = jo("query").get.asString.get
-                    val variabels = jo("variables").flatMap(_.asObject).map(_.toMap).getOrElse(Map.empty)
-                    gql.parser.parse(query) match {
-                      case Left(err) =>
-                        println(err.prettyError.value)
-                        BadRequest(
-                          JsonObject(
-                            "errors" -> Seq(
-                              JsonObject(
-                                "message" -> "could not parse query".asJson,
-                                "locations" -> Seq(
-                                  JsonObject(
-                                    "line" -> err.caret.line.asJson,
-                                    "column" -> err.caret.col.asJson
-                                  ).asJson
-                                ).asJson
-                              ).asJson
-                            ).asJson
-                          ).asJson
-                        )
-                      case Right(ed) =>
-                        gql.PreparedQuery.prepare(ed, s, variabels) match {
-                          case Left(err) => BadRequest(err.toString())
-                          case Right(x) =>
-                            gql.interpreter.Interpreter
-                              .runSync[G]((), x, s.state)
-                              .run(Main.Deps("lol"))
-                              .flatMap { case (errs, res) =>
-                                val e = gql.Execute.formatErrors(errs)
-                                Ok(
-                                  JsonObject(
-                                    "data" -> res.asJson,
-                                    "errors" -> e.asJson
-                                  ).asJson
-                                )
-                              }
-                        }
-                    }
-                  }
-              case GET -> Root => Ok()
-              case x           => Ok()
-            }
-            .orNotFound
-        )
-        .withoutSsl
-        .bindHttp()
-        .serve
-        .compile
-        .lastOrError
-    }
+  override def run(args: List[String]): IO[ExitCode] = {
+    type G[A] = Kleisli[IO, Main.Deps, A]
+    ???
+    // gql.Schema.stateful(Main.testSchemaShape[G]).flatMap { s =>
+    //   BlazeServerBuilder[IO]
+    //     .withHttpApp(
+    //       HttpRoutes
+    //         .of[IO] {
+    //           case req @ POST -> Root / "graphql" =>
+    //             req
+    //               .as[Json]
+    //               .map(_.asObject.get)
+    //               .flatMap { jo =>
+    //                 val query = jo("query").get.asString.get
+    //                 val variabels = jo("variables").flatMap(_.asObject).map(_.toMap).getOrElse(Map.empty)
+    //                 gql.parser.parse(query) match {
+    //                   case Left(err) =>
+    //                     println(err.prettyError.value)
+    //                     BadRequest(
+    //                       JsonObject(
+    //                         "errors" -> Seq(
+    //                           JsonObject(
+    //                             "message" -> "could not parse query".asJson,
+    //                             "locations" -> Seq(
+    //                               JsonObject(
+    //                                 "line" -> err.caret.line.asJson,
+    //                                 "column" -> err.caret.col.asJson
+    //                               ).asJson
+    //                             ).asJson
+    //                           ).asJson
+    //                         ).asJson
+    //                       ).asJson
+    //                     )
+    //                   case Right(ed) =>
+    //                     gql.PreparedQuery.prepare(ed, s, variabels) match {
+    //                       case Left(err) => BadRequest(err.toString())
+    //                       case Right(x) =>
+    //                         gql.interpreter.Interpreter
+    //                           .runSync[G]((), x, s.state)
+    //                           .run(Main.Deps("lol"))
+    //                           .flatMap { case (errs, res) =>
+    //                             val e = null //gql.Execute.formatErrors(errs)
+    //                             Ok(
+    //                               JsonObject(
+    //                                 "data" -> res.asJson
+    //                                 // "errors" -> e.asJson
+    //                               ).asJson
+    //                             )
+    //                           }
+    //                     }
+    //                 }
+    //               }
+    //           case GET -> Root => Ok()
+    //           case x           => Ok()
+    //         }
+    //         .orNotFound
+    //     )
+    //     .withoutSsl
+    //     .bindHttp()
+    //     .serve
+    //     .compile
+    //     .lastOrError
+    // }
+  }
 
   println("holla world")
 }

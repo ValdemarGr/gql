@@ -1,5 +1,6 @@
 package gql
 
+import cats.effect._
 import cats._
 import cats.implicits._
 import cats.mtl._
@@ -7,14 +8,17 @@ import cats.data._
 import gql.ast._
 import gql.parser.QueryParser
 
-final case class SchemaShape[F[_], Q](
-    query: Type[F, Q]
-    // mutation: Output.Type[F, M],
-    // subscription: Output.Type[F, M],
+final case class SchemaShape[F[_], Q, M, S](
+    query: Type[F, Q],
+    mutation: Option[Type[F, M]],
+    subscription: Option[Type[F, S]]
 ) {
-  lazy val discover = SchemaShape.discover[F, Q](this)
+  def mapK[G[_]: MonadCancelThrow](fk: F ~> G): SchemaShape[G, Q, M, S] =
+    SchemaShape(query.mapK(fk), mutation.map(_.mapK(fk)), subscription.map(_.mapK(fk)))
 
-  lazy val validate = SchemaShape.validate[F, Q](this)
+  lazy val discover = SchemaShape.discover[F](this)
+
+  lazy val validate = SchemaShape.validate[F](this)
 }
 
 object SchemaShape {
@@ -25,7 +29,7 @@ object SchemaShape {
       interfaceImplementations: Map[String, Set[String]]
   )
 
-  def discover[F[_], Q](shape: SchemaShape[F, Q]): DiscoveryState[F] = {
+  def discover[F[_]](shape: SchemaShape[F, _, _, _]): DiscoveryState[F] = {
     def inputNotSeen[G[_], A](
         tl: InToplevel[Any]
     )(ga: G[A])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]], M: Monoid[A]): G[A] =
@@ -118,7 +122,7 @@ object SchemaShape {
   }
   // TODO has really bad running time on some inputs
   // since it doesn't remember what references it has seen
-  def validate[F[_], Q](schema: SchemaShape[F, Q]) = {
+  def validate[F[_]](schema: SchemaShape[F, _, _, _]) = {
     final case class ValidationState(
         problems: Chain[Problem],
         currentPath: Chain[ValidationEdge],

@@ -24,37 +24,34 @@ final case class Context(
   userId: String
 )
 
-def getSchema[F[_]: Applicative](implicit A: Ask[F, Context]): Schema[F, Unit] = {
-  def schema: Schema[F, Unit] = Schema.simple[F, Unit](
-    tpe(
-      "Query",
-      "me" -> eff(_ => A.ask.map(_.userId))
-    )
+def queries[F[_]: Functor](implicit A: Ask[F, Context]): Type[F, Unit] = 
+  tpe[F, Unit](
+    "Query",
+    "me" -> eff(_ => A.ask.map(_.userId))
   )
-  
-  schema
-}
 
 type G[A] = Kleisli[IO, Context, A]
-def s = getSchema[G]
 
 def query = """
   query {
     me
   }
 """
-  
-def parsed = gql.parser.parse(query).toOption.get
- 
-implicit lazy val stats = 
-  Statistics[IO].unsafeRunSync().mapK(Kleisli.liftK[IO, Context])
 
-def queryResult = Execute.executor(parsed, s, Map.empty) match {
-  case Execute.ExecutorOutcome.Query(run) => run(()).map { case (_, output) => output } 
-}
-
-queryResult.run(Context("john_doe")).unsafeRunSync()
-// res0: JsonObject = object[me -> "john_doe"]
+Statistics[IO].flatMap{ stats =>
+  val schema =
+    Schema.query(stats.mapK(Kleisli.liftK[IO, Context]))(queries[G])
+    
+  schema.assemble(query, variables = Map.empty)
+    .traverse { case ExecutableQuery.Query(run) => run(()).map(_.asGraphQL) }
+    .run(Context("john_doe"))
+}.unsafeRunSync()
+// res0: Either[gql.parser.package.ParseError, JsonObject] = Right(
+//   value = object[errors -> [
+// ],data -> {
+//   "me" : "john_doe"
+// }]
+// )
 ```
 
 ## Working in a specific effect
@@ -75,13 +72,5 @@ IOLocal(null: Context).flatMap{ implicit loc =>
     
   runAuthorizedQuery("john_doe")
 }
-// res1: IO[Unit] = FlatMap(
-//   ioe = Delay(
-//     thunk = cats.effect.IOLocal$$$Lambda$9202/0x0000000102a0c040@38ddcdd3,
-//     event = cats.effect.tracing.TracingEvent$StackTrace
-//   ),
-//   f = <function1>,
-//   event = cats.effect.tracing.TracingEvent$StackTrace
-// )
 ```
 :::
