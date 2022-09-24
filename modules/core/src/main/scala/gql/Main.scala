@@ -332,7 +332,7 @@ query withNestedFragments {
                 .map(_.copy(a = if (scala.util.Random.nextDouble() > 0.5) "Jane" else "John"))
                 .repeat
                 .metered((if (k.a == "John") 10 else 50).millis)
-            }),
+            })
             // "test" -> field(stream(k => fs2.Stream(0))),
             // "test" -> field(arg[Int]("num"))(stream { case (k, a) => fs2.Stream(0) }),
             // "test" -> field(streamFallible(k => fs2.Stream(NonEmptyChain("errrrr").leftIor[String]))),
@@ -536,7 +536,7 @@ query withNestedFragments {
           interpreter.Interpreter
             .runSync[F]((), x, schema.state)
             .flatMap { case (failures, x) =>
-              C.println(Execute.formatErrors(failures)) >> C.println(x)
+              C.println(failures.flatMap(_.asGraphQL)) >> C.println(x)
             }
         }
       }
@@ -552,7 +552,7 @@ query withNestedFragments {
               .evalMap { case ((failures, x), i) =>
                 C.println(s"got new subtree $i") >>
                   C.println("errors:") >>
-                  C.println(Execute.formatErrors(failures)) >>
+                  C.println(failures.flatMap(_.asGraphQL)) >>
                   C.println(x.toString())
               }
               .take(10)
@@ -702,8 +702,8 @@ object Example {
 
   def program = Statistics[IO].flatMap { implicit stats =>
     IO.fromEither(gql.parser.parse(query).leftMap(x => new Exception(x.prettyError.value)))
-      .map(Execute.executor(_, s, Map.empty))
-      .flatMap { case Execute.ExecutorOutcome.Query(run) => run(()).map { case (_, output) => output } }
+      .map(ExecutableQuery.assemble(_, s, Map.empty))
+      .flatMap { case ExecutableQuery.Query(run) => run(()).map { case (_, output) => output } }
   }
 
   program.unsafeRunSync()
@@ -781,8 +781,8 @@ object Test3 {
 
   def parsed = gql.parser.parse(query).toOption.get
 
-  def program = Execute.executor(parsed, s, Map.empty) match {
-    case Execute.ExecutorOutcome.Query(run) => run(()).map { case (_, output) => output }
+  def program = ExecutableQuery.assemble(parsed, s, Map.empty) match {
+    case ExecutableQuery.Query(run) => run(()).map { case (_, output) => output }
   }
 
   program.unsafeRunSync()

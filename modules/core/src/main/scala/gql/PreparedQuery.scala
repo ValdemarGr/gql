@@ -56,7 +56,16 @@ object PreparedQuery {
 
   final case class PreparedLeaf[F[_], A](name: String, encode: A => Json) extends Prepared[F, A]
 
-  final case class PositionalError(position: PrepCursor, caret: List[Caret], message: String)
+  final case class PositionalError(position: PrepCursor, caret: List[Caret], message: String) {
+    lazy val asGraphQL: JsonObject = {
+      import io.circe.syntax._
+      Map(
+        "message" -> Some(message.asJson),
+        "locations" -> caret.map(c => Json.obj("line" -> c.line.asJson, "column" -> c.col.asJson)).toNel.map(_.asJson),
+        "path" -> position.position.toNel.map(_.asJson)
+      ).collect { case (k, Some(v)) => k -> v }.asJsonObject
+    }
+  }
 
   final case class PrepCursor(position: List[String]) {
     def add(name: String): PrepCursor = PrepCursor(name :: position)
