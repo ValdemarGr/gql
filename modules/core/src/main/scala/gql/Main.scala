@@ -333,17 +333,17 @@ query withNestedFragments {
                 .repeat
                 .metered((if (k.a == "John") 10 else 50).millis)
             }),
-            "test" -> field(stream(k => fs2.Stream(0))),
-            "test" -> field(arg[Int]("num"))(stream { case (k, a) => fs2.Stream(0) }),
-            "test" -> field(streamFallible(k => fs2.Stream(NonEmptyChain("errrrr").leftIor[String]))),
-            "test" -> field(arg[Int]("num"))(streamFallible { case (k, a) =>
-              fs2.Stream(NonEmptyChain("errrrr").leftIor[String])
-            }),
-            "test" -> {
-              val a: Arg[(Int, Option[Int])] = (arg[Int]("numDice"), arg[Option[Int]]("numSides")).tupled
-              val r: BatchResolver[F, (Data[F], Int), String] = ???
-              field(stream(r)(k => fs2.Stream(0)))
-            }
+            // "test" -> field(stream(k => fs2.Stream(0))),
+            // "test" -> field(arg[Int]("num"))(stream { case (k, a) => fs2.Stream(0) }),
+            // "test" -> field(streamFallible(k => fs2.Stream(NonEmptyChain("errrrr").leftIor[String]))),
+            // "test" -> field(arg[Int]("num"))(streamFallible { case (k, a) =>
+            //   fs2.Stream(NonEmptyChain("errrrr").leftIor[String])
+            // }),
+            // "test" -> {
+            //   val a: Arg[(Int, Option[Int])] = (arg[Int]("numDice"), arg[Option[Int]]("numSides")).tupled
+            //   val r: BatchResolver[F, (Data[F], Int), String] = ???
+            //   field(stream(r)(k => fs2.Stream(0)))
+            // }
           )
         }
 

@@ -56,7 +56,7 @@ object PreparedQuery {
 
   final case class PreparedLeaf[F[_], A](name: String, encode: A => Json) extends Prepared[F, A]
 
-  final case class PositionalError(position: PrepCursor, caret: Option[Caret], message: String)
+  final case class PositionalError(position: PrepCursor, caret: List[Caret], message: String)
 
   final case class PrepCursor(position: List[String]) {
     def add(name: String): PrepCursor = PrepCursor(name :: position)
@@ -193,7 +193,7 @@ object PreparedQuery {
     S.inspect(_.nextId) <* S.modify(x => x.copy(nextId = x.nextId + 1))
 
   def raise[F[_], A](s: String, caret: Option[Caret])(implicit S: Stateful[F, Prep], F: MonadError[F, PositionalError]): F[A] =
-    S.get.map(state => PositionalError(state.cursor, caret, s)).flatMap(F.raiseError[A])
+    S.get.map(state => PositionalError(state.cursor, caret.toList, s)).flatMap(F.raiseError[A])
 
   def raiseOpt[F[_], A](o: Option[A], s: String, caret: Option[Caret])(implicit
       S: Stateful[F, Prep],
@@ -464,20 +464,20 @@ object PreparedQuery {
   def getOperationDefinition[F[_]](
       ops: List[Pos[P.OperationDefinition]],
       operationName: Option[String]
-  )(implicit F: MonadError[F, String]): F[P.OperationDefinition] =
+  )(implicit F: MonadError[F, (String, List[Caret])]): F[P.OperationDefinition] =
     (ops, operationName) match {
-      case (Nil, _)      => F.raiseError(s"no operations provided")
+      case (Nil, _)      => F.raiseError((s"no operations provided", Nil))
       case (x :: Nil, _) => F.pure(x.value)
       case (xs, _) if xs.exists {
             case Pos(_, _: P.OperationDefinition.Simple) => true
             case _                                       => false
           } =>
-        F.raiseError(s"exactly one operation must be suplied for shorthand queries")
-      case (x :: y :: _, None) =>
-        F.raiseError(s"operation name must be supplied for multiple operations")
+        F.raiseError((s"exactly one operation must be suplied for shorthand queries", xs.map(_.caret)))
+      case (xs, None) if xs.size > 1 =>
+        F.raiseError((s"operation name must be supplied for multiple operations"), xs.map(_.caret))
       case (xs, Some(name)) =>
         val o = xs.collectFirst { case Pos(_, d: P.OperationDefinition.Detailed) if d.name.contains(name) => d }
-        F.fromOption(o, s"unable to find operation $name")
+        F.fromOption(o, (s"unable to find operation $name", xs.map(_.caret)))
     }
 
   def operationType(od: P.OperationDefinition) =
@@ -545,8 +545,8 @@ object PreparedQuery {
 
     type G[A] = StateT[EitherT[Eval, PositionalError, *], Prep, A]
 
-    getOperationDefinition[Either[String, *]](ops, None) match {
-      case Left(e) => Left(PositionalError(PrepCursor.empty, None, e))
+    getOperationDefinition[Either[(String, List[Caret]), *]](ops, None) match {
+      case Left((e, carets)) => Left(PositionalError(PrepCursor.empty, carets, e))
       case Right(op) =>
         prepareParts[G, F, Q](op, frags, schema, variableMap)
           .map { case (_, x) => x }
@@ -568,8 +568,8 @@ object PreparedQuery {
 
     type G[A] = StateT[EitherT[Eval, PositionalError, *], Prep, A]
 
-    getOperationDefinition[Either[String, *]](ops, None) match {
-      case Left(e) => Left(PositionalError(PrepCursor.empty, None, e))
+    getOperationDefinition[Either[(String, List[Caret]), *]](ops, None) match {
+      case Left((e, carets)) => Left(PositionalError(PrepCursor.empty, carets, e))
       case Right(op) =>
         prepareParts[G, F, Q](op, frags, schema, variableMap)
           .runA(Prep(Set.empty, 1, PrepCursor.empty))
