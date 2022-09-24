@@ -47,8 +47,7 @@ Statistics[IO].flatMap{ stats =>
     .run(Context("john_doe"))
 }.unsafeRunSync()
 // res0: Either[gql.parser.package.ParseError, JsonObject] = Right(
-//   value = object[errors -> [
-// ],data -> {
+//   value = object[data -> {
 //   "me" : "john_doe"
 // }]
 // )

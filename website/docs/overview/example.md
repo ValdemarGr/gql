@@ -155,28 +155,17 @@ def query = """
 
 Now we can parse, plan and evaluate the query:
 ```scala
-schema[IO].map { sch =>
+schema[IO].flatMap { sch =>
   sch.assemble(query, variables = Map.empty)
     .traverse { case ExecutableQuery.Query(run) => run(()).map(_.asGraphQL) }
 }.unsafeRunSync()
-// res0: IO[Either[parser.package.ParseError, io.circe.JsonObject]] = Map(
-//   ioe = Map(
-//     ioe = Map(
-//       ioe = FlatMap(
-//         ioe = Uncancelable(
-//           body = cats.effect.IO$$$Lambda$16051/0x00000001044d2840@6cadaf35,
-//           event = cats.effect.tracing.TracingEvent$StackTrace
-//         ),
-//         f = fs2.Stream$CompileOps$$Lambda$16052/0x00000001044d3840@50acebae,
-//         event = cats.effect.tracing.TracingEvent$StackTrace
-//       ),
-//       f = gql.ExecutableQuery$$$Lambda$16053/0x00000001044d4040@730fad8a,
-//       event = cats.effect.tracing.TracingEvent$StackTrace
-//     ),
-//     f = <function1>,
-//     event = cats.effect.tracing.TracingEvent$StackTrace
-//   ),
-//   f = cats.syntax.EitherOps$$$Lambda$16054/0x00000001044d5040@6c6ae9c4,
-//   event = cats.effect.tracing.TracingEvent$StackTrace
+// res0: Either[parser.package.ParseError, io.circe.JsonObject] = Right(
+//   value = object[data -> {
+//   "hero" : {
+//     "primaryFunction" : "Astromech",
+//     "name" : "R2-D2",
+//     "id" : "1000"
+//   }
+// }]
 // )
 ```

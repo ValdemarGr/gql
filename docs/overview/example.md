@@ -155,7 +155,7 @@ def query = """
 
 Now we can parse, plan and evaluate the query:
 ```scala mdoc
-schema[IO].map { sch =>
+schema[IO].flatMap { sch =>
   sch.assemble(query, variables = Map.empty)
     .traverse { case ExecutableQuery.Query(run) => run(()).map(_.asGraphQL) }
 }.unsafeRunSync()

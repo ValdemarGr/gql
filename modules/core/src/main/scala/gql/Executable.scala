@@ -19,11 +19,12 @@ object ExecutableQuery {
       errors: Chain[EvalFailure],
       data: JsonObject
   ) {
-    lazy val asGraphQL =
-      JsonObject(
-        "errors" -> errors.map(_.asGraphQL).asJson,
-        "data" -> data.asJson
-      )
+    lazy val asGraphQL: JsonObject = {
+      Map(
+        "errors" -> errors.map(_.asGraphQL).toList.toNel.map(_.asJson),
+        "data" -> Some(data).filter(_.nonEmpty).map(_.asJson)
+      ).collect { case (k, Some(v)) => k -> v }.asJsonObject
+    }
   }
 
   final case class ValidationError[F[_], Q, M, S](msg: PreparedQuery.PositionalError) extends ExecutableQuery[F, Q, M, S]
