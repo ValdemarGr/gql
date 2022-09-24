@@ -106,13 +106,13 @@ object QueryParser {
 
   sealed trait ExecutableDefinition
   object ExecutableDefinition {
-    final case class Operation(o: OperationDefinition) extends ExecutableDefinition
+    final case class Operation(o: Pos[OperationDefinition]) extends ExecutableDefinition
     final case class Fragment(f: Pos[FragmentDefinition]) extends ExecutableDefinition
   }
   lazy val executableDefinition = {
     import ExecutableDefinition._
     Pos.pos(fragmentDefinition).map(Fragment(_)) |
-      operationDefinition.map(Operation(_))
+      Pos.pos(operationDefinition).map(Operation(_))
   }
 
   sealed trait OperationDefinition

@@ -460,25 +460,34 @@ object PreparedQuery {
       }
     }
 
+  // TODO positions for errors
   def getOperationDefinition[F[_]](
-      ops: List[P.OperationDefinition],
+      ops: List[Pos[P.OperationDefinition]],
       operationName: Option[String]
   )(implicit F: MonadError[F, String]): F[P.OperationDefinition] =
     (ops, operationName) match {
       case (Nil, _)      => F.raiseError(s"no operations provided")
-      case (x :: Nil, _) => F.pure(x)
+      case (x :: Nil, _) => F.pure(x.value)
       case (xs, _) if xs.exists {
-            case _: P.OperationDefinition.Simple => true
-            case _                               => false
+            case Pos(_, _: P.OperationDefinition.Simple) => true
+            case _                                       => false
           } =>
         F.raiseError(s"exactly one operation must be suplied for shorthand queries")
       case (x :: y :: _, None) =>
         F.raiseError(s"operation name must be supplied for multiple operations")
       case (xs, Some(name)) =>
-        val o = xs.collectFirst { case d: P.OperationDefinition.Detailed if d.name.contains(name) => d }
+        val o = xs.collectFirst { case Pos(_, d: P.OperationDefinition.Detailed) if d.name.contains(name) => d }
         F.fromOption(o, s"unable to find operation $name")
     }
 
+  def operationType(od: P.OperationDefinition) =
+    od match {
+      case P.OperationDefinition.Simple(_)                => P.OperationType.Query
+      case P.OperationDefinition.Detailed(ot, _, _, _, _) => ot
+    }
+
+  // TODO add another phase after finding the OperationDefinition and before this,
+  // that checks all that variables have been used
   def prepareParts[F[_], G[_]: Applicative, Q](
       op: P.OperationDefinition,
       frags: List[Pos[P.FragmentDefinition]],
@@ -488,47 +497,39 @@ object PreparedQuery {
       S: Stateful[F, Prep],
       F: MonadError[F, PositionalError],
       D: Defer[F]
-  ) = {
+  ): F[(P.OperationType, NonEmptyList[PreparedField[G, Any]])] = {
+    val ot = operationType(op)
+
     val rootTypename =
-      op match {
-        case P.OperationDefinition.Simple(_)                                          => "Query"
-        case P.OperationDefinition.Detailed(P.OperationType.Query, _, _, _, _)        => "Query"
-        case P.OperationDefinition.Detailed(P.OperationType.Mutation, _, _, _, _)     => "Mutation"
-        case P.OperationDefinition.Detailed(P.OperationType.Subscription, _, _, _, _) => "Subscription"
+      ot match {
+        case P.OperationType.Query        => "Query"
+        case P.OperationType.Mutation     => "Mutation"
+        case P.OperationType.Subscription => "Subscription"
       }
 
-    op match {
-      case P.OperationDefinition.Simple(sel) =>
-        prepareSelections[F, G](
-          schema.shape.query.asInstanceOf[Selectable[G, Any]],
-          sel,
-          variableMap,
-          frags.map(f => f.value.name -> f).toMap,
-          rootTypename
-        ).map(OperationType.Query(_))
-      case P.OperationDefinition.Detailed(ot, _, vdsO, _, sel) =>
-        vdsO match {
-          case None => variableMap
-          case Some(vars) =>
-            val vds = vars.nel
-            // vds.traverse{ vd =>
-            //   ???
-            // }
-            vds.map(_.defaultValue)
-        }
-        // TODO decode variables
-        // TODO handle other things than query
-        ot match {
-          case P.OperationType.Query =>
-            prepareSelections[F, G](
-              schema.shape.query.asInstanceOf[Selectable[G, Any]],
-              sel,
-              variableMap,
-              frags.map(f => f.value.name -> f).toMap,
-              rootTypename
-            ).map(OperationType.Query(_))
-        }
+    val sel = op match {
+      case P.OperationDefinition.Simple(sel)                  => sel
+      case P.OperationDefinition.Detailed(_, _, vdsO, _, sel) => sel
+      // vdsO match {
+      //   case None => Map.empty
+      //   case Some(vars) =>
+      //     val vds = vars.nel
+      //     vds.traverse{ vd =>
+      //     }
+      //     vds.map(_.defaultValue)
+      // }
+      // (variableMap, sel)
     }
+
+    val fa = prepareSelections[F, G](
+      schema.shape.query.asInstanceOf[Selectable[G, Any]],
+      sel,
+      variableMap,
+      frags.map(f => f.value.name -> f).toMap,
+      rootTypename
+    )
+
+    fa.tupleLeft(ot)
   }
 
   def prepare[F[_]: Applicative, Q](
@@ -548,29 +549,32 @@ object PreparedQuery {
       case Left(e) => Left(PositionalError(PrepCursor.empty, None, e))
       case Right(op) =>
         prepareParts[G, F, Q](op, frags, schema, variableMap)
-          .map(_.rootFields)
+          .map { case (_, x) => x }
           .runA(Prep(Set.empty, 1, PrepCursor.empty))
           .value
           .value
     }
   }
 
-  sealed trait OperationType[F[_]]
-  object OperationType {
-    final case class Query[F[_]](rootFields: NonEmptyList[PreparedField[F, Any]]) extends OperationType[F]
-    final case class Mutation[F[_]](rootFields: NonEmptyList[PreparedField[F, Any]]) extends OperationType[F]
-    final case class Subscription[F[_]](
-        dataStream: Any => fs2.Stream[F, Any],
-        root: PreparedField[F, Any]
-    ) extends OperationType[F]
-  }
-
   def prepare2[F[_]: Applicative, Q, M, S](
       executabels: NonEmptyList[P.ExecutableDefinition],
       schema: Schema[F, Q],
       variableMap: Map[String, Json]
-  ): Either[PositionalError, OperationType[F]] = {
-    prepare[F, Q](executabels, schema, variableMap)
-      .map(OperationType.Query(_))
+  ): Either[PositionalError, (P.OperationType, NonEmptyList[PreparedField[F, Any]])] = {
+    val (ops, frags) = executabels.toList.partitionEither {
+      case P.ExecutableDefinition.Operation(op)  => Left(op)
+      case P.ExecutableDefinition.Fragment(frag) => Right(frag)
+    }
+
+    type G[A] = StateT[EitherT[Eval, PositionalError, *], Prep, A]
+
+    getOperationDefinition[Either[String, *]](ops, None) match {
+      case Left(e) => Left(PositionalError(PrepCursor.empty, None, e))
+      case Right(op) =>
+        prepareParts[G, F, Q](op, frags, schema, variableMap)
+          .runA(Prep(Set.empty, 1, PrepCursor.empty))
+          .value
+          .value
+    }
   }
 }

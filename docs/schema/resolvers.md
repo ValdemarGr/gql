@@ -140,13 +140,13 @@ final case class DomainBatchers[F[_]](
 The `StreamResolver` is a very powerful resolver type, that can perform many different tasks.
 First and foremost a `StreamResolver` can update a sub-tree of the schema via some provided stream:
 ```scala mdoc
-// def streamSchema = 
-  // SchemaShape[IO, Unit](
-    // tpe(
-      // "Query",
-      // "stream" -> field()
-    // )
-  // )
+def streamSchema = 
+  SchemaShape[IO, Unit](
+    tpe(
+      "Query",
+      "stream" -> field(stream(_ => fs2.Stream(1).repeat.lift[IO].scan(0)(_ + _)))
+    )
+  )
 ```
 
 :::caution

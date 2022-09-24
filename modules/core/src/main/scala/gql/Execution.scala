@@ -30,14 +30,12 @@ object Execute {
       case Left(err) => ExecutorOutcome.ValidationError(err)
       case Right(x) =>
         x match {
-          case PreparedQuery.OperationType.Query(rootFields) =>
+          case (P.OperationType.Query, rootFields) =>
             ExecutorOutcome.Query[F, Q, M, S](Interpreter.runSync(_, rootFields, schema.state))
-          case PreparedQuery.OperationType.Mutation(rootFields) =>
+          case (P.OperationType.Mutation, rootFields) =>
             ExecutorOutcome.Mutation[F, Q, M, S](Interpreter.runSync(_, rootFields, schema.state))
-          case PreparedQuery.OperationType.Subscription(dataStream, root) =>
-            ExecutorOutcome.Stream[F, Q, M, S] { s =>
-              dataStream(s).switchMap(Interpreter.runStreamed[F](_, NonEmptyList.one(root), schema.state))
-            }
+          case (P.OperationType.Subscription, rootFields) =>
+            ExecutorOutcome.Stream[F, Q, M, S](Interpreter.runStreamed(_, rootFields, schema.state))
         }
     }
   }
