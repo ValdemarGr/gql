@@ -22,10 +22,10 @@ final case class Schema[F[_], Q, M, S](
 
   def assemble(query: NonEmptyList[P.ExecutableDefinition], variables: Map[String, Json])(implicit
       F: Async[F]
-  ): ExecutableQuery[F, Q, M, S] =
-    ExecutableQuery.assemble[F, Q, M, S](query, this, variables)
+  ): Executable[F, Q, M, S] =
+    Executable.assemble[F, Q, M, S](query, this, variables)
 
-  def assemble(query: String, variables: Map[String, Json])(implicit F: Async[F]): Either[ParseError, ExecutableQuery[F, Q, M, S]] =
+  def assemble(query: String, variables: Map[String, Json])(implicit F: Async[F]): Either[ParseError, Executable[F, Q, M, S]] =
     parse(query).map(assemble(_, variables))
 }
 

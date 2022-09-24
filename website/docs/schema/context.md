@@ -43,7 +43,7 @@ Statistics[IO].flatMap{ stats =>
     Schema.query(stats.mapK(Kleisli.liftK[IO, Context]))(queries[G])
     
   schema.assemble(query, variables = Map.empty)
-    .traverse { case ExecutableQuery.Query(run) => run(()).map(_.asGraphQL) }
+    .traverse { case Executable.Query(run) => run(()).map(_.asGraphQL) }
     .run(Context("john_doe"))
 }.unsafeRunSync()
 // res0: Either[gql.parser.package.ParseError, JsonObject] = Right(

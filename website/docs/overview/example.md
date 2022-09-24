@@ -157,7 +157,7 @@ Now we can parse, plan and evaluate the query:
 ```scala
 schema[IO].flatMap { sch =>
   sch.assemble(query, variables = Map.empty)
-    .traverse { case ExecutableQuery.Query(run) => run(()).map(_.asGraphQL) }
+    .traverse { case Executable.Query(run) => run(()).map(_.asGraphQL) }
 }.unsafeRunSync()
 // res0: Either[parser.package.ParseError, io.circe.JsonObject] = Right(
 //   value = object[data -> {
