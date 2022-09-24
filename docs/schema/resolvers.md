@@ -136,6 +136,36 @@ final case class DomainBatchers[F[_]](
 ).mapN(DomainBatchers.apply)
 ```
 
+## StreamResolver
+The `StreamResolver` is a very powerful resolver type, that can perform many different tasks.
+First and foremost a `StreamResolver` can update a sub-tree of the schema via some provided stream:
+```scala mdoc
+// def streamSchema = 
+  // SchemaShape[IO, Unit](
+    // tpe(
+      // "Query",
+      // "stream" -> field()
+    // )
+  // )
+```
+
+:::caution
+Streams must not be empty.
+If stream terminates before at-least one element is emitted the subscription is terminated with an error.
+:::
+:::danger
+It is **highly** reccomended that every stream has at least one **guarenteed** element.
+The initial evaluation of a (sub-)tree will never complete if a stream never emits, even if future updates cause the stream to be redundant.
+:::
+:::note
+Technically, a `StreamResolver` with one element can perform the same task as an `EffectResolver` by creating a single-element stream.
+An `EffectResolver` has less resource overhead, since it is a single function compared to a `StreamResolver` that has some bookkeeping associated with it.
+:::
+:::info
+When a `StreamResolver` is interpreted during a query or mutation operation, no "background fiber" is spawned such that only the head element is respected.
+:::
+
+# Deprecated
 ## SignalResolver
 The `SignalResolver` is a special type of resolver that can update itself.
 A `SignalResolver[F, I, R, A]` contains:
@@ -154,7 +184,7 @@ In queries and mutations, the stream part of the resolver is ignored.
 
 A `StreamRef` is a reference to a stream that can be subscribed to, it is the implementation of `I => Stream[R]`.
 A `StreamRef` is constructed by suppling a subscription function `I => Resource[F, fs2.Stream[F, O]]`:
-```scala mdoc
+```scala
 import scala.concurrent.duration._
 
 val sr = 
@@ -166,7 +196,7 @@ TODO subscription
 
 
 With a `StreamRef`, we can construct a `SignalResolver`:
-```scala mdoc
+```scala
 def signalSchema = sr.map { s =>
   val adjusted = 
     s.contramap[(Unit, Int)]{ case (_, i) => i}

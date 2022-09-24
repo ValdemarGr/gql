@@ -31,6 +31,7 @@ const sidebars = {
       label: "Schema",
       items: [
         "schema/output_types",
+        "schema/dsl",
         "schema/resolvers",
         "schema/context",
         "schema/error_handling",

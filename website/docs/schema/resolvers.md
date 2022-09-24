@@ -41,7 +41,7 @@ import gql.resolver._
 import cats.effect._
 
 val brState = BatchResolver[IO, Int, Int](keys => IO.pure(keys.map(k => k -> (k * 2)).toMap))
-// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@11b49223
+// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@6da6bf89
 ```
 A `State` monad is used to keep track of the batchers that have been created and unique id generation.
 During schema construction, `State` can be composed using `Monad`ic operations.
@@ -136,9 +136,33 @@ final case class DomainBatchers[F[_]](
     .map[Int]{ case (_, m) => m.values.toList.combineAll }
   )
 ).mapN(DomainBatchers.apply)
-// res1: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], DomainBatchers[[A]IO[A]]] = cats.data.IndexedStateT@3a9ea520
+// res1: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], DomainBatchers[[A]IO[A]]] = cats.data.IndexedStateT@f6e0724
 ```
 
+## StreamResolver
+The `StreamResolver` is a very powerful resolver type, that can perform many different tasks.
+First and foremost a `StreamResolver` can update a sub-tree of the schema via some provided stream:
+```scala
+
+```
+
+:::caution
+Streams must not be empty.
+If stream terminates before at-least one element is emitted the subscription is terminated with an error.
+:::
+:::danger
+It is **highly** reccomended that every stream has at least one **guarenteed** element.
+The initial evaluation of a (sub-)tree will never complete if a stream never emits, even if future updates cause the stream to be redundant.
+:::
+:::note
+Technically, a `StreamResolver` with one element can perform the same task as an `EffectResolver` by creating a single-element stream.
+An `EffectResolver` has less resource overhead, since it is a single function compared to a `StreamResolver` that has some bookkeeping associated with it.
+:::
+:::info
+When a `StreamResolver` is interpreted during a query or mutation operation, no "background fiber" is spawned such that only the head element is respected.
+:::
+
+# Deprecated
 ## SignalResolver
 The `SignalResolver` is a special type of resolver that can update itself.
 A `SignalResolver[F, I, R, A]` contains:
@@ -164,7 +188,6 @@ val sr =
   StreamRef[IO, Int, Int](i => Resource.pure{
     fs2.Stream(1).covary[IO].repeat.scan(i)(_ + _).metered(1.second)
   })
-// sr: data.package.State[SchemaState[IO], StreamRef[IO, Int, Int]] = cats.data.IndexedStateT@2c6717a0
 ```
 TODO subscription
 
