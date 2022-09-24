@@ -10,8 +10,8 @@ import gql.parser.QueryParser
 
 final case class SchemaShape[F[_], Q, M, S](
     query: Type[F, Q],
-    mutation: Option[Type[F, M]],
-    subscription: Option[Type[F, S]]
+    mutation: Option[Type[F, M]] = None,
+    subscription: Option[Type[F, S]] = None
 ) {
   def mapK[G[_]: MonadCancelThrow](fk: F ~> G): SchemaShape[G, Q, M, S] =
     SchemaShape(query.mapK(fk), mutation.map(_.mapK(fk)), subscription.map(_.mapK(fk)))

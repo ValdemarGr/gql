@@ -25,14 +25,14 @@ val withArg = field(intArg)(EffectResolver[IO, (String, Int), String]{ case (s, 
 //     entries = Vector(
 //       ArgParam(
 //         name = "intArg",
-//         input = Scalar(name = "Int", codec = io.circe.Codec$$anon$4@5c88e155),
+//         input = Scalar(name = "Int", codec = io.circe.Codec$$anon$4@3a5ba98),
 //         default = None
 //       )
 //     ),
-//     decode = gql.Arg$$$Lambda$20459/0x000000010560f040@c927af4
+//     decode = gql.Arg$$$Lambda$36881/0x00000001097fd040@765a131e
 //   ),
 //   resolve = EffectResolver(resolve = <function1>),
-//   output = cats.Later@29468c85
+//   output = cats.Later@2220bed7
 // )
 ```
 
@@ -106,19 +106,19 @@ val it =
   )(instance[Dog.type]{ case Dog => Dog })
 // it: gql.ast.Interface[[_]IO[_], Animal] = Interface(
 //   name = "Animal",
-//   instances = List(Instance(ol = cats.Later@1ad337ab)),
+//   instances = List(Instance(ol = cats.Later@54e7a0af)),
 //   fields = NonEmptyList(
 //     head = (
 //       "sound",
 //       Field(
 //         args = Arg(
 //           entries = Vector(),
-//           decode = gql.Arg$$anon$1$$Lambda$20655/0x000000010575a040@4f5049bc
+//           decode = gql.Arg$$anon$1$$Lambda$37077/0x000000010995c840@269e640
 //         ),
 //         resolve = EffectResolver(
-//           resolve = gql.dsl$$$Lambda$20462/0x000000010560d840@52efc677
+//           resolve = gql.dsl$$$Lambda$36884/0x00000001097fb040@259836dc
 //         ),
-//         output = cats.Later@5102ddee
+//         output = cats.Later@4c930818
 //       )
 //     ),
 //     tail = List()

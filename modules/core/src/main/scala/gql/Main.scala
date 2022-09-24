@@ -702,7 +702,7 @@ fragment HumanDetails on Human {
     .map { sch =>
       sch
         .assemble(query, variables = Map.empty)
-        .traverse { case Executable.Query(run) => run(()).map(_.asGraphQL) }
+        .traverse { case gql.execution.Executable.Query(run) => run(()).map(_.asGraphQL) }
     }
     .unsafeRunSync()
 }

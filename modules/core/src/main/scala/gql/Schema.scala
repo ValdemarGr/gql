@@ -1,5 +1,6 @@
 package gql
 
+import gql.execution._
 import gql.parser.{QueryParser => P, ParseError, parse}
 import io.circe._
 import cats.effect._
@@ -27,19 +28,36 @@ final case class Schema[F[_], Q, M, S](
 
   def assemble(query: String, variables: Map[String, Json])(implicit F: Async[F]): Either[ParseError, Executable[F, Q, M, S]] =
     parse(query).map(assemble(_, variables))
+
+  def assembleMonoid(query: NonEmptyList[P.ExecutableDefinition], variables: Map[String, Json])(implicit
+      F: Async[F],
+      Q: Monoid[Q],
+      M: Monoid[M],
+      S: Monoid[S]
+  ): AppliedExecutable[F] = assemble(query, variables) match {
+    case Executable.Mutation(run)        => AppliedExecutable.Mutation(run(M.empty))
+    case Executable.Query(run)           => AppliedExecutable.Query(run(Q.empty))
+    case Executable.Subscription(run)    => AppliedExecutable.Subscription(run(S.empty))
+    case Executable.ValidationError(msg) => AppliedExecutable.ValidationError(msg)
+  }
+
+  def assembleMonoid(query: String, variables: Map[String, Json])(implicit
+      F: Async[F],
+      Q: Monoid[Q],
+      M: Monoid[M],
+      S: Monoid[S]
+  ): Either[ParseError, AppliedExecutable[F]] =
+    parse(query).map(assembleMonoid(_, variables))
 }
 
 object Schema {
-  def stateful[F[_]: Async, Q, M, S](fa: State[SchemaState[F], SchemaShape[F, Q, M, S]]): F[Schema[F, Q, M, S]] =
-    Statistics[F].map { stats =>
-      val (state, shape) = fa.run(SchemaState(0, Map.empty)).value
-      Schema(shape, state, stats)
-    }
-
   def stateful[F[_], Q, M, S](statistics: Statistics[F])(fa: State[SchemaState[F], SchemaShape[F, Q, M, S]]): Schema[F, Q, M, S] = {
     val (state, shape) = fa.run(SchemaState(0, Map.empty)).value
     Schema(shape, state, statistics)
   }
+
+  def stateful[F[_]: Async, Q, M, S](fa: State[SchemaState[F], SchemaShape[F, Q, M, S]]): F[Schema[F, Q, M, S]] =
+    Statistics[F].map(stateful(_)(fa))
 
   def query[F[_], Q](statistics: Statistics[F])(query: Type[F, Q]): Schema[F, Q, Unit, Unit] =
     stateful(statistics)(State.pure(SchemaShape(query, None, None)))

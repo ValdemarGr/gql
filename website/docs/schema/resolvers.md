@@ -41,7 +41,7 @@ import gql.resolver._
 import cats.effect._
 
 val brState = BatchResolver[IO, Int, Int](keys => IO.pure(keys.map(k => k -> (k * 2)).toMap))
-// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@1a42265
+// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@146ca72b
 ```
 A `State` monad is used to keep track of the batchers that have been created and unique id generation.
 During schema construction, `State` can be composed using `Monad`ic operations.
@@ -51,6 +51,7 @@ The `Schema` companion object contains smart constructors that run the `State` m
 ```scala
 import gql._
 import gql.dsl._
+import gql.execution._
 import cats._
 
 def batchSchema = brState.map { (br: BatchResolver[IO, Set[Int], Map[Int, Int]]) =>
@@ -62,9 +63,7 @@ def batchSchema = brState.map { (br: BatchResolver[IO, Set[Int], Map[Int, Int]])
     tpe[IO, Unit](
       "Query",
       "field" -> field(adjusted.contramap(_ => 42))
-    ),
-    None,
-    None
+    )
   )
 }
 ```
@@ -137,7 +136,7 @@ final case class DomainBatchers[F[_]](
     .map[Int]{ case (_, m) => m.values.toList.combineAll }
   )
 ).mapN(DomainBatchers.apply)
-// res1: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], DomainBatchers[[A]IO[A]]] = cats.data.IndexedStateT@6e05ef76
+// res1: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], DomainBatchers[[A]IO[A]]] = cats.data.IndexedStateT@121f1080
 ```
 
 ## StreamResolver
@@ -149,9 +148,7 @@ def streamSchema =
     tpe(
       "Query",
       "stream" -> field(stream(_ => fs2.Stream(1).repeat.lift[IO].scan(0)(_ + _)))
-    ),
-    None,
-    None
+    )
   )
 ```
 

@@ -50,6 +50,7 @@ The `Schema` companion object contains smart constructors that run the `State` m
 ```scala mdoc
 import gql._
 import gql.dsl._
+import gql.execution._
 import cats._
 
 def batchSchema = brState.map { (br: BatchResolver[IO, Set[Int], Map[Int, Int]]) =>
@@ -61,9 +62,7 @@ def batchSchema = brState.map { (br: BatchResolver[IO, Set[Int], Map[Int, Int]])
     tpe[IO, Unit](
       "Query",
       "field" -> field(adjusted.contramap(_ => 42))
-    ),
-    None,
-    None
+    )
   )
 }
 ```
@@ -142,9 +141,7 @@ def streamSchema =
     tpe(
       "Query",
       "stream" -> field(stream(_ => fs2.Stream(1).repeat.lift[IO].scan(0)(_ + _)))
-    ),
-    None,
-    None
+    )
   )
 ```
 

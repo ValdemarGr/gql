@@ -33,6 +33,7 @@ const sidebars = {
         "schema/output_types",
         "schema/dsl",
         "schema/resolvers",
+        "schema/schema",
         "schema/context",
         "schema/error_handling",
         "schema/graph_philosophy",

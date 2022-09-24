@@ -1,4 +1,4 @@
-package gql
+package gql.execution
 
 import cats.Monoid
 import gql.parser._
@@ -11,22 +11,11 @@ import io.circe.syntax._
 import cats.data._
 import gql.interpreter._
 import gql.parser.ParserUtil
+import gql._
 
 sealed trait Executable[F[_], Q, M, S]
 
 object Executable {
-  case class Result(
-      errors: Chain[EvalFailure],
-      data: JsonObject
-  ) {
-    lazy val asGraphQL: JsonObject = {
-      Map(
-        "errors" -> errors.map(_.asGraphQL).toList.toNel.map(_.asJson),
-        "data" -> Some(data).filter(_.nonEmpty).map(_.asJson)
-      ).collect { case (k, Some(v)) => k -> v }.asJsonObject
-    }
-  }
-
   final case class ValidationError[F[_], Q, M, S](msg: PreparedQuery.PositionalError) extends Executable[F, Q, M, S]
   final case class Query[F[_], Q, M, S](run: Q => F[Result]) extends Executable[F, Q, M, S]
   final case class Mutation[F[_], Q, M, S](run: M => F[Result]) extends Executable[F, Q, M, S]

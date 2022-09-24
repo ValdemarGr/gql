@@ -7,7 +7,7 @@ const darkCodeTheme = require('prism-react-renderer/themes/dracula');
 /** @type {import('@docusaurus/types').Config} */
 const config = {
   title: 'gql',
-  tagline: 'A GraphQL DSL for Scala',
+  tagline: 'A functional GraphQL implementation for Scala',
   url: 'https://github.com',
   baseUrl: '/gql/',
   onBrokenLinks: 'throw',

@@ -7,12 +7,12 @@ import cats.data._
 
 abstract case class BatchResolver[F[_], I, O](
     id: Int,
-    run: I => F[Result[(Set[Any], Map[Any, Any] => F[Result[O]])]]
+    run: I => F[IorNec[String, (Set[Any], Map[Any, Any] => F[IorNec[String, O]])]]
 ) extends LeafResolver[F, I, O] {
   override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): LeafResolver[G, I, O] =
     new BatchResolver[G, I, O](id, i => fk(run(i)).map(_.map { case (ks, f) => (ks, m => fk(f(m))) })) {}
 
-  def contramapF[B](g: B => F[Result[I]])(implicit F: Monad[F]): BatchResolver[F, B, O] =
+  def contramapF[B](g: B => F[IorNec[String, I]])(implicit F: Monad[F]): BatchResolver[F, B, O] =
     new BatchResolver[F, B, O](id, b => IorT(g(b)).flatMap(i => IorT(run(i))).value) {}
 
   override def contramap[B](g: B => I): BatchResolver[F, B, O] =
