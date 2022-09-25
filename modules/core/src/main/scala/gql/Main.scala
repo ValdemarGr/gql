@@ -408,9 +408,7 @@ query withNestedFragments {
           "getInterface" -> pure(_ => (C("hey", "tun"): A)),
           "getOther" -> pure(_ => (C("hey", "tun"): D)),
           "doIdentity" -> pure(_ => IdentityData(2, "hello"))
-        ),
-        None,
-        None
+        ).some
       )
     }
   }
@@ -702,7 +700,7 @@ fragment HumanDetails on Human {
     .map { sch =>
       sch
         .assemble(query, variables = Map.empty)
-        .traverse { case gql.execution.Executable.Query(run) => run(()).map(_.asGraphQL) }
+        .traverse { case gql.Executable.Query(run) => run(()).map(_.asGraphQL) }
     }
     .unsafeRunSync()
 }

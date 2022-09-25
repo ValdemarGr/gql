@@ -1,6 +1,5 @@
 package gql
 
-import gql.execution._
 import gql.parser.{QueryParser => P, ParseError, parse}
 import io.circe._
 import cats.effect._
@@ -60,24 +59,14 @@ object Schema {
     Statistics[F].map(stateful(_)(fa))
 
   def query[F[_], Q](statistics: Statistics[F])(query: Type[F, Q]): Schema[F, Q, Unit, Unit] =
-    stateful(statistics)(State.pure(SchemaShape(query, None, None)))
+    stateful(statistics)(State.pure(SchemaShape(Some(query), None, None)))
 
   def query[F[_]: Async, Q](query: Type[F, Q]): F[Schema[F, Q, Unit, Unit]] =
-    stateful(State.pure(SchemaShape(query, None, None)))
+    stateful(State.pure(SchemaShape(Some(query), None, None)))
 
-  def simple[F[_]: Async, Q, M, S](
-      query: Type[F, Q],
-      mutation: Option[Type[F, M]],
-      subscription: Option[Type[F, S]]
-  ): F[Schema[F, Q, M, S]] =
-    Statistics[F].map { stats =>
-      Schema(SchemaShape[F, Q, M, S](query, mutation, subscription), Empty[SchemaState[F]].empty, stats)
-    }
+  def simple[F[_]: Async, Q, M, S](shape: SchemaShape[F, Q, M, S]): F[Schema[F, Q, M, S]] =
+    Statistics[F].map(Schema(shape, Empty[SchemaState[F]].empty, _))
 
-  def simple[F[_], Q, M, S](statistics: Statistics[F])(
-      query: Type[F, Q],
-      mutation: Option[Type[F, M]],
-      subscription: Option[Type[F, S]]
-  ): Schema[F, Q, M, S] =
-    Schema(SchemaShape[F, Q, M, S](query, mutation, subscription), Empty[SchemaState[F]].empty, statistics)
+  def simple[F[_], Q, M, S](statistics: Statistics[F])(shape: SchemaShape[F, Q, M, S]): Schema[F, Q, M, S] =
+    Schema(shape, Empty[SchemaState[F]].empty, statistics)
 }

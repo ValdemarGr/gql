@@ -41,7 +41,7 @@ import gql.resolver._
 import cats.effect._
 
 val brState = BatchResolver[IO, Int, Int](keys => IO.pure(keys.map(k => k -> (k * 2)).toMap))
-// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@146ca72b
+// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@2b7128a2
 ```
 A `State` monad is used to keep track of the batchers that have been created and unique id generation.
 During schema construction, `State` can be composed using `Monad`ic operations.
@@ -51,8 +51,8 @@ The `Schema` companion object contains smart constructors that run the `State` m
 ```scala
 import gql._
 import gql.dsl._
-import gql.execution._
 import cats._
+import cats.implicits._
 
 def batchSchema = brState.map { (br: BatchResolver[IO, Set[Int], Map[Int, Int]]) =>
   val adjusted: BatchResolver[IO, Int, Option[Int]] = br
@@ -63,7 +63,7 @@ def batchSchema = brState.map { (br: BatchResolver[IO, Set[Int], Map[Int, Int]])
     tpe[IO, Unit](
       "Query",
       "field" -> field(adjusted.contramap(_ => 42))
-    )
+    ).some
   )
 }
 ```
@@ -136,21 +136,37 @@ final case class DomainBatchers[F[_]](
     .map[Int]{ case (_, m) => m.values.toList.combineAll }
   )
 ).mapN(DomainBatchers.apply)
-// res1: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], DomainBatchers[[A]IO[A]]] = cats.data.IndexedStateT@121f1080
+// res1: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], DomainBatchers[[A]IO[A]]] = cats.data.IndexedStateT@626e6ac2
 ```
 
 ## StreamResolver
 The `StreamResolver` is a very powerful resolver type, that can perform many different tasks.
-First and foremost a `StreamResolver` can update a sub-tree of the schema via some provided stream:
+First and foremost a `StreamResolver` can update a sub-tree of the schema via some provided stream, like signals in frp or observables.
 ```scala
 def streamSchema = 
   SchemaShape[IO, Unit, Unit, Unit](
-    tpe(
-      "Query",
+    subscription = tpe[IO, Unit](
+      "Subscription",
       "stream" -> field(stream(_ => fs2.Stream(1).repeat.lift[IO].scan(0)(_ + _)))
-    )
+    ).some
   )
 ```
+
+### Stream semantics
+A `StreamResolver` that occurs as a child another `StreamResolver` has some interesting implications.
+
+The first time the interpreter sees a `StreamResolver`, it will await the first element and subscribe the rest of the stream to a background queue.
+
+:::info
+When a `StreamResolver` is interpreted during a query or mutation operation, no "background fiber" is spawned such that only the head element is respected.
+:::
+:::note
+Technically, a `StreamResolver` with one element can perform the same task as an `EffectResolver` by creating a single-element stream.
+An `EffectResolver` has less resource overhead, since it is a single function compared to a `StreamResolver` that has some bookkeeping associated with it.
+:::
+
+When the first element arrives, the interpreter will continue interpreting the rest of the query.
+That is, the interpreter will be blocked until the first element arrives.
 
 :::caution
 Streams must not be empty.
@@ -158,15 +174,183 @@ If stream terminates before at-least one element is emitted the subscription is 
 :::
 :::danger
 It is **highly** reccomended that every stream has at least one **guarenteed** element.
-The initial evaluation of a (sub-)tree will never complete if a stream never emits, even if future updates cause the stream to be redundant.
+The initial evaluation of a (sub-)tree will never complete if a stream never emits, even if future updates cause a stream to become redundant.
 :::
+
+Whenever the tail of the stream emits, the interpreter will re-evaluate the sub-tree that occurs at the `StreamResolver`.
+Re-evaluation forgets everything regarding the previous children, which includes `StreamResolver`s that may occur as children.
+Forgotten `StreamResolver`s are gracefully cancelled.
+
 :::note
-Technically, a `StreamResolver` with one element can perform the same task as an `EffectResolver` by creating a single-element stream.
-An `EffectResolver` has less resource overhead, since it is a single function compared to a `StreamResolver` that has some bookkeeping associated with it.
+The interpreter only respects elements arriving in streams that are considered "active".
+That is, if a node emits but is also about to be removed because a parent has emitted, the interpreter will ignore the emission.
 :::
-:::info
-When a `StreamResolver` is interpreted during a query or mutation operation, no "background fiber" is spawned such that only the head element is respected.
-:::
+
+### Interesting use cases
+Since stream can embed `Resource`s, some very interesting problems can be solved with `StreamResolver`s.
+
+Say we had a very slow connection to some VPN server that we wanted to fetch data from, but only if data from the VPN had been selected.
+```scala
+import cats.effect.implicits._
+
+final case class VpnData(
+  content: String,
+  hash: String,
+  connectedUser: String,
+  serverId: String
+)
+
+type Username = String
+
+trait VpnConnection[F[_]] {
+  def getName: F[String]
+  
+  def getCreatedAge: F[Int]
+  
+  def getDataUpdates: fs2.Stream[F, VpnData]
+}
+
+object VpnConnection {
+  // Connection aquisition is very slow
+  def apply[F[_]](userId: Username, serverId: String)(implicit F: Async[F]): Resource[F, VpnConnection[F]] = {
+    val C = std.Console.make[F]
+    import scala.concurrent.duration._
+    
+    Resource.make[F, VpnConnection[F]]{
+      C.println("Connecting to VPN...").delayBy(500.millis).as{
+        new VpnConnection[F] {
+          def getName = F.delay("super_secret_file")
+          
+          def getCreatedAge = F.delay(42)
+          
+          def getDataUpdates = 
+            fs2.Stream(1)
+              .repeat
+              .scan(0)(_ + _)
+              .lift[F]
+              .metered(50.millis)
+              .map(i => VpnData(s"content $i", s"hash of $i", userId, serverId))
+        }
+      }
+    }(_ => C.println("Disconnecting from VPN..."))
+  }
+}
+```
+We could embed the VPN connection in a stream and pass it around to types that need it.
+```scala
+final case class WithVpn[F[_], A](
+  vpn: VpnConnection[F],
+  value: A
+)
+
+final case class VpnMetadata(subscriptionTimestamp: String)
+
+def currentTimestamp[F[_]](implicit F: Applicative[F]): F[String] = F.pure("now!")
+
+implicit def vpnMetadata[F[_]: Applicative] = tpe[F, WithVpn[F, VpnMetadata]](
+  "VpnMetadata",
+  "name" -> eff(_.vpn.getName),
+  "createdAge" -> eff(_.vpn.getCreatedAge),
+  "subscriptionTimestamp" -> pure(_.value.subscriptionTimestamp),
+)
+
+implicit def vpnData[F[_]: Applicative] = tpe[F, VpnData](
+  "VpnData",
+  "content" -> pure(_.content),
+  "hash" -> pure(_.hash),
+  "connectedUser" -> pure(_.connectedUser),
+  "serverId" -> pure(_.serverId)
+)
+
+implicit def vpn[F[_]: Applicative] = tpe[F, VpnConnection[F]](
+  "Vpn",
+  "metadata" -> eff(conn => currentTimestamp[F].map(ts => WithVpn(conn, VpnMetadata(ts)))),
+  "data" -> field(stream(_.getDataUpdates))
+)
+
+def root[F[_]: Async] = 
+  tpe[F, Username](
+    "Subscription",
+    "vpn" -> field(arg[String]("serverId"))(stream{ case (userId, serverId) => 
+      fs2.Stream.resource(VpnConnection[F](userId, serverId))
+    })
+  )
+```
+
+We can now try querying the VPN connection through a GraphQL query:
+```scala
+def subscriptionQuery = """
+subscription {
+  vpn(serverId: "secret_server") {
+    metadata {
+      name
+      createdAge
+      subscriptionTimestamp
+    }
+    data {
+      content
+      hash
+      connectedUser
+      serverId
+    }
+  }
+}
+"""
+
+Schema.simple(SchemaShape[IO, Unit, Unit, Username](subscription = root[IO].some)).flatMap{ sch =>
+  sch.assemble(subscriptionQuery, variables = Map.empty)
+    .traverse { case Executable.Subscription(run) => run("john_doe").take(3).map(_.asGraphQL).compile.toList }
+}.unsafeRunSync()
+// res2: Either[parser.package.ParseError, List[io.circe.JsonObject]] = Right(
+//   value = List(
+//     object[data -> {
+//   "vpn" : {
+//     "data" : {
+//       "serverId" : "secret_server",
+//       "connectedUser" : "john_doe",
+//       "hash" : "hash of 0",
+//       "content" : "content 0"
+//     },
+//     "metadata" : {
+//       "subscriptionTimestamp" : "now!",
+//       "createdAge" : 42,
+//       "name" : "super_secret_file"
+//     }
+//   }
+// }],
+//     object[data -> {
+//   "vpn" : {
+//     "data" : {
+//       "serverId" : "secret_server",
+//       "connectedUser" : "john_doe",
+//       "hash" : "hash of 1",
+//       "content" : "content 1"
+//     },
+//     "metadata" : {
+//       "subscriptionTimestamp" : "now!",
+//       "createdAge" : 42,
+//       "name" : "super_secret_file"
+//     }
+//   }
+// }],
+//     object[data -> {
+//   "vpn" : {
+//     "data" : {
+//       "serverId" : "secret_server",
+//       "connectedUser" : "john_doe",
+//       "hash" : "hash of 2",
+//       "content" : "content 2"
+//     },
+//     "metadata" : {
+//       "subscriptionTimestamp" : "now!",
+//       "createdAge" : 42,
+//       "name" : "super_secret_file"
+//     }
+//   }
+// }]
+//   )
+// )
+```
 
 # Deprecated
 ## SignalResolver

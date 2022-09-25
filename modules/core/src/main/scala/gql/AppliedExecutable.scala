@@ -1,4 +1,4 @@
-package gql.execution
+package gql
 
 import gql.PreparedQuery
 

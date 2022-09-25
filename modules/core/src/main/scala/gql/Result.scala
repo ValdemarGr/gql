@@ -1,4 +1,4 @@
-package gql.execution
+package gql
 
 import io.circe._
 import cats.data._

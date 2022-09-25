@@ -116,7 +116,6 @@ def schema[F[_]: Async](implicit repo: Repository[F]) = {
 
 Lets construct a simple in-memory repository and query:
 ```scala
-import gql.execution._
 import cats.effect._
 import cats.effect.unsafe.implicits.global
 

@@ -1,4 +1,4 @@
-package gql.execution
+package gql
 
 import cats.Monoid
 import gql.parser._
@@ -11,7 +11,6 @@ import io.circe.syntax._
 import cats.data._
 import gql.interpreter._
 import gql.parser.ParserUtil
-import gql._
 
 sealed trait Executable[F[_], Q, M, S]
 

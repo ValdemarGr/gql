@@ -9,12 +9,12 @@ import gql.ast._
 import gql.parser.QueryParser
 
 final case class SchemaShape[F[_], Q, M, S](
-    query: Type[F, Q],
+    query: Option[Type[F, Q]] = None,
     mutation: Option[Type[F, M]] = None,
     subscription: Option[Type[F, S]] = None
 ) {
   def mapK[G[_]: MonadCancelThrow](fk: F ~> G): SchemaShape[G, Q, M, S] =
-    SchemaShape(query.mapK(fk), mutation.map(_.mapK(fk)), subscription.map(_.mapK(fk)))
+    SchemaShape(query.map(_.mapK(fk)), mutation.map(_.mapK(fk)), subscription.map(_.mapK(fk)))
 
   lazy val discover = SchemaShape.discover[F](this)
 
@@ -95,7 +95,10 @@ object SchemaShape {
           }
       }
 
-    goOutput[State[DiscoveryState[F], *]](shape.query).runS(DiscoveryState(Map.empty, Map.empty, Map.empty)).value
+    (shape.query ++ shape.mutation ++ shape.subscription).toList
+      .traverse_(goOutput[State[DiscoveryState[F], *]])
+      .runS(DiscoveryState(Map.empty, Map.empty, Map.empty))
+      .value
   }
 
   sealed trait ValidationEdge
@@ -259,7 +262,8 @@ object SchemaShape {
         case OutOpt(of)           => validateOutput[G](of)
       }
 
-    validateOutput[State[ValidationState, *]](schema.query)
+    (schema.query ++ schema.mutation ++ schema.subscription).toList
+      .traverse_(validateOutput[State[ValidationState, *]])
       .runS(ValidationState(Chain.empty, Chain.empty, Map.empty, Map.empty))
       .value
       .problems

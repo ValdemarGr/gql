@@ -12,7 +12,6 @@ Writing `ReaderT`/`Kleisli` everywhere is tedious, instead consider opting for `
 import gql._
 import gql.dsl._
 import gql.ast._
-import gql.execution._
 import cats.mtl.Ask
 import cats._
 import cats.data._
