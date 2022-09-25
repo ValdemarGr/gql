@@ -28,27 +28,56 @@ object StreamSupervisor {
             override def acquireAwait(stream: Stream[F, A]): F[(Unique.Token, Either[Throwable, A])] =
               for {
                 token <- F.unique
-                head <- F.deferred[Either[Throwable, A]]
-                close <-
-                  // Some danger here
-                  // We must NOT start the background stream outside of the main stream since that would escape the scope (as in fs2 `Scope`) the main stream
-                  // Instead we use the resource compiler to do so
-                  stream.attempt.pull.uncons1
-                    .flatMap {
-                      case None => ???
-                      case Some((hd, tl)) =>
-                        val back =
-                          if (openTail)
-                            tl.map(e => (token, e)).enqueueUnterminatedChunks(q).pull.echo
-                          else Pull.done
-                        Pull.eval(head.complete(hd)) >> back
+                // head <- F.deferred[Either[Throwable, A]]
+                (head, close) <-
+                  // stream
+                  //   .attempt
+                  //   .pull
+                  //   .uncons1
+                  //   .flatMap{
+                  //     case None => ???
+                  //     case Some((hd, tl)) =>
+                  //       ???
+                  //       // Pull.output1(hd).flatMap{ hd =>
+                  //       // }>> tl.pull.echo
+                  //   }
+                  //   .head
+                  //   .compile
+                  //   .resource
+                  //   .lastOrError
+                  //   .allocated
+                  fs2.Stream
+                    .eval(F.deferred[Either[Throwable, A]])
+                    .flatMap{ d =>
+                      fs2.Stream.eval(d.get).concurrently {
+                        stream.attempt
+                          .evalTap(d.complete)
+                          .tail
+                          .through(stream =>
+                            if (openTail) stream.map((token, _)).enqueueUnterminatedChunks(q) else fs2.Stream.never[F] ++ stream
+                          )
+                      }
                     }
-                    .stream
                     .compile
-                    .drain
-                    .start
-                    .map(_.cancel)
-                head <- head.get
+                    .resource
+                    .lastOrError
+                    .allocated
+                // .attempt.pull.uncons1
+                // .flatMap {
+                //   case None => ???
+                //   case Some((hd, tl)) =>
+                //     val back =
+                //       if (openTail)
+                //         tl.map(e => (token, e)).enqueueUnterminatedChunks(q).pull.echo
+                //       else Pull.done
+                //     Pull.eval(head.complete(hd)) >> back
+                // }
+                // .stream
+                // .compile
+                // .resource
+                // .drain
+                // .allocated
+                // head <- head.get
                 _ <- state.update(_ + (token -> close))
               } yield (token, head)
 

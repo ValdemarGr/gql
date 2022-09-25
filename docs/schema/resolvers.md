@@ -206,26 +206,30 @@ trait VpnConnection[F[_]] {
 object VpnConnection {
   // Connection aquisition is very slow
   def apply[F[_]](userId: Username, serverId: String)(implicit F: Async[F]): Resource[F, VpnConnection[F]] = {
-    val C = std.Console.make[F]
     import scala.concurrent.duration._
     
-    Resource.make[F, VpnConnection[F]]{
-      C.println("Connecting to VPN...").delayBy(500.millis).as{
-        new VpnConnection[F] {
-          def getName = F.delay("super_secret_file")
-          
-          def getCreatedAge = F.delay(42)
-          
-          def getDataUpdates = 
-            fs2.Stream(1)
-              .repeat
-              .scan(0)(_ + _)
-              .lift[F]
-              .metered(50.millis)
-              .map(i => VpnData(s"content $i", s"hash of $i", userId, serverId))
+    Resource.eval(F.monotonic).flatMap{ before =>
+      Resource.make[F, VpnConnection[F]]{
+        F.delay(println("Connecting to VPN...")).delayBy(500.millis).as{
+          new VpnConnection[F] {
+            def getName = F.delay("super_secret_file")
+            
+            def getCreatedAge = F.delay(42)
+            
+            def getDataUpdates = 
+              fs2.Stream(1)
+                .repeat
+                .scan(0)(_ + _)
+                .lift[F]
+                .metered(50.millis)
+                .map{ x => println("emitting");x}
+                .map(i => VpnData(s"content $i", s"hash of $i", userId, serverId))
+          }
         }
-      }
-    }(_ => C.println("Disconnecting from VPN..."))
+      }(_ => F.monotonic.map{ after => 
+        println(s"Disconnecting from VPN after ${(after - before).toMillis}ms ...")
+      })
+    }
   }
 }
 ```

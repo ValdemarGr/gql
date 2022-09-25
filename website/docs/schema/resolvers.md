@@ -41,7 +41,7 @@ import gql.resolver._
 import cats.effect._
 
 val brState = BatchResolver[IO, Int, Int](keys => IO.pure(keys.map(k => k -> (k * 2)).toMap))
-// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@54a7791b
+// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@5fb152d
 ```
 A `State` monad is used to keep track of the batchers that have been created and unique id generation.
 During schema construction, `State` can be composed using `Monad`ic operations.
@@ -136,7 +136,7 @@ final case class DomainBatchers[F[_]](
     .map[Int]{ case (_, m) => m.values.toList.combineAll }
   )
 ).mapN(DomainBatchers.apply)
-// res1: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], DomainBatchers[[A]IO[A]]] = cats.data.IndexedStateT@609bd439
+// res1: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], DomainBatchers[[A]IO[A]]] = cats.data.IndexedStateT@2611ac55
 ```
 
 ## StreamResolver
@@ -213,26 +213,30 @@ trait VpnConnection[F[_]] {
 object VpnConnection {
   // Connection aquisition is very slow
   def apply[F[_]](userId: Username, serverId: String)(implicit F: Async[F]): Resource[F, VpnConnection[F]] = {
-    val C = std.Console.make[F]
     import scala.concurrent.duration._
     
-    Resource.make[F, VpnConnection[F]]{
-      C.println("Connecting to VPN...").delayBy(500.millis).as{
-        new VpnConnection[F] {
-          def getName = F.delay("super_secret_file")
-          
-          def getCreatedAge = F.delay(42)
-          
-          def getDataUpdates = 
-            fs2.Stream(1)
-              .repeat
-              .scan(0)(_ + _)
-              .lift[F]
-              .metered(50.millis)
-              .map(i => VpnData(s"content $i", s"hash of $i", userId, serverId))
+    Resource.eval(F.monotonic).flatMap{ before =>
+      Resource.make[F, VpnConnection[F]]{
+        F.delay(println("Connecting to VPN...")).delayBy(500.millis).as{
+          new VpnConnection[F] {
+            def getName = F.delay("super_secret_file")
+            
+            def getCreatedAge = F.delay(42)
+            
+            def getDataUpdates = 
+              fs2.Stream(1)
+                .repeat
+                .scan(0)(_ + _)
+                .lift[F]
+                .metered(50.millis)
+                .map{ x => println("emitting");x}
+                .map(i => VpnData(s"content $i", s"hash of $i", userId, serverId))
+          }
         }
-      }
-    }(_ => C.println("Disconnecting from VPN..."))
+      }(_ => F.monotonic.map{ after => 
+        println(s"Disconnecting from VPN after ${(after - before).toMillis}ms ...")
+      })
+    }
   }
 }
 ```
@@ -305,6 +309,11 @@ def runVPNSubscription(q: String, n: Int) =
   }
   
 runVPNSubscription(subscriptionQuery, 3).unsafeRunSync()
+// Connecting to VPN...
+// Disconnecting from VPN after 507ms ...
+// emitting
+// emitting
+// emitting
 // res2: Either[parser.package.ParseError, List[io.circe.JsonObject]] = Right(
 //   value = List(
 //     object[data -> {
@@ -365,13 +374,33 @@ def bench(fa: IO[_]) =
   } yield s"duration was ${(after - before).toMillis}ms"
   
 bench(runVPNSubscription(subscriptionQuery, 10)).unsafeRunSync()
-// res3: String = "duration was 1020ms"
+// Connecting to VPN...
+// Disconnecting from VPN after 504ms ...
+// emitting
+// emitting
+// emitting
+// emitting
+// emitting
+// emitting
+// emitting
+// emitting
+// emitting
+// emitting
+// res3: String = "duration was 1048ms"
 
 bench(runVPNSubscription(subscriptionQuery, 3)).unsafeRunSync()
-// res4: String = "duration was 669ms"
+// Connecting to VPN...
+// Disconnecting from VPN after 503ms ...
+// emitting
+// emitting
+// emitting
+// res4: String = "duration was 676ms"
 
 bench(runVPNSubscription(subscriptionQuery, 1)).unsafeRunSync()
-// res5: String = "duration was 573ms"
+// Connecting to VPN...
+// Disconnecting from VPN after 503ms ...
+// emitting
+// res5: String = "duration was 575ms"
 
 def fastQuery = """
   subscription {
@@ -380,7 +409,7 @@ def fastQuery = """
 """
 
 bench(runVPNSubscription(fastQuery, 1)).unsafeRunSync()
-// res6: String = "duration was 1ms"
+// res6: String = "duration was 9ms"
 ```
 
 # Deprecated
