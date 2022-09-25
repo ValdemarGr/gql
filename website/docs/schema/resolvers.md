@@ -41,7 +41,7 @@ import gql.resolver._
 import cats.effect._
 
 val brState = BatchResolver[IO, Int, Int](keys => IO.pure(keys.map(k => k -> (k * 2)).toMap))
-// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@2b7128a2
+// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@54a7791b
 ```
 A `State` monad is used to keep track of the batchers that have been created and unique id generation.
 During schema construction, `State` can be composed using `Monad`ic operations.
@@ -136,7 +136,7 @@ final case class DomainBatchers[F[_]](
     .map[Int]{ case (_, m) => m.values.toList.combineAll }
   )
 ).mapN(DomainBatchers.apply)
-// res1: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], DomainBatchers[[A]IO[A]]] = cats.data.IndexedStateT@626e6ac2
+// res1: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], DomainBatchers[[A]IO[A]]] = cats.data.IndexedStateT@609bd439
 ```
 
 ## StreamResolver
@@ -273,7 +273,8 @@ def root[F[_]: Async] =
     "Subscription",
     "vpn" -> field(arg[String]("serverId"))(stream{ case (userId, serverId) => 
       fs2.Stream.resource(VpnConnection[F](userId, serverId))
-    })
+    }),
+    "me" -> pure(identity)
   )
 ```
 
@@ -297,10 +298,13 @@ subscription {
 }
 """
 
-Schema.simple(SchemaShape[IO, Unit, Unit, Username](subscription = root[IO].some)).flatMap{ sch =>
-  sch.assemble(subscriptionQuery, variables = Map.empty)
-    .traverse { case Executable.Subscription(run) => run("john_doe").take(3).map(_.asGraphQL).compile.toList }
-}.unsafeRunSync()
+def runVPNSubscription(q: String, n: Int) = 
+  Schema.simple(SchemaShape[IO, Unit, Unit, Username](subscription = root[IO].some)).flatMap{ sch =>
+    sch.assemble(q, variables = Map.empty)
+      .traverse { case Executable.Subscription(run) => run("john_doe").take(n).map(_.asGraphQL).compile.toList }
+  }
+  
+runVPNSubscription(subscriptionQuery, 3).unsafeRunSync()
 // res2: Either[parser.package.ParseError, List[io.circe.JsonObject]] = Right(
 //   value = List(
 //     object[data -> {
@@ -350,6 +354,33 @@ Schema.simple(SchemaShape[IO, Unit, Unit, Username](subscription = root[IO].some
 // }]
 //   )
 // )
+```
+We can check the performance difference of a queries that open a VPN connection, and ones that don't:
+```scala
+def bench(fa: IO[_]) = 
+  for {
+    before <- IO.monotonic
+    _ <- fa.timed
+    after <- IO.monotonic
+  } yield s"duration was ${(after - before).toMillis}ms"
+  
+bench(runVPNSubscription(subscriptionQuery, 10)).unsafeRunSync()
+// res3: String = "duration was 1020ms"
+
+bench(runVPNSubscription(subscriptionQuery, 3)).unsafeRunSync()
+// res4: String = "duration was 669ms"
+
+bench(runVPNSubscription(subscriptionQuery, 1)).unsafeRunSync()
+// res5: String = "duration was 573ms"
+
+def fastQuery = """
+  subscription {
+    me
+  }
+"""
+
+bench(runVPNSubscription(fastQuery, 1)).unsafeRunSync()
+// res6: String = "duration was 1ms"
 ```
 
 # Deprecated

@@ -255,6 +255,7 @@ query withNestedFragments {
       F.delay(if (name == "John") 22 else 20),
       F.defer(getFriends[F](name))
     )
+  IO.monotonic.map(_.toMillis)
 
   import gql.syntax.out._
 

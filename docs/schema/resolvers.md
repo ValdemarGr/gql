@@ -266,7 +266,8 @@ def root[F[_]: Async] =
     "Subscription",
     "vpn" -> field(arg[String]("serverId"))(stream{ case (userId, serverId) => 
       fs2.Stream.resource(VpnConnection[F](userId, serverId))
-    })
+    }),
+    "me" -> pure(identity)
   )
 ```
 
@@ -290,10 +291,36 @@ subscription {
 }
 """
 
-Schema.simple(SchemaShape[IO, Unit, Unit, Username](subscription = root[IO].some)).flatMap{ sch =>
-  sch.assemble(subscriptionQuery, variables = Map.empty)
-    .traverse { case Executable.Subscription(run) => run("john_doe").take(3).map(_.asGraphQL).compile.toList }
-}.unsafeRunSync()
+def runVPNSubscription(q: String, n: Int) = 
+  Schema.simple(SchemaShape[IO, Unit, Unit, Username](subscription = root[IO].some)).flatMap{ sch =>
+    sch.assemble(q, variables = Map.empty)
+      .traverse { case Executable.Subscription(run) => run("john_doe").take(n).map(_.asGraphQL).compile.toList }
+  }
+  
+runVPNSubscription(subscriptionQuery, 3).unsafeRunSync()
+```
+We can check the performance difference of a queries that open a VPN connection, and ones that don't:
+```scala mdoc
+def bench(fa: IO[_]) = 
+  for {
+    before <- IO.monotonic
+    _ <- fa.timed
+    after <- IO.monotonic
+  } yield s"duration was ${(after - before).toMillis}ms"
+  
+bench(runVPNSubscription(subscriptionQuery, 10)).unsafeRunSync()
+
+bench(runVPNSubscription(subscriptionQuery, 3)).unsafeRunSync()
+
+bench(runVPNSubscription(subscriptionQuery, 1)).unsafeRunSync()
+
+def fastQuery = """
+  subscription {
+    me
+  }
+"""
+
+bench(runVPNSubscription(fastQuery, 1)).unsafeRunSync()
 ```
 
 # Deprecated
