@@ -11,80 +11,103 @@ import cats.effect.std._
 import fs2.{Chunk, Stream, Pull}
 
 trait StreamSupervisor[F[_], A] {
-  def acquireAwait(stream: Stream[F, A]): F[(Unique.Token, Either[Throwable, A])]
+  def acquireAwait(stream: Stream[F, A]): F[(StreamToken, Either[Throwable, A])]
 
-  def release(token: Unique.Token): F[Unit]
+  def release(token: Set[StreamToken]): F[Unit]
 
-  def changes: Stream[F, NonEmptyList[(Unique.Token, Either[Throwable, A])]]
+  def freeUnused(token: StreamToken, resource: ResourceToken): F[Unit]
+
+  def changes: Stream[F, NonEmptyList[(StreamToken, ResourceToken, Either[Throwable, A])]]
 }
 
 object StreamSupervisor {
-  def apply[F[_], A](openTail: Boolean)(implicit F: Concurrent[F]): Stream[F, StreamSupervisor[F, A]] = {
+  final case class State[F[_]](
+      unsubscribe: F[Unit],
+      allocatedResources: Vector[(ResourceToken, F[Unit])]
+  )
+
+  def apply[F[_], A](openTail: Boolean)(implicit F: Async[F]): Stream[F, StreamSupervisor[F, A]] = {
+    def removeStates(xs: List[State[F]]) = {
+      xs.traverse_(_.unsubscribe) >>
+        xs.traverse_(_.allocatedResources.toList.traverse_ { case (_, fa) => fa })
+    }
+
+    type StateMap = Map[StreamToken, State[F]]
     fs2.Stream
-      .bracket(F.ref(Map.empty[Unique.Token, F[Unit]]))(_.get.flatMap(_.values.toList.sequence_))
-      .flatMap { state =>
-        fs2.Stream.eval(Queue.bounded[F, Chunk[(Unique.Token, Either[Throwable, A])]](1024)).map { q =>
+      .bracket(F.ref(Map.empty[StreamToken, State[F]]))(_.get.flatMap(xs => removeStates(xs.values.toList)))
+      .flatMap { (state: Ref[F, StateMap]) =>
+        fs2.Stream.eval(Queue.bounded[F, Chunk[(StreamToken, ResourceToken, Either[Throwable, A])]](1024)).map { q =>
           new StreamSupervisor[F, A] {
             override def acquireAwait(stream: Stream[F, A]): F[(Unique.Token, Either[Throwable, A])] =
               for {
                 token <- F.unique
-                // head <- F.deferred[Either[Throwable, A]]
-                (head, close) <-
-                  // stream
-                  //   .attempt
-                  //   .pull
-                  //   .uncons1
-                  //   .flatMap{
-                  //     case None => ???
-                  //     case Some((hd, tl)) =>
-                  //       ???
-                  //       // Pull.output1(hd).flatMap{ hd =>
-                  //       // }>> tl.pull.echo
-                  //   }
-                  //   .head
-                  //   .compile
-                  //   .resource
-                  //   .lastOrError
-                  //   .allocated
-                  fs2.Stream
-                    .eval(F.deferred[Either[Throwable, A]])
-                    .flatMap{ d =>
-                      fs2.Stream.eval(d.get).concurrently {
-                        stream.attempt
-                          .evalTap(d.complete)
-                          .tail
-                          .through(stream =>
-                            if (openTail) stream.map((token, _)).enqueueUnterminatedChunks(q) else fs2.Stream.never[F] ++ stream
-                          )
+
+                head <- F.deferred[Either[Throwable, A]]
+
+                start <- F.deferred[Unit]
+
+                close <- {
+                  fs2.Stream.eval(start.get) >> {
+                    stream.attempt
+                      .evalMap { a =>
+                        F.deferred[Unit].flatMap { killSignal =>
+                          F.unique.flatMap { resourceToken =>
+                            state.modify[Option[(Either[Throwable, A], ResourceToken, F[Unit])]] { m =>
+                              m.get(token) match {
+                                // We are closed for business
+                                case None => (m, None)
+                                case Some(state) =>
+                                  val resourceEntry = (resourceToken, killSignal.complete(()).void)
+                                  val newEntry = state.copy(
+                                    allocatedResources = state.allocatedResources :+ resourceEntry
+                                  )
+                                  (m + (token -> newEntry), (Some((a, resourceToken, killSignal.get))))
+                              }
+                            }
+                          }
+                        }
                       }
-                    }
-                    .compile
-                    .resource
-                    .lastOrError
-                    .allocated
-                // .attempt.pull.uncons1
-                // .flatMap {
-                //   case None => ???
-                //   case Some((hd, tl)) =>
-                //     val back =
-                //       if (openTail)
-                //         tl.map(e => (token, e)).enqueueUnterminatedChunks(q).pull.echo
-                //       else Pull.done
-                //     Pull.eval(head.complete(hd)) >> back
-                // }
-                // .stream
-                // .compile
-                // .resource
-                // .drain
-                // .allocated
-                // head <- head.get
-                _ <- state.update(_ + (token -> close))
-              } yield (token, head)
+                      .unNone
+                      .pull
+                      .uncons1
+                      .flatMap {
+                        case None => ???
+                        case Some(((hd, rt, killSignal), tl)) =>
+                          val back =
+                            if (openTail)
+                              tl.evalMap { case (e, rt, ks) => q.offer(Chunk((token, rt, e))).as(ks) }.pull.echo
+                            else Pull.done
+                          Pull.eval(head.complete(hd)) >> Pull.output1(killSignal) >> back
+                      }
+                      .stream
+                      .map(fs2.Stream.eval(_))
+                      .parJoinUnbounded
+                  }
+                }.compile.drain.start
+                  .map(_.cancel)
 
-            override def release(token: Unique.Token): F[Unit] =
-              state.modify(m => (m - token, m.get(token))).flatMap(_.sequence_)
+                _ <- state.update(_ + (token -> State(close, Vector.empty)))
+                _ <- start.complete(())
+                hd <- head.get
+              } yield (token, hd)
 
-            override def changes: Stream[F, NonEmptyList[(Unique.Token, Either[Throwable, A])]] =
+            override def release(tokens: Set[StreamToken]): F[Unit] =
+              state
+                .modify(m => (m -- tokens, tokens.toList.flatMap(m.get(_).toList)))
+                .flatMap(removeStates)
+
+            override def freeUnused(token: StreamToken, resource: ResourceToken): F[Unit] =
+              state.modify { s =>
+                s.get(token) match {
+                  case None => (s, F.unit)
+                  case Some(state) =>
+                    val (release, keep) = state.allocatedResources.span { case (k, _) => k != resource }
+                    val newState = state.copy(allocatedResources = keep)
+                    (s + (token -> newState), release.traverse_ { case (_, fa) => fa })
+                }
+              }.flatten
+
+            override def changes: Stream[F, NonEmptyList[(StreamToken, ResourceToken, Either[Throwable, A])]] =
               Stream
                 .fromQueueUnterminatedChunk(q)
                 .chunks

@@ -23,6 +23,8 @@ import cats.mtl._
 import cats.instances.unit
 import gql.parser.ParserUtil
 import gql.ast._
+import fs2.Pull
+import fs2.concurrent.SignallingRef
 
 object Main extends App {
   def showTree(indent: Int, nodes: NonEmptyList[Planner.Node]): String = {
@@ -563,6 +565,125 @@ query withNestedFragments {
         }
     }
   }
+  // IO.ref(List.empty[IO[Unit]])
+  //   .flatMap { releaseState =>
+  //     def goRec[A](stream: fs2.Stream[IO, A]): Pull[IO, A, Unit] =
+  //       stream.pull.uncons1
+  //         .flatMap {
+  //           case None => Pull.done
+  //           case Some((hd, tl)) =>
+  //             Pull.eval(IO.deferred[Unit]).flatMap { d =>
+  //               val addRelease = Pull.eval(releaseState.update(d.complete().void :: _))
+  //               val await = d.get
+  //               val lease =
+  //                 Pull
+  //                   .extendScopeTo(fs2.Stream.eval(await))
+  //                   .evalMap(_.compile.drain.start)
+
+  //               addRelease >> lease >> Pull.output1(hd) >> goRec(tl)
+  //             }
+  //         }
+
+  //     goRec {
+  //       (
+  //         fs2.Stream
+  //           .iterate(0)(_ + 1)
+  //           .lift[IO]
+  //           .take(3) ++ fs2.Stream.never[IO]
+  //       )
+  //         .flatMap { i =>
+  //           fs2.Stream
+  //             .resource(Resource.make(IO.println(s"open $i").as(i))(x => IO.println(s"close $x")))
+  //         }
+  //         .evalTap(i => IO.println(s"first using $i"))
+  //     }.stream
+  //       .evalTap(i => IO.println(s"second using $i"))
+  //       .compile
+  //       .drain
+  //       .start
+  //       .flatTap { _ =>
+  //         releaseState.get.flatMap(_.traverseWithIndexM { case (fa, i) =>
+  //           IO.sleep(4000.millis) >> IO.println(s"closing $i") >> fa
+  //         })
+  //       }
+  //       .flatMap(_.cancel)
+  //   }
+
+  // import scala.concurrent.duration._
+
+  // val attempt2 =
+  //   IO.ref(List.empty[(Int, IO[Unit])]).flatMap { allocations =>
+  //     fs2.Stream
+  //       .iterate(0)(_ + 1)
+  //       .lift[IO]
+  //       .take(3)
+  //       .flatMap { i =>
+  //         fs2.Stream
+  //           .resource(Resource.make(IO.println(s"open $i").as(i))(x => IO.println(s"close $x")))
+  //       }
+  //       .evalTap(x => IO.println("heyyy"))
+  //       .evalMap { i =>
+  //         IO.deferred[Unit].flatMap { d =>
+  //           val putF = allocations.update((i, d.complete(()).void) :: _)
+  //           val awaitTermination = fs2.Stream.eval(d.get)
+
+  //           putF.as(awaitTermination)
+  //         }
+  //       }
+  //       .evalTap(i => IO.println(s"second using $i"))
+  //       .parJoinUnbounded
+  //       .compile
+  //       .drain
+  //       .start
+  //       .flatTap(_ =>
+  //         IO.sleep(400.millis) >>
+  //           allocations.get.flatMap(_.traverse { case (i, release) =>
+  //             IO.sleep(400.millis) >> IO.println(s"closing $i") >> release
+  //           })
+  //       )
+  //       .flatMap(_.cancel)
+  //   }
+
+  // val attempt1 = {
+  //   def goRec[A](stream: fs2.Stream[IO, A]): Pull[IO, (A, IO[Unit]), Unit] =
+  //     stream.pull.uncons1
+  //       .flatMap {
+  //         case None => Pull.done
+  //         case Some((hd, tl)) =>
+  //           Pull.eval(IO.deferred[Unit]).flatMap { d =>
+  //             val release = d.complete().void
+  //             val await = d.get
+  //             val lease =
+  //               Pull
+  //                 .extendScopeTo(fs2.Stream.eval(await))
+  //                 .evalMap(_.compile.drain.start)
+
+  //             lease >> Pull.output1((hd, release)) >> goRec(tl)
+  //           }
+  //       }
+
+  //   goRec {
+  //     fs2.Stream
+  //       .iterate(0)(_ + 1)
+  //       .lift[IO]
+  //       .take(3)
+  //       .flatMap { i =>
+  //         fs2.Stream
+  //           .resource(Resource.make(IO.println(s"open $i").as(i))(x => IO.println(s"close $x")))
+  //       }
+  //       .evalTap(i => IO.println(s"first using $i"))
+  //   }.stream
+  //     .evalTap(i => IO.println(s"second using $i"))
+  //     .compile
+  //     .toList
+  //     .flatMap(xs =>
+  //       xs.traverse { case (i, release) =>
+  //         IO.sleep(400.millis) >> IO.println(s"closing $i") >> release
+  //       }
+  //     )
+  // }
+
+  // attempt2.unsafeRunSync()
 
   mainProgram[D].run(Deps("hey")).unsafeRunSync()
 
@@ -692,26 +813,26 @@ subscription {
 
     runVPNSubscription(subscriptionQuery, 3).unsafeRunSync()
 
-    def bench(fa: IO[_]) =
-      for {
-        before <- IO.monotonic
-        _ <- fa.timed
-        after <- IO.monotonic
-      } yield s"duration was ${(after - before).toMillis}ms"
+//     def bench(fa: IO[_]) =
+//       for {
+//         before <- IO.monotonic
+//         _ <- fa.timed
+//         after <- IO.monotonic
+//       } yield s"duration was ${(after - before).toMillis}ms"
 
-    bench(runVPNSubscription(subscriptionQuery, 10)).unsafeRunSync()
+//     bench(runVPNSubscription(subscriptionQuery, 10)).unsafeRunSync()
 
-    bench(runVPNSubscription(subscriptionQuery, 3)).unsafeRunSync()
+//     bench(runVPNSubscription(subscriptionQuery, 3)).unsafeRunSync()
 
-    bench(runVPNSubscription(subscriptionQuery, 1)).unsafeRunSync()
+//     bench(runVPNSubscription(subscriptionQuery, 1)).unsafeRunSync()
 
-    def fastQuery = """
-  subscription {
-    me
-  }
-"""
+//     def fastQuery = """
+//   subscription {
+//     me
+//   }
+// """
 
-    bench(runVPNSubscription(fastQuery, 1)).unsafeRunSync()
+//     bench(runVPNSubscription(fastQuery, 1)).unsafeRunSync()
   }
 }
 

@@ -61,7 +61,7 @@ object Interpreter {
   )(implicit F: Async[F]): fs2.Stream[F, (Chain[EvalFailure], JsonObject)] =
     StreamSupervisor[F, IorNec[String, Any]](openTails).flatMap { implicit streamSup =>
       val changeStream = streamSup.changes
-        .map(_.toList.reverse.distinctBy { case (tok, _) => tok }.toNel)
+        .map(_.toList.reverse.distinctBy { case (tok, _, _) => tok }.toNel)
         .unNone
 
       def runStreamIt(
@@ -89,11 +89,11 @@ object Interpreter {
               changeStream
                 .evalMapAccumulate((initialOutput, initialSM)) { case ((prevOutput, activeStreams), changes) =>
                   changes
-                    .map { case (k, v) => activeStreams.get(k).map((k, v, _)) }
+                    .map { case (k, rt, v) => activeStreams.get(k).map((k, rt, v, _)) }
                     .collect { case Some(x) => x }
                     .toNel
                     .flatTraverse { activeChanges =>
-                      val s = activeChanges.toList.map { case (k, _, _) => k }.toSet
+                      val s = activeChanges.toList.map { case (k, _, _, _) => k }.toSet
                       val allSigNodes = activeStreams.toList.map { case (k, StreamMetadata(cursor, _, df)) =>
                         // The cursor is to the parent, traversing the arc for df.name will get us to the changed node
                         (cursor.field(df.id, df.name), k)
@@ -101,13 +101,13 @@ object Interpreter {
                       val meta = recompute(allSigNodes, s)
 
                       // The root nodes are the highest common signal ancestors
-                      val rootNodes = activeChanges.filter { case (k, _, _) => meta.hcsa.contains(k) }
+                      val rootNodes = activeChanges.filter { case (k, _, _, _) => meta.hcsa.contains(k) }
 
                       // Partition every HCSA node into it's own cursor group (for efficient re-association later)
                       // We cannot use the field name to group them, since two changed fields can have the same name
                       // The property of field uniqueness is lost since we are starting at n different non-root nodes
                       val prepaedRoots =
-                        rootNodes.mapWithIndex { case ((id, input, _), idx) =>
+                        rootNodes.mapWithIndex { case ((id, _, input, _), idx) =>
                           val StreamMetadata(cursor, _, field) = activeStreams(id)
                           val cursorGroup = BigInt(idx)
                           val cg = CursorGroup.startAt(cursorGroup, cursor)
@@ -165,10 +165,16 @@ object Interpreter {
 
                               val o = ((recombined, garbageCollected), Some((allFails, recombined)))
 
-                              // Also remove the subscriptions
-                              meta.toRemove.toList
-                                .traverse(streamSup.release)
-                                .as(o)
+                              // Also remove the subscriptions and dead resources
+                              val releasesF =
+                                streamSup
+                                  .release(meta.toRemove.toSet)
+
+                              val freeF = activeChanges
+                                .collect { case (k, rt, _, _) if meta.hcsa.contains(k) => (k, rt) }
+                                .traverse_ { case (k, rt) => streamSup.freeUnused(k, rt) }
+
+                              releasesF >> freeF as o
                             }
                         }
                     }
@@ -257,6 +263,12 @@ object Interpreter {
 
   def groupNodeValues2[A](nvs: List[(Cursor, A)]): Map[Option[GraphArc], List[(Cursor, A)]] =
     nvs.groupMap { case (c, _) => c.headOption } { case (c, v) => (c.tail, v) }
+
+  final case class ExecutionDeps[F[_]](
+      batching: Batching[F],
+      batchExeutionState: Map[Int, Ref[F, BatchExecutionState]],
+      schemaState: SchemaState[F]
+  )
 
   def interpret[F[_]](
       rootSel: NonEmptyList[(PreparedField[F, Any], Chain[EvalNode[Any]])],
