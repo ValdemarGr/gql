@@ -52,40 +52,87 @@ object StreamSupervisor {
                 // 2. do data publishing
                 // 3. await one killSignal for every stream element/resource scope
                 close <- {
+                  // def goRec(stream: Stream[F, Either[Throwable, A]], idx: Long): Pull[F, Nothing, Unit] =
+                  //   stream.pull.uncons1
+                  //     .flatMap {
+                  //       case None => Pull.done
+                  //       case Some((x, xs)) =>
+                  //         Pull.eval(F.deferred[Unit]).flatMap { ks =>
+                  //           Pull.eval(F.unique).flatMap { resourceToken =>
+                  //             val release = ks.complete(()).void
+                  //             val await = ks.get
+                  //             val lease =
+                  //             Pull
+                  //               .extendScopeTo(fs2.Stream.eval(await))
+                  //               .evalMap(_.compile.drain.start)
+
+                  //             val updateState =
+                  //               Pull.eval {
+                  //                 state.modify { m =>
+                  //                   m.get(token) match {
+                  //                     // We are closed for business
+                  //                     case None => (m, release)
+                  //                     case Some(state) =>
+                  //                       val resourceEntry = (resourceToken, release)
+                  //                       val newEntry = state.copy(
+                  //                         allocatedResources = state.allocatedResources :+ resourceEntry
+                  //                       )
+                  //                       val emit =
+                  //                         if (idx == 0) head.complete(x).void
+                  //                         else if (openTail) q.offer(Chunk((token, resourceToken, x)))
+                  //                         else F.unit
+
+                  //                       (m + (token -> newEntry), emit)
+                  //                   }
+                  //                 }.flatten
+                  //               }
+
+                  //             lease >> updateState >> goRec(xs, idx + 1)
+                  //           }
+                  //         }
+                  //     }
+
                   fs2.Stream.eval(start.get) >> {
-                    stream.attempt
-                      .evalMap { a =>
+                    stream
+                      .attempt
+                      // .pull
+                      // .uncons1
+                      // .flatMap {
+                      //   case None => ???
+                      //   case Some((hd, tl)) =>
+                      //     Pull.eval(head.complete(hd)) >> tl.map((token, token, _)).enqueueUnterminatedChunks(q).pull.echo
+                      // }
+                      // .stream
+                      // .pull
+                      // .uncons1
+                      // .flatMap {
+                      //   case None           => ???
+                      //   case Some((hd, tl)) => goRec(tl.cons1(hd), 0)
+                      // }
+                      // .stream
+                      .zipWithIndex
+                      .evalMap { case (a, i) =>
                         F.deferred[Unit].flatMap { killSignal =>
                           F.unique.flatMap { resourceToken =>
-                            state.modify[Option[(Either[Throwable, A], ResourceToken, F[Unit])]] { m =>
+                            state.update { m =>
                               m.get(token) match {
                                 // We are closed for business
-                                case None => (m, None)
+                                case None => m
                                 case Some(state) =>
                                   val resourceEntry = (resourceToken, killSignal.complete(()).void)
                                   val newEntry = state.copy(
                                     allocatedResources = state.allocatedResources :+ resourceEntry
                                   )
-                                  (m + (token -> newEntry), (Some((a, resourceToken, killSignal.get))))
+                                  (m + (token -> newEntry))
                               }
-                            }
+                            } >> {
+                              if (i == 0) head.complete(a)
+                              else if (openTail) q.offer(Chunk((token, resourceToken, a)))
+                              else F.unit
+                            }.as(killSignal.get)
                           }
                         }
                       }
-                      .unNone
-                      .pull
-                      .uncons1
-                      .flatMap {
-                        // TODO better error
-                        case None => ???
-                        case Some(((hd, rt, killSignal), tl)) =>
-                          val back =
-                            if (openTail)
-                              tl.evalMap { case (e, rt, ks) => q.offer(Chunk((token, rt, e))).as(ks) }.pull.echo
-                            else Pull.done
-                          Pull.eval(head.complete(hd)) >> Pull.output1(killSignal) >> back
-                      }
-                      .stream
                       .map(fs2.Stream.eval(_))
                       .parJoinUnbounded
                   }

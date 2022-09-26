@@ -565,125 +565,6 @@ query withNestedFragments {
         }
     }
   }
-  // IO.ref(List.empty[IO[Unit]])
-  //   .flatMap { releaseState =>
-  //     def goRec[A](stream: fs2.Stream[IO, A]): Pull[IO, A, Unit] =
-  //       stream.pull.uncons1
-  //         .flatMap {
-  //           case None => Pull.done
-  //           case Some((hd, tl)) =>
-  //             Pull.eval(IO.deferred[Unit]).flatMap { d =>
-  //               val addRelease = Pull.eval(releaseState.update(d.complete().void :: _))
-  //               val await = d.get
-  //               val lease =
-  //                 Pull
-  //                   .extendScopeTo(fs2.Stream.eval(await))
-  //                   .evalMap(_.compile.drain.start)
-
-  //               addRelease >> lease >> Pull.output1(hd) >> goRec(tl)
-  //             }
-  //         }
-
-  //     goRec {
-  //       (
-  //         fs2.Stream
-  //           .iterate(0)(_ + 1)
-  //           .lift[IO]
-  //           .take(3) ++ fs2.Stream.never[IO]
-  //       )
-  //         .flatMap { i =>
-  //           fs2.Stream
-  //             .resource(Resource.make(IO.println(s"open $i").as(i))(x => IO.println(s"close $x")))
-  //         }
-  //         .evalTap(i => IO.println(s"first using $i"))
-  //     }.stream
-  //       .evalTap(i => IO.println(s"second using $i"))
-  //       .compile
-  //       .drain
-  //       .start
-  //       .flatTap { _ =>
-  //         releaseState.get.flatMap(_.traverseWithIndexM { case (fa, i) =>
-  //           IO.sleep(4000.millis) >> IO.println(s"closing $i") >> fa
-  //         })
-  //       }
-  //       .flatMap(_.cancel)
-  //   }
-
-  // import scala.concurrent.duration._
-
-  // val attempt2 =
-  //   IO.ref(List.empty[(Int, IO[Unit])]).flatMap { allocations =>
-  //     fs2.Stream
-  //       .iterate(0)(_ + 1)
-  //       .lift[IO]
-  //       .take(3)
-  //       .flatMap { i =>
-  //         fs2.Stream
-  //           .resource(Resource.make(IO.println(s"open $i").as(i))(x => IO.println(s"close $x")))
-  //       }
-  //       .evalTap(x => IO.println("heyyy"))
-  //       .evalMap { i =>
-  //         IO.deferred[Unit].flatMap { d =>
-  //           val putF = allocations.update((i, d.complete(()).void) :: _)
-  //           val awaitTermination = fs2.Stream.eval(d.get)
-
-  //           putF.as(awaitTermination)
-  //         }
-  //       }
-  //       .evalTap(i => IO.println(s"second using $i"))
-  //       .parJoinUnbounded
-  //       .compile
-  //       .drain
-  //       .start
-  //       .flatTap(_ =>
-  //         IO.sleep(400.millis) >>
-  //           allocations.get.flatMap(_.traverse { case (i, release) =>
-  //             IO.sleep(400.millis) >> IO.println(s"closing $i") >> release
-  //           })
-  //       )
-  //       .flatMap(_.cancel)
-  //   }
-
-  // val attempt1 = {
-  //   def goRec[A](stream: fs2.Stream[IO, A]): Pull[IO, (A, IO[Unit]), Unit] =
-  //     stream.pull.uncons1
-  //       .flatMap {
-  //         case None => Pull.done
-  //         case Some((hd, tl)) =>
-  //           Pull.eval(IO.deferred[Unit]).flatMap { d =>
-  //             val release = d.complete().void
-  //             val await = d.get
-  //             val lease =
-  //               Pull
-  //                 .extendScopeTo(fs2.Stream.eval(await))
-  //                 .evalMap(_.compile.drain.start)
-
-  //             lease >> Pull.output1((hd, release)) >> goRec(tl)
-  //           }
-  //       }
-
-  //   goRec {
-  //     fs2.Stream
-  //       .iterate(0)(_ + 1)
-  //       .lift[IO]
-  //       .take(3)
-  //       .flatMap { i =>
-  //         fs2.Stream
-  //           .resource(Resource.make(IO.println(s"open $i").as(i))(x => IO.println(s"close $x")))
-  //       }
-  //       .evalTap(i => IO.println(s"first using $i"))
-  //   }.stream
-  //     .evalTap(i => IO.println(s"second using $i"))
-  //     .compile
-  //     .toList
-  //     .flatMap(xs =>
-  //       xs.traverse { case (i, release) =>
-  //         IO.sleep(400.millis) >> IO.println(s"closing $i") >> release
-  //       }
-  //     )
-  // }
-
-  // attempt2.unsafeRunSync()
 
   mainProgram[D].run(Deps("hey")).unsafeRunSync()
 
@@ -804,14 +685,37 @@ subscription {
 }
 """
 
-    def runVPNSubscription(q: String, n: Int) =
-      Schema.simple(SchemaShape[IO, Unit, Unit, Username](subscription = root[IO].some)).flatMap { sch =>
+    def runVPNSubscription(q: String, n: Int, subscription: Type[IO, Username] = root[IO]) =
+      Schema.simple(SchemaShape[IO, Unit, Unit, Username](subscription = subscription.some)).flatMap { sch =>
         sch
           .assemble(q, variables = Map.empty)
-          .traverse { case Executable.Subscription(run) => run("john_doe").take(n).map(_.asGraphQL).compile.toList }
+          .traverse { case Executable.Subscription(run) =>
+            run("john_doe").take(n).map(_.asGraphQL).compile.toList
+          }
       }
 
-    runVPNSubscription(subscriptionQuery, 3).unsafeRunSync()
+    // runVPNSubscription(subscriptionQuery, 3).unsafeRunSync()
+
+    def oauthAccessToken[F[_]: Async](username: Username): fs2.Stream[F, Username] =
+      fs2
+        .Stream(username)
+        .lift[F]
+        .repeat
+        .metered(110.millis)
+        .zipWithIndex
+        .map(i => s"token $i")
+
+    def root2[F[_]: Async] =
+      tpe[F, Username](
+        "Subscription",
+        "vpn" -> field(arg[String]("serverId"))(stream { case (userId, serverId) =>
+          oauthAccessToken[F](userId).map{ un => println(un);un}.flatMap { token =>
+            fs2.Stream.resource(VpnConnection[F](token, serverId)).map{ con => println(con);con}
+          }
+        })
+      )
+
+    println(runVPNSubscription(subscriptionQuery, 1, root2[IO]).unsafeRunSync())
 
 //     def bench(fa: IO[_]) =
 //       for {
@@ -835,96 +739,3 @@ subscription {
 //     bench(runVPNSubscription(fastQuery, 1)).unsafeRunSync()
   }
 }
-
-// object SangriaTest {
-//   import sangria.schema._
-
-//   trait A {
-//     def a: String
-//   }
-//   implicit lazy val atype: InterfaceType[Unit, A] =
-//     InterfaceType(
-//       "A",
-//       fields[Unit, A](
-//         Field("a", StringType, resolve = _ => "A")
-//       )
-//     )
-
-//   trait B extends A {
-//     def a: String
-//     def b: Int
-//   }
-//   implicit lazy val btype: InterfaceType[Unit, B] =
-//     InterfaceType(
-//       "B",
-//       fields[Unit, B](
-//         Field("a", StringType, resolve = _ => "B"),
-//         Field("b", IntType, resolve = _ => 2)
-//       ),
-//       interfaces[Unit, B](atype)
-//     )
-
-//   case class C(a: String, b: Int, c: Double) extends B
-//   val ctype =
-//     ObjectType(
-//       "C",
-//       interfaces[Unit, C](btype),
-//       fields[Unit, C](
-//         Field("a", StringType, resolve = _.value.a),
-//         Field("b", IntType, resolve = _.value.b),
-//         Field("c", FloatType, resolve = _.value.c)
-//       )
-//     )
-
-//   case class D(a: String, b: Int, c: Double) extends B
-
-//   val test =
-//     ObjectType(
-//       "Query",
-//       fields[Unit, Unit](
-//         Field(
-//           "getData",
-//           atype,
-//           resolve = _ => C("hey", 2, 3.0)
-//         ),
-//         Field(
-//           "getData2",
-//           atype,
-//           resolve = _ => D("hey", 2, 3.0)
-//         ),
-//         Field(
-//           "cfill",
-//           ctype,
-//           resolve = _ => C("hey", 2, 3.0)
-//         )
-//       )
-//     )
-
-//   import sangria.macros._
-//   val query =
-//     graphql"""
-//       query {
-//         getData2 {
-//           ... on B {
-//             __typename
-//             a
-//           }
-//         }
-//         getData {
-//           ... on C {
-//             __typename
-//             a
-//           }
-//           # __typename
-//           # a
-//           # b
-//           # c
-//         }
-//       }
-//     """
-
-//   import scala.concurrent.ExecutionContext.Implicits.global
-//   def qr = sangria.execution.Executor.execute(sangria.schema.Schema(test), query)
-
-//   def run = println(scala.concurrent.Await.ready(qr, scala.concurrent.duration.Duration.Inf))
-// }

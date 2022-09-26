@@ -104,6 +104,8 @@ def orderedBr: BatchResolver[IO, List[Int], List[String]] =
 ```
 :::
 
+TODO queries
+
 ### Design patterns
 Since `State` itself is a monad, we can compose them into `case class`es for more ergonomic implementation at scale.
 ```scala mdoc
@@ -185,6 +187,7 @@ Since stream can embed `Resource`s, some very interesting problems can be solved
 Say we had a very slow connection to some VPN server that we wanted to fetch data from, but only if data from the VPN had been selected.
 ```scala mdoc
 import cats.effect.implicits._
+import scala.concurrent.duration._
 
 final case class VpnData(
   content: String,
@@ -206,11 +209,13 @@ trait VpnConnection[F[_]] {
 object VpnConnection {
   // Connection aquisition is very slow
   def apply[F[_]](userId: Username, serverId: String)(implicit F: Async[F]): Resource[F, VpnConnection[F]] = {
-    import scala.concurrent.duration._
-    
     Resource.eval(F.monotonic).flatMap{ before =>
       Resource.make[F, VpnConnection[F]]{
-        F.delay(println("Connecting to VPN...")).delayBy(500.millis).as{
+        {
+          F.delay(println(s"Connecting to VPN for $userId ...")) >>
+          F.sleep(500.millis) >> 
+          F.delay(println(s"Connected to VPN for $userId!"))
+        }.as{
           new VpnConnection[F] {
             def getName = F.delay("super_secret_file")
             
@@ -222,7 +227,7 @@ object VpnConnection {
                 .scan(0)(_ + _)
                 .lift[F]
                 .metered(50.millis)
-                .map{ x => println("emitting");x}
+                .map{ x => println(s"emitting for user $userId");x}
                 .map(i => VpnData(s"content $i", s"hash of $i", userId, serverId))
           }
         }
@@ -278,6 +283,8 @@ def root[F[_]: Async] =
 
 We can now try querying the VPN connection through a GraphQL query:
 ```scala mdoc
+import gql.ast._
+
 def subscriptionQuery = """
 subscription {
   vpn(serverId: "secret_server") {
@@ -296,8 +303,8 @@ subscription {
 }
 """
 
-def runVPNSubscription(q: String, n: Int) = 
-  Schema.simple(SchemaShape[IO, Unit, Unit, Username](subscription = root[IO].some)).flatMap{ sch =>
+def runVPNSubscription(q: String, n: Int, subscription: Type[IO, Username] = root[IO]) = 
+  Schema.simple(SchemaShape[IO, Unit, Unit, Username](subscription = subscription.some)).flatMap{ sch =>
     sch.assemble(q, variables = Map.empty)
       .traverse { case Executable.Subscription(run) => 
         run("john_doe").take(n).map(_.asGraphQL).compile.toList 
@@ -328,6 +335,30 @@ def fastQuery = """
 """
 
 bench(runVPNSubscription(fastQuery, 1)).unsafeRunSync()
+```
+
+Say that the VPN connection was based on a OAuth token that needed to be refreshed every 110 milliseconds.
+This is also possible:
+```scala mdoc
+def oauthAccessToken[F[_]: Async](username: Username): fs2.Stream[F, Username] =
+  fs2.Stream(username)
+    .lift[F]
+    .repeat
+    .metered(110.millis)
+    .zipWithIndex
+    .map(i => s"token $i")
+
+def root2[F[_]: Async] = 
+  tpe[F, Username](
+    "Subscription",
+    "vpn" -> field(arg[String]("serverId"))(stream{ case (userId, serverId) => 
+      oauthAccessToken[F](userId).flatMap{ token =>
+        fs2.Stream.resource(VpnConnection[F](token, serverId))
+      }
+    })
+  )
+  
+runVPNSubscription(subscriptionQuery, 10, root2[IO]).unsafeRunSync().map(_.takeRight(3))
 ```
 
 # Deprecated
