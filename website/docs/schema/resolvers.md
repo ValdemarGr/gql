@@ -41,7 +41,7 @@ import gql.resolver._
 import cats.effect._
 
 val brState = BatchResolver[IO, Int, Int](keys => IO.pure(keys.map(k => k -> (k * 2)).toMap))
-// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@5fb152d
+// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@7ee479bd
 ```
 A `State` monad is used to keep track of the batchers that have been created and unique id generation.
 During schema construction, `State` can be composed using `Monad`ic operations.
@@ -136,7 +136,7 @@ final case class DomainBatchers[F[_]](
     .map[Int]{ case (_, m) => m.values.toList.combineAll }
   )
 ).mapN(DomainBatchers.apply)
-// res1: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], DomainBatchers[[A]IO[A]]] = cats.data.IndexedStateT@2611ac55
+// res1: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], DomainBatchers[[A]IO[A]]] = cats.data.IndexedStateT@262ed1e0
 ```
 
 ## StreamResolver
@@ -305,15 +305,17 @@ subscription {
 def runVPNSubscription(q: String, n: Int) = 
   Schema.simple(SchemaShape[IO, Unit, Unit, Username](subscription = root[IO].some)).flatMap{ sch =>
     sch.assemble(q, variables = Map.empty)
-      .traverse { case Executable.Subscription(run) => run("john_doe").take(n).map(_.asGraphQL).compile.toList }
+      .traverse { case Executable.Subscription(run) => 
+        run("john_doe").take(n).map(_.asGraphQL).compile.toList 
+      }
   }
   
 runVPNSubscription(subscriptionQuery, 3).unsafeRunSync()
 // Connecting to VPN...
-// Disconnecting from VPN after 507ms ...
 // emitting
 // emitting
 // emitting
+// Disconnecting from VPN after 700ms ...
 // res2: Either[parser.package.ParseError, List[io.circe.JsonObject]] = Right(
 //   value = List(
 //     object[data -> {
@@ -375,7 +377,6 @@ def bench(fa: IO[_]) =
   
 bench(runVPNSubscription(subscriptionQuery, 10)).unsafeRunSync()
 // Connecting to VPN...
-// Disconnecting from VPN after 504ms ...
 // emitting
 // emitting
 // emitting
@@ -386,21 +387,22 @@ bench(runVPNSubscription(subscriptionQuery, 10)).unsafeRunSync()
 // emitting
 // emitting
 // emitting
-// res3: String = "duration was 1048ms"
+// Disconnecting from VPN after 1032ms ...
+// res3: String = "duration was 1075ms"
 
 bench(runVPNSubscription(subscriptionQuery, 3)).unsafeRunSync()
 // Connecting to VPN...
-// Disconnecting from VPN after 503ms ...
 // emitting
 // emitting
 // emitting
-// res4: String = "duration was 676ms"
+// Disconnecting from VPN after 661ms ...
+// res4: String = "duration was 683ms"
 
 bench(runVPNSubscription(subscriptionQuery, 1)).unsafeRunSync()
 // Connecting to VPN...
-// Disconnecting from VPN after 503ms ...
 // emitting
-// res5: String = "duration was 575ms"
+// Disconnecting from VPN after 565ms ...
+// res5: String = "duration was 576ms"
 
 def fastQuery = """
   subscription {
@@ -409,7 +411,7 @@ def fastQuery = """
 """
 
 bench(runVPNSubscription(fastQuery, 1)).unsafeRunSync()
-// res6: String = "duration was 9ms"
+// res6: String = "duration was 8ms"
 ```
 
 # Deprecated

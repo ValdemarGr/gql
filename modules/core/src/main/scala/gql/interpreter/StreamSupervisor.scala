@@ -44,8 +44,13 @@ object StreamSupervisor {
 
                 head <- F.deferred[Either[Throwable, A]]
 
+                // TODO find a more elegant way of holding fs2 Leases
                 start <- F.deferred[Unit]
 
+                // Hold fs2 leases by:
+                // 1. allocate a token for the resource and a killSignal / releaseSignal
+                // 2. do data publishing
+                // 3. await one killSignal for every stream element/resource scope
                 close <- {
                   fs2.Stream.eval(start.get) >> {
                     stream.attempt
@@ -71,6 +76,7 @@ object StreamSupervisor {
                       .pull
                       .uncons1
                       .flatMap {
+                        // TODO better error
                         case None => ???
                         case Some(((hd, rt, killSignal), tl)) =>
                           val back =

@@ -298,7 +298,9 @@ subscription {
 def runVPNSubscription(q: String, n: Int) = 
   Schema.simple(SchemaShape[IO, Unit, Unit, Username](subscription = root[IO].some)).flatMap{ sch =>
     sch.assemble(q, variables = Map.empty)
-      .traverse { case Executable.Subscription(run) => run("john_doe").take(n).map(_.asGraphQL).compile.toList }
+      .traverse { case Executable.Subscription(run) => 
+        run("john_doe").take(n).map(_.asGraphQL).compile.toList 
+      }
   }
   
 runVPNSubscription(subscriptionQuery, 3).unsafeRunSync()
