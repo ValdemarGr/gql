@@ -233,6 +233,7 @@ object VpnConnection {
   }
 }
 ```
+
 We could embed the VPN connection in a stream and pass it around to types that need it.
 ```scala mdoc
 final case class WithVpn[F[_], A](
