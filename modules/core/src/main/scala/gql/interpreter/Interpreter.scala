@@ -40,13 +40,6 @@ object Interpreter {
   def combineSplit(fails: Chain[EvalFailure], succs: Chain[EvalNode[Json]]): Chain[(CursorGroup, Json)] =
     fails.flatMap(_.paths).map(m => (m, Json.Null)) ++ succs.map(n => (n.cursorGroup, n.value))
 
-  final case class SignalMetadata[F[_]](
-      cursor: Cursor,
-      initialValue: Any,
-      df: PreparedDataField[F, Any, Any],
-      mapFilter: Any => Option[Any]
-  )
-
   final case class StreamMetadata[F[_]](
       cursor: Cursor,
       initialValue: Any,
@@ -227,35 +220,6 @@ object Interpreter {
     val tr = findToRemove(nodes, s)
     val hcsa = s -- tr
     StreamRecompute(tr, hcsa)
-  }
-
-  def computeToRemove(nodes: List[(Cursor, BigInt)], s: Set[BigInt]): Set[BigInt] = {
-    import Chain._
-    val (children, nodeHere) = nodes
-      .partitionEither {
-        case (xs, y) if xs.path.isEmpty => Right(y)
-        case (xs, y)                    => Left((xs, y))
-      }
-
-    lazy val msg =
-      s"something went terribly wrong s=$s, nodeHere:${nodeHere}\niterates:\n${children.mkString("\n")}\nall nodes:\n${nodes.mkString("\n")}"
-
-    nodeHere match {
-      case x :: Nil if s.contains(x) => children.map { case (_, v) => v }.toSet
-      case _ :: Nil | Nil            => groupNodeValues(children).flatMap { case (_, v) => computeToRemove(v, s) }.toSet
-      case _                         => throw new Exception(msg)
-    }
-  }
-
-  final case class SignalRecompute(
-      toRemove: Set[BigInt],
-      hcsa: Set[BigInt]
-  )
-
-  def computeMetadata(nodes: List[(Cursor, BigInt)], s: Set[BigInt]): SignalRecompute = {
-    val tr = computeToRemove(nodes, s)
-    val hcsa = s -- tr
-    SignalRecompute(tr, hcsa)
   }
 
   def groupNodeValues[A](nvs: List[(Cursor, A)]): Map[GraphArc, List[(Cursor, A)]] =
