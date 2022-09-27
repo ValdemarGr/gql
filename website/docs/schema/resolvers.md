@@ -41,7 +41,7 @@ import gql.resolver._
 import cats.effect._
 
 val brState = BatchResolver[IO, Int, Int](keys => IO.pure(keys.map(k => k -> (k * 2)).toMap))
-// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@6d9848a3
+// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@737fa028
 ```
 A `State` monad is used to keep track of the batchers that have been created and unique id generation.
 During schema construction, `State` can be composed using `Monad`ic operations.
@@ -211,7 +211,7 @@ final case class DomainBatchers[F[_]](
     .map[Int]{ case (_, m) => m.values.toList.combineAll }
   )
 ).mapN(DomainBatchers.apply)
-// res2: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], DomainBatchers[[A]IO[A]]] = cats.data.IndexedStateT@5d02fe73
+// res2: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], DomainBatchers[[A]IO[A]]] = cats.data.IndexedStateT@17b300e9
 ```
 
 ## StreamResolver
@@ -410,7 +410,7 @@ runVPNSubscription(subscriptionQuery, 3).unsafeRunSync()
 // emitting for user john_doe
 // emitting for user john_doe
 // emitting for user john_doe
-// Disconnecting from VPN after 703ms for john_doe ...
+// Disconnecting from VPN after 682ms for john_doe ...
 // res3: Either[parser.package.ParseError, List[io.circe.JsonObject]] = Right(
 //   value = List(
 //     object[data -> {
@@ -483,8 +483,8 @@ bench(runVPNSubscription(subscriptionQuery, 10)).unsafeRunSync()
 // emitting for user john_doe
 // emitting for user john_doe
 // emitting for user john_doe
-// Disconnecting from VPN after 1020ms for john_doe ...
-// res4: String = "duration was 1034ms"
+// Disconnecting from VPN after 1009ms for john_doe ...
+// res4: String = "duration was 1022ms"
 
 bench(runVPNSubscription(subscriptionQuery, 3)).unsafeRunSync()
 // Connecting to VPN for john_doe ...
@@ -492,15 +492,15 @@ bench(runVPNSubscription(subscriptionQuery, 3)).unsafeRunSync()
 // emitting for user john_doe
 // emitting for user john_doe
 // emitting for user john_doe
-// Disconnecting from VPN after 672ms for john_doe ...
-// res5: String = "duration was 687ms"
+// Disconnecting from VPN after 662ms for john_doe ...
+// res5: String = "duration was 666ms"
 
 bench(runVPNSubscription(subscriptionQuery, 1)).unsafeRunSync()
 // Connecting to VPN for john_doe ...
 // Connected to VPN for john_doe!
 // emitting for user john_doe
-// Disconnecting from VPN after 563ms for john_doe ...
-// res6: String = "duration was 579ms"
+// Disconnecting from VPN after 559ms for john_doe ...
+// res6: String = "duration was 572ms"
 
 def fastQuery = """
   subscription {
@@ -512,14 +512,14 @@ bench(runVPNSubscription(fastQuery, 1)).unsafeRunSync()
 // res7: String = "duration was 4ms"
 ```
 
-Say that the VPN connection was based on a OAuth token that needed to be refreshed every 110 milliseconds.
+Say that the VPN connection was based on a OAuth token that needed to be refreshed every 600 milliseconds.
 This is also possible:
 ```scala
 def oauthAccessToken[F[_]: Async](username: Username): fs2.Stream[F, Username] =
   fs2.Stream(username)
     .lift[F]
     .repeat
-    .metered(110.millis)
+    .metered(600.millis)
     .zipWithIndex
     .map{ case (un, i) => s"token-$un-$i"}
     .map{x => println(s"a new token was issued: $x");x}
@@ -534,10 +534,11 @@ def root2[F[_]: Async] =
     })
   )
   
-runVPNSubscription(subscriptionQuery, 20, root2[IO]).unsafeRunSync().map(_.takeRight(3))
+runVPNSubscription(subscriptionQuery, 13, root2[IO]).unsafeRunSync().map(_.takeRight(3))
 // a new token was issued: token-john_doe-0
 // Connecting to VPN for token-john_doe-0 ...
 // Connected to VPN for token-john_doe-0!
+// emitting for user token-john_doe-0
 // a new token was issued: token-john_doe-1
 // Connecting to VPN for token-john_doe-1 ...
 // emitting for user token-john_doe-0
@@ -551,37 +552,24 @@ runVPNSubscription(subscriptionQuery, 20, root2[IO]).unsafeRunSync().map(_.takeR
 // emitting for user token-john_doe-0
 // emitting for user token-john_doe-0
 // Connected to VPN for token-john_doe-1!
-// a new token was issued: token-john_doe-2
-// Connecting to VPN for token-john_doe-2 ...
+// emitting for user token-john_doe-0
 // emitting for user token-john_doe-0
 // emitting for user token-john_doe-1
-// Disconnecting from VPN after 1076ms for token-john_doe-0 ...
+// Disconnecting from VPN after 1163ms for token-john_doe-0 ...
+// a new token was issued: token-john_doe-2
+// Connecting to VPN for token-john_doe-2 ...
 // emitting for user token-john_doe-1
-// emitting for user token-john_doe-1
-// emitting for user token-john_doe-1
-// emitting for user token-john_doe-1
-// emitting for user token-john_doe-1
-// emitting for user token-john_doe-1
-// emitting for user token-john_doe-1
-// emitting for user token-john_doe-1
-// Connected to VPN for token-john_doe-2!
-// a new token was issued: token-john_doe-3
-// Connecting to VPN for token-john_doe-3 ...
-// emitting for user token-john_doe-1
-// emitting for user token-john_doe-2
-// emitting for user token-john_doe-1
-// Disconnecting from VPN after 1068ms for token-john_doe-1 ...
-// Connection for token-john_doe-3 cancelled while connecting!
-// Disconnecting from VPN after 566ms for token-john_doe-2 ...
+// Connection for token-john_doe-2 cancelled while connecting!
+// Disconnecting from VPN after 614ms for token-john_doe-1 ...
 // res8: Either[parser.package.ParseError, List[io.circe.JsonObject]] = Right(
 //   value = List(
 //     object[data -> {
 //   "vpn" : {
 //     "data" : {
 //       "serverId" : "secret_server",
-//       "connectedUser" : "token-john_doe-1",
-//       "hash" : "hash of 7",
-//       "content" : "content 7"
+//       "connectedUser" : "token-john_doe-0",
+//       "hash" : "hash of 10",
+//       "content" : "content 10"
 //     },
 //     "metadata" : {
 //       "subscriptionTimestamp" : "now!",
@@ -595,23 +583,23 @@ runVPNSubscription(subscriptionQuery, 20, root2[IO]).unsafeRunSync().map(_.takeR
 //     "data" : {
 //       "serverId" : "secret_server",
 //       "connectedUser" : "token-john_doe-1",
-//       "hash" : "hash of 8",
-//       "content" : "content 8"
-//     },
-//     "metadata" : {
-//       "subscriptionTimestamp" : "now!",
-//       "createdAge" : 42,
-//       "name" : "super_secret_file"
-//     }
-//   }
-// }],
-//     object[data -> {
-//   "vpn" : {
-//     "data" : {
-//       "serverId" : "secret_server",
-//       "connectedUser" : "token-john_doe-2",
 //       "hash" : "hash of 0",
 //       "content" : "content 0"
+//     },
+//     "metadata" : {
+//       "subscriptionTimestamp" : "now!",
+//       "createdAge" : 42,
+//       "name" : "super_secret_file"
+//     }
+//   }
+// }],
+//     object[data -> {
+//   "vpn" : {
+//     "data" : {
+//       "serverId" : "secret_server",
+//       "connectedUser" : "token-john_doe-1",
+//       "hash" : "hash of 1",
+//       "content" : "content 1"
 //     },
 //     "metadata" : {
 //       "subscriptionTimestamp" : "now!",

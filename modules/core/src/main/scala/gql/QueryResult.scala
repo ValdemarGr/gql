@@ -5,7 +5,7 @@ import cats.data._
 import cats.implicits._
 import gql.interpreter._
 
-final case class Result(
+final case class QueryResult(
     errors: Chain[EvalFailure],
     data: JsonObject
 ) {

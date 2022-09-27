@@ -22,8 +22,18 @@ import cats.implicits._
 import cats.data._
 import cats.effect._
 import cats.effect.unsafe.implicits.global
+  
+def multifailSchema = 
+  tpe[IO, Unit](
+    "Query", 
+    "field" -> fallible(arg[Int]("i", Some(10))){ 
+      case (_, 0) => IO.pure(Ior.left("fail gracefully"))
+      case (_, 1) => IO.raiseError(new Exception("fail hard"))
+      case (_, i) => IO.pure(Ior.right(i))
+    }
+  )
 
-def go(tpe: Type[IO, Unit], query: String) = 
+def go(query: String, tpe: Type[IO, Unit] = multifailSchema) = 
   Schema.query(tpe).flatMap { sch =>
     sch.assemble(query, variables = Map.empty)
       .traverse { 
@@ -35,25 +45,18 @@ def go(tpe: Type[IO, Unit], query: String) =
       }
   }.unsafeRunSync()
   
-def multifailSchema = 
-  tpe[IO, Unit](
-    "Query", 
-    "field" -> fallible(arg[Int]("i", Some(10))){ 
-      case (_, 0) => IO.pure(Ior.left("fail gracefully"))
-      case (_, 1) => IO.raiseError(new Exception("fail hard"))
-      case (_, i) => IO.pure(Ior.right(i))
-    }
-  )
-  
-go(multifailSchema, "query { field }")
+go("query { field }")
 // Chain()
 // res0: Either[parser.package.ParseError, io.circe.JsonObject] = Right(
 //   value = object[data -> {
 //   "field" : 10
 // }]
 // )
+```
 
-go(multifailSchema, "query { field(i: 0) }")
+A query can fail gracefully by returning `Ior.left`:
+```scala
+go("query { field(i: 0) }")
 // Chain(EffectResolution(CursorGroup(Cursor(Chain()),Cursor(Chain(Field(1,field))),1),Right(fail gracefully),()))
 // res1: Either[parser.package.ParseError, io.circe.JsonObject] = Right(
 //   value = object[errors -> [
@@ -69,8 +72,11 @@ go(multifailSchema, "query { field(i: 0) }")
 //   "field" : null
 // }]
 // )
+```
 
-go(multifailSchema, "query { field(i: 1) }")
+A query can fail hard by raising an exception:
+```scala
+go("query { field(i: 1) }")
 // Chain(EffectResolution(CursorGroup(Cursor(Chain()),Cursor(Chain(Field(1,field))),1),Left(java.lang.Exception: fail hard),()))
 // res2: Either[parser.package.ParseError, io.circe.JsonObject] = Right(
 //   value = object[errors -> [
@@ -86,8 +92,11 @@ go(multifailSchema, "query { field(i: 1) }")
 //   "field" : null
 // }]
 // )
+```
 
-go(multifailSchema, "query { nonExisting }")
+A query can also fail before even evaluating the query:
+```scala
+go("query { nonExisting }")
 // PositionalError(PrepCursor(List(nonExisting)),List(Caret(0,20,20)),unknown field name nonExisting)
 // res3: Either[parser.package.ParseError, io.circe.JsonObject] = Right(
 //   value = object[message -> "unknown field name nonExisting",locations -> [
@@ -99,7 +108,10 @@ go(multifailSchema, "query { nonExisting }")
 //   "nonExisting"
 // ]]
 // )
+```
 
+And finally, it can fail if it isn't parsable:
+```scala
 def largerQuery = """
   query {
     field1
@@ -111,7 +123,8 @@ def largerQuery = """
     value2 
   }
 """
-go(multifailSchema, largerQuery).leftMap(_.prettyError.value)
+
+go(largerQuery).leftMap(_.prettyError.value)
 // res4: Either[String, io.circe.JsonObject] = Left(
 //   value = """failed at offset 80 on line 7 with code 45
 // one of "..."
@@ -136,3 +149,44 @@ go(multifailSchema, largerQuery).leftMap(_.prettyError.value)
 Parser errors look nice in ANSI terminals:
 
 ![Terminal output](./error_image.png)
+
+### Exception trick
+If for whatever reason you wish to pass information through exceptions, that is also possible:
+```scala
+final case class MyException(msg: String, data: Int) extends Exception(msg)
+
+val res = 
+  Schema.query(
+    tpe[IO, Unit](
+      "Query",
+      "field" -> eff(_ => IO.raiseError[String](MyException("fail hard", 42)))
+    )
+  ).flatMap { sch =>
+    sch.assemble("query { field } ", variables = Map.empty)
+      .traverse { case Executable.Query(run) => run(()) }
+  }.unsafeRunSync()
+// res: Either[parser.package.ParseError, QueryResult] = Right(
+//   value = QueryResult(
+//     errors = Singleton(
+//       a = EffectResolution(
+//         path = CursorGroup(
+//           startPosition = Cursor(path = Chain()),
+//           relativePath = Cursor(
+//             path = Singleton(a = Field(id = 1, name = "field"))
+//           ),
+//           groupId = 1
+//         ),
+//         error = Left(value = MyException(msg = "fail hard", data = 42)),
+//         input = ()
+//       )
+//     ),
+//     data = object[field -> null]
+//   )
+// )
+  
+res.toOption.flatMap(_.errors.headOption).flatMap(_.exception) match {
+  case Some(MyException(_, data)) => println(s"Got data: $data")
+  case _ => println("No data")
+}
+// Got data: 42
+```

@@ -413,14 +413,14 @@ def fastQuery = """
 bench(runVPNSubscription(fastQuery, 1)).unsafeRunSync()
 ```
 
-Say that the VPN connection was based on a OAuth token that needed to be refreshed every 110 milliseconds.
+Say that the VPN connection was based on a OAuth token that needed to be refreshed every 600 milliseconds.
 This is also possible:
 ```scala mdoc
 def oauthAccessToken[F[_]: Async](username: Username): fs2.Stream[F, Username] =
   fs2.Stream(username)
     .lift[F]
     .repeat
-    .metered(110.millis)
+    .metered(600.millis)
     .zipWithIndex
     .map{ case (un, i) => s"token-$un-$i"}
     .map{x => println(s"a new token was issued: $x");x}
@@ -435,6 +435,6 @@ def root2[F[_]: Async] =
     })
   )
   
-runVPNSubscription(subscriptionQuery, 20, root2[IO]).unsafeRunSync().map(_.takeRight(3))
+runVPNSubscription(subscriptionQuery, 13, root2[IO]).unsafeRunSync().map(_.takeRight(3))
 ```
 

@@ -16,9 +16,9 @@ sealed trait Executable[F[_], Q, M, S]
 
 object Executable {
   final case class ValidationError[F[_], Q, M, S](msg: PreparedQuery.PositionalError) extends Executable[F, Q, M, S]
-  final case class Query[F[_], Q, M, S](run: Q => F[Result]) extends Executable[F, Q, M, S]
-  final case class Mutation[F[_], Q, M, S](run: M => F[Result]) extends Executable[F, Q, M, S]
-  final case class Subscription[F[_], Q, M, S](run: S => fs2.Stream[F, Result]) extends Executable[F, Q, M, S]
+  final case class Query[F[_], Q, M, S](run: Q => F[QueryResult]) extends Executable[F, Q, M, S]
+  final case class Mutation[F[_], Q, M, S](run: M => F[QueryResult]) extends Executable[F, Q, M, S]
+  final case class Subscription[F[_], Q, M, S](run: S => fs2.Stream[F, QueryResult]) extends Executable[F, Q, M, S]
 
   def assemble[F[_]: Statistics, Q, M, S](
       query: NonEmptyList[P.ExecutableDefinition],
@@ -31,15 +31,15 @@ object Executable {
         x match {
           case (P.OperationType.Query, rootFields) =>
             Executable.Query[F, Q, M, S](
-              Interpreter.runSync(_, rootFields, schema.state).map { case (e, d) => Result(e, d) }
+              Interpreter.runSync(_, rootFields, schema.state).map { case (e, d) => QueryResult(e, d) }
             )
           case (P.OperationType.Mutation, rootFields) =>
             Executable.Mutation[F, Q, M, S](
-              Interpreter.runSync(_, rootFields, schema.state).map { case (e, d) => Result(e, d) }
+              Interpreter.runSync(_, rootFields, schema.state).map { case (e, d) => QueryResult(e, d) }
             )
           case (P.OperationType.Subscription, rootFields) =>
             Executable.Subscription[F, Q, M, S](
-              Interpreter.runStreamed(_, rootFields, schema.state).map { case (e, d) => Result(e, d) }
+              Interpreter.runStreamed(_, rootFields, schema.state).map { case (e, d) => QueryResult(e, d) }
             )
         }
     }

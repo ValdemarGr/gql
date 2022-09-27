@@ -8,6 +8,8 @@ import cats.implicits._
 sealed trait EvalFailure {
   def paths: Chain[CursorGroup]
 
+  def exception: Option[Throwable]
+
   def asGraphQL: Chain[JsonObject] = {
     final case class GQLError(
         message: String,
@@ -57,45 +59,71 @@ object EvalFailure {
       path: CursorGroup,
       error: Either[Throwable, String],
       input: Any
-  ) extends EvalFailure { lazy val paths = Chain(path) }
+  ) extends EvalFailure {
+    lazy val paths = Chain(path)
+    lazy val exception = error.swap.toOption
+  }
   final case class StreamTailResolution(
       path: CursorGroup,
       error: Either[Throwable, String]
-  ) extends EvalFailure { lazy val paths = Chain(path) }
+  ) extends EvalFailure {
+    lazy val paths = Chain(path)
+    lazy val exception = error.swap.toOption
+  }
   final case class SignalHeadResolution(
       path: CursorGroup,
       error: Either[Throwable, String],
       input: Any
-  ) extends EvalFailure { lazy val paths = Chain(path) }
+  ) extends EvalFailure {
+    lazy val paths = Chain(path)
+    lazy val exception = error.swap.toOption
+  }
   final case class SignalTailResolution(
       path: CursorGroup,
       error: Either[Throwable, String],
       input: Any
-  ) extends EvalFailure { lazy val paths = Chain(path) }
+  ) extends EvalFailure {
+    lazy val paths = Chain(path)
+    lazy val exception = error.swap.toOption
+  }
   final case class BatchResolution(
       paths: Chain[CursorGroup],
-      exception: Throwable,
+      ex: Throwable,
       keys: Set[Any]
-  ) extends EvalFailure
+  ) extends EvalFailure {
+    lazy val exception = Some(ex)
+  }
   final case class BatchPostProcessing(
       path: CursorGroup,
       error: Either[Throwable, String],
       resultMap: Chain[(BatchKey, BatchValue)]
-  ) extends EvalFailure { lazy val paths = Chain(path) }
+  ) extends EvalFailure {
+    lazy val paths = Chain(path)
+    lazy val exception = error.swap.toOption
+  }
   final case class BatchMissingKey(
       path: CursorGroup,
       resultMap: Map[BatchKey, BatchValue],
       expectedKeys: Set[BatchKey],
       conflictingKeys: Set[BatchKey]
-  ) extends EvalFailure { lazy val paths = Chain(path) }
+  ) extends EvalFailure {
+    lazy val paths = Chain(path)
+    lazy val exception = None
+  }
   final case class BatchPartitioning(
       path: CursorGroup,
       error: Either[Throwable, String],
       input: Any
-  ) extends EvalFailure { lazy val paths = Chain(path) }
+  ) extends EvalFailure {
+    lazy val paths = Chain(path)
+    lazy val exception = error.swap.toOption
+  }
   final case class EffectResolution(
       path: CursorGroup,
       error: Either[Throwable, String],
       input: Any
-  ) extends EvalFailure { lazy val paths = Chain(path) }
+  ) extends EvalFailure {
+    lazy val paths = Chain(path)
+    lazy val exception = error.swap.toOption
+  }
 }
