@@ -41,7 +41,7 @@ import gql.resolver._
 import cats.effect._
 
 val brState = BatchResolver[IO, Int, Int](keys => IO.pure(keys.map(k => k -> (k * 2)).toMap))
-// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@59df34c2
+// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@7fc99a0d
 ```
 A `State` monad is used to keep track of the batchers that have been created and unique id generation.
 During schema construction, `State` can be composed using `Monad`ic operations.
@@ -110,7 +110,80 @@ def orderedBr: BatchResolver[IO, List[Int], List[String]] =
 ```
 :::
 
-TODO queries
+### Example of a database batcher
+Most applications interact with a database one way or another.
+Usually databases have a way to fetch multiple rows at once, and it is usually more efficient to do so.
+
+Let's define our database:
+```scala
+trait DatabaseConnection[F[_]] {
+  def get(ids: Set[Int]): F[Map[Int, String]]
+}
+
+object DatabaseConnection {
+  def apply[F[_]](implicit F: Applicative[F]) = new DatabaseConnection[F] {
+    def get(ids: Set[Int]): F[Map[Int, String]] = {
+      println(s"executing query for ids $ids")
+      F.pure(ids.map(i => i -> s"row $i").toMap)
+    }
+  }
+}
+```
+Now we can define our schema:
+```scala
+final case class Nested(key: Int)
+
+def databaseRoot[F[_]: Monad](implicit db: DatabaseConnection[F]) =
+  BatchResolver[F, Int, String](keys => db.get(keys)).map { br =>
+    val single = br.contramap[Int](Set(_)).map { case (_, m) => m.values.head }
+
+    implicit lazy val nestedType = tpe[F, Nested](
+      "Nested",
+      "nestedValue" -> field(single.contramap[Nested](_.key))
+    )
+    
+    SchemaShape[F, Unit, Unit, Unit](
+      tpe[F, Unit](
+        "Query",
+        "getFirstField" -> field(arg[Int]("x"))(single.contramap{ case (_, x) => x}),
+        "getSecondField" -> field(arg[Int]("y"))(single.contramap{ case (_, x) => x}),
+        "nested" -> pure(_ => Nested(42))
+      ).some
+    )
+  }
+```
+
+And finally execute it:
+```scala
+def databaseQuery = """
+  query {
+    getFirstField(x: 1)
+    getSecondField(y: 2)
+    nested {
+      nestedValue
+    }
+  }
+"""
+
+implicit def db = DatabaseConnection[IO]
+
+Schema.stateful(databaseRoot[IO]).flatMap{ sch =>
+  sch.assemble(databaseQuery, variables = Map.empty)
+    .traverse { case Executable.Query(run) => run(()).map(_.asGraphQL) }
+}.unsafeRunSync()
+// executing query for ids Set(1, 2, 42)
+// res1: Either[parser.package.ParseError, io.circe.JsonObject] = Right(
+//   value = object[data -> {
+//   "nested" : {
+//     "nestedValue" : "row 42"
+//   },
+//   "getSecondField" : "row 2",
+//   "getFirstField" : "row 1"
+// }]
+// )
+```
+
+Notice how the huristic query planner is able to figure out that waiting till `nested` is resolved and then batching is more efficient than batching the two toplevel fields first and then resolving `nested`.
 
 ### Design patterns
 Since `State` itself is a monad, we can compose them into `case class`es for more ergonomic implementation at scale.
@@ -138,7 +211,7 @@ final case class DomainBatchers[F[_]](
     .map[Int]{ case (_, m) => m.values.toList.combineAll }
   )
 ).mapN(DomainBatchers.apply)
-// res1: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], DomainBatchers[[A]IO[A]]] = cats.data.IndexedStateT@673c4cb4
+// res2: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], DomainBatchers[[A]IO[A]]] = cats.data.IndexedStateT@10bd4265
 ```
 
 ## StreamResolver
@@ -337,8 +410,8 @@ runVPNSubscription(subscriptionQuery, 3).unsafeRunSync()
 // emitting for user john_doe
 // emitting for user john_doe
 // emitting for user john_doe
-// Disconnecting from VPN after 677ms for john_doe ...
-// res2: Either[parser.package.ParseError, List[io.circe.JsonObject]] = Right(
+// Disconnecting from VPN after 683ms for john_doe ...
+// res3: Either[parser.package.ParseError, List[io.circe.JsonObject]] = Right(
 //   value = List(
 //     object[data -> {
 //   "vpn" : {
@@ -410,8 +483,8 @@ bench(runVPNSubscription(subscriptionQuery, 10)).unsafeRunSync()
 // emitting for user john_doe
 // emitting for user john_doe
 // emitting for user john_doe
-// Disconnecting from VPN after 1009ms for john_doe ...
-// res3: String = "duration was 1017ms"
+// Disconnecting from VPN after 1005ms for john_doe ...
+// res4: String = "duration was 1018ms"
 
 bench(runVPNSubscription(subscriptionQuery, 3)).unsafeRunSync()
 // Connecting to VPN for john_doe ...
@@ -419,15 +492,15 @@ bench(runVPNSubscription(subscriptionQuery, 3)).unsafeRunSync()
 // emitting for user john_doe
 // emitting for user john_doe
 // emitting for user john_doe
-// Disconnecting from VPN after 660ms for john_doe ...
-// res4: String = "duration was 669ms"
+// Disconnecting from VPN after 657ms for john_doe ...
+// res5: String = "duration was 665ms"
 
 bench(runVPNSubscription(subscriptionQuery, 1)).unsafeRunSync()
 // Connecting to VPN for john_doe ...
 // Connected to VPN for john_doe!
 // emitting for user john_doe
-// Disconnecting from VPN after 552ms for john_doe ...
-// res5: String = "duration was 554ms"
+// Disconnecting from VPN after 555ms for john_doe ...
+// res6: String = "duration was 563ms"
 
 def fastQuery = """
   subscription {
@@ -436,7 +509,7 @@ def fastQuery = """
 """
 
 bench(runVPNSubscription(fastQuery, 1)).unsafeRunSync()
-// res6: String = "duration was 0ms"
+// res7: String = "duration was 2ms"
 ```
 
 Say that the VPN connection was based on a OAuth token that needed to be refreshed every 110 milliseconds.
@@ -478,11 +551,11 @@ runVPNSubscription(subscriptionQuery, 20, root2[IO]).unsafeRunSync().map(_.takeR
 // emitting for user token-john_doe-0
 // Connected to VPN for token-john_doe-1!
 // a new token was issued: token-john_doe-2
+// emitting for user token-john_doe-0
 // Connecting to VPN for token-john_doe-2 ...
 // emitting for user token-john_doe-0
-// emitting for user token-john_doe-0
 // emitting for user token-john_doe-1
-// Disconnecting from VPN after 1057ms for token-john_doe-0 ...
+// Disconnecting from VPN after 1058ms for token-john_doe-0 ...
 // emitting for user token-john_doe-1
 // emitting for user token-john_doe-1
 // emitting for user token-john_doe-1
@@ -497,11 +570,11 @@ runVPNSubscription(subscriptionQuery, 20, root2[IO]).unsafeRunSync().map(_.takeR
 // emitting for user token-john_doe-1
 // emitting for user token-john_doe-1
 // emitting for user token-john_doe-2
-// Disconnecting from VPN after 1060ms for token-john_doe-1 ...
+// Disconnecting from VPN after 1055ms for token-john_doe-1 ...
 // emitting for user token-john_doe-2
 // Connection for token-john_doe-3 cancelled while connecting!
-// Disconnecting from VPN after 606ms for token-john_doe-2 ...
-// res7: Either[parser.package.ParseError, List[io.circe.JsonObject]] = Right(
+// Disconnecting from VPN after 604ms for token-john_doe-2 ...
+// res8: Either[parser.package.ParseError, List[io.circe.JsonObject]] = Right(
 //   value = List(
 //     object[data -> {
 //   "vpn" : {

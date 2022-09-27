@@ -167,7 +167,7 @@ Schema.stateful(databaseRoot[IO]).flatMap{ sch =>
 }.unsafeRunSync()
 ```
 
-Notice how the huristic query planner is able to figure out that waiting till `nested` is resolved and then batching is more efficient than batching the two toplevel fields first and then resolving `nested`.
+Notice how the huristic query planner is able to figure out that waiting till nested is resolved and then batching is more efficient than batching first and then resolving nested.
 
 ### Design patterns
 Since `State` itself is a monad, we can compose them into `case class`es for more ergonomic implementation at scale.
