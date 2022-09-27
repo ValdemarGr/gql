@@ -568,6 +568,20 @@ query withNestedFragments {
 
   mainProgram[D].run(Deps("hey")).unsafeRunSync()
 
+  gql.parser.parse(
+"""
+  query {
+    field1
+    field2(test: 42)
+  }
+  
+  fragment test on Test {
+    -value1
+    value2 
+  }
+"""
+).leftMap(x => println(x.prettyError.value))
+
   Test.go
   // SangriaTest.run
 }

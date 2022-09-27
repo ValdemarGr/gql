@@ -38,6 +38,14 @@ const sidebars = {
         "schema/error_handling",
         "schema/graph_philosophy",
       ]
+    },
+    {
+      collapsed: false,
+      type: 'category',
+      label: "Planner",
+      items: [
+        "execution/planning",
+      ]
     }
   ]
 
