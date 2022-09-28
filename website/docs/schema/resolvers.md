@@ -41,7 +41,7 @@ import gql.resolver._
 import cats.effect._
 
 val brState = BatchResolver[IO, Int, Int](keys => IO.pure(keys.map(k => k -> (k * 2)).toMap))
-// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@737fa028
+// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@394ef931
 ```
 A `State` monad is used to keep track of the batchers that have been created and unique id generation.
 During schema construction, `State` can be composed using `Monad`ic operations.
@@ -211,7 +211,7 @@ final case class DomainBatchers[F[_]](
     .map[Int]{ case (_, m) => m.values.toList.combineAll }
   )
 ).mapN(DomainBatchers.apply)
-// res2: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], DomainBatchers[[A]IO[A]]] = cats.data.IndexedStateT@17b300e9
+// res2: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], DomainBatchers[[A]IO[A]]] = cats.data.IndexedStateT@4d4d92c8
 ```
 
 ## StreamResolver
@@ -410,7 +410,7 @@ runVPNSubscription(subscriptionQuery, 3).unsafeRunSync()
 // emitting for user john_doe
 // emitting for user john_doe
 // emitting for user john_doe
-// Disconnecting from VPN after 682ms for john_doe ...
+// Disconnecting from VPN after 677ms for john_doe ...
 // res3: Either[parser.package.ParseError, List[io.circe.JsonObject]] = Right(
 //   value = List(
 //     object[data -> {
@@ -483,8 +483,8 @@ bench(runVPNSubscription(subscriptionQuery, 10)).unsafeRunSync()
 // emitting for user john_doe
 // emitting for user john_doe
 // emitting for user john_doe
-// Disconnecting from VPN after 1009ms for john_doe ...
-// res4: String = "duration was 1022ms"
+// Disconnecting from VPN after 1006ms for john_doe ...
+// res4: String = "duration was 1012ms"
 
 bench(runVPNSubscription(subscriptionQuery, 3)).unsafeRunSync()
 // Connecting to VPN for john_doe ...
@@ -492,15 +492,15 @@ bench(runVPNSubscription(subscriptionQuery, 3)).unsafeRunSync()
 // emitting for user john_doe
 // emitting for user john_doe
 // emitting for user john_doe
-// Disconnecting from VPN after 662ms for john_doe ...
-// res5: String = "duration was 666ms"
+// Disconnecting from VPN after 655ms for john_doe ...
+// res5: String = "duration was 660ms"
 
 bench(runVPNSubscription(subscriptionQuery, 1)).unsafeRunSync()
 // Connecting to VPN for john_doe ...
 // Connected to VPN for john_doe!
 // emitting for user john_doe
-// Disconnecting from VPN after 559ms for john_doe ...
-// res6: String = "duration was 572ms"
+// Disconnecting from VPN after 555ms for john_doe ...
+// res6: String = "duration was 560ms"
 
 def fastQuery = """
   subscription {
@@ -509,7 +509,7 @@ def fastQuery = """
 """
 
 bench(runVPNSubscription(fastQuery, 1)).unsafeRunSync()
-// res7: String = "duration was 4ms"
+// res7: String = "duration was 1ms"
 ```
 
 Say that the VPN connection was based on a OAuth token that needed to be refreshed every 600 milliseconds.
@@ -555,12 +555,12 @@ runVPNSubscription(subscriptionQuery, 13, root2[IO]).unsafeRunSync().map(_.takeR
 // emitting for user token-john_doe-0
 // emitting for user token-john_doe-0
 // emitting for user token-john_doe-1
-// Disconnecting from VPN after 1163ms for token-john_doe-0 ...
+// Disconnecting from VPN after 1159ms for token-john_doe-0 ...
 // a new token was issued: token-john_doe-2
 // Connecting to VPN for token-john_doe-2 ...
 // emitting for user token-john_doe-1
 // Connection for token-john_doe-2 cancelled while connecting!
-// Disconnecting from VPN after 614ms for token-john_doe-1 ...
+// Disconnecting from VPN after 607ms for token-john_doe-1 ...
 // res8: Either[parser.package.ParseError, List[io.circe.JsonObject]] = Right(
 //   value = List(
 //     object[data -> {

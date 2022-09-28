@@ -1,0 +1,213 @@
+digraph G1 {
+  fontname="Helvetica,Arial,sans-serif"
+  node [fontname="Helvetica,Arial,sans-serif"]
+  edge [fontname="Helvetica,Arial,sans-serif"]
+  concentrate=True;
+  rankdir=LR;
+  node [shape=record];
+  "Query" [label="Query |<a> a |<b> b |<c> c"];
+  "A" [label="A |<d> d |<e> e"];
+  "B" [label="B"];
+  "C" [label="C |<f> f"];
+  "D" [label="D"];
+  "E" [label="E"];
+  "F" [label="F"];
+  Query:a -> "A" [minlen=2, label="cost:2\nbatch:z"];
+  Query:b -> "B" [minlen=1, label="cost:1\nbatch:z"];
+  Query:c -> "C" [minlen=1, label="cost:1\nbatch:x"];
+  C:f -> "F" [minlen=5, label="cost:6\nbatch:y"];
+  "A":d -> "D" [minlen=1, label="cost:1\nbatch:y"];
+  "A":e -> "E" [minlen=2, label="cost:2\nbatch:x"];
+}
+
+digraph G2 {
+  fontname="Helvetica,Arial,sans-serif"
+  node [fontname="Helvetica,Arial,sans-serif"]
+  edge [fontname="Helvetica,Arial,sans-serif"]
+  concentrate=True;
+  rankdir=LR;
+  node [shape=record];
+  "root" [label="root", shape=circle];
+  "a" [label="a\ncost:2\nend:2\nbatch:z"];
+  "b" [label="b\ncost:1\nend:1\nbatch:z"];
+  "c" [label="c\ncost:1\nend:1\nbatch:x"];
+  "d" [label="d\ncost:1\nend:3\nbatch:y"];
+  "e" [label="e\ncost:2\nend:4\nbatch:x"];
+  "f" [label="f\ncost:6\nend:7\nbatch:y"];
+  root -> a [minlen=2];
+  root -> b [minlen=1];
+  root -> c [minlen=1];
+
+  a -> d [minlen=1];
+  a -> e [minlen=2];
+
+  c -> f [minlen=6];
+}
+
+digraph G3 {
+  fontname="Helvetica,Arial,sans-serif"
+  node [fontname="Helvetica,Arial,sans-serif"]
+  edge [fontname="Helvetica,Arial,sans-serif"]
+  concentrate=True;
+  rankdir=LR;
+  node [shape=record];
+  "root" [label="root", shape=circle];
+  "a" [label="a\ncost:2\nend:2\nbatch:z"];
+  "b" [label="b\ncost:1\nend:1\nbatch:z"];
+  "c" [label="c\ncost:1\nend:1\nbatch:x"];
+  "d" [label="d\ncost:1\nend:3\nbatch:y"];
+  "e" [label="e\ncost:2\nend:4\nbatch:x"];
+  "f" [label="f\ncost:6\nend:7\nbatch:y", color=green];
+  root -> a [minlen=2];
+  root -> b [minlen=1];
+  root -> c [minlen=1];
+
+  a -> d [minlen=1];
+  a -> e [minlen=2];
+
+  c -> f [minlen=6];
+}
+
+digraph G4 {
+  fontname="Helvetica,Arial,sans-serif"
+  node [fontname="Helvetica,Arial,sans-serif"]
+  edge [fontname="Helvetica,Arial,sans-serif"]
+  concentrate=True;
+  rankdir=LR;
+  node [shape=record];
+  "root" [label="root", shape=circle];
+  "a" [label="a\ncost:2\nend:2\nbatch:z"];
+  "b" [label="b\ncost:1\nend:1\nbatch:z"];
+  "c" [label="c\ncost:1\nend:1\nbatch:x"];
+  "d" [label="d\ncost:1\nend:3\nbatch:y"];
+  "e" [label="e\ncost:2\nend:7\nbatch:x", color=green];
+  "f" [label="f\ncost:6\nend:7\nbatch:y"];
+  root -> a [minlen=2];
+  root -> b [minlen=1];
+  root -> c [minlen=1];
+
+  a -> d [minlen=1];
+  a -> e [minlen=5];
+
+  c -> f [minlen=6];
+}
+
+digraph G5 {
+  fontname="Helvetica,Arial,sans-serif"
+  node [fontname="Helvetica,Arial,sans-serif"]
+  edge [fontname="Helvetica,Arial,sans-serif"]
+  concentrate=True;
+  rankdir=LR;
+  node [shape=record];
+  "root" [label="root", shape=circle];
+  "a" [label="a\ncost:2\nend:2\nbatch:z"];
+  "b" [label="b\ncost:1\nend:1\nbatch:z"];
+  "c" [label="c\ncost:1\nend:1\nbatch:x"];
+  "d" [label="d\ncost:1\nend:7\nbatch:y", color=green];
+  "e" [label="e\ncost:2\nend:7\nbatch:x"];
+  "f" [label="f\ncost:6\nend:7\nbatch:y"];
+  root -> a [minlen=2];
+  root -> b [minlen=1];
+  root -> c [minlen=1];
+
+  a -> d [minlen=5];
+  a -> e [minlen=5];
+
+  c -> f [minlen=6];
+}
+
+digraph G6 {
+  fontname="Helvetica,Arial,sans-serif"
+  node [fontname="Helvetica,Arial,sans-serif"]
+  edge [fontname="Helvetica,Arial,sans-serif"]
+  concentrate=True;
+  rankdir=LR;
+  node [shape=record];
+  "root" [label="root", shape=circle];
+  "a" [label="a\ncost:2\nend:2\nbatch:z"];
+  "b" [label="b\ncost:1\nend:1\nbatch:z"];
+  "c" [label="c\ncost:1\nend:1\nbatch:x"];
+  "d" [label="d\ncost:1\nend:7\nbatch:y", color=red];
+  "e" [label="e\ncost:2\nend:7\nbatch:x"];
+  "f" [label="f\ncost:6\nend:7\nbatch:y", color=red];
+  root -> a [minlen=2];
+  root -> b [minlen=1];
+  root -> c [minlen=1];
+
+  a -> d [minlen=5];
+  a -> e [minlen=5];
+
+  c -> f [minlen=6];
+}
+
+digraph G7 {
+  fontname="Helvetica,Arial,sans-serif"
+  node [fontname="Helvetica,Arial,sans-serif"]
+  edge [fontname="Helvetica,Arial,sans-serif"]
+  concentrate=True;
+  rankdir=LR;
+  node [shape=record];
+  "root" [label="root", shape=circle];
+  "a" [label="a\ncost:2\nend:5\nbatch:z",color=green];
+  "b" [label="b\ncost:1\nend:1\nbatch:z"];
+  "c" [label="c\ncost:1\nend:1\nbatch:x"];
+  "d" [label="d\ncost:1\nend:7\nbatch:y", color=red];
+  "e" [label="e\ncost:2\nend:7\nbatch:x"];
+  "f" [label="f\ncost:6\nend:7\nbatch:y", color=red];
+  root -> a [minlen=5];
+  root -> b [minlen=1];
+  root -> c [minlen=1];
+
+  a -> d [minlen=2];
+  a -> e [minlen=2];
+
+  c -> f [minlen=6];
+}
+
+digraph G8 {
+  fontname="Helvetica,Arial,sans-serif"
+  node [fontname="Helvetica,Arial,sans-serif"]
+  edge [fontname="Helvetica,Arial,sans-serif"]
+  concentrate=True;
+  rankdir=LR;
+  node [shape=record];
+  "root" [label="root", shape=circle];
+  "a" [label="a\ncost:2\nend:5\nbatch:z"];
+  "b" [label="b\ncost:1\nend:5\nbatch:z",color=green];
+  "c" [label="c\ncost:1\nend:1\nbatch:x"];
+  "d" [label="d\ncost:1\nend:7\nbatch:y", color=red];
+  "e" [label="e\ncost:2\nend:7\nbatch:x"];
+  "f" [label="f\ncost:6\nend:7\nbatch:y", color=red];
+  root -> a [minlen=5];
+  root -> b [minlen=5];
+  root -> c [minlen=1];
+
+  a -> d [minlen=2];
+  a -> e [minlen=2];
+
+  c -> f [minlen=6];
+}
+
+digraph G9 {
+  fontname="Helvetica,Arial,sans-serif"
+  node [fontname="Helvetica,Arial,sans-serif"]
+  edge [fontname="Helvetica,Arial,sans-serif"]
+  concentrate=True;
+  rankdir=LR;
+  node [shape=record];
+  "root" [label="root", shape=circle];
+  "a" [label="a\ncost:2\nend:5\nbatch:z", color=blue];
+  "b" [label="b\ncost:1\nend:5\nbatch:z", color=blue];
+  "c" [label="c\ncost:1\nend:1\nbatch:x",color=green];
+  "d" [label="d\ncost:1\nend:7\nbatch:y", color=red];
+  "e" [label="e\ncost:2\nend:7\nbatch:x"];
+  "f" [label="f\ncost:6\nend:7\nbatch:y", color=red];
+  root -> a [minlen=5];
+  root -> b [minlen=5];
+  root -> c [minlen=1];
+
+  a -> d [minlen=2];
+  a -> e [minlen=2];
+
+  c -> f [minlen=6];
+}
