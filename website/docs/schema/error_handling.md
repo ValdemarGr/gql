@@ -146,7 +146,7 @@ go(largerQuery).leftMap(_.prettyError.value)
 // | """
 // )
 ```
-Parser errors look nice in ANSI terminals:
+Parser errors also look nice in ANSI terminals:
 
 ![Terminal output](./error_image.png)
 
