@@ -65,12 +65,12 @@ const config = {
             position: 'left',
             label: 'Docs',
           },
-          {
-            type: 'doc',
-            docId: 'intro',
-            position: 'left',
-            label: 'Docs_docusarus',
-          },
+          // {
+          //   type: 'doc',
+          //   docId: 'intro',
+          //   position: 'left',
+          //   label: 'Docs_docusarus',
+          // },
           {
             href: 'https://github.com/ValdemarGr/gql',
             label: 'GitHub',
