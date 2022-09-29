@@ -153,7 +153,7 @@ object Planner {
 
                 val newSet =
                   batchMap.get(bn) match {
-                    case None    => Eval.now(TreeSet(r.end))
+                    case None    => Eval.later(TreeSet(r.end))
                     case Some(s) => s.map(_ + r.end)
                   }
                 val newMap = batchMap + (bn -> newSet)

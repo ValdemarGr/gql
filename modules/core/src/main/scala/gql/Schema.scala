@@ -27,26 +27,6 @@ final case class Schema[F[_], Q, M, S](
 
   def assemble(query: String, variables: Map[String, Json])(implicit F: Async[F]): Either[ParseError, Executable[F, Q, M, S]] =
     parse(query).map(assemble(_, variables))
-
-  def assembleMonoid(query: NonEmptyList[P.ExecutableDefinition], variables: Map[String, Json])(implicit
-      F: Async[F],
-      Q: Monoid[Q],
-      M: Monoid[M],
-      S: Monoid[S]
-  ): AppliedExecutable[F] = assemble(query, variables) match {
-    case Executable.Mutation(run)        => AppliedExecutable.Mutation(run(M.empty))
-    case Executable.Query(run)           => AppliedExecutable.Query(run(Q.empty))
-    case Executable.Subscription(run)    => AppliedExecutable.Subscription(run(S.empty))
-    case Executable.ValidationError(msg) => AppliedExecutable.ValidationError(msg)
-  }
-
-  def assembleMonoid(query: String, variables: Map[String, Json])(implicit
-      F: Async[F],
-      Q: Monoid[Q],
-      M: Monoid[M],
-      S: Monoid[S]
-  ): Either[ParseError, AppliedExecutable[F]] =
-    parse(query).map(assembleMonoid(_, variables))
 }
 
 object Schema {

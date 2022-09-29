@@ -526,6 +526,11 @@ object PreparedQuery {
     val sel = op match {
       case P.OperationDefinition.Simple(sel)                  => sel
       case P.OperationDefinition.Detailed(_, _, vdsO, _, sel) => sel
+      // TODO check variables and fill defaults
+      // Also embed type information into the variable map that must be checked against the parameters in the schema
+      // Json can be removed from the variables map since it will be decoded up-front
+      // Map[String, (Value, Type)]
+      // Typechecking must occur at the usage of this map also, or else, we implement structural typing
       // vdsO match {
       //   case None => Map.empty
       //   case Some(vars) =>
