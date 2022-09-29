@@ -103,6 +103,9 @@ def orderedBr: BatchResolver[IO, List[Int], List[String]] =
   br.contramap[List[Int]](_.toSet).map{ case (i, m) => i.map(m.apply) }
 ```
 :::
+:::tip
+For more information on how the batch resolver works, check out the [planning section](./../execution/planning.md).
+:::
 
 ### Example of a database batcher
 Most applications interact with a database one way or another.

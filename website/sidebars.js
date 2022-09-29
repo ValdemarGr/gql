@@ -42,9 +42,10 @@ const sidebars = {
     {
       collapsed: false,
       type: 'category',
-      label: "Planner",
+      label: "Execution",
       items: [
         "execution/planning",
+        "execution/statistics",
       ]
     }
   ]

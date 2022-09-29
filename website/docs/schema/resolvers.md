@@ -41,7 +41,7 @@ import gql.resolver._
 import cats.effect._
 
 val brState = BatchResolver[IO, Int, Int](keys => IO.pure(keys.map(k => k -> (k * 2)).toMap))
-// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@79d09b01
+// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@1b6eee33
 ```
 A `State` monad is used to keep track of the batchers that have been created and unique id generation.
 During schema construction, `State` can be composed using `Monad`ic operations.
@@ -108,6 +108,9 @@ def br: BatchResolver[IO, Set[Int], Map[Int, String]] = ???
 def orderedBr: BatchResolver[IO, List[Int], List[String]] =
   br.contramap[List[Int]](_.toSet).map{ case (i, m) => i.map(m.apply) }
 ```
+:::
+:::tip
+For more information on how the batch resolver works, check out the [planning section](./../execution/planning.md).
 :::
 
 ### Example of a database batcher
@@ -211,7 +214,7 @@ final case class DomainBatchers[F[_]](
     .map[Int]{ case (_, m) => m.values.toList.combineAll }
   )
 ).mapN(DomainBatchers.apply)
-// res2: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], DomainBatchers[[A]IO[A]]] = cats.data.IndexedStateT@5bd57fb6
+// res2: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], DomainBatchers[[A]IO[A]]] = cats.data.IndexedStateT@d57f54b
 ```
 
 ## StreamResolver
@@ -410,7 +413,7 @@ runVPNSubscription(subscriptionQuery, 3).unsafeRunSync()
 // emitting for user john_doe
 // emitting for user john_doe
 // emitting for user john_doe
-// Disconnecting from VPN after 690ms for john_doe ...
+// Disconnecting from VPN after 673ms for john_doe ...
 // res3: Either[parser.package.ParseError, List[io.circe.JsonObject]] = Right(
 //   value = List(
 //     object[data -> {
@@ -483,8 +486,8 @@ bench(runVPNSubscription(subscriptionQuery, 10)).unsafeRunSync()
 // emitting for user john_doe
 // emitting for user john_doe
 // emitting for user john_doe
-// Disconnecting from VPN after 1014ms for john_doe ...
-// res4: String = "duration was 1030ms"
+// Disconnecting from VPN after 1008ms for john_doe ...
+// res4: String = "duration was 1020ms"
 
 bench(runVPNSubscription(subscriptionQuery, 3)).unsafeRunSync()
 // Connecting to VPN for john_doe ...
@@ -492,15 +495,15 @@ bench(runVPNSubscription(subscriptionQuery, 3)).unsafeRunSync()
 // emitting for user john_doe
 // emitting for user john_doe
 // emitting for user john_doe
-// Disconnecting from VPN after 665ms for john_doe ...
-// res5: String = "duration was 683ms"
+// Disconnecting from VPN after 653ms for john_doe ...
+// res5: String = "duration was 659ms"
 
 bench(runVPNSubscription(subscriptionQuery, 1)).unsafeRunSync()
 // Connecting to VPN for john_doe ...
 // Connected to VPN for john_doe!
 // emitting for user john_doe
 // Disconnecting from VPN after 562ms for john_doe ...
-// res6: String = "duration was 570ms"
+// res6: String = "duration was 569ms"
 
 def fastQuery = """
   subscription {
@@ -509,7 +512,7 @@ def fastQuery = """
 """
 
 bench(runVPNSubscription(fastQuery, 1)).unsafeRunSync()
-// res7: String = "duration was 2ms"
+// res7: String = "duration was 5ms"
 ```
 
 Say that the VPN connection was based on a OAuth token that needed to be refreshed every 600 milliseconds.
@@ -555,12 +558,12 @@ runVPNSubscription(subscriptionQuery, 13, root2[IO]).unsafeRunSync().map(_.takeR
 // emitting for user token-john_doe-0
 // emitting for user token-john_doe-0
 // emitting for user token-john_doe-1
-// Disconnecting from VPN after 1182ms for token-john_doe-0 ...
+// Disconnecting from VPN after 1168ms for token-john_doe-0 ...
 // a new token was issued: token-john_doe-2
 // Connecting to VPN for token-john_doe-2 ...
 // emitting for user token-john_doe-1
 // Connection for token-john_doe-2 cancelled while connecting!
-// Disconnecting from VPN after 640ms for token-john_doe-1 ...
+// Disconnecting from VPN after 619ms for token-john_doe-1 ...
 // res8: Either[parser.package.ParseError, List[io.circe.JsonObject]] = Right(
 //   value = List(
 //     object[data -> {

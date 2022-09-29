@@ -27,6 +27,9 @@ def q = """
 ```
 
 Then the planner assigns weights to every edge/field, and optionally labels them with their batch names (if a batch resolver was used):
+:::tip
+For information on how the planner assigns weights, check out the [statistics](./statistics).
+:::
 
 ![Graph1](./graph.gv.svg)
 
