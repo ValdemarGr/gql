@@ -6,7 +6,7 @@ Output types act as continuations of their input types, such that a schema effec
 The output types of gql are defined in `gql.ast` and are named after their respective GraphQL types.
 
 Lets import the things we need: 
-```scala
+```scala mdoc
 import gql.ast._
 import gql.resolver._
 import gql.dsl._
@@ -22,21 +22,17 @@ The `Scalar` type can encode `A => Json` and decode `Json => Either[Error, A]`.
 gql comes with a few predefined scalars, but you can also define your own.
 
 For instance, the `ID` type is defined for any `Scalar` as follows:
-```scala
+```scala mdoc
 final case class ID[A](value: A)
 implicit def idScalar[F[_], A](implicit inner: Scalar[F, A]): Scalar[F, ID[A]] =
   Scalar("ID", inner.codec.imap(ID(_))(_.value))
   
 implicitly[Scalar[Id, ID[String]]]
-// res0: Scalar[Id, ID[String]] = Scalar(
-//   name = "ID",
-//   codec = io.circe.Codec$$anon$4@59551394
-// )
 ```
 
 ## Enum
 `Enum` types, like `Scalar` types, are terminal types that consist of a name and non-empty bi-directional mapping from a scala type to a `String`:
-```scala
+```scala mdoc
 sealed trait Color
 object Color {
   case object Red extends Color
@@ -56,7 +52,7 @@ implicit def color[F[_]] =
 ```
 
 `Enum` types have no constraints on the values they can encode or decode, so they can in fact, be dynamically typed:
-```scala
+```scala mdoc
 final case class UntypedEnum(s: String)
 
 implicit def untypedEnum[F[_]] = 
@@ -73,7 +69,7 @@ Therefore, it is recommended to enumerate the image of the enum; only use `seale
 :::
 
 `Enum` types can also be constructed with the `dsl`.
-```scala
+```scala mdoc
 implicit def color2[F[_]]: Enum[F, Color] = 
   enum(
     "Color",
@@ -95,7 +91,7 @@ Check out the [resolver section](./resolvers.md) for more info on how resolvers 
 ## Type (object)
 `Type` is the gql equivalent of `type` in GraphQL parlance.
 A `Type` consists of a name and a non-empty list of fields.
-```scala
+```scala mdoc
 final case class Domain(
   name: String,
   amount: Int
@@ -120,7 +116,7 @@ implicit def domain[F[_]](implicit F: Applicative[F]): Type[F, Domain] =
 ```
 
 `Type`'s look very rough, but are significantly easier to define with the `dsl`:
-```scala
+```scala mdoc
 implicit def domain2[F[_]: Applicative]: Type[F, Domain] =
   tpe(
     "Domain",
@@ -132,7 +128,7 @@ implicit def domain2[F[_]: Applicative]: Type[F, Domain] =
 ## Union
 `Union` types allow unification of arbitary types.
 The `Union` type defines a set of `PartialFunction`s that can specify the the type.
-```scala
+```scala mdoc
 sealed trait Animal
 final case class Dog(name: String) extends Animal
 final case class Cat(name: String) extends Animal
@@ -160,7 +156,7 @@ If the interpreter cannot find an instance of the value when querying for `__typ
 
 ### Ad-hoc unions
 In the true spirit of unification, `Union` types can be constructed in a more ad-hoc fashion:
-```scala
+```scala mdoc
 final case class Entity1(value: String)
 final case class Entity2(value: String)
 
@@ -181,7 +177,7 @@ implicit def unification[F[_]: Applicative] =
 ```
 ### For the daring
 Since the specify function is a `PartialFunction`, it is indeed possible to have no unifying type:
-```scala
+```scala mdoc
 def untypedUnification[F[_]: Applicative] =
   union[F, Any](
     "AnyUnification",
@@ -190,7 +186,7 @@ def untypedUnification[F[_]: Applicative] =
   )
 ```
 And also complex routing logic:
-```scala
+```scala mdoc
 def routedUnification[F[_]: Applicative] =
   union[F, Unification](
     "RoutedUnification",
@@ -204,7 +200,7 @@ def routedUnification[F[_]: Applicative] =
 
 ## Interface
 An interface is a combination of `Type` and `Union`.
-```scala
+```scala mdoc
 sealed trait Node {
  def id: String
 }

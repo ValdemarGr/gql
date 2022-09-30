@@ -13,6 +13,11 @@ object dsl {
       tl: (String, Field[F, A, _, _])*
   ) = Type[F, A](name, NonEmptyList(hd, tl.toList))
 
+  def input[A](
+    name: String,
+    fields: Arg[A]
+  ): Input[A] = Input(name, fields)
+
   def arg[A](name: String, default: Option[A] = None)(implicit tpe: In[A]): Arg[A] =
     Arg.initial[A](ArgParam(name, tpe, default))
 
@@ -56,7 +61,8 @@ object dsl {
     eff[F, I, T, Unit](Applicative[Arg].unit)((i, _) => resolver(i))
   }
 
-  def pure[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => T)(implicit F: Applicative[F], tpe: => Out[F, T]): Field[F, I, T, A] = {
+  // Not sure if this is a compiler bug or something since all type parameters except I are invariant?
+  def pure[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => Id[T])(implicit F: Applicative[F], tpe: => Out[F, T]): Field[F, I, T, A] = {
     implicit lazy val t0 = tpe
     eff[F, I, T, A](arg)((i, a) => F.pure(resolver(i, a)))
   }

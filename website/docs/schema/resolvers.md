@@ -36,19 +36,18 @@ What if two `BatchResolver`'s were to have their keys merged, what resolver's `S
 :::
 
 A `BatchResolver[F, K, T]` is constructed as follows:
-```scala
+```scala mdoc
 import gql.resolver._
 import cats.effect._
 
 val brState = BatchResolver[IO, Int, Int](keys => IO.pure(keys.map(k => k -> (k * 2)).toMap))
-// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@1b6eee33
 ```
 A `State` monad is used to keep track of the batchers that have been created and unique id generation.
 During schema construction, `State` can be composed using `Monad`ic operations.
 The `Schema` companion object contains smart constructors that run the `State` monad.
 
 `map` and `contramap` can be used to align the input and output types:
-```scala
+```scala mdoc
 import gql._
 import gql.dsl._
 import cats._
@@ -76,7 +75,7 @@ Reasoning with function addreses is not very intuitive, so this is not the prefe
 :::
 
 Which we can finally run:
-```scala
+```scala mdoc
 import cats.effect.unsafe.implicits.global
 import cats.implicits._
 
@@ -90,11 +89,6 @@ Schema.stateful(batchSchema).flatMap{ sch =>
   sch.assemble(query, variables = Map.empty)
     .traverse { case Executable.Query(run) => run(()).map(_.asGraphQL) }
 }.unsafeRunSync()
-// res0: Either[parser.package.ParseError, io.circe.JsonObject] = Right(
-//   value = object[data -> {
-//   "field" : 84
-// }]
-// )
 ```
 :::tip
 The `BatchResolver` de-duplicates keys since it uses `Set` and `Map`.
@@ -102,7 +96,7 @@ This means that even if no function exists that effeciently fetches your data, y
 :::
 :::tip
 The `BatchResolver` does not maintain ordering internally, but this doesn't mean that the output values cannot maintain order.
-```scala
+```scala mdoc
 def br: BatchResolver[IO, Set[Int], Map[Int, String]] = ???
 
 def orderedBr: BatchResolver[IO, List[Int], List[String]] =
@@ -118,7 +112,7 @@ Most applications interact with a database one way or another.
 Usually databases have a way to fetch multiple rows at once, and it is usually more efficient to do so.
 
 Let's define our database:
-```scala
+```scala mdoc
 trait DatabaseConnection[F[_]] {
   def get(ids: Set[Int]): F[Map[Int, String]]
 }
@@ -133,7 +127,7 @@ object DatabaseConnection {
 }
 ```
 Now we can define our schema:
-```scala
+```scala mdoc
 final case class Nested(key: Int)
 
 def databaseRoot[F[_]: Monad](implicit db: DatabaseConnection[F]) =
@@ -157,7 +151,7 @@ def databaseRoot[F[_]: Monad](implicit db: DatabaseConnection[F]) =
 ```
 
 And finally execute it:
-```scala
+```scala mdoc
 def databaseQuery = """
   query {
     getFirstField(x: 1)
@@ -174,23 +168,13 @@ Schema.stateful(databaseRoot[IO]).flatMap{ sch =>
   sch.assemble(databaseQuery, variables = Map.empty)
     .traverse { case Executable.Query(run) => run(()).map(_.asGraphQL) }
 }.unsafeRunSync()
-// executing query for ids Set(1, 2, 42)
-// res1: Either[parser.package.ParseError, io.circe.JsonObject] = Right(
-//   value = object[data -> {
-//   "nested" : {
-//     "nestedValue" : "row 42"
-//   },
-//   "getSecondField" : "row 2",
-//   "getFirstField" : "row 1"
-// }]
-// )
 ```
 
 Notice how the huristic query planner is able to figure out that waiting till `nested` is resolved and then batching is more efficient than batching the two toplevel fields first and then resolving `nested`.
 
 ### Design patterns
 Since `State` itself is a monad, we can compose them into `case class`es for more ergonomic implementation at scale.
-```scala
+```scala mdoc
 import cats.implicits._
 
 trait User
@@ -214,13 +198,12 @@ final case class DomainBatchers[F[_]](
     .map[Int]{ case (_, m) => m.values.toList.combineAll }
   )
 ).mapN(DomainBatchers.apply)
-// res2: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], DomainBatchers[[A]IO[A]]] = cats.data.IndexedStateT@d57f54b
 ```
 
 ## StreamResolver
 The `StreamResolver` is a very powerful resolver type, that can perform many different tasks.
 First and foremost a `StreamResolver` can update a sub-tree of the schema via some provided stream, like signals in frp or observables.
-```scala
+```scala mdoc
 def streamSchema = 
   SchemaShape[IO, Unit, Unit, Unit](
     subscription = tpe[IO, Unit](
@@ -281,7 +264,7 @@ That is, if a node emits but is also about to be removed because a parent has em
 Since stream can embed `Resource`s, some very interesting problems can be solved with `StreamResolver`s.
 
 Say we had a very slow connection to some VPN server that we wanted to fetch data from, but only if data from the VPN had been selected.
-```scala
+```scala mdoc
 import cats.effect.implicits._
 import scala.concurrent.duration._
 
@@ -336,7 +319,7 @@ object VpnConnection {
 ```
 
 We could embed the VPN connection in a stream and pass it around to types that need it.
-```scala
+```scala mdoc
 final case class WithVpn[F[_], A](
   vpn: VpnConnection[F],
   value: A
@@ -378,7 +361,7 @@ def root[F[_]: Async] =
 ```
 
 We can now try querying the VPN connection through a GraphQL query:
-```scala
+```scala mdoc
 import gql.ast._
 
 def subscriptionQuery = """
@@ -408,64 +391,9 @@ def runVPNSubscription(q: String, n: Int, subscription: Type[IO, Username] = roo
   }
   
 runVPNSubscription(subscriptionQuery, 3).unsafeRunSync()
-// Connecting to VPN for john_doe ...
-// Connected to VPN for john_doe!
-// emitting for user john_doe
-// emitting for user john_doe
-// emitting for user john_doe
-// Disconnecting from VPN after 673ms for john_doe ...
-// res3: Either[parser.package.ParseError, List[io.circe.JsonObject]] = Right(
-//   value = List(
-//     object[data -> {
-//   "vpn" : {
-//     "data" : {
-//       "serverId" : "secret_server",
-//       "connectedUser" : "john_doe",
-//       "hash" : "hash of 0",
-//       "content" : "content 0"
-//     },
-//     "metadata" : {
-//       "subscriptionTimestamp" : "now!",
-//       "createdAge" : 42,
-//       "name" : "super_secret_file"
-//     }
-//   }
-// }],
-//     object[data -> {
-//   "vpn" : {
-//     "data" : {
-//       "serverId" : "secret_server",
-//       "connectedUser" : "john_doe",
-//       "hash" : "hash of 1",
-//       "content" : "content 1"
-//     },
-//     "metadata" : {
-//       "subscriptionTimestamp" : "now!",
-//       "createdAge" : 42,
-//       "name" : "super_secret_file"
-//     }
-//   }
-// }],
-//     object[data -> {
-//   "vpn" : {
-//     "data" : {
-//       "serverId" : "secret_server",
-//       "connectedUser" : "john_doe",
-//       "hash" : "hash of 2",
-//       "content" : "content 2"
-//     },
-//     "metadata" : {
-//       "subscriptionTimestamp" : "now!",
-//       "createdAge" : 42,
-//       "name" : "super_secret_file"
-//     }
-//   }
-// }]
-//   )
-// )
 ```
 We can alsa check the performance difference of a queries that open a VPN connection, and ones that don't:
-```scala
+```scala mdoc
 def bench(fa: IO[_]) = 
   for {
     before <- IO.monotonic
@@ -474,36 +402,10 @@ def bench(fa: IO[_]) =
   } yield s"duration was ${(after - before).toMillis}ms"
   
 bench(runVPNSubscription(subscriptionQuery, 10)).unsafeRunSync()
-// Connecting to VPN for john_doe ...
-// Connected to VPN for john_doe!
-// emitting for user john_doe
-// emitting for user john_doe
-// emitting for user john_doe
-// emitting for user john_doe
-// emitting for user john_doe
-// emitting for user john_doe
-// emitting for user john_doe
-// emitting for user john_doe
-// emitting for user john_doe
-// emitting for user john_doe
-// Disconnecting from VPN after 1008ms for john_doe ...
-// res4: String = "duration was 1020ms"
 
 bench(runVPNSubscription(subscriptionQuery, 3)).unsafeRunSync()
-// Connecting to VPN for john_doe ...
-// Connected to VPN for john_doe!
-// emitting for user john_doe
-// emitting for user john_doe
-// emitting for user john_doe
-// Disconnecting from VPN after 653ms for john_doe ...
-// res5: String = "duration was 659ms"
 
 bench(runVPNSubscription(subscriptionQuery, 1)).unsafeRunSync()
-// Connecting to VPN for john_doe ...
-// Connected to VPN for john_doe!
-// emitting for user john_doe
-// Disconnecting from VPN after 562ms for john_doe ...
-// res6: String = "duration was 569ms"
 
 def fastQuery = """
   subscription {
@@ -512,12 +414,11 @@ def fastQuery = """
 """
 
 bench(runVPNSubscription(fastQuery, 1)).unsafeRunSync()
-// res7: String = "duration was 5ms"
 ```
 
 Say that the VPN connection was based on a OAuth token that needed to be refreshed every 600 milliseconds.
 This is also possible:
-```scala
+```scala mdoc
 def oauthAccessToken[F[_]: Async](username: Username): fs2.Stream[F, Username] =
   fs2.Stream(username)
     .lift[F]
@@ -538,80 +439,5 @@ def root2[F[_]: Async] =
   )
   
 runVPNSubscription(subscriptionQuery, 13, root2[IO]).unsafeRunSync().map(_.takeRight(3))
-// a new token was issued: token-john_doe-0
-// Connecting to VPN for token-john_doe-0 ...
-// Connected to VPN for token-john_doe-0!
-// emitting for user token-john_doe-0
-// a new token was issued: token-john_doe-1
-// Connecting to VPN for token-john_doe-1 ...
-// emitting for user token-john_doe-0
-// emitting for user token-john_doe-0
-// emitting for user token-john_doe-0
-// emitting for user token-john_doe-0
-// emitting for user token-john_doe-0
-// emitting for user token-john_doe-0
-// emitting for user token-john_doe-0
-// emitting for user token-john_doe-0
-// emitting for user token-john_doe-0
-// emitting for user token-john_doe-0
-// Connected to VPN for token-john_doe-1!
-// emitting for user token-john_doe-0
-// emitting for user token-john_doe-0
-// emitting for user token-john_doe-1
-// Disconnecting from VPN after 1168ms for token-john_doe-0 ...
-// a new token was issued: token-john_doe-2
-// Connecting to VPN for token-john_doe-2 ...
-// emitting for user token-john_doe-1
-// Connection for token-john_doe-2 cancelled while connecting!
-// Disconnecting from VPN after 619ms for token-john_doe-1 ...
-// res8: Either[parser.package.ParseError, List[io.circe.JsonObject]] = Right(
-//   value = List(
-//     object[data -> {
-//   "vpn" : {
-//     "data" : {
-//       "serverId" : "secret_server",
-//       "connectedUser" : "token-john_doe-0",
-//       "hash" : "hash of 10",
-//       "content" : "content 10"
-//     },
-//     "metadata" : {
-//       "subscriptionTimestamp" : "now!",
-//       "createdAge" : 42,
-//       "name" : "super_secret_file"
-//     }
-//   }
-// }],
-//     object[data -> {
-//   "vpn" : {
-//     "data" : {
-//       "serverId" : "secret_server",
-//       "connectedUser" : "token-john_doe-1",
-//       "hash" : "hash of 0",
-//       "content" : "content 0"
-//     },
-//     "metadata" : {
-//       "subscriptionTimestamp" : "now!",
-//       "createdAge" : 42,
-//       "name" : "super_secret_file"
-//     }
-//   }
-// }],
-//     object[data -> {
-//   "vpn" : {
-//     "data" : {
-//       "serverId" : "secret_server",
-//       "connectedUser" : "token-john_doe-1",
-//       "hash" : "hash of 1",
-//       "content" : "content 1"
-//     },
-//     "metadata" : {
-//       "subscriptionTimestamp" : "now!",
-//       "createdAge" : 42,
-//       "name" : "super_secret_file"
-//     }
-//   }
-// }]
-//   )
-// )
 ```
 

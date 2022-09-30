@@ -171,14 +171,14 @@ object ast extends AstImplicits.Implicits {
 
   final case class InArr[A, G[_] <: Seq[_]](of: In[A]) extends In[G[A]]
 
-  object Out {
+  // object Out {
     // poor man's covariant F
     // covariance for F is very unpleasant
     // every F in the AST is on the right side (covariant position) so this cannot fail
     // TODO, make F covariant
-    implicit def covariantForOut[F[_], F2[x] >: F[x], A](implicit out: Out[F, A]): Out[F2, A] =
-      out.asInstanceOf[Out[F2, A]]
-  }
+    // implicit def covariantForOut[F[_], F2[x] >: F[x], A](implicit out: Out[F, A]): Out[F2, A] =
+    //   out.asInstanceOf[Out[F2, A]]
+  // }
 
   final case class ID[A](value: A) extends AnyVal
   implicit def idTpe[F[_], A](implicit s: Scalar[F, A]): In[ID[A]] =

@@ -1,4 +1,4 @@
-ThisBuild / scalaVersion := "2.13.8"
+ThisBuild / scalaVersion := "2.13.9"
 ThisBuild / organization := "io.valdemargr"
 
 lazy val sharedSettings = Seq(

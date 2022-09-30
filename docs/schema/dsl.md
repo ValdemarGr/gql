@@ -91,3 +91,9 @@ val it =
     "sound" -> pure(_.sound)
   )(instance[Dog.type]{ case Dog => Dog })
 ```
+
+## Arg
+TODO
+
+## Input
+TODO

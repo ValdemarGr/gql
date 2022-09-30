@@ -568,8 +568,9 @@ query withNestedFragments {
 
   mainProgram[D].run(Deps("hey")).unsafeRunSync()
 
-  gql.parser.parse(
-"""
+  gql.parser
+    .parse(
+      """
   query {
     field1
     field2(test: 42)
@@ -580,15 +581,26 @@ query withNestedFragments {
     value2 
   }
 """
-).leftMap(x => println(x.prettyError.value))
+    )
+    .leftMap(x => println(x.prettyError.value))
 
   Test.go
   // SangriaTest.run
 }
 
 object Test {
+  import cats._
+
   import gql._
   import gql.dsl._
+
+  final case class Data(str: String)
+
+  dsl.tpe[Id, Data](
+    "Something",
+    "field" -> dsl.pure(dsl.arg[String]("arg1", Some("default"))) { case (_, _) => "" }
+  )
+
   def go = {
     import cats.effect.implicits._
 
@@ -723,8 +735,8 @@ subscription {
       tpe[F, Username](
         "Subscription",
         "vpn" -> field(arg[String]("serverId"))(stream { case (userId, serverId) =>
-          oauthAccessToken[F](userId).map{ un => println(un);un}.flatMap { token =>
-            fs2.Stream.resource(VpnConnection[F](token, serverId)).map{ con => println(con);con}
+          oauthAccessToken[F](userId).map { un => println(un); un }.flatMap { token =>
+            fs2.Stream.resource(VpnConnection[F](token, serverId)).map { con => println(con); con }
           }
         })
       )
