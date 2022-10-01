@@ -24,39 +24,60 @@ final case class Arg[A](
     )
 }
 
-object Arg {
-  final case class Value[A](
-      name: String,
-      input: In[A],
-      default: Option[A] = None
-  )
+trait Arg2[A] {
+  def entries: Chain[ArgValue[_]]
 
-  trait Arg2[A]
-  final case class NonEmpty[A](
-      entries: NonEmptyChain[Value[_]],
-      decode: Map[String, _] => A
-  ) extends Arg2[A]
-  final case class Pure[A](value: A) extends Arg2[A]
+  def decode: Map[String, _] => A
+}
 
-  implicit lazy val applicativeInstanceForArg: Apply[Arg2] = new Apply[Arg2] {
-    override def map[A, B](fa: Arg2[A])(f: A => B): Arg2[B] =
-      fa match {
-        case NonEmpty(entries, decode) => NonEmpty(entries, decode.andThen(f))
-        case Pure(value)               => Pure(f(value))
-      }
+object Arg2 {
+  def one[A](name: String)(implicit input: => In[A]): NonEmptyArg[A] =
+    NonEmptyArg[A](NonEmptyChain.one(ArgValue(name, Eval.later(input))), _(name).asInstanceOf[A])
+
+  implicit lazy val applicativeInstanceForArg: Apply[Arg2] = new Applicative[Arg2] {
+    override def pure[A](x: A): Arg2[A] = PureArg(x)
 
     override def ap[A, B](ff: Arg2[A => B])(fa: Arg2[A]): Arg2[B] =
       (ff, fa) match {
-        case (NonEmpty(entries1, decode1), NonEmpty(entries2, decode2)) =>
-          NonEmpty(entries1 ++ entries2, m => decode1(m)(decode2(m)))
-        case (NonEmpty(entries, decode), Pure(value)) =>
-          NonEmpty(entries, decode.andThen(_(value)))
-        case (Pure(value), NonEmpty(entries, decode)) =>
-          NonEmpty(entries, decode.andThen(value(_)))
-        case (Pure(f), Pure(value)) => Pure(f(value))
+        case (NonEmptyArg(entries1, decode1), NonEmptyArg(entries2, decode2)) =>
+          NonEmptyArg(entries1 ++ entries2, m => decode1(m)(decode2(m)))
+        case (NonEmptyArg(entries, decode), PureArg(value)) =>
+          NonEmptyArg(entries, decode.andThen(_(value)))
+        case (PureArg(value), NonEmptyArg(entries, decode)) =>
+          NonEmptyArg(entries, decode.andThen(value(_)))
+        case (PureArg(f), PureArg(value)) => PureArg(f(value))
       }
   }
+}
 
+final case class ArgValue[A](
+    name: String,
+    input: Eval[In[A]],
+    default: Option[A] = None
+)
+
+final case class NonEmptyArg[A](
+    nec: NonEmptyChain[ArgValue[_]],
+    decode: Map[String, _] => A
+) extends Arg2[A] {
+  def entries = nec.toChain
+}
+object NonEmptyArg {
+  implicit lazy val applicativeInstanceForNonEmptyArg: Apply[NonEmptyArg] = new Apply[NonEmptyArg] {
+    override def map[A, B](fa: NonEmptyArg[A])(f: A => B): NonEmptyArg[B] =
+      NonEmptyArg(fa.nec, fa.decode.andThen(f))
+
+    override def ap[A, B](ff: NonEmptyArg[A => B])(fa: NonEmptyArg[A]): NonEmptyArg[B] =
+      NonEmptyArg(ff.nec ++ fa.nec, m => ff.decode(m) apply fa.decode(m))
+  }
+}
+
+final case class PureArg[A](value: A) extends Arg2[A] {
+  def entries = Chain.empty
+  def decode = _ => value
+}
+
+object Arg {
   def initial[A](entry: ArgParam[A]): Arg[A] =
     Arg(Vector(entry), { s => (s.tail, s.head.asInstanceOf[A]) })
 
