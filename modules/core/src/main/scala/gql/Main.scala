@@ -604,19 +604,19 @@ object Test {
   implicit val inputForInputStuff = input(
     "InputStuff",
     (
-      dsl.arg[String]("a"),
-      dsl.arg[Int]("b", 42)
+      arg[String]("a"),
+      arg[Int]("b", 42)
     ).mapN(InputStuff.apply)
   )
 
-  dsl.tpe[Id, Data](
+  tpe[Id, Data](
     "Something",
-    "field" -> dsl.pure(dsl.arg[String]("arg1", dsl.default("default"))) { case (_, _) => "" },
-    "field2" -> dsl.pure(
-      dsl.arg[InputStuff](
+    "field" -> pure(arg[String]("arg1", default("default"))) { case (_, _) => "" },
+    "field2" -> pure(
+      arg[InputStuff](
         "arg1",
-        dsl.default.obj(
-          "a" -> dsl.default("a-default")
+        default.obj(
+          "a" -> default("a-default")
         )
       )
     ) { case (_, _) => "" }

@@ -20,15 +20,18 @@ object dsl {
 
   def arg[A](name: String)(implicit tpe: => In[A]): NonEmptyArg[A] = {
     implicit lazy val t0 = tpe
-    Arg.one[A](name)
+    Arg.make[A](name, None)
   }
 
-  def arg[A](name: String, default: A)(implicit tpe: => InLeaf[A]): NonEmptyArg[A] = {
+  def arg[A](name: String, defaultValue: A)(implicit tpe: => InLeaf[A]): NonEmptyArg[A] = {
     implicit lazy val t0 = tpe
-    Arg.onePrimitive[A](name, Some(default))
+    Arg.make[A](name, Some(default(defaultValue)))
   }
 
-  def arg[A](name: String, default: DefaultValue[A])(implicit tpe: => In[A]): NonEmptyArg[A] = ???
+  def arg[A](name: String, default: DefaultValue[A])(implicit tpe: => In[A]): NonEmptyArg[A] = {
+    implicit lazy val t0 = tpe
+    Arg.make[A](name, Some(default))
+  }
 
   object default {
     def apply[A](value: A)(implicit tpe: => InLeaf[A]): DefaultValue[A] =

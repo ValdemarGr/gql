@@ -12,6 +12,12 @@ trait Arg[A] {
 }
 
 object Arg {
+  // def encLeaf[A](value: A, leaf: InLeaf[A]) = leaf match {
+  //   case e@Enum(_, _) => Value.EnumValue(e.revm(value))
+  //   case Scalar(_, codec) => 
+  //     (codec: io.circe.Encoder[A]).apply(value)
+  // }
+
   def onePrimitive[A](name: String, default: Option[A] = None)(implicit input: => InLeaf[A]): NonEmptyArg[A] =
     NonEmptyArg[A](
       NonEmptyChain.one(ArgValue(name, Eval.later(input), default, default.map(DefaultValue.Primitive(_, input)))),
@@ -20,6 +26,9 @@ object Arg {
 
   def one[A](name: String)(implicit input: => In[A]): NonEmptyArg[A] =
     NonEmptyArg[A](NonEmptyChain.one(ArgValue(name, Eval.later(input), None, None)), _(name).asInstanceOf[A])
+
+  def make[A](name: String, default: Option[DefaultValue[A]])(implicit input: => In[A]): NonEmptyArg[A] =
+    NonEmptyArg[A](NonEmptyChain.one(ArgValue(name, Eval.later(input), None, default)), _(name).asInstanceOf[A])
 
   implicit lazy val applicativeInstanceForArg: Applicative[Arg] = new Applicative[Arg] {
     override def pure[A](x: A): Arg[A] = PureArg(x)

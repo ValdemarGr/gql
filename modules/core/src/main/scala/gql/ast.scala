@@ -13,9 +13,9 @@ object ast extends AstImplicits.Implicits {
     def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Out[G, A]
   }
 
-  sealed trait In[+A]
+  sealed trait In[A]
 
-  sealed trait InLeaf[+A] extends In[A]
+  sealed trait InLeaf[A] extends In[A]
 
   sealed trait Toplevel[+A] {
     def name: String
@@ -23,7 +23,7 @@ object ast extends AstImplicits.Implicits {
 
   sealed trait OutToplevel[F[_], A] extends Out[F, A] with Toplevel[A]
 
-  sealed trait InToplevel[+A] extends In[A] with Toplevel[A]
+  sealed trait InToplevel[A] extends In[A] with Toplevel[A]
 
   sealed trait Selectable[F[_], A] extends OutToplevel[F, A] {
     def fieldsList: List[(String, Field[F, A, _, _])]
@@ -153,14 +153,6 @@ object ast extends AstImplicits.Implicits {
       }
   }
 
-  // final case class OutArr2[F[_], A, B, C[_]: Traverse](
-  //     resolve: Resolver[F, A, B],
-  //     of: Out[F, B]
-  // ) extends Out[F, C[A]] {
-  //   def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Out[G, C[A]] =
-  //     OutArr2(resolve.mapK(fk), of.mapK(fk))
-  // }
-
   final case class OutArr[F[_], A, C[_] <: Seq[_]](of: Out[F, A]) extends Out[F, C[A]] {
     def mapK[G[_]: MonadCancelThrow](fk: F ~> G): OutArr[G, A, C] = OutArr(of.mapK(fk))
   }
@@ -173,8 +165,22 @@ object ast extends AstImplicits.Implicits {
   }
 
   final case class InOpt[A](of: In[A]) extends In[Option[A]]
+  // object InOpt {
+  //   def unapply[A](p: In[A]): Option[In[A]] =
+  //     p.asInstanceOf[In[Option[A]]] match {
+  //       case x: InOpt[A] => Some(x.of.asInstanceOf[In[A]])
+  //       case _           => None
+  //     }
+  // }
 
   final case class InArr[A, G[_] <: Seq[_]](of: In[A]) extends In[G[A]]
+  // object InArr {
+  //   def unapply[A](p: In[A]): Option[In[A]] =
+  //     p.asInstanceOf[In[Seq[A]]] match {
+  //       case x: InArr[A, Seq] => Some(x.of.asInstanceOf[In[A]])
+  //       case _           => None
+  //     }
+  // }
 
   // object Out {
   // poor man's covariant F
