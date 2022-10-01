@@ -107,8 +107,13 @@ abstract class OutputSyntax {
       Eval.later(tpe)
     )
 
-  def arg[A](name: String, default: Option[A] = None)(implicit tpe: In[A]): Arg[A] =
-    Arg.initial[A](ArgParam(name, tpe, default))
+  def arg[A](name: String, default: A)(implicit tpe: In[A]): NonEmptyArg[A] = {
+    Arg.one[A](name)
+  }
+
+  def arg[A](name: String)(implicit tpe: In[A]): NonEmptyArg[A] = {
+    Arg.one[A](name)
+  }
 }
 
 object OutputSyntax {

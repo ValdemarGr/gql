@@ -279,7 +279,7 @@ query withNestedFragments {
       implicit val inputDataType: In[InputData] = InputSyntax.obj[InputData](
         "InputData",
         (
-          arg[Int]("value", Some(42)),
+          arg[Int]("value", 42),
           arg[String]("val2")
         ).mapN(InputData.apply)
       )
@@ -287,12 +287,12 @@ query withNestedFragments {
       val valueArgs: Arg[(Int, String, Seq[String])] =
         (
           (
-            arg[Int]("num", Some(42)),
-            arg[Int]("num2", Some(9)),
-            arg[Int]("num", Some(99))
+            arg[Int]("num", 42),
+            arg[Int]("num2", 9),
+            arg[Int]("num", 99)
           ).mapN(_ + _ + _),
           arg[String]("text"),
-          arg[Seq[String]]("xs", Seq.empty.some)
+          arg[Seq[String]]("xs", Seq.empty)
         ).tupled
 
       val inputDataArg = arg[InputData]("input")
@@ -596,9 +596,30 @@ object Test {
 
   final case class Data(str: String)
 
+  final case class InputStuff(
+      a: String,
+      b: Int
+  )
+
+  implicit val inputForInputStuff = input(
+    "InputStuff",
+    (
+      dsl.arg[String]("a"),
+      dsl.arg[Int]("b", 42)
+    ).mapN(InputStuff.apply)
+  )
+
   dsl.tpe[Id, Data](
     "Something",
-    "field" -> dsl.pure(dsl.arg[String]("arg1", Some("default"))) { case (_, _) => "" }
+    "field" -> dsl.pure(dsl.arg[String]("arg1", dsl.default("default"))) { case (_, _) => "" },
+    "field2" -> dsl.pure(
+      dsl.arg[InputStuff](
+        "arg1",
+        dsl.default.obj(
+          "a" -> dsl.default("a-default")
+        )
+      )
+    ) { case (_, _) => "" }
   )
 
   def go = {

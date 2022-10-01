@@ -5,39 +5,26 @@ import cats._
 import cats.implicits._
 import gql.ast._
 
-final case class ArgParam[A](
-    name: String,
-    input: In[A],
-    default: Option[A] = None
-)
-
-// TODO Look into free applicatives, I think they might do the same
-final case class Arg[A](
-    entries: Vector[ArgParam[_]],
-    decode: List[_] => (List[_], A)
-) {
-  def apply[F[_], I, O](f: Field[F, (I, A), O, Unit]): Field[F, I, O, A] =
-    Field(
-      f.args *> this,
-      f.resolve.contramap[(I, A)] { case (i, ag) => ((i, ag), ()) },
-      f.output
-    )
-}
-
-trait Arg2[A] {
+trait Arg[A] {
   def entries: Chain[ArgValue[_]]
 
   def decode: Map[String, _] => A
 }
 
-object Arg2 {
+object Arg {
+  def onePrimitive[A](name: String, default: Option[A] = None)(implicit input: => InLeaf[A]): NonEmptyArg[A] =
+    NonEmptyArg[A](
+      NonEmptyChain.one(ArgValue(name, Eval.later(input), default, default.map(DefaultValue.Primitive(_, input)))),
+      _(name).asInstanceOf[A]
+    )
+
   def one[A](name: String)(implicit input: => In[A]): NonEmptyArg[A] =
-    NonEmptyArg[A](NonEmptyChain.one(ArgValue(name, Eval.later(input))), _(name).asInstanceOf[A])
+    NonEmptyArg[A](NonEmptyChain.one(ArgValue(name, Eval.later(input), None, None)), _(name).asInstanceOf[A])
 
-  implicit lazy val applicativeInstanceForArg: Apply[Arg2] = new Applicative[Arg2] {
-    override def pure[A](x: A): Arg2[A] = PureArg(x)
+  implicit lazy val applicativeInstanceForArg: Applicative[Arg] = new Applicative[Arg] {
+    override def pure[A](x: A): Arg[A] = PureArg(x)
 
-    override def ap[A, B](ff: Arg2[A => B])(fa: Arg2[A]): Arg2[B] =
+    override def ap[A, B](ff: Arg[A => B])(fa: Arg[A]): Arg[B] =
       (ff, fa) match {
         case (NonEmptyArg(entries1, decode1), NonEmptyArg(entries2, decode2)) =>
           NonEmptyArg(entries1 ++ entries2, m => decode1(m)(decode2(m)))
@@ -50,16 +37,28 @@ object Arg2 {
   }
 }
 
+sealed trait DefaultValue[A]
+object DefaultValue {
+  final case class Primitive[A](value: A, in: InLeaf[A]) extends DefaultValue[A]
+  final case class Obj[A](
+      fields: NonEmptyChain[(String, DefaultValue[_])],
+      input: Eval[Input[A]]
+  ) extends DefaultValue[A]
+  final case class Arr[A](values: Seq[DefaultValue[A]], in: In[A]) extends DefaultValue[Seq[A]]
+  final case class Opt[A](value: Option[DefaultValue[A]], in: In[A]) extends DefaultValue[Option[A]]
+}
+
 final case class ArgValue[A](
     name: String,
     input: Eval[In[A]],
-    default: Option[A] = None
+    default: Option[A] = None,
+    defaultValue: Option[DefaultValue[A]] = None
 )
 
 final case class NonEmptyArg[A](
     nec: NonEmptyChain[ArgValue[_]],
     decode: Map[String, _] => A
-) extends Arg2[A] {
+) extends Arg[A] {
   def entries = nec.toChain
 }
 object NonEmptyArg {
@@ -72,27 +71,7 @@ object NonEmptyArg {
   }
 }
 
-final case class PureArg[A](value: A) extends Arg2[A] {
+final case class PureArg[A](value: A) extends Arg[A] {
   def entries = Chain.empty
   def decode = _ => value
-}
-
-object Arg {
-  def initial[A](entry: ArgParam[A]): Arg[A] =
-    Arg(Vector(entry), { s => (s.tail, s.head.asInstanceOf[A]) })
-
-  implicit lazy val applicativeForArgs: Applicative[Arg] = new Applicative[Arg] {
-    override def pure[A](a: A): Arg[A] =
-      Arg(Vector.empty, (_, a))
-
-    override def ap[A, B](ff: Arg[A => B])(fa: Arg[A]): Arg[B] =
-      Arg(
-        ff.entries ++ fa.entries,
-        { s1 =>
-          val (s2, f) = ff.decode(s1)
-          val (s3, a) = fa.decode(s2)
-          (s3, f(a))
-        }
-      )
-  }
 }

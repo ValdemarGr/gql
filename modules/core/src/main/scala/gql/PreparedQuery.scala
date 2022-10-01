@@ -118,33 +118,31 @@ object PreparedQuery {
 
             fields.entries
               .traverse { a =>
-                m
-                  .get(a.name)
-                  .map(x => decodeInput(a.input, gql.Value.JsonValue(x))) match {
-                  case Some(outcome) => outcome
-                  case None          => a.default.toRight(s"missing field ${a.name} in input object $name")
-                }
+                val o =
+                  m
+                    .get(a.name)
+                    .map(x => decodeInput(a.input.value, gql.Value.JsonValue(x))) match {
+                    case Some(outcome) => outcome
+                    case None          => a.default.toRight(s"missing field ${a.name} in input object $name")
+                  }
+                o.tupleLeft(a.name)
               }
-              .map(_.toList)
-              .map { xs =>
-                val (_, o) = fields.decode(xs.asInstanceOf[List[Any]])
-                o
-              }
+              .map(_.toList.toMap)
+              .map(fields.decode)
           case gql.Value.ObjectValue(xs) =>
             fields.entries
               .traverse { a =>
-                xs
-                  .get(a.name)
-                  .map(decodeInput(a.input, _)) match {
-                  case Some(outcome) => outcome
-                  case None          => a.default.toRight(s"missing field ${a.name} in input object $name")
-                }
+                val o =
+                  xs
+                    .get(a.name)
+                    .map(decodeInput(a.input.value, _)) match {
+                    case Some(outcome) => outcome
+                    case None          => a.default.toRight(s"missing field ${a.name} in input object $name")
+                  }
+                o.tupleLeft(a.name)
               }
-              .map(_.toList)
-              .map { xs =>
-                val (_, o) = fields.decode(xs.asInstanceOf[List[Any]])
-                o
-              }
+              .map(_.toList.toMap)
+              .map(fields.decode)
           case _ => Left(s"expected object for $name, got ${value.name}")
         }
     }
@@ -308,18 +306,20 @@ object PreparedQuery {
     val argResolution =
       args.entries
         .traverse { arg =>
-          providedMap
-            .get(arg.name) match {
-            case None => raiseOpt[F, Any](arg.default, s"missing argument ${arg.name}", Some(caret))
-            case Some(x) =>
-              parserValueToValue(x, variableMap, caret)
-                .flatMap(j => raiseEither[F, Any](decodeInput(arg.input, j), Some(caret)))
-          }
+          val o =
+            providedMap
+              .get(arg.name) match {
+              case None => raiseOpt[F, Any](arg.default, s"missing argument ${arg.name}", Some(caret))
+              case Some(x) =>
+                parserValueToValue(x, variableMap, caret)
+                  .flatMap(j => raiseEither[F, Any](decodeInput(arg.input.value, j), Some(caret)))
+            }
+          o.tupleLeft(arg.name)
         }
-        .map(_.toList)
+        .map(_.toList.toMap)
 
-    argResolution.map { x =>
-      val (_, resolvedArg) = args.decode(x)
+    argResolution.map { m =>
+      val resolvedArg = args.decode(m)
       val closed = resolve.contramap[Any]((_, resolvedArg))
       closed
     }

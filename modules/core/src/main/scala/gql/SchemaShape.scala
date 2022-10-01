@@ -215,7 +215,7 @@ object SchemaShape {
       allUnique[G]("duplicate arg", arg.entries.toList.map(_.name)) >>
         arg.entries.traverse_ { entry =>
           useEdge(ValidationEdge.Arg(entry.name)) {
-            validateFieldName[G](entry.name) >> validateInput[G](entry.input)
+            validateFieldName[G](entry.name) >> validateInput[G](entry.input.value)
           }
         }
 

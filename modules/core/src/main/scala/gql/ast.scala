@@ -15,6 +15,8 @@ object ast extends AstImplicits.Implicits {
 
   sealed trait In[+A]
 
+  sealed trait InLeaf[+A] extends In[A]
+
   sealed trait Toplevel[+A] {
     def name: String
   }
@@ -48,7 +50,7 @@ object ast extends AstImplicits.Implicits {
       Type(name, fields.map { case (k, v) => k -> v.mapK(fk) })
   }
 
-  final case class Input[A](name: String, fields: Arg[A]) extends InToplevel[A]
+  final case class Input[A](name: String, fields: NonEmptyArg[A]) extends InToplevel[A]
 
   final case class Union[F[_], A](
       name: String,
@@ -95,12 +97,15 @@ object ast extends AstImplicits.Implicits {
       )
   }
 
-  final case class Scalar[F[_], A](name: String, codec: Codec[A]) extends OutToplevel[F, A] with In[A] with InToplevel[A] {
+  final case class Scalar[F[_], A](name: String, codec: Codec[A]) extends OutToplevel[F, A] with InLeaf[A] with InToplevel[A] {
     override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Scalar[G, A] =
       Scalar(name, codec)
   }
 
-  final case class Enum[F[_], A](name: String, mappings: NonEmptyList[(String, A)]) extends OutToplevel[F, A] with InToplevel[A] {
+  final case class Enum[F[_], A](name: String, mappings: NonEmptyList[(String, A)])
+      extends OutToplevel[F, A]
+      with InLeaf[A]
+      with InToplevel[A] {
     override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Out[G, A] =
       Enum(name, mappings)
 
@@ -172,12 +177,12 @@ object ast extends AstImplicits.Implicits {
   final case class InArr[A, G[_] <: Seq[_]](of: In[A]) extends In[G[A]]
 
   // object Out {
-    // poor man's covariant F
-    // covariance for F is very unpleasant
-    // every F in the AST is on the right side (covariant position) so this cannot fail
-    // TODO, make F covariant
-    // implicit def covariantForOut[F[_], F2[x] >: F[x], A](implicit out: Out[F, A]): Out[F2, A] =
-    //   out.asInstanceOf[Out[F2, A]]
+  // poor man's covariant F
+  // covariance for F is very unpleasant
+  // every F in the AST is on the right side (covariant position) so this cannot fail
+  // TODO, make F covariant
+  // implicit def covariantForOut[F[_], F2[x] >: F[x], A](implicit out: Out[F, A]): Out[F2, A] =
+  //   out.asInstanceOf[Out[F2, A]]
   // }
 
   final case class ID[A](value: A) extends AnyVal
