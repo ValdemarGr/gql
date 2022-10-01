@@ -28,30 +28,22 @@ object dsl {
     Arg.make[A](name, Some(default(defaultValue)))
   }
 
-  def arg[A](name: String, default: DefaultValue[A])(implicit tpe: => In[A]): NonEmptyArg[A] = {
+  def arg[A](name: String, default: DefaultValue)(implicit tpe: => In[A]): NonEmptyArg[A] = {
     implicit lazy val t0 = tpe
     Arg.make[A](name, Some(default))
   }
 
   object default {
-    def apply[A](value: A)(implicit tpe: => InLeaf[A]): DefaultValue[A] =
+    def apply[A](value: A)(implicit tpe: => InLeaf[A]): DefaultValue =
       DefaultValue.Primitive(value, tpe)
 
-    def obj[A](
-        hd: (String, DefaultValue[_]),
-        tl: (String, DefaultValue[_])*
-    )(implicit tpe: => Input[A]): DefaultValue[A] =
-      DefaultValue.Obj(NonEmptyChain.of(hd, tl: _*), Eval.later(tpe))
+    def obj(hd: (String, DefaultValue), tl: (String, DefaultValue)*): DefaultValue =
+      DefaultValue.Obj(NonEmptyChain.of(hd, tl: _*))
 
-    def arr[A](
-        xs: Seq[DefaultValue[A]]
-    )(implicit tpe: => In[A]): DefaultValue[Seq[A]] =
-      DefaultValue.Arr(xs, tpe)
+    def arr(xs: Seq[DefaultValue]): DefaultValue =
+      DefaultValue.Arr(xs)
 
-    def opt[A](
-        value: Option[DefaultValue[A]]
-    )(implicit tpe: => In[A]): DefaultValue[Option[A]] =
-      DefaultValue.Opt(value, tpe)
+    def none: DefaultValue = DefaultValue.Null
   }
 
   def field[F[_], I, T, A](arg: Arg[A])(resolver: Resolver[F, (I, A), T])(implicit tpe: => Out[F, T]): Field[F, I, T, A] =

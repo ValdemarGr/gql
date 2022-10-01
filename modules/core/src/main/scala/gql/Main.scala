@@ -616,7 +616,8 @@ object Test {
       arg[InputStuff](
         "arg1",
         default.obj(
-          "a" -> default("a-default")
+          "a" -> default("a"),
+          "b" -> default(43)
         )
       )
     ) { case (_, _) => "" }

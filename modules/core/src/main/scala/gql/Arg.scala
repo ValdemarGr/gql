@@ -14,7 +14,7 @@ trait Arg[A] {
 object Arg {
   // def encLeaf[A](value: A, leaf: InLeaf[A]) = leaf match {
   //   case e@Enum(_, _) => Value.EnumValue(e.revm(value))
-  //   case Scalar(_, codec) => 
+  //   case Scalar(_, codec) =>
   //     (codec: io.circe.Encoder[A]).apply(value)
   // }
 
@@ -27,7 +27,7 @@ object Arg {
   def one[A](name: String)(implicit input: => In[A]): NonEmptyArg[A] =
     NonEmptyArg[A](NonEmptyChain.one(ArgValue(name, Eval.later(input), None, None)), _(name).asInstanceOf[A])
 
-  def make[A](name: String, default: Option[DefaultValue[A]])(implicit input: => In[A]): NonEmptyArg[A] =
+  def make[A](name: String, default: Option[DefaultValue])(implicit input: => In[A]): NonEmptyArg[A] =
     NonEmptyArg[A](NonEmptyChain.one(ArgValue(name, Eval.later(input), None, default)), _(name).asInstanceOf[A])
 
   implicit lazy val applicativeInstanceForArg: Applicative[Arg] = new Applicative[Arg] {
@@ -46,22 +46,34 @@ object Arg {
   }
 }
 
-sealed trait DefaultValue[A]
+sealed trait DefaultValue
 object DefaultValue {
-  final case class Primitive[A](value: A, in: InLeaf[A]) extends DefaultValue[A]
-  final case class Obj[A](
-      fields: NonEmptyChain[(String, DefaultValue[_])],
-      input: Eval[Input[A]]
-  ) extends DefaultValue[A]
-  final case class Arr[A](values: Seq[DefaultValue[A]], in: In[A]) extends DefaultValue[Seq[A]]
-  final case class Opt[A](value: Option[DefaultValue[A]], in: In[A]) extends DefaultValue[Option[A]]
+  abstract case class Primitive() extends DefaultValue {
+    type T
+    def value: T
+    def in: InLeaf[T]
+  }
+  object Primitive {
+    def apply[A](value: A, in: InLeaf[A]): Primitive = {
+      val value0 = value
+      val in0 = in
+      new Primitive {
+        type T = A
+        def value: T = value0
+        def in: InLeaf[T] = in0
+      }
+    }
+  }
+  final case class Obj(fields: NonEmptyChain[(String, DefaultValue)]) extends DefaultValue
+  final case class Arr(values: Seq[DefaultValue]) extends DefaultValue
+  final case object Null extends DefaultValue
 }
 
 final case class ArgValue[A](
     name: String,
     input: Eval[In[A]],
     default: Option[A] = None,
-    defaultValue: Option[DefaultValue[A]] = None
+    defaultValue: Option[DefaultValue] = None
 )
 
 final case class NonEmptyArg[A](
