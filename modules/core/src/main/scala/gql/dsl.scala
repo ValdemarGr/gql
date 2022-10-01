@@ -28,22 +28,22 @@ object dsl {
     Arg.make[A](name, Some(default(defaultValue)))
   }
 
-  def arg[A](name: String, default: DefaultValue)(implicit tpe: => In[A]): NonEmptyArg[A] = {
+  def arg[A](name: String, default: DefaultValue[A])(implicit tpe: => In[A]): NonEmptyArg[A] = {
     implicit lazy val t0 = tpe
     Arg.make[A](name, Some(default))
   }
 
   object default {
-    def apply[A](value: A)(implicit tpe: => InLeaf[A]): DefaultValue =
+    def apply[A](value: A)(implicit tpe: => InLeaf[A]): DefaultValue.Primitive[A] =
       DefaultValue.Primitive(value, tpe)
 
-    def obj(hd: (String, DefaultValue), tl: (String, DefaultValue)*): DefaultValue =
+    def obj(hd: (String, DefaultValue[_]), tl: (String, DefaultValue[_])*): DefaultValue.Obj =
       DefaultValue.Obj(NonEmptyChain.of(hd, tl: _*))
 
-    def arr(xs: Seq[DefaultValue]): DefaultValue =
+    def arr[A](xs: Seq[DefaultValue[A]]): DefaultValue.Arr[A] =
       DefaultValue.Arr(xs)
 
-    def none: DefaultValue = DefaultValue.Null
+    def none: DefaultValue.Null.type = DefaultValue.Null
   }
 
   def field[F[_], I, T, A](arg: Arg[A])(resolver: Resolver[F, (I, A), T])(implicit tpe: => Out[F, T]): Field[F, I, T, A] =

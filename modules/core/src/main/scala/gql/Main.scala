@@ -617,7 +617,13 @@ object Test {
         "arg1",
         default.obj(
           "a" -> default("a"),
-          "b" -> default(43)
+          "b" -> default(43),
+          "c" -> default.arr(
+            Seq(
+              default("42"),
+              default(43)
+            )
+          )
         )
       )
     ) { case (_, _) => "" }
