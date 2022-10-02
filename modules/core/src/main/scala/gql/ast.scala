@@ -165,22 +165,22 @@ object ast extends AstImplicits.Implicits {
   }
 
   final case class InOpt[A](of: In[A]) extends In[Option[A]]
-  // object InOpt {
-  //   def unapply[A](p: In[A]): Option[In[A]] =
-  //     p.asInstanceOf[In[Option[A]]] match {
-  //       case x: InOpt[A] => Some(x.of.asInstanceOf[In[A]])
-  //       case _           => None
-  //     }
-  // }
+  object InOpt {
+    def unapply[A](p: In[A]): Option[In[A]] =
+      p.asInstanceOf[In[Option[A]]] match {
+        case x: InOpt[A] => Some(x.of.asInstanceOf[In[A]])
+        case _           => None
+      }
+  }
 
   final case class InArr[A, G[_] <: Seq[_]](of: In[A]) extends In[G[A]]
-  // object InArr {
-  //   def unapply[A](p: In[A]): Option[In[A]] =
-  //     p.asInstanceOf[In[Seq[A]]] match {
-  //       case x: InArr[A, Seq] => Some(x.of.asInstanceOf[In[A]])
-  //       case _           => None
-  //     }
-  // }
+  object InArr {
+    def unapply[A](p: In[A]): Option[In[A]] =
+      p.asInstanceOf[In[Seq[A]]] match {
+        case x: InArr[A, Seq] => Some(x.of.asInstanceOf[In[A]])
+        case _           => None
+      }
+  }
 
   // object Out {
   // poor man's covariant F

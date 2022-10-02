@@ -9,7 +9,8 @@ import gql.ast._
 object Render {
   final case class RenderState[F[_]](
       discoveredTypes: Set[String],
-      toRender: List[Toplevel[Any]]
+      toRender: List[Toplevel[Any]],
+      cycleSet: Set[String]
   )
 
   // def maybeAdd[F[_], G[_]](tpe: Toplevel[Any])(implicit

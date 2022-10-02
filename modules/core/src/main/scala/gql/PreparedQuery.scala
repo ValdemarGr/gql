@@ -86,13 +86,13 @@ object PreparedQuery {
   def decodeInput[A](in: ast.In[A], value: Value): Either[String, A] =
     in match {
       case ast.InOpt(inner) =>
-        if (value.asJson.isNull) Right(None)
-        else decodeInput(inner, value).map(Some(_))
+        if (value.asJson.isNull) Right(None).asInstanceOf[Either[String, A]]
+        else decodeInput(inner, value).map(Some(_)).asInstanceOf[Either[String, A]]
       case ast.InArr(inner) =>
         value match {
           case gql.Value.JsonValue(ja) if ja.isArray =>
-            ja.asArray.get.traverse(j => decodeInput(inner, Value.JsonValue(j)))
-          case gql.Value.ArrayValue(v) => v.traverse(decodeInput(inner, _))
+            ja.asArray.get.traverse(j => decodeInput(inner, Value.JsonValue(j))).asInstanceOf[Either[String, A]]
+          case gql.Value.ArrayValue(v) => v.traverse(decodeInput(inner, _)).asInstanceOf[Either[String, A]]
           case _                       => Left(s"expected array type, get ${value.name}")
         }
       case ast.Scalar(_, codec) =>

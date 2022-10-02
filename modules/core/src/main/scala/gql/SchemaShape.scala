@@ -84,8 +84,8 @@ object SchemaShape {
     def goInput[G[_]](inp: In[Any])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]]): G[Unit] =
       inp match {
         // TODO
-        // case InArr(of) => goInput[G](of)
-        // case InOpt(of) => goInput[G](of)
+        case InArr(of) => goInput[G](of)
+        case InOpt(of) => goInput[G](of)
         case t: InToplevel[Any] =>
           inputNotSeen(t) {
             t match {
@@ -268,5 +268,110 @@ object SchemaShape {
       .runS(ValidationState(Chain.empty, Chain.empty, Map.empty, Map.empty))
       .value
       .problems
+  }
+
+  def render[F[_]](shape: SchemaShape[F, _, _, _]) = {
+    // lets the caller pick the implementation
+    def getInputName(in: In[_]): (String, String) =
+      in match {
+        case t: Toplevel[_] => (t.name, t.name + "!")
+        case InArr(of) =>
+          val (_, r) = getInputName(of)
+          val out = s"[$r]"
+          (out, out + "!")
+        case InOpt(of) =>
+          val (o, _) = getInputName(of)
+          (o, o)
+      }
+
+    def renderDefault(default: DefaultValue[_]): String = {
+      import DefaultValue._
+      default match {
+        case Arr(values)       => "[" + values.map(renderDefault).mkString(", ") + "]"
+        case DefaultValue.Null => "null"
+        case Primitive(value, in) =>
+          in match {
+            case e @ Enum(_, _)   => e.revm(value)
+            case Scalar(_, codec) => codec.apply(value).noSpaces
+          }
+        case Obj(fields) => fields.map { case (k, v) => s"$k: ${renderDefault(v)}" }.mkString_("\n")
+      }
+    }
+
+    def renderArgValue(av: ArgValue[_]): String = {
+      val o = av.defaultValue.map(dv => s" = ${renderDefault(dv)}}")
+      s"${av.name}: ${getInputName(av.input.value)}$o"
+    }
+
+    def renderOutput[G[_]](o: Out[G, _]): (String, String) =
+      o match {
+        case ot: OutToplevel[G, _] => (ot.name, ot.name + "!")
+        case OutArr(of) =>
+          val (_, r) = renderOutput(of)
+          val out = s"[$r]"
+          (out, out + "!")
+        case OutOpt(of) =>
+          val (o, _) = renderOutput(of)
+          (o, o)
+      }
+
+    def renderField[G[_]](name: String, field: Field[G, _, _, _]): String = {
+      val args = NonEmptyChain
+        .fromChain(field.args.entries)
+        .map(nec => s"(${nec.map(renderArgValue).mkString_(", ")})")
+        .mkString
+      s"$name$args: ${renderOutput(field.output.value)}"
+    }
+
+    val discovery: DiscoveryState[F] = shape.discover
+
+    val all = discovery.inputs ++ discovery.outputs
+
+    all.values.toList
+      .map { tl =>
+        tl match {
+          case Enum(name, mappings) =>
+            s"""
+            |enum $name {
+              ${mappings.map { case (str, _) => s"| $str" }.mkString_("\n")}
+            |}
+            """.stripMargin
+          case Input(name, fields) =>
+            s"""
+            |input $name {
+              ${fields.nec.map { av => s"| ${renderArgValue(av)}" }.mkString_("\n")}
+            |}
+            """.stripMargin
+          case Scalar(name, _) => s"\nscalar $name\n"
+          case Interface(name, _, fields) =>
+            s"""
+            |interface $name {
+              ${fields
+              .map { case (name, field) => s"| ${renderField(name, field)}" }
+              .mkString_("\n")}
+            |}
+            """.stripMargin
+          case Type(name, fields) =>
+            val interfaces =
+              discovery.interfaceImplementations
+                .get(name)
+                .flatMap(_.toList.toNel)
+                .map { nel =>
+                  s" implements ${nel.mkString_(" & ")}"
+                }
+                .mkString
+            s"""
+            |type $name $interfaces {
+              ${fields
+              .map { case (name, field) => s"| ${renderField(name, field)}" }
+              .mkString_("\n")}
+            |}
+            """.stripMargin
+          case Union(name, types) =>
+            s"""
+            |union $name = ${types.map(_.ol.value.name).mkString_(" | ")}
+            """.stripMargin
+        }
+      }
   }
 }
