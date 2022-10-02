@@ -15,10 +15,10 @@ sealed trait Value {
  * shouldn't be allowed as an enum value.
  */
 object Value {
-  final case class JsonValue(value: Json) extends Value {
-    override lazy val asJson = value
-    override def name: String = value.name
-  }
+  // final case class JsonValue(value: Json) extends Value {
+  //   override lazy val asJson = value
+  //   override def name: String = value.name
+  // }
   final case class IntValue(v: BigInt) extends Value {
     override lazy val asJson: Json = Json.fromBigInt(v)
     override def name: String = "Int"
@@ -51,4 +51,13 @@ object Value {
     override lazy val asJson: Json = Json.fromFields(fields.map { case (k, v) => k -> v.asJson })
     override def name: String = "Object"
   }
+
+  def fromJson(j: Json): Value = j.fold(
+    jsonNull = NullValue,
+    jsonBoolean = BooleanValue(_),
+    jsonNumber = n => n.toBigInt.map(IntValue(_)).getOrElse(FloatValue(n.toBigDecimal.getOrElse(BigDecimal(n.toDouble)))),
+    jsonString = StringValue(_),
+    jsonArray = a => ArrayValue(a.map(fromJson)),
+    jsonObject = jo => ObjectValue(jo.toMap.view.mapValues(fromJson).toMap)
+  )
 }

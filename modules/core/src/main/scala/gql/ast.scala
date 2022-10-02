@@ -201,7 +201,7 @@ object ast extends AstImplicits.Implicits {
 
   object Scalar {
     def fromCirce[F[_], A](name: String)(implicit enc: Encoder[A], dec: Decoder[A]): Scalar[F, A] =
-      Scalar(name, a => Value.JsonValue(enc(a)), value => dec.decodeJson(value.asJson).leftMap(_.show))
+      Scalar(name, a => Value.fromJson(enc(a)), value => dec.decodeJson(value.asJson).leftMap(_.show))
   }
 }
 

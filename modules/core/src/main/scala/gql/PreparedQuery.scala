@@ -93,8 +93,8 @@ object PreparedQuery {
         else decodeInput(inner, value).map(Some(_)).asInstanceOf[Either[String, A]]
       case ast.InArr(inner) =>
         value match {
-          case gql.Value.JsonValue(ja) if ja.isArray =>
-            ja.asArray.get.traverse(j => decodeInput(inner, Value.JsonValue(j))).asInstanceOf[Either[String, A]]
+          // case gql.Value.JsonValue(ja) if ja.isArray =>
+          //   ja.asArray.get.traverse(j => decodeInput(inner, Value.JsonValue(j))).asInstanceOf[Either[String, A]]
           case gql.Value.ArrayValue(v) => v.traverse(decodeInput(inner, _)).asInstanceOf[Either[String, A]]
           case _                       => Left(s"expected array type, get ${value.name}")
         }
@@ -107,7 +107,7 @@ object PreparedQuery {
           }
 
         value match {
-          case gql.Value.JsonValue(v) if v.isString => decodeString(v.asString.get)
+          // case gql.Value.JsonValue(v) if v.isString => decodeString(v.asString.get)
           case gql.Value.EnumValue(s)               => decodeString(s)
           case _                                    => Left(s"expected enum $name, got ${value.name}")
         }
@@ -115,22 +115,22 @@ object PreparedQuery {
       // Look into free applicatives
       case ast.Input(name, fields) =>
         value match {
-          case gql.Value.JsonValue(jo) if jo.isObject =>
-            val m = jo.asObject.get.toMap
+          // case gql.Value.JsonValue(jo) if jo.isObject =>
+          //   val m = jo.asObject.get.toMap
 
-            fields.entries
-              .traverse { a =>
-                val o =
-                  m
-                    .get(a.name)
-                    .map(x => decodeInput(a.input.value, gql.Value.JsonValue(x))) match {
-                    case Some(outcome) => outcome
-                    case None          => a.default.toRight(s"missing field ${a.name} in input object $name")
-                  }
-                o.tupleLeft(a.name)
-              }
-              .map(_.toList.toMap)
-              .map(fields.decode)
+          //   fields.entries
+          //     .traverse { a =>
+          //       val o =
+          //         m
+          //           .get(a.name)
+          //           .map(x => decodeInput(a.input.value, gql.Value.JsonValue(x))) match {
+          //           case Some(outcome) => outcome
+          //           case None          => a.default.toRight(s"missing field ${a.name} in input object $name")
+          //         }
+          //       o.tupleLeft(a.name)
+          //     }
+          //     .map(_.toList.toMap)
+          //     .map(fields.decode)
           case gql.Value.ObjectValue(xs) =>
             fields.entries
               .traverse { a =>
@@ -187,7 +187,7 @@ object PreparedQuery {
           D.defer(v.toVector.traverse(go).map(Value.ArrayValue(_)))
         case EnumValue(v) => F.pure(Value.EnumValue(v))
         case VariableValue(v) =>
-          raiseOpt(variableMap.get(v).map(Value.JsonValue(_)), s"variable $v not found", Some(caret))
+          raiseOpt(variableMap.get(v).map(Value.fromJson(_)), s"variable $v not found", Some(caret))
         case NullValue       => F.pure(Value.NullValue)
         case BooleanValue(v) => F.pure(Value.BooleanValue(v))
         case FloatValue(v) =>
