@@ -274,16 +274,6 @@ object SchemaShape {
   }
 
   def render[F[_]](shape: SchemaShape[F, _, _, _]) = {
-    // optional is a flag we can consume on the next step
-    def getInputName(in: In[_], optional: Boolean = false): String =
-      in match {
-        case t: Toplevel[_] => if (optional) t.name else t.name + "!"
-        case InArr(of) =>
-          val base = s"[${getInputName(of, optional = false)}]"
-          if (optional) base else base + "!"
-        case InOpt(of) => getInputName(of, optional = true)
-      }
-
     def getInputNameDoc(in: In[_], optional: Boolean = false): Doc =
       in match {
         case t: Toplevel[_] => Doc.text(if (optional) t.name else t.name + "!")
@@ -292,24 +282,6 @@ object SchemaShape {
           d.tightBracketBy(Doc.char('['), Doc.char(']')) + (if (optional) Doc.empty else Doc.char('!'))
         case InOpt(of) => getInputNameDoc(of, optional = true)
       }
-
-    def renderDefault(default: DefaultValue[_]): String = {
-      import DefaultValue._
-      val str =
-        default match {
-          case Arr(values) =>
-            "[\n" + values.map(renderDefault).mkString(",\n") + "\n]"
-          case DefaultValue.Null => "null"
-          case Primitive(value, in) =>
-            in match {
-              case e @ Enum(_, _)              => e.revm(value)
-              case Scalar(_, encoder, decoder) => encoder(value).toString
-            }
-          case Obj(fields) =>
-            s"{\n" + fields.map { case (k, v) => s"$k: ${renderDefault(v)}" }.mkString_("\n") + "\n}"
-        }
-      str.split('\n').map(line => s"  $line").mkString("\n")
-    }
 
     import io.circe._
     def renderValueDoc(v: Value): Doc = {
@@ -321,11 +293,11 @@ object SchemaShape {
         case NullValue       => Doc.text("null")
         case BooleanValue(v) => Doc.text(v.toString)
         case ArrayValue(v) =>
-          Doc.intercalate(Doc.comma + Doc.lineOrSpace, v.map(renderValueDoc)).bracketBy(Doc.char('['), Doc.char(']'))
+          Doc.intercalate(Doc.comma + Doc.line, v.map(renderValueDoc)).tightBracketBy(Doc.char('['), Doc.char(']'))
         case ObjectValue(fields) =>
           Doc
             .intercalate(
-              Doc.comma + Doc.lineOrSpace,
+              Doc.comma + Doc.line,
               fields.map { case (k, v) => Doc.text(k) + Doc.text(": ") + renderValueDoc(v) }
             )
             .bracketBy(Doc.char('{'), Doc.char('}'))
@@ -333,45 +305,24 @@ object SchemaShape {
       }
     }
 
-    def renderDefaultDoc(default: DefaultValue[_]): Doc = {
+    def defaultToValue(default: DefaultValue[_]): Value = {
       import DefaultValue._
       default match {
-        case Arr(values) =>
-          Doc.intercalate(Doc.comma + Doc.lineOrSpace, values.map(renderDefaultDoc)).tightBracketBy(Doc.char('['), Doc.char(']'))
-        case DefaultValue.Null => Doc.text("null")
+        case Arr(values)       => Value.ArrayValue(values.toVector.map(defaultToValue))
+        case DefaultValue.Null => Value.NullValue
         case Primitive(value, in) =>
           in match {
-            case e @ Enum(_, _)    => Doc.text(e.revm(value))
-            case Scalar(_, enc, _) => renderValueDoc(enc(value))
+            case e @ Enum(_, _)    => Value.EnumValue(e.revm(value))
+            case Scalar(_, enc, _) => enc(value)
           }
-        case Obj(fields) =>
-          Doc
-            .intercalate(
-              Doc.comma + Doc.lineOrSpace,
-              fields.toList.map { case (k, v) => Doc.text(k) + Doc.text(": ") + renderDefaultDoc(v) }
-            )
-            .bracketBy(Doc.char('{'), Doc.char('}'))
+        case Obj(fields) => Value.ObjectValue(fields.toList.toMap.view.mapValues(defaultToValue).toMap)
       }
     }
 
     def renderArgValueDoc(av: ArgValue[_]): Doc = {
-      val o = av.defaultValue.map(dv => Doc.text(" = ") + renderDefaultDoc(dv)).getOrElse(Doc.empty)
+      val o = av.defaultValue.map(dv => Doc.text(" = ") + renderValueDoc(defaultToValue(dv))).getOrElse(Doc.empty)
       Doc.text(av.name) + Doc.text(": ") + getInputNameDoc(av.input.value) + o
     }
-
-    def renderArgValue(av: ArgValue[_]): String = {
-      val o = av.defaultValue.map(dv => s" = ${renderDefault(dv)}}").mkString
-      s"${av.name}: ${getInputName(av.input.value)}$o"
-    }
-
-    def renderOutput[G[_]](o: Out[G, _], optional: Boolean = false): String =
-      o match {
-        case ot: OutToplevel[G, _] => if (optional) ot.name else ot.name + "!"
-        case OutArr(of) =>
-          val base = s"[${renderOutput(of, optional = false)}]"
-          if (optional) base else base + "!"
-        case OutOpt(of) => renderOutput(of, optional = true)
-      }
 
     def renderOutputDoc[G[_]](o: Out[G, _], optional: Boolean = false): Doc =
       o match {
@@ -381,14 +332,6 @@ object SchemaShape {
           d.tightBracketBy(Doc.char('['), Doc.char(']')) + (if (optional) Doc.empty else Doc.char('!'))
         case OutOpt(of) => renderOutputDoc(of, optional = true)
       }
-
-    def renderField[G[_]](name: String, field: Field[G, _, _, _]): String = {
-      val args = NonEmptyChain
-        .fromChain(field.args.entries)
-        .map(nec => s"(${nec.map(renderArgValue).mkString_(", ")})")
-        .mkString
-      s"$name$args: ${renderOutput(field.output.value)}"
-    }
 
     def renderFieldDoc[G[_]](name: String, field: Field[G, _, _, _]): Doc = {
       val args = NonEmptyChain
@@ -415,17 +358,27 @@ object SchemaShape {
             case Input(name, fields) =>
               Doc.text(s"input $name") + (Doc.text(" {") + Doc.hardLine + Doc
                 .intercalate(Doc.hardLine, fields.nec.toList.map(renderArgValueDoc))
-                .indent(2) + Doc.hardLine + Doc.text("}")).grouped
+                .indent(2) + Doc.hardLine + Doc.text("}"))
             case Scalar(name, _, _) => Doc.text(s"scalar $name")
             case Interface(name, _, fields) =>
-              (Doc.text(s"interface $name") + Doc.text(" {") + Doc.hardLine + Doc
+              val fieldsDoc = Doc
                 .intercalate(
                   Doc.hardLine,
-                  fields.toList
-                    .map { case (name, field) => renderFieldDoc(name, field) }
+                  fields.toList.map { case (name, field) => renderFieldDoc(name, field) }
                 )
-                .indent(2) + Doc.hardLine + Doc.text("}")).grouped
+                .indent(2)
+
+              (Doc.text(s"interface $name") + Doc.text(" {") + Doc.hardLine +
+                fieldsDoc +
+                Doc.hardLine + Doc.text("}"))
             case Type(name, fields) =>
+              val fieldsDoc = Doc
+                .intercalate(
+                  Doc.hardLine,
+                  fields.toList.map { case (name, field) => renderFieldDoc(name, field) }
+                )
+                .indent(2)
+
               val interfaces =
                 discovery.interfaceImplementations
                   .get(name)
@@ -433,13 +386,9 @@ object SchemaShape {
                   .map { nel => Doc.text(" implements ") + Doc.intercalate(Doc.text(" & "), nel.toList.map(Doc.text)) }
                   .getOrElse(Doc.empty)
 
-              (Doc.text(s"type $name") + interfaces + Doc.text(" {") + Doc.hardLine + Doc
-                .intercalate(
-                  Doc.hardLine,
-                  fields.toList
-                    .map { case (name, field) => renderFieldDoc(name, field) }
-                )
-                .indent(2) + Doc.hardLine + Doc.text("}")).grouped
+              Doc.text(s"type $name") + interfaces + (Doc.text(" {") + Doc.hardLine +
+                fieldsDoc +
+                Doc.hardLine + Doc.text("}"))
             case Union(name, types) =>
               val names = types.toList.map(x => Doc.text(x.ol.value.name))
               val xs =
@@ -448,6 +397,53 @@ object SchemaShape {
               (Doc.text(s"union $name = ") + xs)
           }
         }
+
+    // import io.circe._
+    // def renderJson(v: Json): Doc = {
+    //   v.fold(
+    //     Doc.text("null"),
+    //     Doc.str,
+    //     Doc.str,
+    //     Doc.str,
+    //     xs => Doc.intercalate(Doc.comma + Doc.line, xs.map(renderJson)).tightBracketBy(Doc.char('['), Doc.char(']')),
+    //     jo =>
+    //       Doc
+    //         .intercalate(
+    //           Doc.comma + Doc.line,
+    //           jo.toList.map { case (k, v) =>
+    //             Doc.text(k) + Doc.text(":") + Doc.space + renderJson(v)
+    //           }
+    //         )
+    //         .tightBracketBy(Doc.char('{'), Doc.char('}'))
+    //   )
+    // }
+
+    // println {
+    //   renderValueDoc(
+    //     Value.fromJson(
+    //       Json.obj(
+    //         "i" -> Json.fromString("i"),
+    //         "will" -> Json.fromString("will"),
+    //         "not" -> Json.arr(
+    //           Json.obj(
+    //             "pretty" -> Json.obj(
+    //               "print" -> Json.fromString("print")
+    //             )
+    //           ),
+    //           Json.obj(
+    //             "so" -> Json.obj(
+    //               "i" -> Json.fromString("i"),
+    //               "will" -> Json.fromString("will"),
+    //               "look" -> Json.obj(
+    //                 "ugly" -> Json.fromString("ugly")
+    //               )
+    //             )
+    //           )
+    //         )
+    //       )
+    //     )
+    //   ).render(40)
+    // }
 
     Doc.intercalate(Doc.hardLine + Doc.hardLine, docs).render(80)
   }

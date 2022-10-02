@@ -346,7 +346,27 @@ query withNestedFragments {
                   dsl.default.obj(
                     "v3" -> dsl.default("@@")
                   )
-                ))
+                )),
+                "ar2" -> dsl.default.arr(Seq(
+                  dsl.default.obj(
+                    "v23" -> dsl.default("@@")
+                  )
+                )),
+                "ar3" -> dsl.default.arr(Seq(
+                  dsl.default.obj(
+                    "v33" -> dsl.default("@@")
+                  )
+                )),
+                "ar4" -> dsl.default.arr(Seq(
+                  dsl.default.obj(
+                    "v43" -> dsl.default("@@")
+                  )
+                )),
+                "ar5" -> dsl.default.arr(Seq(
+                  dsl.default.obj(
+                    "v53" -> dsl.default("@@")
+                  )
+                )),
               )
             )
           ){ case (_, _) => ""}
