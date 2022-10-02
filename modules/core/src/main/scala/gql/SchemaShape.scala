@@ -347,8 +347,11 @@ object SchemaShape {
 
     val all = discovery.inputs ++ discovery.outputs
 
+    lazy val exclusion = Set("String", "Int", "Float", "ID", "Boolean")
+
     val docs =
       all.values.toList
+        .filterNot(x => exclusion.contains(x.name))
         .map { tl =>
           tl match {
             case Enum(name, mappings) =>
@@ -359,6 +362,7 @@ object SchemaShape {
               Doc.text(s"input $name") + (Doc.text(" {") + Doc.hardLine + Doc
                 .intercalate(Doc.hardLine, fields.nec.toList.map(renderArgValueDoc))
                 .indent(2) + Doc.hardLine + Doc.text("}"))
+            // Dont render built-in scalars
             case Scalar(name, _, _) => Doc.text(s"scalar $name")
             case Interface(name, _, fields) =>
               val fieldsDoc = Doc
