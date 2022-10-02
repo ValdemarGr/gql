@@ -54,7 +54,10 @@ object PreparedQuery {
 
   final case class PreparedOption[F[_], A](of: Prepared[F, A]) extends Prepared[F, A]
 
-  final case class PreparedLeaf[F[_], A](name: String, encode: A => Json) extends Prepared[F, A]
+  final case class PreparedLeaf[F[_], A](
+      name: String,
+      encode: A => Json
+  ) extends Prepared[F, A]
 
   final case class PositionalError(position: PrepCursor, caret: List[Caret], message: String) {
     lazy val asGraphQL: JsonObject = {
@@ -95,8 +98,7 @@ object PreparedQuery {
           case gql.Value.ArrayValue(v) => v.traverse(decodeInput(inner, _)).asInstanceOf[Either[String, A]]
           case _                       => Left(s"expected array type, get ${value.name}")
         }
-      case ast.Scalar(_, codec) =>
-        codec.decodeJson(value.asJson).leftMap(_.show)
+      case ast.Scalar(_, _, dec) => dec(value)
       case e @ ast.Enum(name, mappings) =>
         def decodeString(s: String): Either[String, A] =
           e.m.lookup(s) match {
@@ -152,13 +154,13 @@ object PreparedQuery {
     case Union(name, _)        => name
     case Interface(name, _, _) => name
     case Type(name, _)         => name
-    case Scalar(name, _)       => name
+    case Scalar(name, _, _)    => name
     case OutOpt(of)            => underlyingOutputTypename(of)
     case OutArr(of)            => underlyingOutputTypename(of)
   }
 
   def friendlyName[G[_], A](ot: Out[G, A]): String = ot match {
-    case Scalar(name, _)       => name
+    case Scalar(name, _, _)    => name
     case Enum(name, _)         => name
     case Type(name, _)         => name
     case Union(name, _)        => name
@@ -251,7 +253,7 @@ object PreparedQuery {
           val x = allPrisms.collectFirstSome { case (p, name) => p(input).as(name) }
           G.pure(x.toRightIor("typename could not be determined, this is an implementation error"))
         },
-        Eval.now(Scalar("String", Codec.from(Decoder.decodeString, Encoder.encodeString)))
+        Eval.now(gql.ast.stringScalar)
       )
 
     val schemaMap = ol.fieldMap + ("__typename" -> syntheticTypename)
@@ -354,7 +356,7 @@ object PreparedQuery {
           case (e: Enum[G, Any], None) =>
             F.pure(PreparedLeaf(e.name, x => Json.fromString(e.revm(x))))
           case (s: Scalar[G, Any], None) =>
-            F.pure(PreparedLeaf(s.name, (s.codec: Encoder[Any]).apply))
+            F.pure(PreparedLeaf(s.name, x => s.encoder(x).asJson))
           case (o, Some(_)) => raise(s"type ${friendlyName[G, Any](o)} cannot have selections", Some(selCaret))
           case (o, None)    => raise(s"object like type ${friendlyName[G, Any](o)} must have a selection", Some(selCaret))
         }

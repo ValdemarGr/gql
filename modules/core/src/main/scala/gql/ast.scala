@@ -97,9 +97,12 @@ object ast extends AstImplicits.Implicits {
       )
   }
 
-  final case class Scalar[F[_], A](name: String, codec: Codec[A]) extends OutToplevel[F, A] with InLeaf[A] with InToplevel[A] {
+  final case class Scalar[F[_], A](name: String, encoder: A => Value, decoder: Value => Either[String, A])
+      extends OutToplevel[F, A]
+      with InLeaf[A]
+      with InToplevel[A] {
     override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Scalar[G, A] =
-      Scalar(name, codec)
+      Scalar(name, encoder, decoder)
   }
 
   final case class Enum[F[_], A](name: String, mappings: NonEmptyList[(String, A)])
@@ -178,7 +181,7 @@ object ast extends AstImplicits.Implicits {
     def unapply[A](p: In[A]): Option[In[A]] =
       p.asInstanceOf[In[Seq[A]]] match {
         case x: InArr[A, Seq] => Some(x.of.asInstanceOf[In[A]])
-        case _           => None
+        case _                => None
       }
   }
 
@@ -192,12 +195,13 @@ object ast extends AstImplicits.Implicits {
   // }
 
   final case class ID[A](value: A) extends AnyVal
-  implicit def idTpe[F[_], A](implicit s: Scalar[F, A]): In[ID[A]] =
-    Scalar("ID", s.codec.imap(ID(_))(_.value))
+  implicit def idTpe[F[_], A](implicit s: Scalar[F, A]): In[ID[A]] = {
+    Scalar("ID", x => s.encoder(x.value), v => s.decoder(v).map(ID(_)))
+  }
 
   object Scalar {
     def fromCirce[F[_], A](name: String)(implicit enc: Encoder[A], dec: Decoder[A]): Scalar[F, A] =
-      Scalar(name, Codec.from(dec, enc))
+      Scalar(name, a => Value.JsonValue(enc(a)), value => dec.decodeJson(value.asJson).leftMap(_.show))
   }
 }
 

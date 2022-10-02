@@ -22,6 +22,7 @@ lazy val sharedSettings = Seq(
     "org.tpolecat" %% "sourcepos" % "1.0.1",
     /* "ch.qos.logback" % "logback-classic" % "1.2.11", */
     "org.typelevel" %% "log4cats-core" % "2.4.0",
+    "org.typelevel" %% "paiges-core" % "0.4.2",
     "org.typelevel" %% "log4cats-slf4j" % "2.4.0",
     "org.sangria-graphql" %% "sangria" % "3.2.0",
   ),

@@ -7,6 +7,7 @@ import cats.mtl._
 import cats.data._
 import gql.ast._
 import gql.parser.QueryParser
+import org.typelevel.paiges.Doc
 
 final case class SchemaShape[F[_], Q, M, S](
     query: Option[Type[F, Q]] = None,
@@ -209,8 +210,8 @@ object SchemaShape {
           useInputEdge(t) {
             validateTypeName[G](name) *> validateArg[G](fields)
           }
-        case Enum(name, _)     => validateTypeName[G](name)
-        case Scalar(name, dec) => validateTypeName[G](name)
+        case Enum(name, _)      => validateTypeName[G](name)
+        case Scalar(name, _, _) => validateTypeName[G](name)
       }
     }
 
@@ -251,8 +252,8 @@ object SchemaShape {
               allUnique[G]("duplicate interface instance", ols.map(_.value.name)) >>
                 ols.traverse_(x => validateOutput[G](x.value)) >>
                 validateFields[G](fields)
-            case Enum(name, _)   => validateTypeName[G](name)
-            case Scalar(name, _) => validateTypeName[G](name)
+            case Enum(name, _)      => validateTypeName[G](name)
+            case Scalar(name, _, _) => validateTypeName[G](name)
           }
         }
       }
@@ -273,53 +274,93 @@ object SchemaShape {
   }
 
   def render[F[_]](shape: SchemaShape[F, _, _, _]) = {
-    // lets the caller pick the implementation
-    def getInputName_(in: In[_]): (String, String) =
+    // optional is a flag we can consume on the next step
+    def getInputName(in: In[_], optional: Boolean = false): String =
       in match {
-        case t: Toplevel[_] => (t.name, t.name + "!")
+        case t: Toplevel[_] => if (optional) t.name else t.name + "!"
         case InArr(of) =>
-          val (_, r) = getInputName_(of)
-          val out = s"[$r]"
-          (out, out + "!")
-        case InOpt(of) =>
-          val (o, _) = getInputName_(of)
-          (o, o)
+          val base = s"[${getInputName(of, optional = false)}]"
+          if (optional) base else base + "!"
+        case InOpt(of) => getInputName(of, optional = true)
       }
-    def getInputName(in: In[_]): String =
-      getInputName_(in)._2
+
+    def getInputNameDoc(in: In[_], optional: Boolean = false): Doc =
+      in match {
+        case t: Toplevel[_] => Doc.text(if (optional) t.name else t.name + "!")
+        case InArr(of) =>
+          lazy val d = getInputNameDoc(of, optional = false)
+          d.bracketBy(Doc.char('['), Doc.char(']')) + (if (optional) Doc.empty else Doc.char('!'))
+        case InOpt(of) => getInputNameDoc(of, optional = true)
+      }
 
     def renderDefault(default: DefaultValue[_]): String = {
       import DefaultValue._
-      default match {
-        case Arr(values)       => "[" + values.map(renderDefault).mkString(", ") + "]"
-        case DefaultValue.Null => "null"
-        case Primitive(value, in) =>
-          in match {
-            case e @ Enum(_, _)   => e.revm(value)
-            case Scalar(_, codec) => codec.apply(value).noSpaces
-          }
-        case Obj(fields) => s"{ ${fields.map { case (k, v) => s"$k: ${renderDefault(v)}" }.mkString_("\n")} }"
-      }
+      val str =
+        default match {
+          case Arr(values) =>
+            "[\n" + values.map(renderDefault).mkString(",\n") + "\n]"
+          case DefaultValue.Null => "null"
+          case Primitive(value, in) =>
+            in match {
+              case e @ Enum(_, _)              => e.revm(value)
+              case Scalar(_, encoder, decoder) => encoder(value).toString
+            }
+          case Obj(fields) =>
+            s"{\n" + fields.map { case (k, v) => s"$k: ${renderDefault(v)}" }.mkString_("\n") + "\n}"
+        }
+      str.split('\n').map(line => s"  $line").mkString("\n")
     }
+
+    import io.circe._
+    def renderJsonDoc(j: Json): Doc = {
+      j.fold(
+        jsonNull = Doc.text("null"),
+        jsonBoolean = b => Doc.text(b.toString()),
+        jsonNumber = n => Doc.text(n.toString()),
+        jsonString = str => Doc.text(s""""$str""""),
+        jsonArray = xs => Doc.intercalate(Doc.comma + Doc.lineOrSpace, xs.map(renderJsonDoc)).bracketBy(Doc.char('['), Doc.char(']')),
+        jsonObject = jo =>
+          Doc
+            .intercalate(
+              Doc.comma + Doc.lineOrSpace,
+              jo.toList.map { case (k, v) =>
+                Doc.text(s""""$k"""") + Doc.char(':') + Doc.space + renderJsonDoc(v)
+              }
+            )
+            .bracketBy(Doc.char('{'), Doc.char('}'))
+      )
+    }
+
+    // def renderDefaultDoc(default: DefaultValue[_]): Doc = {
+    //   import DefaultValue._
+    //   default match {
+    //     case Arr(values) =>
+    //       Doc.intercalate(Doc.comma + Doc.lineOrSpace, values.map(renderDefaultDoc)).bracketBy(Doc.char('['), Doc.char(']'))
+    //     case DefaultValue.Null => Doc.text("null")
+    //     case Primitive(value, in) =>
+    //       in match {
+    //         case e @ Enum(_, _)   => Doc.text(e.revm(value))
+    //         case Scalar(_, codec) =>
+    //           Doc.text(codec.apply(value).spaces2)
+    //       }
+    //     case Obj(fields) =>
+    //       s"{\n" + fields.map { case (k, v) => s"$k: ${renderDefault(v)}" }.mkString_("\n") + "\n}"
+    //   }
+    // }
 
     def renderArgValue(av: ArgValue[_]): String = {
       val o = av.defaultValue.map(dv => s" = ${renderDefault(dv)}}").mkString
       s"${av.name}: ${getInputName(av.input.value)}$o"
     }
 
-    def renderOutput_[G[_]](o: Out[G, _]): (String, String) =
+    def renderOutput[G[_]](o: Out[G, _], optional: Boolean = false): String =
       o match {
-        case ot: OutToplevel[G, _] => (ot.name, ot.name + "!")
+        case ot: OutToplevel[G, _] => if (optional) ot.name else ot.name + "!"
         case OutArr(of) =>
-          val (_, r) = renderOutput_(of)
-          val out = s"[$r]"
-          (out, out + "!")
-        case OutOpt(of) =>
-          val (o, _) = renderOutput_(of)
-          (o, o)
+          val base = s"[${renderOutput(of, optional = false)}]"
+          if (optional) base else base + "!"
+        case OutOpt(of) => renderOutput(of, optional = true)
       }
-    def renderOutput[G[_]](o: Out[G, _]): String =
-      renderOutput_(o)._2
 
     def renderField[G[_]](name: String, field: Field[G, _, _, _]): String = {
       val args = NonEmptyChain
@@ -348,7 +389,7 @@ object SchemaShape {
               ${fields.nec.map { av => s"|  ${renderArgValue(av)}" }.mkString_("\n")}
             |}
             """.stripMargin
-          case Scalar(name, _) => s"\nscalar $name\n"
+          case Scalar(name, _, _) => s"\nscalar $name\n"
           case Interface(name, _, fields) =>
             s"""
             |interface $name {
