@@ -298,7 +298,7 @@ object SchemaShape {
             case e @ Enum(_, _)   => e.revm(value)
             case Scalar(_, codec) => codec.apply(value).noSpaces
           }
-        case Obj(fields) => fields.map { case (k, v) => s"$k: ${renderDefault(v)}" }.mkString_("\n")
+        case Obj(fields) => s"{ ${fields.map { case (k, v) => s"$k: ${renderDefault(v)}" }.mkString_("\n")} }"
       }
     }
 

@@ -335,7 +335,21 @@ query withNestedFragments {
                 .map(_.copy(a = if (scala.util.Random.nextDouble() > 0.5) "Jane" else "John"))
                 .repeat
                 .metered((if (k.a == "John") 10 else 50).millis)
-            })
+            }),
+          "testdefault" -> dsl.pure(
+            dsl.arg[InputData](
+              "input",
+              dsl.default.obj(
+                "value" -> dsl.default(422),
+                "val2" -> dsl.default("test"),
+                "ar" -> dsl.default.arr(Seq(
+                  dsl.default.obj(
+                    "v3" -> dsl.default("@@")
+                  )
+                ))
+              )
+            )
+          ){ case (_, _) => ""}
             // "test" -> field(stream(k => fs2.Stream(0))),
             // "test" -> field(arg[Int]("num"))(stream { case (k, a) => fs2.Stream(0) }),
             // "test" -> field(streamFallible(k => fs2.Stream(NonEmptyChain("errrrr").leftIor[String]))),
