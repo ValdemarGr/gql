@@ -19,6 +19,8 @@ final case class SchemaShape[F[_], Q, M, S](
   lazy val discover = SchemaShape.discover[F](this)
 
   lazy val validate = SchemaShape.validate[F](this)
+
+  lazy val render = SchemaShape.render[F](this)
 }
 
 object SchemaShape {
@@ -55,7 +57,7 @@ object SchemaShape {
             def handleFields(o: Selectable[F, _]): G[Unit] =
               o.fieldsList.traverse_ { case (_, x) =>
                 goOutput[G](x.output.value) >>
-                  x.args.entries.traverse_(x => goInput[G](x.input.asInstanceOf[In[Any]]))
+                  x.args.entries.traverse_(x => goInput[G](x.input.value.asInstanceOf[In[Any]]))
               }
 
             t match {
@@ -90,7 +92,7 @@ object SchemaShape {
           inputNotSeen(t) {
             t match {
               case Input(_, fields) =>
-                fields.entries.traverse_(x => goInput[G](x.input.asInstanceOf[In[Any]]))
+                fields.entries.traverse_(x => goInput[G](x.input.value.asInstanceOf[In[Any]]))
               case _ => G.unit
             }
           }
@@ -272,17 +274,19 @@ object SchemaShape {
 
   def render[F[_]](shape: SchemaShape[F, _, _, _]) = {
     // lets the caller pick the implementation
-    def getInputName(in: In[_]): (String, String) =
+    def getInputName_(in: In[_]): (String, String) =
       in match {
         case t: Toplevel[_] => (t.name, t.name + "!")
         case InArr(of) =>
-          val (_, r) = getInputName(of)
+          val (_, r) = getInputName_(of)
           val out = s"[$r]"
           (out, out + "!")
         case InOpt(of) =>
-          val (o, _) = getInputName(of)
+          val (o, _) = getInputName_(of)
           (o, o)
       }
+    def getInputName(in: In[_]): String =
+      getInputName_(in)._2
 
     def renderDefault(default: DefaultValue[_]): String = {
       import DefaultValue._
@@ -299,21 +303,23 @@ object SchemaShape {
     }
 
     def renderArgValue(av: ArgValue[_]): String = {
-      val o = av.defaultValue.map(dv => s" = ${renderDefault(dv)}}")
+      val o = av.defaultValue.map(dv => s" = ${renderDefault(dv)}}").mkString
       s"${av.name}: ${getInputName(av.input.value)}$o"
     }
 
-    def renderOutput[G[_]](o: Out[G, _]): (String, String) =
+    def renderOutput_[G[_]](o: Out[G, _]): (String, String) =
       o match {
         case ot: OutToplevel[G, _] => (ot.name, ot.name + "!")
         case OutArr(of) =>
-          val (_, r) = renderOutput(of)
+          val (_, r) = renderOutput_(of)
           val out = s"[$r]"
           (out, out + "!")
         case OutOpt(of) =>
-          val (o, _) = renderOutput(of)
+          val (o, _) = renderOutput_(of)
           (o, o)
       }
+    def renderOutput[G[_]](o: Out[G, _]): String =
+      renderOutput_(o)._2
 
     def renderField[G[_]](name: String, field: Field[G, _, _, _]): String = {
       val args = NonEmptyChain
@@ -333,13 +339,13 @@ object SchemaShape {
           case Enum(name, mappings) =>
             s"""
             |enum $name {
-              ${mappings.map { case (str, _) => s"| $str" }.mkString_("\n")}
+              ${mappings.map { case (str, _) => s"|  $str" }.mkString_("\n")}
             |}
             """.stripMargin
           case Input(name, fields) =>
             s"""
             |input $name {
-              ${fields.nec.map { av => s"| ${renderArgValue(av)}" }.mkString_("\n")}
+              ${fields.nec.map { av => s"|  ${renderArgValue(av)}" }.mkString_("\n")}
             |}
             """.stripMargin
           case Scalar(name, _) => s"\nscalar $name\n"
@@ -347,7 +353,7 @@ object SchemaShape {
             s"""
             |interface $name {
               ${fields
-              .map { case (name, field) => s"| ${renderField(name, field)}" }
+              .map { case (name, field) => s"|  ${renderField(name, field)}" }
               .mkString_("\n")}
             |}
             """.stripMargin
@@ -363,7 +369,7 @@ object SchemaShape {
             s"""
             |type $name $interfaces {
               ${fields
-              .map { case (name, field) => s"| ${renderField(name, field)}" }
+              .map { case (name, field) => s"|  ${renderField(name, field)}" }
               .mkString_("\n")}
             |}
             """.stripMargin
@@ -373,5 +379,6 @@ object SchemaShape {
             """.stripMargin
         }
       }
+      .mkString("\n")
   }
 }
