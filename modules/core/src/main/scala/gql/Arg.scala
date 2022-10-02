@@ -49,21 +49,6 @@ object Arg {
 sealed trait DefaultValue[+A]
 object DefaultValue {
   final case class Primitive[A](value: A, in: InLeaf[A]) extends DefaultValue[A] //{
-  // type T
-  // def value: T
-  // def in: InLeaf[T]
-  // }
-  // object Primitive {
-  //   def apply[A](value: A, in: InLeaf[A]): Primitive = {
-  //     val value0 = value
-  //     val in0 = in
-  //     new Primitive {
-  //       type T = A
-  //       def value: T = value0
-  //       def in: InLeaf[T] = in0
-  //     }
-  //   }
-  // }
   final case class Arr[A](values: Seq[DefaultValue[A]]) extends DefaultValue[Seq[A]]
   final case class Obj(fields: NonEmptyChain[(String, DefaultValue[_])]) extends DefaultValue[Nothing]
   case object Null extends DefaultValue[Nothing]

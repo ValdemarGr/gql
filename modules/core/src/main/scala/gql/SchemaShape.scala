@@ -289,7 +289,7 @@ object SchemaShape {
         case t: Toplevel[_] => Doc.text(if (optional) t.name else t.name + "!")
         case InArr(of) =>
           lazy val d = getInputNameDoc(of, optional = false)
-          d.bracketBy(Doc.char('['), Doc.char(']')) + (if (optional) Doc.empty else Doc.char('!'))
+          d.tightBracketBy(Doc.char('['), Doc.char(']')) + (if (optional) Doc.empty else Doc.char('!'))
         case InOpt(of) => getInputNameDoc(of, optional = true)
       }
 
@@ -312,41 +312,52 @@ object SchemaShape {
     }
 
     import io.circe._
-    def renderJsonDoc(j: Json): Doc = {
-      j.fold(
-        jsonNull = Doc.text("null"),
-        jsonBoolean = b => Doc.text(b.toString()),
-        jsonNumber = n => Doc.text(n.toString()),
-        jsonString = str => Doc.text(s""""$str""""),
-        jsonArray = xs => Doc.intercalate(Doc.comma + Doc.lineOrSpace, xs.map(renderJsonDoc)).bracketBy(Doc.char('['), Doc.char(']')),
-        jsonObject = jo =>
+    def renderValueDoc(v: Value): Doc = {
+      import Value._
+      v match {
+        case IntValue(v)     => Doc.text(v.toString)
+        case StringValue(v)  => Doc.text(s""""$v"""")
+        case FloatValue(v)   => Doc.text(v.toString)
+        case NullValue       => Doc.text("null")
+        case BooleanValue(v) => Doc.text(v.toString)
+        case ArrayValue(v) =>
+          Doc.intercalate(Doc.comma + Doc.lineOrSpace, v.map(renderValueDoc)).bracketBy(Doc.char('['), Doc.char(']'))
+        case ObjectValue(fields) =>
           Doc
             .intercalate(
               Doc.comma + Doc.lineOrSpace,
-              jo.toList.map { case (k, v) =>
-                Doc.text(s""""$k"""") + Doc.char(':') + Doc.space + renderJsonDoc(v)
-              }
+              fields.map { case (k, v) => Doc.text(k) + Doc.text(": ") + renderValueDoc(v) }
             )
             .bracketBy(Doc.char('{'), Doc.char('}'))
-      )
+        case EnumValue(v) => Doc.text(v)
+      }
     }
 
-    // def renderDefaultDoc(default: DefaultValue[_]): Doc = {
-    //   import DefaultValue._
-    //   default match {
-    //     case Arr(values) =>
-    //       Doc.intercalate(Doc.comma + Doc.lineOrSpace, values.map(renderDefaultDoc)).bracketBy(Doc.char('['), Doc.char(']'))
-    //     case DefaultValue.Null => Doc.text("null")
-    //     case Primitive(value, in) =>
-    //       in match {
-    //         case e @ Enum(_, _)   => Doc.text(e.revm(value))
-    //         case Scalar(_, codec) =>
-    //           Doc.text(codec.apply(value).spaces2)
-    //       }
-    //     case Obj(fields) =>
-    //       s"{\n" + fields.map { case (k, v) => s"$k: ${renderDefault(v)}" }.mkString_("\n") + "\n}"
-    //   }
-    // }
+    def renderDefaultDoc(default: DefaultValue[_]): Doc = {
+      import DefaultValue._
+      default match {
+        case Arr(values) =>
+          Doc.intercalate(Doc.comma + Doc.lineOrSpace, values.map(renderDefaultDoc)).tightBracketBy(Doc.char('['), Doc.char(']'))
+        case DefaultValue.Null => Doc.text("null")
+        case Primitive(value, in) =>
+          in match {
+            case e @ Enum(_, _)    => Doc.text(e.revm(value))
+            case Scalar(_, enc, _) => renderValueDoc(enc(value))
+          }
+        case Obj(fields) =>
+          Doc
+            .intercalate(
+              Doc.comma + Doc.lineOrSpace,
+              fields.toList.map { case (k, v) => Doc.text(k) + Doc.text(": ") + renderDefaultDoc(v) }
+            )
+            .bracketBy(Doc.char('{'), Doc.char('}'))
+      }
+    }
+
+    def renderArgValueDoc(av: ArgValue[_]): Doc = {
+      val o = av.defaultValue.map(dv => Doc.text(" = ") + renderDefaultDoc(dv)).getOrElse(Doc.empty)
+      Doc.text(av.name) + Doc.text(": ") + getInputNameDoc(av.input.value) + o
+    }
 
     def renderArgValue(av: ArgValue[_]): String = {
       val o = av.defaultValue.map(dv => s" = ${renderDefault(dv)}}").mkString
@@ -362,6 +373,15 @@ object SchemaShape {
         case OutOpt(of) => renderOutput(of, optional = true)
       }
 
+    def renderOutputDoc[G[_]](o: Out[G, _], optional: Boolean = false): Doc =
+      o match {
+        case ot: OutToplevel[G, _] => Doc.text(if (optional) ot.name else ot.name + "!")
+        case OutArr(of) =>
+          lazy val d = renderOutputDoc(of, optional = false)
+          d.tightBracketBy(Doc.char('['), Doc.char(']')) + (if (optional) Doc.empty else Doc.char('!'))
+        case OutOpt(of) => renderOutputDoc(of, optional = true)
+      }
+
     def renderField[G[_]](name: String, field: Field[G, _, _, _]): String = {
       val args = NonEmptyChain
         .fromChain(field.args.entries)
@@ -370,56 +390,65 @@ object SchemaShape {
       s"$name$args: ${renderOutput(field.output.value)}"
     }
 
+    def renderFieldDoc[G[_]](name: String, field: Field[G, _, _, _]): Doc = {
+      val args = NonEmptyChain
+        .fromChain(field.args.entries)
+        .map(nec =>
+          Doc.intercalate(Doc.comma + Doc.lineOrSpace, nec.toList.map(renderArgValueDoc)).tightBracketBy(Doc.char('('), Doc.char(')'))
+        )
+        .getOrElse(Doc.empty)
+      Doc.text(name) + args + Doc.text(": ") + renderOutputDoc(field.output.value)
+    }
+
     val discovery: DiscoveryState[F] = shape.discover
 
     val all = discovery.inputs ++ discovery.outputs
 
-    all.values.toList
-      .map { tl =>
-        tl match {
-          case Enum(name, mappings) =>
-            s"""
-            |enum $name {
-              ${mappings.map { case (str, _) => s"|  $str" }.mkString_("\n")}
-            |}
-            """.stripMargin
-          case Input(name, fields) =>
-            s"""
-            |input $name {
-              ${fields.nec.map { av => s"|  ${renderArgValue(av)}" }.mkString_("\n")}
-            |}
-            """.stripMargin
-          case Scalar(name, _, _) => s"\nscalar $name\n"
-          case Interface(name, _, fields) =>
-            s"""
-            |interface $name {
-              ${fields
-              .map { case (name, field) => s"|  ${renderField(name, field)}" }
-              .mkString_("\n")}
-            |}
-            """.stripMargin
-          case Type(name, fields) =>
-            val interfaces =
-              discovery.interfaceImplementations
-                .get(name)
-                .flatMap(_.toList.toNel)
-                .map { nel =>
-                  s" implements ${nel.mkString_(" & ")}"
-                }
-                .mkString
-            s"""
-            |type $name $interfaces {
-              ${fields
-              .map { case (name, field) => s"|  ${renderField(name, field)}" }
-              .mkString_("\n")}
-            |}
-            """.stripMargin
-          case Union(name, types) =>
-            s"""
-            |union $name = ${types.map(_.ol.value.name).mkString_(" | ")}
-            """.stripMargin
+    val docs =
+      all.values.toList
+        .map { tl =>
+          tl match {
+            case Enum(name, mappings) =>
+              Doc.text(s"enum $name {") + Doc.hardLine +
+                Doc.intercalate(Doc.hardLine, mappings.toList.map { case (k, _) => Doc.text(k) }) +
+                Doc.hardLine + Doc.text("}")
+            case Input(name, fields) =>
+              Doc.text(s"input $name") + (Doc.text(" {") + Doc.hardLine + Doc
+                .intercalate(Doc.hardLine, fields.nec.toList.map(renderArgValueDoc))
+                .indent(2) + Doc.hardLine + Doc.text("}")).grouped
+            case Scalar(name, _, _) => Doc.text(s"scalar $name")
+            case Interface(name, _, fields) =>
+              (Doc.text(s"interface $name") + Doc.text(" {") + Doc.hardLine + Doc
+                .intercalate(
+                  Doc.hardLine,
+                  fields.toList
+                    .map { case (name, field) => renderFieldDoc(name, field) }
+                )
+                .indent(2) + Doc.hardLine + Doc.text("}")).grouped
+            case Type(name, fields) =>
+              val interfaces =
+                discovery.interfaceImplementations
+                  .get(name)
+                  .flatMap(_.toList.toNel)
+                  .map { nel => Doc.text(" implements ") + Doc.intercalate(Doc.text(" & "), nel.toList.map(Doc.text)) }
+                  .getOrElse(Doc.empty)
+
+              (Doc.text(s"type $name") + interfaces + Doc.text(" {") + Doc.hardLine + Doc
+                .intercalate(
+                  Doc.hardLine,
+                  fields.toList
+                    .map { case (name, field) => renderFieldDoc(name, field) }
+                )
+                .indent(2) + Doc.hardLine + Doc.text("}")).grouped
+            case Union(name, types) =>
+              val names = types.toList.map(x => Doc.text(x.ol.value.name))
+              val xs =
+                if (names.size <= 3) Doc.intercalate(Doc.text(" | "), names)
+                else Doc.hardLine + Doc.intercalate(Doc.hardLine, names.map(d => Doc.text("| ").indent(2) + d))
+              (Doc.text(s"union $name = ") + xs)
+          }
         }
-      }
-      .mkString("\n")
+
+    Doc.intercalate(Doc.hardLine + Doc.hardLine, docs).render(80)
   }
 }
