@@ -359,12 +359,36 @@ query withNestedFragments {
                 )),
                 "ar4" -> dsl.default.arr(Seq(
                   dsl.default.obj(
-                    "v43" -> dsl.default("@@")
-                  )
+                    "v43" -> dsl.default("@@"),
+                    "v44" -> dsl.default("@@"),
+                    "v45" -> dsl.default("@@"),
+                    "v46" -> dsl.default("@@"),
+                    "v54" -> dsl.default("@@"),
+                    "v55" -> dsl.default("@@"),
+                    "v56" -> dsl.default("@@"),
+                    "v57" -> dsl.default("@@"),
+                  ),
+                  dsl.default.obj(
+                    "v43" -> dsl.default("@@"),
+                    "v44" -> dsl.default("@@"),
+                    "v45" -> dsl.default("@@"),
+                    "v46" -> dsl.default("@@"),
+                    "v54" -> dsl.default("@@"),
+                    "v55" -> dsl.default("@@"),
+                    "v56" -> dsl.default("@@"),
+                    "v57" -> dsl.default("@@"),
+                  ),
                 )),
                 "ar5" -> dsl.default.arr(Seq(
                   dsl.default.obj(
-                    "v53" -> dsl.default("@@")
+                    "v43" -> dsl.default("@@"),
+                    "v44" -> dsl.default("@@"),
+                    "v45" -> dsl.default("@@"),
+                    "v46" -> dsl.default("@@"),
+                    "v54" -> dsl.default("@@"),
+                    "v55" -> dsl.default("@@"),
+                    "v56" -> dsl.default("@@"),
+                    "v57" -> dsl.default("@@"),
                   )
                 )),
               )
