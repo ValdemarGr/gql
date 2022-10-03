@@ -353,7 +353,7 @@ object Interpreter {
                 selection.fields,
                 in.flatMap(x => Chain.fromOption(specify(x.value)).map(y => x.succeed(y, _.fragment(id, typename))))
               )
-            case df @ PreparedDataField(id, name, _, _, _, _, _) => runDataField(df, in)
+            case df @ PreparedDataField(id, name, _, _, _, _, _, _) => runDataField(df, in)
           }
 
         def startNext(s: Prepared[F, Any], in: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] = W.defer {
@@ -538,7 +538,7 @@ object Interpreter {
                 _reconstructSelection(selection.fields, m2)
               }
               .getOrElse(JsonObject.empty)
-          case df @ PreparedDataField(id, name, _, selection, _, alias, _) =>
+          case df @ PreparedDataField(id, name, _, selection, _, alias, _, _) =>
             JsonObject(
               alias.getOrElse(name) -> reconstructField(selection, m.get(Some(GraphArc.Field(id, name))).toList.flatten)
             )

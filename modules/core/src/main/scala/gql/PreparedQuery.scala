@@ -20,16 +20,24 @@ object PreparedQuery {
   sealed trait PreparedField[F[_], A]
 
   final case class PreparedDataField[F[_], I, T](
+      // Maybe dead
       id: Int,
+      // Maybe dead
       name: String,
+      // Maybe dead
       resolve: Resolver[F, I, T],
+      // Maybe dead
       selection: Prepared[F, T],
+      // Maybe dead
       typename: String,
       alias: Option[String],
-      parentTypename: String
+      // Maybe dead
+      parentTypename: String,
+      cont: PreparedCont[F]
   ) extends PreparedField[F, I]
 
   final case class PreparedFragField[F[_], A](
+      // Maybe dead
       id: Int,
       typename: String,
       specify: Any => Option[A],
@@ -113,8 +121,6 @@ object PreparedQuery {
         else decodeInput(inner, value).map(Some(_)).asInstanceOf[Either[String, A]]
       case ast.InArr(inner) =>
         value match {
-          // case gql.Value.JsonValue(ja) if ja.isArray =>
-          //   ja.asArray.get.traverse(j => decodeInput(inner, Value.JsonValue(j))).asInstanceOf[Either[String, A]]
           case gql.Value.ArrayValue(v) => v.traverse(decodeInput(inner, _)).asInstanceOf[Either[String, A]]
           case _                       => Left(s"expected array type, get ${value.name}")
         }
@@ -127,30 +133,12 @@ object PreparedQuery {
           }
 
         value match {
-          // case gql.Value.JsonValue(v) if v.isString => decodeString(v.asString.get)
           case gql.Value.EnumValue(s) => decodeString(s)
           case _                      => Left(s"expected enum $name, got ${value.name}")
         }
       // TODO unify this and arg decoding
-      // Look into free applicatives
       case ast.Input(name, fields) =>
         value match {
-          // case gql.Value.JsonValue(jo) if jo.isObject =>
-          //   val m = jo.asObject.get.toMap
-
-          //   fields.entries
-          //     .traverse { a =>
-          //       val o =
-          //         m
-          //           .get(a.name)
-          //           .map(x => decodeInput(a.input.value, gql.Value.JsonValue(x))) match {
-          //           case Some(outcome) => outcome
-          //           case None          => a.default.toRight(s"missing field ${a.name} in input object $name")
-          //         }
-          //       o.tupleLeft(a.name)
-          //     }
-          //     .map(_.toList.toMap)
-          //     .map(fields.decode)
           case gql.Value.ObjectValue(xs) =>
             fields.entries
               .traverse { a =>
@@ -383,11 +371,14 @@ object PreparedQuery {
 
       val prepF: F[Prepared[G, Any]] = typePrep(tpe)
 
-      prepF.flatMap(p =>
-        nextId[F].map { id =>
-          PreparedDataField(id, gqlField.name, resolve, p, tn, gqlField.alias, currentTypename)
+      prepF.flatMap { p =>
+        nextId[F].flatMap { id =>
+          flattenResolvers[F, G](s"${currentTypename}_${gqlField.name}", resolve).map { case (edges, _) =>
+            val pc = PreparedCont(edges, p)
+            PreparedDataField(id, gqlField.name, resolve, p, tn, gqlField.alias, currentTypename, pc)
+          }
         }
-      )
+      }
     }
   }
 

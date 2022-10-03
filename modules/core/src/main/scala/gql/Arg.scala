@@ -12,12 +12,6 @@ trait Arg[A] {
 }
 
 object Arg {
-  // def encLeaf[A](value: A, leaf: InLeaf[A]) = leaf match {
-  //   case e@Enum(_, _) => Value.EnumValue(e.revm(value))
-  //   case Scalar(_, codec) =>
-  //     (codec: io.circe.Encoder[A]).apply(value)
-  // }
-
   def onePrimitive[A](name: String, default: Option[A] = None)(implicit input: => InLeaf[A]): NonEmptyArg[A] =
     NonEmptyArg[A](
       NonEmptyChain.one(ArgValue(name, Eval.later(input), default, default.map(DefaultValue.Primitive(_, input)))),

@@ -63,7 +63,7 @@ object Planner {
       stats: Statistics[F]
   ): F[NonEmptyList[Node]] = {
     prepared.flatTraverse {
-      case df @ PreparedDataField(id, name, resolve, selection, tn, _, _) =>
+      case df @ PreparedDataField(id, name, resolve, selection, tn, _, _, _) =>
         val batchName = resolve match {
           case br @ BatchResolver(_, _) => Some(makeBatchName(br.id))
           case _                        => None

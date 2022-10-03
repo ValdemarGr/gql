@@ -15,10 +15,6 @@ sealed trait Value {
  * shouldn't be allowed as an enum value.
  */
 object Value {
-  // final case class JsonValue(value: Json) extends Value {
-  //   override lazy val asJson = value
-  //   override def name: String = value.name
-  // }
   final case class IntValue(v: BigInt) extends Value {
     override lazy val asJson: Json = Json.fromBigInt(v)
     override def name: String = "Int"
