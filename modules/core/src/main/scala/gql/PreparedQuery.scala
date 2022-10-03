@@ -43,21 +43,24 @@ object PreparedQuery {
       fields: NonEmptyList[PreparedField[F, A]]
   )
 
+  final case class PreparedEdge[F[_]](
+      id: Int,
+      resolver: Resolver[F, Any, Any],
+      statisticsName: String
+  )
+
+  final case class PreparedCont[F[_]](
+      edges: Chain[PreparedEdge[F]],
+      cont: Prepared[F, Any]
+  )
+
   final case class Selection[F[_], A](fields: NonEmptyList[PreparedField[F, A]]) extends Prepared[F, A]
 
   final case class PreparedList[F[_], A](of: Prepared[F, A]) extends Prepared[F, A]
 
-  // final case class PreparedList2[F[_]](
-  //     of: Prepared[F, Any],
-  //     resolver: Resolver[F, Any, Any]
-  // ) extends Prepared[F, Any]
-
   final case class PreparedOption[F[_], A](of: Prepared[F, A]) extends Prepared[F, A]
 
-  final case class PreparedLeaf[F[_], A](
-      name: String,
-      encode: A => Json
-  ) extends Prepared[F, A]
+  final case class PreparedLeaf[F[_], A](name: String, encode: A => Json) extends Prepared[F, A]
 
   final case class PositionalError(position: PrepCursor, caret: List[Caret], message: String) {
     lazy val asGraphQL: JsonObject = {
@@ -85,6 +88,23 @@ object PreparedQuery {
       cursor: PrepCursor
   )
 
+  def flattenResolvers[F[_]: Monad, G[_]](parentName: String, resolver: Resolver[G, Any, Any])(implicit
+      S: Stateful[F, Prep]
+  ): F[(Chain[PreparedEdge[G]], String)] =
+    resolver match {
+      case r @ BatchResolver(id, run) => nextId[F].map(nid => (Chain(PreparedEdge(nid, resolver, s"batch_$id")), parentName))
+      case r @ EffectResolver(_) =>
+        val thisName = s"${parentName}_effect"
+        nextId[F].map(nid => (Chain(PreparedEdge(nid, resolver, thisName)), thisName))
+      case r @ StreamResolver(_, _) =>
+        val thisName = s"${parentName}_stream"
+        nextId[F].map(nid => (Chain(PreparedEdge(nid, resolver, thisName)), thisName))
+      case r @ CompositionResolver(left, right) =>
+        flattenResolvers[F, G](parentName, left).flatMap { case (ys, newParentName) =>
+          flattenResolvers[F, G](newParentName, right).map { case (zs, outName) => (ys ++ zs, outName) }
+        }
+    }
+
   // TODO use validated
   def decodeInput[A](in: ast.In[A], value: Value): Either[String, A] =
     in match {
@@ -108,8 +128,8 @@ object PreparedQuery {
 
         value match {
           // case gql.Value.JsonValue(v) if v.isString => decodeString(v.asString.get)
-          case gql.Value.EnumValue(s)               => decodeString(s)
-          case _                                    => Left(s"expected enum $name, got ${value.name}")
+          case gql.Value.EnumValue(s) => decodeString(s)
+          case _                      => Left(s"expected enum $name, got ${value.name}")
         }
       // TODO unify this and arg decoding
       // Look into free applicatives

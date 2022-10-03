@@ -8,6 +8,9 @@ trait Resolver[F[_], -I, A] {
   def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Resolver[G, I, A]
 
   def contramap[B](g: B => I): Resolver[F, B, A]
+
+  def andThen[O2](next: Resolver[F, A, O2]): Resolver[F, I, O2] =
+    CompositionResolver(this.asInstanceOf[Resolver[F, I, Any]], next.asInstanceOf[Resolver[F, Any, O2]])
 }
 
 trait LeafResolver[F[_], I, A] extends Resolver[F, I, A] {
