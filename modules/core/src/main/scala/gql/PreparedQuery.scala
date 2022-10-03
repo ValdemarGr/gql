@@ -51,8 +51,10 @@ object PreparedQuery {
       fields: NonEmptyList[PreparedField[F, A]]
   )
 
+  final case class EdgeId(id: Int) extends AnyVal
+
   final case class PreparedEdge[F[_]](
-      id: Int,
+      id: EdgeId,
       resolver: Resolver[F, Any, Any],
       statisticsName: String
   )
@@ -100,13 +102,14 @@ object PreparedQuery {
       S: Stateful[F, Prep]
   ): F[(Chain[PreparedEdge[G]], String)] =
     resolver match {
-      case r @ BatchResolver(id, run) => nextId[F].map(nid => (Chain(PreparedEdge(nid, resolver, s"batch_$id")), parentName))
+      case r @ BatchResolver(id, run) =>
+        nextId[F].map(nid => (Chain(PreparedEdge(EdgeId(nid), resolver, s"batch_$id")), parentName))
       case r @ EffectResolver(_) =>
         val thisName = s"${parentName}_effect"
-        nextId[F].map(nid => (Chain(PreparedEdge(nid, resolver, thisName)), thisName))
+        nextId[F].map(nid => (Chain(PreparedEdge(EdgeId(nid), resolver, thisName)), thisName))
       case r @ StreamResolver(_, _) =>
         val thisName = s"${parentName}_stream"
-        nextId[F].map(nid => (Chain(PreparedEdge(nid, resolver, thisName)), thisName))
+        nextId[F].map(nid => (Chain(PreparedEdge(EdgeId(nid), resolver, thisName)), thisName))
       case r @ CompositionResolver(left, right) =>
         flattenResolvers[F, G](parentName, left).flatMap { case (ys, newParentName) =>
           flattenResolvers[F, G](newParentName, right).map { case (zs, outName) => (ys ++ zs, outName) }

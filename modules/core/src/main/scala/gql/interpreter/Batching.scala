@@ -12,7 +12,8 @@ final case class BatchExecutionState(remainingInputs: Set[Int], inputMap: Map[In
 final case class Batching[F[_]](
     nodeMap: Map[Int, Planner.Node],
     dataFieldMap: Map[Int, PreparedDataField[F, Any, Any]],
-    batches: List[NonEmptyList[Int]]
+    batches: List[NonEmptyList[Int]],
+    // edgeMap: Map[PreparedQuery.EdgeId, PreparedQuery.PreparedEdge[F]] = Map.empty
 ) {
   def batchExecutionState[F[_]](implicit F: Concurrent[F]): F[Map[Int, Ref[F, BatchExecutionState]]] =
     batches

@@ -420,7 +420,7 @@ object Interpreter {
 
                     val resolvedF: F[WriterT[F, Chain[EvalFailure], Chain[EvalNode[Json]]]] =
                       schemaState
-                        .batchers(b.batcher)(allKeys)
+                        .batchers(BatchResolver.ResolverKey(b.batcher))(allKeys)
                         .timed
                         .flatTap { case (dur, m) => submit(Planner.makeBatchName[F](b.batcher), dur, allKeys.size) }
                         .map { case (dur, resultLookup: Map[BatchKey, BatchValue]) =>

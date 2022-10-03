@@ -24,8 +24,8 @@ object Planner {
     lazy val flattened: NonEmptyList[Node] = {
       def go(xs: NonEmptyList[Node]): Eval[NonEmptyList[Node]] = Eval.defer {
         xs.flatTraverse {
-          case n @ Node(_, _, _, _, _, _, Nil)     => Eval.now(NonEmptyList.one(n))
-          case n @ Node(_, _, _, _, _, _, x :: xs) => go(NonEmptyList(x, xs)).map(ns => NonEmptyList.one(n).concatNel(ns))
+          case n @ Node(_, _, _, _, _, _, Nil, _)     => Eval.now(NonEmptyList.one(n))
+          case n @ Node(_, _, _, _, _, _, x :: xs, _) => go(NonEmptyList(x, xs)).map(ns => NonEmptyList.one(n).concatNel(ns))
         }
       }
 
@@ -40,7 +40,8 @@ object Planner {
       end: Double,
       cost: Double,
       elemCost: Double,
-      children: List[Node]
+      children: List[Node],
+      batcher: Option[BatchResolver.ResolverKey] = None
   ) {
     lazy val start = end - cost
   }

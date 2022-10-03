@@ -23,6 +23,12 @@ abstract case class BatchResolver[F[_], I, O](
 }
 
 object BatchResolver {
+  final case class ResolverKey(id: Int) extends AnyVal
+
+  object ResolverKey {
+    implicit val order: Order[ResolverKey] = Order.by(_.id)
+  }
+
   def apply[F[_], K, T](
       f: Set[K] => F[Map[K, T]]
   )(implicit F: Monad[F]): State[gql.SchemaState[F], BatchResolver[F, Set[K], Map[K, T]]] =
@@ -37,6 +43,6 @@ object BatchResolver {
           )
       ) {}
       val entry = f.asInstanceOf[Set[Any] => F[Map[Any, Any]]]
-      (s.copy(nextId = id + 1, batchers = s.batchers + (id -> entry)), r)
+      (s.copy(nextId = id + 1, batchers = s.batchers + (ResolverKey(id) -> entry)), r)
     }
 }
