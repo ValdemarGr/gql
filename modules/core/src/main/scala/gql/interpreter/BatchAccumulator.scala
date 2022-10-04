@@ -7,16 +7,21 @@ import gql.Planner
 import cats.data._
 import gql.SchemaState
 import gql.resolver.BatchResolver
+import gql.PreparedQuery
+import gql.Statistics
 
 trait BatchAccumulator[F[_]] {
   // Emits the whole result of the batch, so the calle must filter
-  def submit(id: Int, values: Chain[(CursorGroup, Set[BatchKey])]): F[Option[Map[BatchKey, BatchValue]]]
+  def submit(id: PreparedQuery.EdgeId, values: Chain[(CursorGroup, Set[BatchKey])]): F[Option[Map[BatchKey, BatchValue]]]
 
   def getErrors: F[List[EvalFailure.BatchResolution]]
 }
 
 object BatchAccumulator {
-  def apply[F[_]](schemaState: SchemaState[F], plan: Planner.NodeTree)(implicit F: Concurrent[F]): F[BatchAccumulator[F]] = {
+  def apply[F[_]](schemaState: SchemaState[F], plan: Planner.NodeTree)(implicit
+      F: Async[F],
+      stats: Statistics[F]
+  ): F[BatchAccumulator[F]] = {
     val flat = plan.flattened
 
     // Group similar ends
@@ -52,9 +57,9 @@ object BatchAccumulator {
         .map(_.toList.toMap)
         .map { accumLookup =>
           new BatchAccumulator[F] {
-            def submit(id: Int, values: InputType): F[Option[Map[BatchKey, BatchValue]]] = {
+            def submit(id: PreparedQuery.EdgeId, values: InputType): F[Option[Map[BatchKey, BatchValue]]] = {
               F.deferred[Option[Map[BatchKey, BatchValue]]].flatMap { ret =>
-                val (state, batchIds, batcherKey) = accumLookup(id)
+                val (state, batchIds, batcherKey) = accumLookup(id.id)
 
                 val resolver = schemaState.batchers(batcherKey)
 
@@ -64,13 +69,13 @@ object BatchAccumulator {
                   state.modify { m =>
                     // We are not the last submitter
                     if (m.size != (batchIds.size + 1)) {
-                      val m2 = m + (id -> ((values, complete)))
+                      val m2 = m + (id.id -> ((values, complete)))
                       (m2, None)
                     } else {
                       // Garbage collect
                       val m2 = m -- batchIds.toIterable
                       val allElems: Chain[(InputType, BatchPromise)] =
-                        batchIds.collect { case bid if bid != id => m(bid) } append (values, complete)
+                        batchIds.collect { case bid if bid != id.id => m(bid) } append (values, complete)
                       (m2, Some(allElems))
                     }
                   }
@@ -88,7 +93,7 @@ object BatchAccumulator {
 
                     val allKeysSet: Set[BatchKey] = Set.from(allKeys.iterator)
 
-                    resolver(allKeysSet).attempt
+                    resolver(allKeysSet).timed.attempt
                       .flatMap[Option[Map[BatchKey, BatchValue]]] {
                         case Left(err) =>
                           val allCursors: Chain[CursorGroup] =
@@ -97,7 +102,8 @@ object BatchAccumulator {
                           errState
                             .update(EvalFailure.BatchResolution(allCursors, err, allKeysSet) :: _)
                             .as(None)
-                        case Right(res) => F.pure(Some(res))
+                        case Right((dur, res)) =>
+                          stats.updateStats(s"batch_${batcherKey.id}", dur, allKeysSet.size) as Some(res)
                       }
                       .flatMap(res => xs.parTraverse_ { case (_, complete) => complete(res) })
                 } >> ret.get

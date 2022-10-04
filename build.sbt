@@ -34,30 +34,30 @@ lazy val core = project
   .in(file("modules/core"))
   .settings(sharedSettings)
 
-lazy val http4s = project
-  .in(file("modules/http4s"))
-  .dependsOn(core)
-  .settings(sharedSettings)
-  .settings(
-    libraryDependencies ++= Seq(
-      "org.http4s" %% "http4s-server" % "1.0.0-M36",
-      "org.http4s" %% "http4s-blaze-server" % "1.0.0-M36",
-      "org.http4s" %% "http4s-circe" % "1.0.0-M36",
-      "org.http4s" %% "http4s-dsl" % "1.0.0-M36",
-    ),
-  )
-  .enablePlugins(NativeImagePlugin)
-  .settings(
-    Compile / mainClass := Some("gql.http4s.Http4sMain"),
-    nativeImageVersion := "22.2.0"
-  )
+/* lazy val http4s = project */
+/*   .in(file("modules/http4s")) */
+/*   .dependsOn(core) */
+/*   .settings(sharedSettings) */
+/*   .settings( */
+/*     libraryDependencies ++= Seq( */
+/*       "org.http4s" %% "http4s-server" % "1.0.0-M36", */
+/*       "org.http4s" %% "http4s-blaze-server" % "1.0.0-M36", */
+/*       "org.http4s" %% "http4s-circe" % "1.0.0-M36", */
+/*       "org.http4s" %% "http4s-dsl" % "1.0.0-M36", */
+/*     ), */
+/*   ) */
+/*   .enablePlugins(NativeImagePlugin) */
+/*   .settings( */
+/*     Compile / mainClass := Some("gql.http4s.Http4sMain"), */
+/*     nativeImageVersion := "22.2.0" */
+/*   ) */
 
-lazy val docs = project
-  .in(file("modules/docs"))
-  .settings(
-    moduleName := "gql-docs",
-    mdocOut := file("website/docs")
-  )
-  .dependsOn(core)
-  .dependsOn(http4s)
-  .enablePlugins(MdocPlugin, DocusaurusPlugin)
+/* lazy val docs = project */
+/*   .in(file("modules/docs")) */
+/*   .settings( */
+/*     moduleName := "gql-docs", */
+/*     mdocOut := file("website/docs") */
+/*   ) */
+/*   .dependsOn(core) */
+/*   .dependsOn(http4s) */
+/*   .enablePlugins(MdocPlugin, DocusaurusPlugin) */

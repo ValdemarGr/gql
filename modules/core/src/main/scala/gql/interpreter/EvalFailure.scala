@@ -96,7 +96,7 @@ object EvalFailure {
   final case class BatchPostProcessing(
       path: CursorGroup,
       error: Either[Throwable, String],
-      resultMap: Chain[(BatchKey, BatchValue)]
+      resultMap: Map[BatchKey, BatchValue]
   ) extends EvalFailure {
     lazy val paths = Chain(path)
     lazy val exception = error.swap.toOption

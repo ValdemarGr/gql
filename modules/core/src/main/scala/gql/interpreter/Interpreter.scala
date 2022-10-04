@@ -43,7 +43,9 @@ object Interpreter {
   final case class StreamMetadata[F[_]](
       cursor: Cursor,
       initialValue: Any,
-      df: PreparedDataField[F, Any, Any]
+      df: PreparedDataField[F, Any, Any],
+      edges: List[PreparedEdge[F]] = null,
+      cont: PreparedCont[F] = null
   )
 
   def constructStream[F[_]: Statistics](
@@ -87,7 +89,7 @@ object Interpreter {
                     .toNel
                     .flatTraverse { activeChanges =>
                       val s = activeChanges.toList.map { case (k, _, _, _) => k }.toSet
-                      val allSigNodes = activeStreams.toList.map { case (k, StreamMetadata(cursor, _, df)) =>
+                      val allSigNodes = activeStreams.toList.map { case (k, StreamMetadata(cursor, _, df, _, _)) =>
                         // The cursor is to the parent, traversing the arc for df.name will get us to the changed node
                         (cursor.field(df.id, df.name), k)
                       }
@@ -101,7 +103,7 @@ object Interpreter {
                       // The property of field uniqueness is lost since we are starting at n different non-root nodes
                       val prepaedRoots =
                         rootNodes.mapWithIndex { case ((id, _, input, _), idx) =>
-                          val StreamMetadata(cursor, _, field) = activeStreams(id)
+                          val StreamMetadata(cursor, _, field, _, _) = activeStreams(id)
                           val cursorGroup = BigInt(idx)
                           val cg = CursorGroup.startAt(cursorGroup, cursor)
                           val (errs, succs) =
@@ -238,7 +240,8 @@ object Interpreter {
       rootSel: NonEmptyList[(PreparedField[F, Any], Chain[EvalNode[Any]])],
       executionDeps: Batching[F],
       schemaState: SchemaState[F],
-      streamAccumulator: StreamMetadataAccumulator[F, StreamMetadata[F], IorNec[String, Any]]
+      streamAccumulator: StreamMetadataAccumulator[F, StreamMetadata[F], IorNec[String, Any]],
+      batchAccumulator: BatchAccumulator[F] = null
   )(implicit F: Async[F], stats: Statistics[F]): WriterT[F, Chain[EvalFailure], Chain[EvalNode[Json]]] = {
     type W[A] = WriterT[F, Chain[EvalFailure], A]
     val W = Async[W]
@@ -286,6 +289,82 @@ object Interpreter {
             batcher: Int,
             keys: Chain[(CursorGroup, (Set[BatchKey], Reassociate))]
         )
+
+        def runEdge(
+            edge: PreparedEdge[F],
+            inputs: Chain[EvalNode[Any]],
+            remaniningEdges: List[PreparedEdge[F]],
+            cont: PreparedCont[F]
+        ): W[Chain[EvalNode[Any]]] =
+          edge.resolver match {
+            case EffectResolver(resolve) =>
+              inputs.parFlatTraverse { in =>
+                attemptUser(
+                  IorT(resolve(in.value)).timed
+                    .semiflatMap { case (dur, v) =>
+                      val out = Chain(in.setValue(v))
+                      submit(edge.statisticsName, dur, 1) as out
+                    }
+                    .value
+                    .map(_.leftMap(NonEmptyChain.one)),
+                  EvalFailure.EffectResolution(in.cursorGroup, _, in.value)
+                )
+              }
+            case CompositionResolver(_, _) =>
+              W.raiseError(new IllegalStateException("composition resolvers cannot appear in edge interpreter"))
+            case StreamResolver(_, stream) =>
+              inputs.parFlatTraverse { in =>
+                attemptUserE(
+                  streamAccumulator
+                    .add(
+                      StreamMetadata(in.cursorGroup.absolutePath, null, null, remaniningEdges, cont),
+                      stream(in.value)
+                    )
+                    .map { case (_, fb) => fb }
+                    .rethrow
+                    .map(_.map(hd => Chain(in.setValue((in.value, hd))))),
+                  EvalFailure.StreamHeadResolution(in.cursorGroup, _, in.value)
+                )
+              }
+              ???
+            case BatchResolver(_, run) =>
+              val resolveds =
+                inputs.parFlatTraverse { en =>
+                  attemptUser(
+                    run(en.value).map(_.map(res => Chain((res, en.cursorGroup)))),
+                    EvalFailure.BatchPartitioning(en.cursorGroup, _, en.value)
+                  )
+                }
+
+              resolveds.flatMap { xs =>
+                val allKeys = xs.map { case ((keys, _), cg) => (cg, keys) }
+
+                lift(batchAccumulator.submit(edge.id, allKeys))
+                  .flatMap {
+                    case None => W.pure(Chain.empty[EvalNode[Any]])
+                    case Some(resultMap) =>
+                      xs.parFlatTraverse { case ((keys, reassoc), cg) =>
+                        val missingKeys =
+                          keys.toList.collect { case k if !resultMap.contains(k) => k }.toSet
+                        if (missingKeys.nonEmpty) {
+                          failM[E](EvalFailure.BatchMissingKey(cg, resultMap, keys, missingKeys))
+                        } else {
+                          attemptUserE(
+                            reassoc(resultMap).map(_.map(res => Chain(EvalNode(cg, res)))),
+                            EvalFailure.BatchPostProcessing(cg, _, resultMap)
+                          )
+                        }
+                      }
+                  }
+              }
+          }
+
+        def runCont(
+            cont: PreparedCont[F],
+            inputs: Chain[EvalNode[Any]]
+        ) = {
+          cont.edges
+        }
 
         def runInputs(
             df: PreparedDataField[F, Any, Any],
@@ -442,7 +521,7 @@ object Interpreter {
                                     lift(submit(executionDeps.nodeMap(df.id).name, dur, allKeys.size)) >>
                                       attemptUserE(
                                         reassoc(found.toMap).map(_.map(res => Chain(EvalNode(cg, res)))),
-                                        EvalFailure.BatchPostProcessing(cg, _, Chain.fromSeq(found))
+                                        EvalFailure.BatchPostProcessing(cg, _, found.toMap)
                                       )
                                 }
                               }
