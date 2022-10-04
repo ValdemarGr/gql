@@ -27,7 +27,7 @@ import fs2.Pull
 import fs2.concurrent.SignallingRef
 
 object Main extends App {
-  def showTree(indent: Int, nodes: NonEmptyList[Planner.Node]): String = {
+  def showTree(indent: Int, nodes: List[Planner.Node]): String = ""/*{
     val pad = "  " * indent
     nodes
       .map { n =>
@@ -36,7 +36,7 @@ object Main extends App {
         thisInfo + n.children.toNel.map(showTree(indent + 1, _)).mkString_("")
       }
       .mkString_("")
-  }
+  }*/
 
   def showDiff_(fa: NonEmptyList[Planner.Node], fb: NonEmptyList[Planner.Node], maxEnd: Double): String = {
     fa.sortBy(_.id)
@@ -55,15 +55,15 @@ object Main extends App {
       .mkString_("")
   }
 
-  def showDiff(fa: NonEmptyList[Planner.Node], fb: NonEmptyList[Planner.Node]) = {
+  def showDiff(fa: NonEmptyList[Planner.Node], fb: NonEmptyList[Planner.Node]) = ""/*{
     val me = Planner.NodeTree(fa).flattened.maximumBy(_.end).end
     AnsiColor.RED_B + "old field schedule" + AnsiColor.RESET + "\n" +
       AnsiColor.GREEN_B + "new field schedule" + AnsiColor.RESET + "\n" +
       AnsiColor.BLUE_B + "new field offset (deferral of execution)" + AnsiColor.RESET + "\n" +
       showDiff_(fa, fb, me)
-  }
+  }*/
 
-  def planCost(nodes: NonEmptyList[Planner.Node]): Double = {
+  def planCost(nodes: NonEmptyList[Planner.Node]): Double = 0d/*{
     val fnt = Planner.NodeTree(nodes).flattened
 
     fnt
@@ -78,7 +78,7 @@ object Main extends App {
         groups * c + batched * e
       }
       .sumAll
-  }
+  }*/
 
   val q = """
 query FragmentTyping {

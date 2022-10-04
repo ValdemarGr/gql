@@ -62,7 +62,7 @@ object Batching {
             .groupBy(_.batchName)
             .filter { case (o, nodes) => nodes.size > 1 && o.isDefined }
             .toList
-            .map { case (nodeType, nodes) => nodes.map(_.id) }
+            .map { case (nodeType, nodes) => nodes.toNel.get.map(_.id) }
         }
 
     Batching(nodeMap, dataFieldMap, batches)

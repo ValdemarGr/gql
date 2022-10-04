@@ -89,11 +89,23 @@ object Interpreter {
           } yield (fails, succs, executionDeps, smaState)
         }
 
-      // def runStreamIt2(root: Interpreter[F] => F[(Chain[EvalFailure], Chain[EvalNode[Json]])]) =
-      //   StreamMetadataAccumulator[F, StreamMetadata[F], IorNec[String, Any]].flatMap { sma =>
-      //     for {
-      //     } yield ()
-      //   }
+      def runStreamIt2(
+          metas: NonEmptyList[StreamMetadata[F]]
+      ) =
+        StreamMetadataAccumulator[F, StreamMetadata[F], IorNec[String, Any]].flatMap { sma =>
+          for {
+            _ <- F.unit
+            // accumulator <- metas.toList
+            //   .flatTraverse { pf =>
+            //     NonEmptyChain.fromSeq(pf.edges) match {
+            //       case None      => Planner.costForPrepared[F](pf.cont, 0d)
+            //       case Some(nec) => Planner.costForEdges[F](nec, pf.cont, 0d).map(_.toList)
+            //     }
+            //   }
+            //   .map(_.toNel.map(Planner.NodeTree(_)).map(Planner.plan2))
+            //   .flatMap(_.traverse(BatchAccumulator[F](schemaState, _)))
+          } yield ()
+        }
 
       // first iteration
       fs2.Stream

@@ -18,14 +18,12 @@ import cats.Eval
 import scala.collection.immutable.TreeSet
 
 object Planner {
-  final case class NodeTree(
-      root: NonEmptyList[Node]
-  ) {
-    lazy val flattened: NonEmptyList[Node] = {
-      def go(xs: NonEmptyList[Node]): Eval[NonEmptyList[Node]] = Eval.defer {
+  final case class NodeTree(root: List[Node]) {
+    lazy val flattened: List[Node] = {
+      def go(xs: List[Node]): Eval[List[Node]] = Eval.defer {
         xs.flatTraverse {
-          case n @ Node(_, _, _, _, _, _, Nil, _, _)     => Eval.now(NonEmptyList.one(n))
-          case n @ Node(_, _, _, _, _, _, x :: xs, _, _) => go(NonEmptyList(x, xs)).map(ns => NonEmptyList.one(n).concatNel(ns))
+          case n @ Node(_, _, _, _, _, _, Nil, _, _) => Eval.now(List(n))
+          case n @ Node(_, _, _, _, _, _, xs, _, _)  => go(xs).map(n :: _)
         }
       }
 
@@ -55,7 +53,59 @@ object Planner {
   def makeTypename[F[_]](df: PreparedDataField[F, _, _]): String =
     s"${df.parentTypename}_${df.name}"
 
-  def constructCostTree2[F[_]](
+  def costForPrepared[F[_]: Statistics](p: PreparedQuery.Prepared[F, Any], currentCost: Double)(implicit F: Monad[F]): F[List[Node]] =
+    p match {
+      case PreparedLeaf(_, _) => F.pure(Nil)
+      case Selection(fields)  => costForFields[F](currentCost, fields).map(_.toList)
+      case PreparedList(of)   => costForPrepared(of, currentCost)
+      case PreparedOption(of) => costForPrepared(of, currentCost)
+    }
+
+  def costForEdges[F[_]](pes: NonEmptyChain[PreparedQuery.PreparedEdge[F]], cont: PreparedQuery.Prepared[F, Any], currentCost: Double)(
+      implicit
+      stats: Statistics[F],
+      F: Monad[F]
+  ): F[NonEmptyList[Node]] = {
+    val x = pes.head
+    val xs = pes.tail
+
+    val resolverKey = x.resolver match {
+      case BatchResolver(id, _) => Some(id)
+      case _                    => None
+    }
+
+    stats
+      .getStatsOpt(x.statisticsName)
+      .map {
+        case None    => Statistics.Stats(1000d, 5d)
+        case Some(x) => x
+      }
+      .flatMap { s =>
+        val end = currentCost + s.initialCost
+
+        val childrenF: F[List[Node]] = NonEmptyChain.fromChain(xs) match {
+          case None      => costForPrepared[F](cont, end)
+          case Some(nel) => costForEdges[F](nel, cont, end).map(_.toList)
+        }
+
+        childrenF.map { children =>
+          NonEmptyList.one(
+            Node(
+              42,
+              x.statisticsName,
+              null,
+              end,
+              s.initialCost,
+              s.extraElementCost,
+              children.toList,
+              resolverKey
+            )
+          )
+        }
+      }
+  }
+
+  def costForFields[F[_]](
       currentCost: Double,
       prepared: NonEmptyList[PreparedQuery.PreparedField[F, Any]]
   )(implicit
@@ -64,65 +114,15 @@ object Planner {
   ): F[NonEmptyList[Node]] = {
     prepared.flatTraverse {
       case df @ PreparedDataField(id, name, resolve, selection, tn, _, _, cont) =>
-        val rootPrepared = cont.cont
-
-        def unpackPrepared(p: PreparedQuery.Prepared[F, Any], currentCost: Double): F[List[Node]] =
-          p match {
-            case PreparedLeaf(_, _) => F.pure(Nil)
-            case Selection(fields)  => constructCostTree2[F](currentCost, fields).map(_.toList)
-            case PreparedList(of)   => unpackPrepared(of, currentCost)
-            case PreparedOption(of) => unpackPrepared(of, currentCost)
-          }
-
-        def unpackEdge(pes: NonEmptyChain[PreparedQuery.PreparedEdge[F]], currentCost: Double): F[NonEmptyList[Node]] = {
-          val x = pes.head
-          val xs = pes.tail
-
-          val resolverKey = x.resolver match {
-            case BatchResolver(id, _) => Some(id)
-            case _                    => None
-          }
-
-          stats
-            .getStatsOpt(x.statisticsName)
-            .map {
-              case None    => Statistics.Stats(1000d, 5d)
-              case Some(x) => x
-            }
-            .flatMap { s =>
-              val end = currentCost + s.initialCost
-
-              val childrenF: F[List[Node]] = NonEmptyChain.fromChain(xs) match {
-                case None      => unpackPrepared(rootPrepared, end)
-                case Some(nel) => unpackEdge(nel, currentCost).map(_.toList)
-              }
-
-              childrenF.map { children =>
-                NonEmptyList.one(
-                  Node(
-                    42,
-                    x.statisticsName,
-                    null,
-                    end,
-                    s.initialCost,
-                    s.extraElementCost,
-                    children.toList,
-                    resolverKey
-                  )
-                )
-              }
-            }
-        }
-
-        unpackEdge(cont.edges, currentCost)
-      case PreparedFragField(_, typename, _, selection) => constructCostTree2[F](currentCost, selection.fields)
+        costForEdges[F](cont.edges, cont.cont, currentCost)
+      case PreparedFragField(_, typename, _, selection) => costForFields[F](currentCost, selection.fields)
     }
   }
 
   def costTree2[F[_]: Monad](
       prepared: NonEmptyList[PreparedQuery.PreparedField[F, Any]]
   )(implicit stats: Statistics[F]): F[NodeTree] =
-    constructCostTree2[F](0d, prepared).map(NodeTree(_))
+    costForFields[F](0d, prepared).map(xs => NodeTree(xs.toList))
 
   def plan2(tree: NodeTree): NodeTree = {
     val flatNodes = tree.flattened
@@ -178,15 +178,11 @@ object Planner {
 
     val plannedMap = go(orderedFlatNodes.toList, Map.empty, Map.empty)
 
-    def reConstruct(ns: NonEmptyList[Int]): Eval[NonEmptyList[Node]] = Eval.defer {
+    def reConstruct(ns: List[Int]): Eval[List[Node]] = Eval.defer {
       ns.traverse { n =>
         val newN = plannedMap(n)
-        newN.children match {
-          case Nil => Eval.now(newN)
-          case x :: xs =>
-            val newChildrenF = reConstruct(NonEmptyList(x, xs).map(_.id)).map(_.toList)
-            newChildrenF.map(x => newN.copy(children = x))
-        }
+        val newChildrenF = reConstruct(newN.children.map(_.id)).map(_.toList)
+        newChildrenF.map(x => newN.copy(children = x))
       }
     }
 
@@ -250,9 +246,9 @@ object Planner {
   def costTree[F[_]: Monad](
       prepared: NonEmptyList[PreparedQuery.PreparedField[F, Any]]
   )(implicit stats: Statistics[F]): F[NodeTree] =
-    constructCostTree[F](0d, prepared).map(NodeTree(_))
+    constructCostTree[F](0d, prepared).map(xs => NodeTree(xs.toList))
 
-  def plan(tree: NodeTree): NodeTree = {
+  def plan(tree: NodeTree): NodeTree = ???/*{
     val flatNodes = tree.flattened
 
     val orderedFlatNodes = flatNodes.sortBy(_.end).reverse
@@ -323,5 +319,5 @@ object Planner {
     }
 
     NodeTree(reConstruct(tree.root.map(_.edgeId)).value)
-  }
+  }*/
 }
