@@ -95,6 +95,16 @@ object Interpreter {
         StreamMetadataAccumulator[F, StreamMetadata[F], IorNec[String, Any]].flatMap { sma =>
           for {
             _ <- F.unit
+            costTree <- metas.toList
+              .flatTraverse { meta =>
+                NonEmptyChain.fromSeq(meta.edges) match {
+                  case None      => Planner.costForPrepared[F](meta.cont, 0d)
+                  case Some(nec) => Planner.costForEdges[F](nec, meta.cont, 0d).map(_.toList)
+                }
+              }
+              .map(Planner.NodeTree(_))
+            planned = Planner.plan2(costTree)
+            accumulator <- BatchAccumulator[F](schemaState, planned)
             // accumulator <- metas.toList
             //   .flatTraverse { pf =>
             //     NonEmptyChain.fromSeq(pf.edges) match {
