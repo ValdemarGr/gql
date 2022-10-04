@@ -18,6 +18,22 @@ import cats.effect.std.Queue
 import fs2.Chunk
 import gql._
 
+sealed trait Interpreter[F[_]] {
+  type W[A] = WriterT[F, Chain[EvalFailure], A]
+
+  def runEdge(
+      inputs: Chain[EvalNode[Any]],
+      edges: List[PreparedEdge[F]],
+      cont: Prepared[F, Any]
+  ): W[Chain[EvalNode[Json]]]
+
+  def runFields(dfs: NonEmptyList[PreparedField[F, Any]], in: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]]
+
+  def startNext(s: Prepared[F, Any], in: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]]
+
+  def runDataField(df: PreparedDataField[F, Any, Any], input: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]]
+}
+
 object Interpreter {
   def stitchInto(oldTree: Json, subTree: Json, path: Cursor): Json =
     path.uncons match {
@@ -45,7 +61,7 @@ object Interpreter {
       initialValue: Any,
       df: PreparedDataField[F, Any, Any],
       edges: List[PreparedEdge[F]] = null,
-      cont: PreparedCont[F] = null
+      cont: Prepared[F, Any] = null
   )
 
   def constructStream[F[_]: Statistics](
@@ -72,6 +88,12 @@ object Interpreter {
             smaState <- sma.getState
           } yield (fails, succs, executionDeps, smaState)
         }
+
+      // def runStreamIt2(root: Interpreter[F] => F[(Chain[EvalFailure], Chain[EvalNode[Json]])]) =
+      //   StreamMetadataAccumulator[F, StreamMetadata[F], IorNec[String, Any]].flatMap { sma =>
+      //     for {
+      //     } yield ()
+      //   }
 
       // first iteration
       fs2.Stream
@@ -291,80 +313,78 @@ object Interpreter {
         )
 
         def runEdge(
-            edge: PreparedEdge[F],
             inputs: Chain[EvalNode[Any]],
-            remaniningEdges: List[PreparedEdge[F]],
-            cont: PreparedCont[F]
-        ): W[Chain[EvalNode[Any]]] =
-          edge.resolver match {
-            case EffectResolver(resolve) =>
-              inputs.parFlatTraverse { in =>
-                attemptUser(
-                  IorT(resolve(in.value)).timed
-                    .semiflatMap { case (dur, v) =>
-                      val out = Chain(in.setValue(v))
-                      submit(edge.statisticsName, dur, 1) as out
+            edges: List[PreparedEdge[F]],
+            cont: Prepared[F, Any]
+        ): W[Chain[EvalNode[Json]]] =
+          edges match {
+            case Nil => startNext(cont, inputs)
+            case edge :: xs =>
+              val edgeRes: WriterT[F, Chain[EvalFailure], Chain[EvalNode[Any]]] =
+                edge.resolver match {
+                  case EffectResolver(resolve) =>
+                    inputs.parFlatTraverse { in =>
+                      attemptUser(
+                        IorT(resolve(in.value)).timed
+                          .semiflatMap { case (dur, v) =>
+                            val out = Chain(in.setValue(v))
+                            submit(edge.statisticsName, dur, 1) as out
+                          }
+                          .value
+                          .map(_.leftMap(NonEmptyChain.one)),
+                        EvalFailure.EffectResolution(in.cursorGroup, _, in.value)
+                      )
                     }
-                    .value
-                    .map(_.leftMap(NonEmptyChain.one)),
-                  EvalFailure.EffectResolution(in.cursorGroup, _, in.value)
-                )
-              }
-            case CompositionResolver(_, _) =>
-              W.raiseError(new IllegalStateException("composition resolvers cannot appear in edge interpreter"))
-            case StreamResolver(_, stream) =>
-              inputs.parFlatTraverse { in =>
-                attemptUserE(
-                  streamAccumulator
-                    .add(
-                      StreamMetadata(in.cursorGroup.absolutePath, null, null, remaniningEdges, cont),
-                      stream(in.value)
-                    )
-                    .map { case (_, fb) => fb }
-                    .rethrow
-                    .map(_.map(hd => Chain(in.setValue((in.value, hd))))),
-                  EvalFailure.StreamHeadResolution(in.cursorGroup, _, in.value)
-                )
-              }
-              ???
-            case BatchResolver(_, run) =>
-              val resolveds =
-                inputs.parFlatTraverse { en =>
-                  attemptUser(
-                    run(en.value).map(_.map(res => Chain((res, en.cursorGroup)))),
-                    EvalFailure.BatchPartitioning(en.cursorGroup, _, en.value)
-                  )
+                  case CompositionResolver(_, _) =>
+                    W.raiseError(new IllegalStateException("composition resolvers cannot appear in edge interpreter"))
+                  case StreamResolver(_, stream) =>
+                    inputs.parFlatTraverse { in =>
+                      attemptUserE(
+                        streamAccumulator
+                          .add(
+                            StreamMetadata(in.cursorGroup.absolutePath, null, null, xs, cont),
+                            stream(in.value)
+                          )
+                          .map { case (_, fb) => fb }
+                          .rethrow
+                          .map(_.map(hd => Chain(in.setValue((in.value, hd))))),
+                        EvalFailure.StreamHeadResolution(in.cursorGroup, _, in.value)
+                      )
+                    }
+                  case BatchResolver(_, run) =>
+                    val resolveds =
+                      inputs.parFlatTraverse { en =>
+                        attemptUser(
+                          run(en.value).map(_.map(res => Chain((res, en.cursorGroup)))),
+                          EvalFailure.BatchPartitioning(en.cursorGroup, _, en.value)
+                        )
+                      }
+
+                    resolveds.flatMap { xs =>
+                      val allKeys = xs.map { case ((keys, _), cg) => (cg, keys) }
+
+                      lift(batchAccumulator.submit(edge.id, allKeys))
+                        .flatMap {
+                          case None => W.pure(Chain.empty[EvalNode[Any]])
+                          case Some(resultMap) =>
+                            xs.parFlatTraverse { case ((keys, reassoc), cg) =>
+                              val missingKeys =
+                                keys.toList.collect { case k if !resultMap.contains(k) => k }.toSet
+                              if (missingKeys.nonEmpty) {
+                                failM[E](EvalFailure.BatchMissingKey(cg, resultMap, keys, missingKeys))
+                              } else {
+                                attemptUserE(
+                                  reassoc(resultMap).map(_.map(res => Chain(EvalNode(cg, res)))),
+                                  EvalFailure.BatchPostProcessing(cg, _, resultMap)
+                                )
+                              }
+                            }
+                        }
+                    }
                 }
 
-              resolveds.flatMap { xs =>
-                val allKeys = xs.map { case ((keys, _), cg) => (cg, keys) }
-
-                lift(batchAccumulator.submit(edge.id, allKeys))
-                  .flatMap {
-                    case None => W.pure(Chain.empty[EvalNode[Any]])
-                    case Some(resultMap) =>
-                      xs.parFlatTraverse { case ((keys, reassoc), cg) =>
-                        val missingKeys =
-                          keys.toList.collect { case k if !resultMap.contains(k) => k }.toSet
-                        if (missingKeys.nonEmpty) {
-                          failM[E](EvalFailure.BatchMissingKey(cg, resultMap, keys, missingKeys))
-                        } else {
-                          attemptUserE(
-                            reassoc(resultMap).map(_.map(res => Chain(EvalNode(cg, res)))),
-                            EvalFailure.BatchPostProcessing(cg, _, resultMap)
-                          )
-                        }
-                      }
-                  }
-              }
+              edgeRes.flatMap(runEdge(_, xs, cont))
           }
-
-        def runCont(
-            cont: PreparedCont[F],
-            inputs: Chain[EvalNode[Any]]
-        ) = {
-          cont.edges
-        }
 
         def runInputs(
             df: PreparedDataField[F, Any, Any],
@@ -401,7 +421,7 @@ object Interpreter {
                   )
                 }
 
-              partitioned.map(p => Right(Batch(id, p)))
+              partitioned.map(p => Right(Batch(id.id, p)))
             case StreamResolver(resolver, stream) =>
               val fb: W[E] =
                 inputs.parFlatTraverse { in =>
@@ -631,6 +651,151 @@ object Interpreter {
       sel: NonEmptyList[PreparedField[F, Any]]
   ): JsonObject =
     _reconstructSelection(sel, groupNodeValues2(levelCursors))
+}
+
+abstract class InterpreterImpl[F[_]](
+    streamAccumulator: StreamMetadataAccumulator[F, Interpreter.StreamMetadata[F], IorNec[String, Any]],
+    batchAccumulator: BatchAccumulator[F]
+)(implicit F: Async[F], stats: Statistics[F], sup: Supervisor[F])
+    extends Interpreter[F] {
+  val W = Async[W]
+  type E = Chain[EvalNode[Any]]
+  val lift: F ~> W = WriterT.liftK[F, Chain[EvalFailure]]
+
+  def failM[A](e: EvalFailure)(implicit M: Monoid[A]): W[A] = WriterT.put(M.empty)(Chain.one(e))
+
+  def attemptUser[A](fa: F[IorNec[String, A]], constructor: Either[Throwable, String] => EvalFailure)(implicit
+      M: Monoid[A]
+  ): W[A] =
+    lift(fa).attempt.flatMap {
+      case Left(ex)              => WriterT.put(M.empty)(Chain(constructor(Left(ex))))
+      case Right(Ior.Both(l, r)) => WriterT.put(r)(l.toChain.map(x => constructor(Right(x))))
+      case Right(Ior.Left(l))    => WriterT.put(M.empty)(l.toChain.map(x => constructor(Right(x))))
+      case Right(Ior.Right(r))   => WriterT.put(r)(Chain.empty)
+    }
+
+  def attemptUserE(fa: F[IorNec[String, E]], constructor: Either[Throwable, String] => EvalFailure): W[E] =
+    attemptUser[E](fa, constructor)
+
+  def submit(name: String, duration: FiniteDuration, size: Int): F[Unit] =
+    sup.supervise(stats.updateStats(name, duration, size)).void
+
+  def runEdge(
+      inputs: Chain[EvalNode[Any]],
+      edges: List[PreparedEdge[F]],
+      cont: Prepared[F, Any]
+  ): W[Chain[EvalNode[Json]]] =
+    edges match {
+      case Nil => startNext(cont, inputs)
+      case edge :: xs =>
+        val edgeRes: WriterT[F, Chain[EvalFailure], Chain[EvalNode[Any]]] =
+          edge.resolver match {
+            case EffectResolver(resolve) =>
+              inputs.parFlatTraverse { in =>
+                attemptUser(
+                  IorT(resolve(in.value)).timed
+                    .semiflatMap { case (dur, v) =>
+                      val out = Chain(in.setValue(v))
+                      submit(edge.statisticsName, dur, 1) as out
+                    }
+                    .value
+                    .map(_.leftMap(NonEmptyChain.one)),
+                  EvalFailure.EffectResolution(in.cursorGroup, _, in.value)
+                )
+              }
+            case CompositionResolver(_, _) =>
+              W.raiseError(new IllegalStateException("composition resolvers cannot appear in edge interpreter"))
+            case StreamResolver(_, stream) =>
+              inputs.parFlatTraverse { in =>
+                attemptUserE(
+                  streamAccumulator
+                    .add(
+                      Interpreter.StreamMetadata(in.cursorGroup.absolutePath, null, null, xs, cont),
+                      stream(in.value)
+                    )
+                    .map { case (_, fb) => fb }
+                    .rethrow
+                    .map(_.map(hd => Chain(in.setValue((in.value, hd))))),
+                  EvalFailure.StreamHeadResolution(in.cursorGroup, _, in.value)
+                )
+              }
+            case BatchResolver(_, run) =>
+              val resolveds =
+                inputs.parFlatTraverse { en =>
+                  attemptUser(
+                    run(en.value).map(_.map(res => Chain((res, en.cursorGroup)))),
+                    EvalFailure.BatchPartitioning(en.cursorGroup, _, en.value)
+                  )
+                }
+
+              resolveds.flatMap { xs =>
+                val allKeys = xs.map { case ((keys, _), cg) => (cg, keys) }
+
+                lift(batchAccumulator.submit(edge.id, allKeys))
+                  .flatMap {
+                    case None => W.pure(Chain.empty[EvalNode[Any]])
+                    case Some(resultMap) =>
+                      xs.parFlatTraverse { case ((keys, reassoc), cg) =>
+                        val missingKeys =
+                          keys.toList.collect { case k if !resultMap.contains(k) => k }.toSet
+                        if (missingKeys.nonEmpty) {
+                          failM[E](EvalFailure.BatchMissingKey(cg, resultMap, keys, missingKeys))
+                        } else {
+                          attemptUserE(
+                            reassoc(resultMap).map(_.map(res => Chain(EvalNode(cg, res)))),
+                            EvalFailure.BatchPostProcessing(cg, _, resultMap)
+                          )
+                        }
+                      }
+                  }
+              }
+          }
+
+        edgeRes.flatMap(runEdge(_, xs, cont))
+    }
+
+  def runFields(dfs: NonEmptyList[PreparedField[F, Any]], in: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] =
+    Chain.fromSeq(dfs.toList).parFlatTraverse {
+      case PreparedFragField(id, typename, specify, selection) =>
+        runFields(
+          selection.fields,
+          in.flatMap(x => Chain.fromOption(specify(x.value)).map(y => x.succeed(y, _.fragment(id, typename))))
+        )
+      case df @ PreparedDataField(id, name, _, _, _, _, _, _) => runDataField(df, in)
+    }
+
+  def startNext(s: Prepared[F, Any], in: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] = W.defer {
+    s match {
+      case PreparedLeaf(name, enc) => W.pure(in.map(en => en.setValue(enc(en.value))))
+      case Selection(fields)       => runFields(fields, in)
+      case PreparedList(of) =>
+        val (emties, continuations) =
+          in.partitionEither { nv =>
+            val inner = Chain.fromSeq(nv.value.asInstanceOf[Seq[Any]])
+
+            NonEmptyChain.fromChain(inner) match {
+              case None      => Left(nv.setValue(Json.arr()))
+              case Some(nec) => Right(nec.mapWithIndex { case (v, i) => nv.succeed(v, _.index(i)) })
+            }
+          }
+
+        startNext(of, continuations.flatMap(_.toChain)).map(_ ++ emties)
+      case PreparedOption(of) =>
+        val (nulls, continuations) =
+          in.partitionEither { nv =>
+            val inner = nv.value.asInstanceOf[Option[Any]]
+
+            inner match {
+              case None    => Left(nv.setValue(Json.Null))
+              case Some(v) => Right(nv.setValue(v))
+            }
+          }
+        startNext(of, continuations).map(_ ++ nulls)
+    }
+  }
+
+  def runDataField(df: PreparedDataField[F, Any, Any], input: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] =
+    runEdge(input, df.cont.edges.toList, df.cont.cont)
 }
 
 // object InInterpretationRebuilding {

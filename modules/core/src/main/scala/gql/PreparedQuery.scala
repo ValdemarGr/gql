@@ -60,7 +60,7 @@ object PreparedQuery {
   )
 
   final case class PreparedCont[F[_]](
-      edges: Chain[PreparedEdge[F]],
+      edges: NonEmptyChain[PreparedEdge[F]],
       cont: Prepared[F, Any]
   )
 
@@ -100,16 +100,16 @@ object PreparedQuery {
 
   def flattenResolvers[F[_]: Monad, G[_]](parentName: String, resolver: Resolver[G, Any, Any])(implicit
       S: Stateful[F, Prep]
-  ): F[(Chain[PreparedEdge[G]], String)] =
+  ): F[(NonEmptyChain[PreparedEdge[G]], String)] =
     resolver match {
       case r @ BatchResolver(id, run) =>
-        nextId[F].map(nid => (Chain(PreparedEdge(EdgeId(nid), resolver, s"batch_$id")), parentName))
+        nextId[F].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, s"batch_$id")), parentName))
       case r @ EffectResolver(_) =>
         val thisName = s"${parentName}_effect"
-        nextId[F].map(nid => (Chain(PreparedEdge(EdgeId(nid), resolver, thisName)), thisName))
+        nextId[F].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, thisName)), thisName))
       case r @ StreamResolver(_, _) =>
         val thisName = s"${parentName}_stream"
-        nextId[F].map(nid => (Chain(PreparedEdge(EdgeId(nid), resolver, thisName)), thisName))
+        nextId[F].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, thisName)), thisName))
       case r @ CompositionResolver(left, right) =>
         flattenResolvers[F, G](parentName, left).flatMap { case (ys, newParentName) =>
           flattenResolvers[F, G](newParentName, right).map { case (zs, outName) => (ys ++ zs, outName) }

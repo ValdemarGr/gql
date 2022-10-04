@@ -6,7 +6,7 @@ import cats.effect._
 import cats.data._
 
 abstract case class BatchResolver[F[_], I, O](
-    id: Int,
+    id: BatchResolver.ResolverKey,
     run: I => F[IorNec[String, (Set[Any], Map[Any, Any] => F[IorNec[String, O]])]]
 ) extends LeafResolver[F, I, O] {
   override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): LeafResolver[G, I, O] =
@@ -34,8 +34,9 @@ object BatchResolver {
   )(implicit F: Monad[F]): State[gql.SchemaState[F], BatchResolver[F, Set[K], Map[K, T]]] =
     State { s =>
       val id = s.nextId
+      val rk = ResolverKey(id)
       val r = new BatchResolver[F, Set[K], Map[K, T]](
-        id,
+        rk,
         k =>
           F.pure(
             (k.asInstanceOf[Set[Any]], (m: Map[Any, Any]) => F.pure(m.asInstanceOf[Map[K, T]].rightIor[NonEmptyChain[String]]))
@@ -43,6 +44,6 @@ object BatchResolver {
           )
       ) {}
       val entry = f.asInstanceOf[Set[Any] => F[Map[Any, Any]]]
-      (s.copy(nextId = id + 1, batchers = s.batchers + (ResolverKey(id) -> entry)), r)
+      (s.copy(nextId = id + 1, batchers = s.batchers + (rk -> entry)), r)
     }
 }
