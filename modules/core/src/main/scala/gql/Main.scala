@@ -27,7 +27,7 @@ import fs2.Pull
 import fs2.concurrent.SignallingRef
 
 object Main extends App {
-  def showTree(indent: Int, nodes: List[Planner.Node]): String = ""/*{
+  def showTree(indent: Int, nodes: List[Planner.Node]): String = "" /*{
     val pad = "  " * indent
     nodes
       .map { n =>
@@ -55,7 +55,7 @@ object Main extends App {
       .mkString_("")
   }
 
-  def showDiff(fa: NonEmptyList[Planner.Node], fb: NonEmptyList[Planner.Node]) = ""/*{
+  def showDiff(fa: NonEmptyList[Planner.Node], fb: NonEmptyList[Planner.Node]) = "" /*{
     val me = Planner.NodeTree(fa).flattened.maximumBy(_.end).end
     AnsiColor.RED_B + "old field schedule" + AnsiColor.RESET + "\n" +
       AnsiColor.GREEN_B + "new field schedule" + AnsiColor.RESET + "\n" +
@@ -63,7 +63,7 @@ object Main extends App {
       showDiff_(fa, fb, me)
   }*/
 
-  def planCost(nodes: NonEmptyList[Planner.Node]): Double = 0d/*{
+  def planCost(nodes: NonEmptyList[Planner.Node]): Double = 0d /*{
     val fnt = Planner.NodeTree(nodes).flattened
 
     fnt
@@ -336,64 +336,74 @@ query withNestedFragments {
                 .repeat
                 .metered((if (k.a == "John") 10 else 50).millis)
             }),
-          "testdefault" -> dsl.pure(
-            dsl.arg[InputData](
-              "input",
-              dsl.default.obj(
-                "value" -> dsl.default(422),
-                "val2" -> dsl.default("test"),
-                "ar" -> dsl.default.arr(Seq(
-                  dsl.default.obj(
-                    "v3" -> dsl.default("@@")
-                  )
-                )),
-                "ar2" -> dsl.default.arr(Seq(
-                  dsl.default.obj(
-                    "v23" -> dsl.default("@@")
-                  )
-                )),
-                "ar3" -> dsl.default.arr(Seq(
-                  dsl.default.obj(
-                    "v33" -> dsl.default("@@")
-                  )
-                )),
-                "ar4" -> dsl.default.arr(Seq(
-                  dsl.default.obj(
-                    "v43" -> dsl.default("@@"),
-                    "v44" -> dsl.default("@@"),
-                    "v45" -> dsl.default("@@"),
-                    "v46" -> dsl.default("@@"),
-                    "v54" -> dsl.default("@@"),
-                    "v55" -> dsl.default("@@"),
-                    "v56" -> dsl.default("@@"),
-                    "v57" -> dsl.default("@@"),
+            "testdefault" -> dsl.pure(
+              dsl.arg[InputData](
+                "input",
+                dsl.default.obj(
+                  "value" -> dsl.default(422),
+                  "val2" -> dsl.default("test"),
+                  "ar" -> dsl.default.arr(
+                    Seq(
+                      dsl.default.obj(
+                        "v3" -> dsl.default("@@")
+                      )
+                    )
                   ),
-                  dsl.default.obj(
-                    "v43" -> dsl.default("@@"),
-                    "v44" -> dsl.default("@@"),
-                    "v45" -> dsl.default("@@"),
-                    "v46" -> dsl.default("@@"),
-                    "v54" -> dsl.default("@@"),
-                    "v55" -> dsl.default("@@"),
-                    "v56" -> dsl.default("@@"),
-                    "v57" -> dsl.default("@@"),
+                  "ar2" -> dsl.default.arr(
+                    Seq(
+                      dsl.default.obj(
+                        "v23" -> dsl.default("@@")
+                      )
+                    )
                   ),
-                )),
-                "ar5" -> dsl.default.arr(Seq(
-                  dsl.default.obj(
-                    "v43" -> dsl.default("@@"),
-                    "v44" -> dsl.default("@@"),
-                    "v45" -> dsl.default("@@"),
-                    "v46" -> dsl.default("@@"),
-                    "v54" -> dsl.default("@@"),
-                    "v55" -> dsl.default("@@"),
-                    "v56" -> dsl.default("@@"),
-                    "v57" -> dsl.default("@@"),
+                  "ar3" -> dsl.default.arr(
+                    Seq(
+                      dsl.default.obj(
+                        "v33" -> dsl.default("@@")
+                      )
+                    )
+                  ),
+                  "ar4" -> dsl.default.arr(
+                    Seq(
+                      dsl.default.obj(
+                        "v43" -> dsl.default("@@"),
+                        "v44" -> dsl.default("@@"),
+                        "v45" -> dsl.default("@@"),
+                        "v46" -> dsl.default("@@"),
+                        "v54" -> dsl.default("@@"),
+                        "v55" -> dsl.default("@@"),
+                        "v56" -> dsl.default("@@"),
+                        "v57" -> dsl.default("@@")
+                      ),
+                      dsl.default.obj(
+                        "v43" -> dsl.default("@@"),
+                        "v44" -> dsl.default("@@"),
+                        "v45" -> dsl.default("@@"),
+                        "v46" -> dsl.default("@@"),
+                        "v54" -> dsl.default("@@"),
+                        "v55" -> dsl.default("@@"),
+                        "v56" -> dsl.default("@@"),
+                        "v57" -> dsl.default("@@")
+                      )
+                    )
+                  ),
+                  "ar5" -> dsl.default.arr(
+                    Seq(
+                      dsl.default.obj(
+                        "v43" -> dsl.default("@@"),
+                        "v44" -> dsl.default("@@"),
+                        "v45" -> dsl.default("@@"),
+                        "v46" -> dsl.default("@@"),
+                        "v54" -> dsl.default("@@"),
+                        "v55" -> dsl.default("@@"),
+                        "v56" -> dsl.default("@@"),
+                        "v57" -> dsl.default("@@")
+                      )
+                    )
                   )
-                )),
+                )
               )
-            )
-          ){ case (_, _) => ""}
+            ) { case (_, _) => "" }
             // "test" -> field(stream(k => fs2.Stream(0))),
             // "test" -> field(arg[Int]("num"))(stream { case (k, a) => fs2.Stream(0) }),
             // "test" -> field(streamFallible(k => fs2.Stream(NonEmptyChain("errrrr").leftIor[String]))),
@@ -776,9 +786,9 @@ object Test {
     def root[F[_]: Async] =
       tpe[F, Username](
         "Subscription",
-        "vpn" -> field(arg[String]("serverId"))(stream { case (userId, serverId) =>
+        "vpn" -> field(arg[String]("serverId"))(stream[F, (Username, String), VpnConnection[F]] { case (userId, serverId) =>
           fs2.Stream.resource(VpnConnection[F](userId, serverId))
-        }),
+        }.andThen(EffectResolver[F, VpnConnection[F], VpnConnection[F]](x => Applicative[F].pure(Ior.left("wak wak waa"))))),
         "me" -> pure(identity)
       )
 
@@ -823,11 +833,11 @@ subscription {
     def root2[F[_]: Async] =
       tpe[F, Username](
         "Subscription",
-        "vpn" -> field(arg[String]("serverId"))(stream { case (userId, serverId) =>
+        "vpn" -> field(arg[String]("serverId"))(stream[F, (Username, String), VpnConnection[F]] { case (userId, serverId) =>
           oauthAccessToken[F](userId).map { un => println(un); un }.flatMap { token =>
             fs2.Stream.resource(VpnConnection[F](token, serverId)).map { con => println(con); con }
           }
-        })
+        }.andThen(EffectResolver[F, VpnConnection[F], VpnConnection[F]](x => Applicative[F].pure(Ior.left("wak wak waa")))))
       )
 
     println(runVPNSubscription(subscriptionQuery, 1, root2[IO]).unsafeRunSync())
