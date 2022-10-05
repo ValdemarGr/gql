@@ -53,8 +53,8 @@ object Interpreter {
         }
     }
 
-  def combineSplit(fails: Chain[EvalFailure], succs: Chain[EvalNode[Json]]): Chain[(CursorGroup, Json)] =
-    fails.flatMap(_.paths).map(m => (m, Json.Null)) ++ succs.map(n => (n.cursorGroup, n.value))
+  def combineSplit(fails: Chain[EvalFailure], succs: Chain[EvalNode[Json]]): Chain[(Cursor, Json)] =
+    fails.flatMap(_.paths).map(m => (m, Json.Null)) ++ succs.map(n => (n.cursor, n.value))
 
   final case class StreamMetadata[F[_]](
       cursor: Cursor,
@@ -91,17 +91,17 @@ object Interpreter {
                 }
               }
               .map(Planner.NodeTree(_))
-            planned = Planner.plan2(costTree)
+            planned = Planner.plan(costTree)
             accumulator <- BatchAccumulator[F](schemaState, planned)
             res <- Supervisor[F].use { sup =>
               val interpreter = new InterpreterImpl[F](sma, accumulator, sup)
               metas.parTraverse { ri =>
                 interpreter
-                  .runEdge(Chain(EvalNode.empty(ri.inputValue, 42)), ri.edges, ri.cont)
+                  .runEdge(Chain(EvalNode.empty(ri.inputValue)), ri.edges, ri.cont)
                   .run
                   .map { case (fail, succs) =>
                     val comb = combineSplit(fail, succs)
-                    val j = reconstructField[F](ri.cont, comb.toList.map { case (cg, j) => (cg.relativePath, j) })
+                    val j = reconstructField[F](ri.cont, comb.toList)
                     (fail, j)
                   }
               }
@@ -360,7 +360,7 @@ class InterpreterImpl[F[_]](
                     }
                     .value
                     .map(_.leftMap(NonEmptyChain.one)),
-                  EvalFailure.EffectResolution(in.cursorGroup, _, in.value)
+                  EvalFailure.EffectResolution(in.cursor, _, in.value)
                 )
               }
             case CompositionResolver(_, _) =>
@@ -370,7 +370,7 @@ class InterpreterImpl[F[_]](
                 attemptUserE(
                   streamAccumulator
                     .add(
-                      Interpreter.StreamMetadata(in.cursorGroup.absolutePath, xs, cont),
+                      Interpreter.StreamMetadata(in.cursor, xs, cont),
                       stream(in.value)
                     )
                     .timed
@@ -380,15 +380,15 @@ class InterpreterImpl[F[_]](
                       submit(edge.statisticsName, dur, 1) as
                         xs.map(hd => Chain(in.setValue(hd)))
                     },
-                  EvalFailure.StreamHeadResolution(in.cursorGroup, _, in.value)
+                  EvalFailure.StreamHeadResolution(in.cursor, _, in.value)
                 )
               }
             case BatchResolver(_, run) =>
               val resolveds =
                 inputs.parFlatTraverse { en =>
                   attemptUser(
-                    run(en.value).map(_.map(res => Chain((res, en.cursorGroup)))),
-                    EvalFailure.BatchPartitioning(en.cursorGroup, _, en.value)
+                    run(en.value).map(_.map(res => Chain((res, en.cursor)))),
+                    EvalFailure.BatchPartitioning(en.cursor, _, en.value)
                   )
                 }
 

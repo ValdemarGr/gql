@@ -12,7 +12,7 @@ import gql.Statistics
 
 trait BatchAccumulator[F[_]] {
   // Emits the whole result of the batch, so the calle must filter
-  def submit(id: PreparedQuery.EdgeId, values: Chain[(CursorGroup, Set[BatchKey])]): F[Option[Map[BatchKey, BatchValue]]]
+  def submit(id: PreparedQuery.EdgeId, values: Chain[(Cursor, Set[BatchKey])]): F[Option[Map[BatchKey, BatchValue]]]
 
   def getErrors: F[List[EvalFailure.BatchResolution]]
 }
@@ -43,11 +43,10 @@ object BatchAccumulator {
               }
           }
       }
-    println(batches.map(_.toString()).mkString_("\n"))
 
     // Now we allocate a deferred for each id in each batch
     type BatchPromise = Option[Map[BatchKey, BatchValue]] => F[Unit]
-    type InputType = Chain[(CursorGroup, Set[BatchKey])]
+    type InputType = Chain[(Cursor, Set[BatchKey])]
     F.ref(List.empty[EvalFailure.BatchResolution]).flatMap { errState =>
       batches
         .flatTraverse { case (batcherKey, batch) =>
@@ -97,7 +96,7 @@ object BatchAccumulator {
                     resolver(allKeysSet).timed.attempt
                       .flatMap[Option[Map[BatchKey, BatchValue]]] {
                         case Left(err) =>
-                          val allCursors: Chain[CursorGroup] =
+                          val allCursors: Chain[Cursor] =
                             xs.flatMap { case (input, _) => input.map { case (cg, _) => cg } }
 
                           errState

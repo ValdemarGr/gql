@@ -35,38 +35,17 @@ object Cursor {
   def empty = Cursor(Chain.empty)
 }
 
-final case class CursorGroup(
-    startPosition: Cursor,
-    relativePath: Cursor,
-    groupId: BigInt
-) {
-  lazy val absolutePath = Cursor(startPosition.path ++ relativePath.path)
-
-  def index(i: Int): CursorGroup = CursorGroup(startPosition, relativePath.index(i), groupId)
-  def field(id: Int, name: String): CursorGroup = CursorGroup(startPosition, relativePath.field(id, name), groupId)
-  def fragment(id: Int, name: String): CursorGroup = CursorGroup(startPosition, relativePath.fragment(id, name), groupId)
-}
-
-object CursorGroup {
-  def startAt(id: BigInt, start: Cursor) = CursorGroup(start, Cursor.empty, id)
-
-  def empty(id: BigInt) = startAt(id, Cursor.empty)
-}
-
-final case class EvalNode[A](cursorGroup: CursorGroup, value: A) {
+final case class EvalNode[A](cursor: Cursor, value: A) {
   def setValue[B](value: B): EvalNode[B] = copy(value = value)
 
-  def modify(f: CursorGroup => CursorGroup): EvalNode[A] = copy(cursorGroup = f(cursorGroup))
+  def modify(f: Cursor => Cursor): EvalNode[A] = copy(cursor = f(cursor))
 
-  def succeed[B](value: B, f: CursorGroup => CursorGroup): EvalNode[B] =
-    EvalNode(f(cursorGroup), value)
+  def succeed[B](value: B, f: Cursor => Cursor): EvalNode[B] =
+    EvalNode(f(cursor), value)
 
   def succeed[B](value: B): EvalNode[B] = succeed(value, identity)
 }
 
 object EvalNode {
-  def startAt[A](value: A, cursorGroup: BigInt, startPosition: Cursor) =
-    EvalNode(CursorGroup.startAt(cursorGroup, startPosition), value)
-
-  def empty[A](value: A, cursorGroup: BigInt) = startAt(value, cursorGroup, Cursor.empty)
+  def empty[A](value: A) = EvalNode[A](Cursor.empty, value)
 }

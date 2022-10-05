@@ -38,7 +38,7 @@ object Main extends App {
       .mkString_("")
   }*/
 
-  def showDiff_(fa: NonEmptyList[Planner.Node], fb: NonEmptyList[Planner.Node], maxEnd: Double): String = {
+  def showDiff_(fa: NonEmptyList[Planner.Node], fb: NonEmptyList[Planner.Node], maxEnd: Double): String = ""/*{
     fa.sortBy(_.id)
       .zip(fb.sortBy(_.id))
       .map { case (a, b) =>
@@ -53,7 +53,7 @@ object Main extends App {
         thisInfo + a.children.toNel.map(showDiff_(_, b.children.toNel.get, maxEnd)).mkString_("")
       }
       .mkString_("")
-  }
+  }*/
 
   def showDiff(fa: NonEmptyList[Planner.Node], fb: NonEmptyList[Planner.Node]) = "" /*{
     val me = Planner.NodeTree(fa).flattened.maximumBy(_.end).end
