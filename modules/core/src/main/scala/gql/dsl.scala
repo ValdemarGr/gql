@@ -52,16 +52,8 @@ object dsl {
   def field[F[_], I, T](resolver: Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T, Unit] =
     Field[F, I, T, Unit](Applicative[Arg].unit, resolver.contramap[(I, Unit)] { case (i, _) => i }, Eval.later(tpe))
 
-  // def stream[F[_], I, R, T](resolver: LeafResolver[F, (I, R), T])(f: I => fs2.Stream[F, R]): StreamResolver[F, I, R, T] =
-  //   streamFallible(resolver)(i => f(i).map(_.rightIor))
-
   def stream[F[_]: Applicative, I, T](f: I => fs2.Stream[F, T]): StreamResolver[F, I, T, T] =
     streamFallible[F, I, T](i => f(i).map(_.rightIor))
-
-  // def streamFallible[F[_], I, R, T](resolver: LeafResolver[F, (I, R), T])(
-  //     f: I => fs2.Stream[F, IorNec[String, R]]
-  // ): StreamResolver[F, I, R, T] =
-  //   StreamResolver[F, I, R, T](resolver, f)
 
   def streamFallible[F[_], I, T](f: I => fs2.Stream[F, IorNec[String, T]])(implicit F: Applicative[F]): StreamResolver[F, I, T, T] =
     StreamResolver(f)

@@ -185,15 +185,6 @@ object ast extends AstImplicits.Implicits {
       }
   }
 
-  // object Out {
-  // poor man's covariant F
-  // covariance for F is very unpleasant
-  // every F in the AST is on the right side (covariant position) so this cannot fail
-  // TODO, make F covariant
-  // implicit def covariantForOut[F[_], F2[x] >: F[x], A](implicit out: Out[F, A]): Out[F2, A] =
-  //   out.asInstanceOf[Out[F2, A]]
-  // }
-
   final case class ID[A](value: A) extends AnyVal
   implicit def idTpe[F[_], A](implicit s: Scalar[F, A]): In[ID[A]] = {
     Scalar("ID", x => s.encoder(x.value), v => s.decoder(v).map(ID(_)))

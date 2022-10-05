@@ -402,53 +402,6 @@ object SchemaShape {
           }
         }
 
-    // import io.circe._
-    // def renderJson(v: Json): Doc = {
-    //   v.fold(
-    //     Doc.text("null"),
-    //     Doc.str,
-    //     Doc.str,
-    //     Doc.str,
-    //     xs => Doc.intercalate(Doc.comma + Doc.line, xs.map(renderJson)).tightBracketBy(Doc.char('['), Doc.char(']')),
-    //     jo =>
-    //       Doc
-    //         .intercalate(
-    //           Doc.comma + Doc.line,
-    //           jo.toList.map { case (k, v) =>
-    //             Doc.text(k) + Doc.text(":") + Doc.space + renderJson(v)
-    //           }
-    //         )
-    //         .tightBracketBy(Doc.char('{'), Doc.char('}'))
-    //   )
-    // }
-
-    // println {
-    //   renderValueDoc(
-    //     Value.fromJson(
-    //       Json.obj(
-    //         "i" -> Json.fromString("i"),
-    //         "will" -> Json.fromString("will"),
-    //         "not" -> Json.arr(
-    //           Json.obj(
-    //             "pretty" -> Json.obj(
-    //               "print" -> Json.fromString("print")
-    //             )
-    //           ),
-    //           Json.obj(
-    //             "so" -> Json.obj(
-    //               "i" -> Json.fromString("i"),
-    //               "will" -> Json.fromString("will"),
-    //               "look" -> Json.obj(
-    //                 "ugly" -> Json.fromString("ugly")
-    //               )
-    //             )
-    //           )
-    //         )
-    //       )
-    //     )
-    //   ).render(40)
-    // }
-
     Doc.intercalate(Doc.hardLine + Doc.hardLine, docs).render(80)
   }
 }
