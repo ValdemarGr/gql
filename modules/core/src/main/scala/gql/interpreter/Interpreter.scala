@@ -144,11 +144,11 @@ object Interpreter {
                         rootNodes.map { case (st, rt, in, sm) =>
                           in match {
                             case Left(ex) =>
-                              (Chain(EvalFailure.StreamTailResolution( /*sm.cursor*/ null, Left(ex))), None, sm.cursor)
+                              (Chain(EvalFailure.StreamTailResolution(sm.cursor, Left(ex))), None, sm.cursor)
                             case Right(nec) =>
                               (
                                 Chain.fromOption(nec.left).flatMap(_.toChain).map { msg =>
-                                  EvalFailure.StreamTailResolution( /*sm.cursor*/ null, Right(msg))
+                                  EvalFailure.StreamTailResolution(sm.cursor, Right(msg))
                                 },
                                 nec.right.map(RunInput(sm.edges, sm.cont, _)),
                                 sm.cursor
