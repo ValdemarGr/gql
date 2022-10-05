@@ -40,7 +40,7 @@ object Planner {
       elemCost: Double,
       children: List[Node],
       batcher: Option[BatchResolver.ResolverKey] = None,
-      edgeId: PreparedQuery.EdgeId = PreparedQuery.EdgeId(???)
+      edgeId: PreparedQuery.EdgeId
   ) {
     lazy val start = end - cost
   }
@@ -98,7 +98,8 @@ object Planner {
               s.initialCost,
               s.extraElementCost,
               children.toList,
-              resolverKey
+              resolverKey,
+              x.id
             )
           )
         }
@@ -133,7 +134,11 @@ object Planner {
 
     // go through every node sorted by end decending
     // if the node has a batching name, move node to lastest possible batch (frees up most space for parents to move)
-    def go(remaining: List[Node], handled: Map[Int, Node], batchMap: Map[String, Eval[TreeSet[Double]]]): Map[Int, Node] =
+    def go(
+        remaining: List[Node],
+        handled: Map[PreparedQuery.EdgeId, Node],
+        batchMap: Map[BatchResolver.ResolverKey, Eval[TreeSet[Double]]]
+    ): Map[PreparedQuery.EdgeId, Node] =
       remaining match {
         case Nil     => handled
         case r :: rs =>
@@ -144,11 +149,11 @@ object Planner {
               // use the already resolved if possible
               val children = NonEmptyList(x, xs)
 
-              children.map(c => handled.get(c.id).getOrElse(c).start).minimum
+              children.map(c => handled.get(c.edgeId).getOrElse(c).start).minimum
           }
 
           val (newEnd, newMap) =
-            r.batchName match {
+            r.batcher match {
               // No batching, free up as much space as possible for parents to move
               case None     => (maxEnd, batchMap)
               case Some(bn) =>
@@ -173,20 +178,20 @@ object Planner {
                 (compat, newMap)
             }
 
-          go(rs, handled + (r.id -> r.copy(end = newEnd)), newMap)
+          go(rs, handled + (r.edgeId -> r.copy(end = newEnd)), newMap)
       }
 
     val plannedMap = go(orderedFlatNodes.toList, Map.empty, Map.empty)
 
-    def reConstruct(ns: List[Int]): Eval[List[Node]] = Eval.defer {
+    def reConstruct(ns: List[PreparedQuery.EdgeId]): Eval[List[Node]] = Eval.defer {
       ns.traverse { n =>
         val newN = plannedMap(n)
-        val newChildrenF = reConstruct(newN.children.map(_.id)).map(_.toList)
+        val newChildrenF = reConstruct(newN.children.map(_.edgeId)).map(_.toList)
         newChildrenF.map(x => newN.copy(children = x))
       }
     }
 
-    NodeTree(reConstruct(tree.root.map(_.id)).value)
+    NodeTree(reConstruct(tree.root.map(_.edgeId)).value)
   }
 
   // TODO get stats for all occuring batch names in the graph before running the algorithm,
@@ -228,10 +233,10 @@ object Planner {
             def handleSelection(p: PreparedQuery.Prepared[F, Any]): F[Node] =
               p match {
                 case PreparedLeaf(_, _) =>
-                  F.pure(Node(id, nodeName, batchName, end, s.initialCost, s.extraElementCost, Nil))
+                  F.pure(Node(id, nodeName, batchName, end, s.initialCost, s.extraElementCost, Nil, null, PreparedQuery.EdgeId(42)))
                 case Selection(fields) =>
                   constructCostTree[F](end, fields).map { nel =>
-                    Node(id, nodeName, batchName, end, s.initialCost, s.extraElementCost, nel.toList)
+                    Node(id, nodeName, batchName, end, s.initialCost, s.extraElementCost, nel.toList, null, PreparedQuery.EdgeId(42))
                   }
                 case PreparedList(of)   => handleSelection(of)
                 case PreparedOption(of) => handleSelection(of)
@@ -248,7 +253,7 @@ object Planner {
   )(implicit stats: Statistics[F]): F[NodeTree] =
     constructCostTree[F](0d, prepared).map(xs => NodeTree(xs.toList))
 
-  def plan(tree: NodeTree): NodeTree = ???/*{
+  def plan(tree: NodeTree): NodeTree = ??? /*{
     val flatNodes = tree.flattened
 
     val orderedFlatNodes = flatNodes.sortBy(_.end).reverse

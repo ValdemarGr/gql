@@ -545,7 +545,7 @@ fragment F2 on Data {
   def mainProgram[F[_]](implicit F: Async[F], A: Ask[F, Deps], C: std.Console[F]): F[Unit] = {
     Schema.stateful(testSchemaShape[F]).flatMap { schema =>
       println(schema.shape.render)
-      System.exit(0)
+      // System.exit(0)
 
       println(schema.shape.validate.map(_.toString).mkString_("\n"))
 

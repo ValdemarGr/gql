@@ -103,7 +103,7 @@ object PreparedQuery {
   ): F[(NonEmptyChain[PreparedEdge[G]], String)] =
     resolver match {
       case r @ BatchResolver(id, run) =>
-        nextId[F].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, s"batch_$id")), parentName))
+        nextId[F].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, s"batch_${id.id}")), parentName))
       case r @ EffectResolver(_) =>
         val thisName = s"${parentName}_effect"
         nextId[F].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, thisName)), thisName))

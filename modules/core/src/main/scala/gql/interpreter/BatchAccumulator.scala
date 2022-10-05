@@ -26,7 +26,7 @@ object BatchAccumulator {
 
     // Group similar ends
     // Then group the end-groups by batcher id
-    val batches: Chain[(BatchResolver.ResolverKey, NonEmptyChain[Int])] =
+    val batches: Chain[(BatchResolver.ResolverKey, NonEmptyChain[PreparedQuery.EdgeId])] =
       Chain.fromSeq {
         flat
           .map(n => (n.batcher, n))
@@ -39,10 +39,11 @@ object BatchAccumulator {
               .toSortedMap
               .toList
               .map { case (batcherKey, batch) =>
-                batcherKey -> batch.map { case (_, node) => node.id }
+                batcherKey -> batch.map { case (_, node) => node.edgeId }
               }
           }
       }
+    println(batches.map(_.toString()).mkString_("\n"))
 
     // Now we allocate a deferred for each id in each batch
     type BatchPromise = Option[Map[BatchKey, BatchValue]] => F[Unit]
@@ -50,7 +51,7 @@ object BatchAccumulator {
     F.ref(List.empty[EvalFailure.BatchResolution]).flatMap { errState =>
       batches
         .flatTraverse { case (batcherKey, batch) =>
-          F.ref(Map.empty[Int, (InputType, BatchPromise)]).map { inputAccum =>
+          F.ref(Map.empty[PreparedQuery.EdgeId, (InputType, BatchPromise)]).map { inputAccum =>
             batch.map(id => id -> (inputAccum, batch, batcherKey)).toChain
           }
         }
@@ -59,7 +60,7 @@ object BatchAccumulator {
           new BatchAccumulator[F] {
             def submit(id: PreparedQuery.EdgeId, values: InputType): F[Option[Map[BatchKey, BatchValue]]] = {
               F.deferred[Option[Map[BatchKey, BatchValue]]].flatMap { ret =>
-                val (state, batchIds, batcherKey) = accumLookup(id.id)
+                val (state, batchIds, batcherKey) = accumLookup(id)
 
                 val resolver = schemaState.batchers(batcherKey)
 
@@ -68,14 +69,14 @@ object BatchAccumulator {
 
                   state.modify { m =>
                     // We are not the last submitter
-                    if (m.size != (batchIds.size + 1)) {
-                      val m2 = m + (id.id -> ((values, complete)))
+                    if (m.size != (batchIds.size - 1)) {
+                      val m2 = m + (id -> ((values, complete)))
                       (m2, None)
                     } else {
                       // Garbage collect
                       val m2 = m -- batchIds.toIterable
                       val allElems: Chain[(InputType, BatchPromise)] =
-                        batchIds.collect { case bid if bid != id.id => m(bid) } append (values, complete)
+                        batchIds.collect { case bid if bid != id => m(bid) } append (values, complete)
                       (m2, Some(allElems))
                     }
                   }
