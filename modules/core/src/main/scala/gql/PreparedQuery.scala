@@ -107,7 +107,7 @@ object PreparedQuery {
       case r @ EffectResolver(_) =>
         val thisName = s"${parentName}_effect"
         nextId[F].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, thisName)), thisName))
-      case r @ StreamResolver(_, _) =>
+      case r @ StreamResolver(_) =>
         val thisName = s"${parentName}_stream"
         nextId[F].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, thisName)), thisName))
       case r @ CompositionResolver(left, right) =>
