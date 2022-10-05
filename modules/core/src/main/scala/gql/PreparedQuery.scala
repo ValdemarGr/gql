@@ -20,24 +20,13 @@ object PreparedQuery {
   sealed trait PreparedField[F[_], A]
 
   final case class PreparedDataField[F[_], I, T](
-      // Maybe dead
       id: Int,
-      // Maybe dead
       name: String,
-      // Maybe dead
-      resolve: Resolver[F, I, T],
-      // Maybe dead
-      selection: Prepared[F, T],
-      // Maybe dead
-      typename: String,
       alias: Option[String],
-      // Maybe dead
-      parentTypename: String,
       cont: PreparedCont[F]
   ) extends PreparedField[F, I]
 
   final case class PreparedFragField[F[_], A](
-      // Maybe dead
       id: Int,
       typename: String,
       specify: Any => Option[A],
@@ -378,7 +367,7 @@ object PreparedQuery {
         nextId[F].flatMap { id =>
           flattenResolvers[F, G](s"${currentTypename}_${gqlField.name}", resolve).map { case (edges, _) =>
             val pc = PreparedCont(edges, p)
-            PreparedDataField(id, gqlField.name, resolve, p, tn, gqlField.alias, currentTypename, pc)
+            PreparedDataField(id, gqlField.name, gqlField.alias, pc)
           }
         }
       }

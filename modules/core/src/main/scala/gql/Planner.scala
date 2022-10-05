@@ -102,9 +102,8 @@ object Planner {
       stats: Statistics[F]
   ): F[NonEmptyList[Node]] = {
     prepared.flatTraverse {
-      case df @ PreparedDataField(id, name, resolve, selection, tn, _, _, cont) =>
-        costForEdges[F](cont.edges, cont.cont, currentCost)
-      case PreparedFragField(_, typename, _, selection) => costForFields[F](currentCost, selection.fields)
+      case df @ PreparedDataField(id, name, selection, cont) => costForEdges[F](cont.edges, cont.cont, currentCost)
+      case PreparedFragField(_, typename, _, selection)      => costForFields[F](currentCost, selection.fields)
     }
   }
 
