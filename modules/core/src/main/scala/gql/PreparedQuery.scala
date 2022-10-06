@@ -538,48 +538,89 @@ object PreparedQuery {
               case (Some(j), _) => j
               // TODO typecheck
               case (None, Some(default)) =>
-                def parserValueToValue(v: P.Value): F[Value] =
+                def parserValueToValue(v: P.Value, followVariables: Boolean): F[Value] =
                   v match {
-                    case NullValue        => F.pure(Value.NullValue)
-                    case FloatValue(v)    => F.pure(Value.FloatValue(v))
-                    case EnumValue(v)     => F.pure(Value.EnumValue(v))
-                    case ListValue(v)     => v.toVector.traverse(parserValueToValue).map(Value.ArrayValue(_))
-                    case IntValue(v)      => F.pure(Value.IntValue(v))
-                    case VariableValue(v) => raise(s"variables cannot reference other variables: variable ${vd.name} references $v", None)
+                    case NullValue     => F.pure(Value.NullValue)
+                    case FloatValue(v) => F.pure(Value.FloatValue(v))
+                    case EnumValue(v)  => F.pure(Value.EnumValue(v))
+                    case ListValue(v)  => v.toVector.traverse(parserValueToValue(_, followVariables)).map(Value.ArrayValue(_))
+                    case IntValue(v)   => F.pure(Value.IntValue(v))
+                    case VariableValue(v) =>
+                      if (!followVariables)
+                        raise(s"variables cannot reference other variables: variable ${vd.name} references $v", None)
+                      else {
+                        variableMap.get(v) match {
+                          case None    => raise(s"variable $v was not provided, but it was declared", None)
+                          case Some(j) => ???
+                        }
+                      }
                     case ObjectValue(v) =>
                       v.traverse { case (k, v) =>
-                        parserValueToValue(v).tupleLeft(k)
+                        parserValueToValue(v, followVariables).tupleLeft(k)
                       }.map(xs => Value.ObjectValue(xs.toMap))
                     case BooleanValue(v) => F.pure(Value.BooleanValue(v))
                     case StringValue(v)  => F.pure(Value.StringValue(v))
                   }
 
-                parserValueToValue(default).map { v0 =>
-                  def go(v: Value) =
-                    vd.tpe match {
-                      case P.Type.Named(name) =>
-                        (schema.shape.discover.inputs.get(name), v) match {
-                          case (None, _) => raise(s"unknown type $name", Some(caret))
-                          case (Some(Enum(_, mappings)), Value.EnumValue(s)) =>
+                parserValueToValue(default, false).map { v0 =>
+                  def ptypeToType(tpe: P.Type): In[Any] = ???
+
+                  def goArg[A](arg: Arg[A], input: Map[String, Value]): F[A] = {
+                    // All provided fields are of the correct type
+                    // All required fields are either defiend or defaulted
+                    val fieldsF: F[Chain[(String, Any)]] =
+                      arg.entries.traverse { a =>
+                        val fa =
+                          input.get(a.name) match {
+                            case None =>
+                              a.defaultValue match {
+                                case None => raise[F, Value](s"required field ${a.name} was not provided and has no default value", None)
+                                // TODO use function defied elsewhere that takes defaultvalue to value
+                                // TODO this value being parsed can probably be cached, since the default is the same for every query
+                                case Some(dv) => F.pure(dv.asInstanceOf[Value])
+                              }
+                            case Some(x) => F.pure(x)
+                          }
+
+                        fa.flatMap(go[Any](_, a.input.value.asInstanceOf[In[Any]])).tupleLeft(a.name)
+                      }
+
+                    fieldsF.map(_.toList.toMap).map(arg.decode)
+                  }
+
+                  def go[A](v: Value, tpe: In[A]): F[A] =
+                    (tpe, v) match {
+                      case (e @ Enum(name, mappings), Value.EnumValue(s)) =>
+                        e.m.lookup(s) match {
+                          case Some(x) => F.pure(x)
+                          case None =>
                             val names = mappings.map { case (name, _) => name }
-                            if (names.exists(_ == v)) F.unit
-                            else
-                              raise(
-                                s"enum value $s does not occur in enum type $name, possible enum values are ${names.mkString_(", ")}",
-                                None
-                              )
-                          case (Some(Enum(_, _)), _)            => raise(s"enum value expected for $name, but got ${v.name}", None)
-                          case (Some(Scalar(_, _, decoder)), x) => raiseEither(decoder(x), None)
-                          case (Some(Input(_, fields)), Value.ObjectValue(m)) =>
-                            m
-                            fields
-                            ???
-                          // x match {
-                          //   case Enum(name, mappings)           =>
-                          //   case Input(name, fields)            =>
-                          //   case Scalar(name, encoder, decoder) =>
-                          // }
+                            raise(
+                              s"enum value $s does not occur in enum type $name, possible enum values are ${names.mkString_(", ")}",
+                              None
+                            )
                         }
+                      case (Enum(name, _), _) =>
+                        raise(s"enum value expected for $name, but got ${v.name}", None)
+                      case (Scalar(_, _, decoder), x)               => raiseEither(decoder(x), None)
+                      case (Input(_, fields), Value.ObjectValue(m)) =>
+                        // All provided fields must be valid fields (type equivalent, and no more fields than are defined)
+                        // All required fields must be provided or defaulted
+
+                        val required = fields.nec.map(x => x.name -> x).toList.toMap
+
+                        // All provided fields are defined
+                        val tooMuch = m.keySet -- required.keySet
+                        val tooMuchF =
+                          if (tooMuch.isEmpty) F.unit
+                          else raise[F, Unit](s"too many fields provided, unknown fields are ${tooMuch.toList.mkString_(", ")}", None)
+
+                        tooMuchF >> goArg(fields, m)
+                      case (Input(name, _), _)               => raise(s"object value expected for $name, but got ${v.name}", None)
+                      case (InArr(of), Value.ArrayValue(xs)) => xs.traverse(go(_, of)).map(_.toSeq.asInstanceOf[A])
+                      case (InArr(name), _)                  => raise(s"array value expected, but got ${v.name}", None)
+                      case (InOpt(of), Value.NullValue)      => F.pure(None.asInstanceOf[A])
+                      case (InOpt(of), x)                    => go(x, of).map(Some(_).asInstanceOf[A])
                     }
                 }
 

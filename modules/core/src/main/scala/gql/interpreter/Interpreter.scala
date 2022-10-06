@@ -82,7 +82,6 @@ object Interpreter {
       def evaluate(metas: NonEmptyList[RunInput]): F[(Chain[EvalFailure], NonEmptyList[Json], Map[Unique.Token, StreamMetadata[F]])] =
         StreamMetadataAccumulator[F, StreamMetadata[F], IorNec[String, Any]].flatMap { sma =>
           for {
-            _ <- F.unit
             costTree <- metas.toList
               .flatTraverse { ri =>
                 NonEmptyChain.fromSeq(ri.edges) match {
