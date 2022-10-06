@@ -105,6 +105,19 @@ object PreparedQuery {
         }
     }
 
+  type M[A] = State[Prep, ValidatedNec[PositionalError, A]]
+
+  object M {
+    def pure[A](a: A): M[A] = State.pure(a.validNec)
+
+    def flatMap[A, B](fa: M[A])(f: A => M[B]): M[B] = {
+      fa.flatMap {
+        case Validated.Invalid(e) => State.pure(Validated.Invalid(e))
+        case Validated.Valid(a)   => f(a)
+      }
+    }
+  }
+
   // TODO use validated
   def decodeInput[A](in: ast.In[A], value: Value): Either[String, A] =
     in match {
@@ -473,6 +486,100 @@ object PreparedQuery {
       }
     }
 
+  def parseInput[F[_], A](v: Value, tpe: In[A], ambigiousEnum: Boolean)(implicit
+      F: MonadError[F, PositionalError],
+      S: Stateful[F, Prep]
+  ): F[A] =
+    (tpe, v) match {
+      case (e @ Enum(name, mappings), v) =>
+        val fa: F[String] = v match {
+          case Value.EnumValue(s)                    => F.pure(s)
+          case Value.StringValue(s) if ambigiousEnum => F.pure(s)
+          case _                                     => raise(s"enum value expected for $name, but got ${v.name}", None)
+        }
+        fa.flatMap { s =>
+          e.m.lookup(s) match {
+            case Some(x) => F.pure(x)
+            case None =>
+              val names = mappings.map { case (name, _) => name }
+              raise(
+                s"enum value $s does not occur in enum type $name, possible enum values are ${names.mkString_(", ")}",
+                None
+              )
+          }
+        }
+      case (Scalar(_, _, decoder), x) => raiseEither(decoder(x), None)
+      case (Input(_, fields), Value.ObjectValue(m)) =>
+        val required = fields.nec.map(x => x.name -> x).toList.toMap
+
+        // All provided fields are defined
+        val tooMuch = m.keySet -- required.keySet
+        val tooMuchF =
+          if (tooMuch.isEmpty) F.unit
+          else raise[F, Unit](s"too many fields provided, unknown fields are ${tooMuch.toList.mkString_(", ")}", None)
+
+        tooMuchF >> parseArg[F, A](fields, m, ambigiousEnum)
+      case (Input(name, _), _)               => raise(s"object value expected for $name, but got ${v.name}", None)
+      case (InArr(of), Value.ArrayValue(xs)) => xs.traverse(parseInput[F, A](_, of, ambigiousEnum)).map(_.toSeq.asInstanceOf[A])
+      case (InArr(name), _)                  => raise(s"array value expected, but got ${v.name}", None)
+      case (InOpt(of), Value.NullValue)      => F.pure(None.asInstanceOf[A])
+      case (InOpt(of), x)                    => parseInput[F, A](x, of, ambigiousEnum).map(Some(_).asInstanceOf[A])
+    }
+
+  def parseArg[F[_], A](arg: Arg[A], input: Map[String, Value], ambigiousEnum: Boolean)(implicit
+      F: MonadError[F, PositionalError],
+      S: Stateful[F, Prep]
+  ): F[A] = {
+    // All provided fields are of the correct type
+    // All required fields are either defiend or defaulted
+    val fieldsF: F[Chain[(String, Any)]] =
+      arg.entries.traverse { a =>
+        val fa =
+          input.get(a.name) match {
+            case None =>
+              a.defaultValue match {
+                case None => raise[F, Value](s"required field ${a.name} was not provided and has no default value", None)
+                // TODO use function defied elsewhere that takes defaultvalue to value
+                // TODO this value being parsed can probably be cached, since the default is the same for every query
+                case Some(dv) => F.pure(dv.asInstanceOf[Value])
+              }
+            case Some(x) => F.pure(x)
+          }
+
+        fa.flatMap(parseInput[F, Any](_, a.input.value.asInstanceOf[In[Any]], ambigiousEnum)).tupleLeft(a.name)
+      }
+
+    fieldsF.map(_.toList.toMap).map(arg.decode)
+  }
+
+  def parserValueToValue2[F[_]](v: P.Value, variableMap: Option[Map[String, Json]])(implicit
+      F: MonadError[F, PositionalError],
+      S: Stateful[F, Prep]
+  ): F[Value] =
+    v match {
+      case NullValue     => F.pure(Value.NullValue)
+      case FloatValue(v) => F.pure(Value.FloatValue(v))
+      case EnumValue(v)  => F.pure(Value.EnumValue(v))
+      case ListValue(v) =>
+        v.toVector.traverse(parserValueToValue2[F](_, variableMap)).map(Value.ArrayValue(_))
+      case IntValue(v) => F.pure(Value.IntValue(v))
+      case VariableValue(v) =>
+        variableMap match {
+          case None => raise[F, Value](s"variable $v must not occur in this position", None)
+          case Some(vm) =>
+            vm.get(v) match {
+              case None    => raise(s"variable $v was not provided, but it was declared", None)
+              case Some(j) => F.pure(Value.fromJson(j))
+            }
+        }
+      case ObjectValue(v) =>
+        v.traverse { case (k, v) =>
+          parserValueToValue2[F](v, variableMap).tupleLeft(k)
+        }.map(xs => Value.ObjectValue(xs.toMap))
+      case BooleanValue(v) => F.pure(Value.BooleanValue(v))
+      case StringValue(v)  => F.pure(Value.StringValue(v))
+    }
+
   // TODO positions for errors
   def getOperationDefinition[F[_]](
       ops: List[Pos[P.OperationDefinition]],
@@ -531,117 +638,40 @@ object PreparedQuery {
       case P.OperationDefinition.Simple(sel) => sel
       case P.OperationDefinition.Detailed(_, _, vdsO, _, sel) =>
         def sus =
-          vdsO.toList.flatMap(_.nel.toList).map { case Pos(caret, vd) =>
-            (variableMap.get(vd.name), vd.defaultValue) match {
-              case (None, None) => raise(s"variable ${vd.name} was not provided and has no default value", Some(caret))
-              // TODO typecheck
-              case (Some(j), _) => j
-              // TODO typecheck
-              case (None, Some(default)) =>
-                def parserValueToValue(v: P.Value, followVariables: Boolean): F[Value] =
-                  v match {
-                    case NullValue     => F.pure(Value.NullValue)
-                    case FloatValue(v) => F.pure(Value.FloatValue(v))
-                    case EnumValue(v)  => F.pure(Value.EnumValue(v))
-                    case ListValue(v)  => v.toVector.traverse(parserValueToValue(_, followVariables)).map(Value.ArrayValue(_))
-                    case IntValue(v)   => F.pure(Value.IntValue(v))
-                    case VariableValue(v) =>
-                      if (!followVariables)
-                        raise(s"variables cannot reference other variables: variable ${vd.name} references $v", None)
-                      else {
-                        variableMap.get(v) match {
-                          case None    => raise(s"variable $v was not provided, but it was declared", None)
-                          case Some(j) => ???
-                        }
-                      }
-                    case ObjectValue(v) =>
-                      v.traverse { case (k, v) =>
-                        parserValueToValue(v, followVariables).tupleLeft(k)
-                      }.map(xs => Value.ObjectValue(xs.toMap))
-                    case BooleanValue(v) => F.pure(Value.BooleanValue(v))
-                    case StringValue(v)  => F.pure(Value.StringValue(v))
+          vdsO.toList
+            .flatMap(_.nel.toList)
+            .traverse { case Pos(caret, vd) =>
+              def getTpe(p: P.Type, optional: Boolean = true): F[In[Any]] = {
+                val fa =
+                  p match {
+                    case P.Type.Named(name) =>
+                      raiseOpt(schema.shape.discover.inputs.get(name).asInstanceOf[Option[In[Any]]], s"type $name does not exist", None)
+                    case P.Type.List(of) =>
+                      getTpe(of).map(InArr[Any, Seq](_).asInstanceOf[In[Any]])
+                    case P.Type.NonNull(of) => getTpe(of, false)
                   }
 
-                parserValueToValue(default, false).map { v0 =>
-                  def ptypeToType(tpe: P.Type): In[Any] = ???
+                fa.map { tpe =>
+                  if (optional) InOpt(tpe).asInstanceOf[In[Any]] else tpe
+                }
+              }
 
-                  def goArg[A](arg: Arg[A], input: Map[String, Value]): F[A] = {
-                    // All provided fields are of the correct type
-                    // All required fields are either defiend or defaulted
-                    val fieldsF: F[Chain[(String, Any)]] =
-                      arg.entries.traverse { a =>
-                        val fa =
-                          input.get(a.name) match {
-                            case None =>
-                              a.defaultValue match {
-                                case None => raise[F, Value](s"required field ${a.name} was not provided and has no default value", None)
-                                // TODO use function defied elsewhere that takes defaultvalue to value
-                                // TODO this value being parsed can probably be cached, since the default is the same for every query
-                                case Some(dv) => F.pure(dv.asInstanceOf[Value])
-                              }
-                            case Some(x) => F.pure(x)
-                          }
-
-                        fa.flatMap(go[Any](_, a.input.value.asInstanceOf[In[Any]])).tupleLeft(a.name)
-                      }
-
-                    fieldsF.map(_.toList.toMap).map(arg.decode)
+              val resolvedInput =
+                getTpe(vd.tpe).flatMap { tpe =>
+                  (variableMap.get(vd.name), vd.defaultValue) match {
+                    case (None, None) => raise[F, Any](s"variable ${vd.name} was not provided and has no default value", Some(caret))
+                    case (Some(j), _) => parseInput[F, Any](Value.fromJson(j), tpe, ambigiousEnum = true)
+                    // TODO typecheck
+                    case (None, Some(default)) =>
+                      parserValueToValue2[F](default, None).flatMap(parseInput[F, Any](_, tpe, ambigiousEnum = false))
                   }
-
-                  def go[A](v: Value, tpe: In[A]): F[A] =
-                    (tpe, v) match {
-                      case (e @ Enum(name, mappings), Value.EnumValue(s)) =>
-                        e.m.lookup(s) match {
-                          case Some(x) => F.pure(x)
-                          case None =>
-                            val names = mappings.map { case (name, _) => name }
-                            raise(
-                              s"enum value $s does not occur in enum type $name, possible enum values are ${names.mkString_(", ")}",
-                              None
-                            )
-                        }
-                      case (Enum(name, _), _) =>
-                        raise(s"enum value expected for $name, but got ${v.name}", None)
-                      case (Scalar(_, _, decoder), x)               => raiseEither(decoder(x), None)
-                      case (Input(_, fields), Value.ObjectValue(m)) =>
-                        // All provided fields must be valid fields (type equivalent, and no more fields than are defined)
-                        // All required fields must be provided or defaulted
-
-                        val required = fields.nec.map(x => x.name -> x).toList.toMap
-
-                        // All provided fields are defined
-                        val tooMuch = m.keySet -- required.keySet
-                        val tooMuchF =
-                          if (tooMuch.isEmpty) F.unit
-                          else raise[F, Unit](s"too many fields provided, unknown fields are ${tooMuch.toList.mkString_(", ")}", None)
-
-                        tooMuchF >> goArg(fields, m)
-                      case (Input(name, _), _)               => raise(s"object value expected for $name, but got ${v.name}", None)
-                      case (InArr(of), Value.ArrayValue(xs)) => xs.traverse(go(_, of)).map(_.toSeq.asInstanceOf[A])
-                      case (InArr(name), _)                  => raise(s"array value expected, but got ${v.name}", None)
-                      case (InOpt(of), Value.NullValue)      => F.pure(None.asInstanceOf[A])
-                      case (InOpt(of), x)                    => go(x, of).map(Some(_).asInstanceOf[A])
-                    }
                 }
 
-                default
+              resolvedInput.tupleLeft(vd.name)
             }
-          }
+            .map(_.toMap)
+
         sel
-      // TODO check variables and fill defaults
-      // Also embed type information into the variable map that must be checked against the parameters in the schema
-      // Json can be removed from the variables map since it will be decoded up-front
-      // Map[String, (Value, Type)]
-      // Typechecking must occur at the usage of this map also, or else, we implement structural typing
-      // vdsO match {
-      //   case None => Map.empty
-      //   case Some(vars) =>
-      //     val vds = vars.nel
-      //     vds.traverse{ vd =>
-      //     }
-      //     vds.map(_.defaultValue)
-      // }
-      // (variableMap, sel)
     }
 
     val fa = rootSchema.flatMap { root =>
