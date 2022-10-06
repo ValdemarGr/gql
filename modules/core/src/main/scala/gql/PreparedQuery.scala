@@ -190,9 +190,8 @@ object PreparedQuery {
           raiseOpt(variableMap.get(v).map(Value.fromJson(_)), s"variable $v not found", Some(caret))
         case NullValue       => F.pure(Value.NullValue)
         case BooleanValue(v) => F.pure(Value.BooleanValue(v))
-        case FloatValue(v) =>
-          raiseOpt(v.toBigDecimal.map(Value.FloatValue(_)), s"$v is not a vaild json number", Some(caret))
-        case StringValue(v) => F.pure(Value.StringValue(v))
+        case FloatValue(v)   => F.pure(Value.FloatValue(v))
+        case StringValue(v)  => F.pure(Value.StringValue(v))
       }
 
     go(value)
@@ -529,8 +528,65 @@ object PreparedQuery {
       }
 
     val sel = op match {
-      case P.OperationDefinition.Simple(sel)                  => sel
-      case P.OperationDefinition.Detailed(_, _, vdsO, _, sel) => sel
+      case P.OperationDefinition.Simple(sel) => sel
+      case P.OperationDefinition.Detailed(_, _, vdsO, _, sel) =>
+        def sus =
+          vdsO.toList.flatMap(_.nel.toList).map { case Pos(caret, vd) =>
+            (variableMap.get(vd.name), vd.defaultValue) match {
+              case (None, None) => raise(s"variable ${vd.name} was not provided and has no default value", Some(caret))
+              // TODO typecheck
+              case (Some(j), _) => j
+              // TODO typecheck
+              case (None, Some(default)) =>
+                def parserValueToValue(v: P.Value): F[Value] =
+                  v match {
+                    case NullValue        => F.pure(Value.NullValue)
+                    case FloatValue(v)    => F.pure(Value.FloatValue(v))
+                    case EnumValue(v)     => F.pure(Value.EnumValue(v))
+                    case ListValue(v)     => v.toVector.traverse(parserValueToValue).map(Value.ArrayValue(_))
+                    case IntValue(v)      => F.pure(Value.IntValue(v))
+                    case VariableValue(v) => raise(s"variables cannot reference other variables: variable ${vd.name} references $v", None)
+                    case ObjectValue(v) =>
+                      v.traverse { case (k, v) =>
+                        parserValueToValue(v).tupleLeft(k)
+                      }.map(xs => Value.ObjectValue(xs.toMap))
+                    case BooleanValue(v) => F.pure(Value.BooleanValue(v))
+                    case StringValue(v)  => F.pure(Value.StringValue(v))
+                  }
+
+                parserValueToValue(default).map { v0 =>
+                  def go(v: Value) =
+                    vd.tpe match {
+                      case P.Type.Named(name) =>
+                        (schema.shape.discover.inputs.get(name), v) match {
+                          case (None, _) => raise(s"unknown type $name", Some(caret))
+                          case (Some(Enum(_, mappings)), Value.EnumValue(s)) =>
+                            val names = mappings.map { case (name, _) => name }
+                            if (names.exists(_ == v)) F.unit
+                            else
+                              raise(
+                                s"enum value $s does not occur in enum type $name, possible enum values are ${names.mkString_(", ")}",
+                                None
+                              )
+                          case (Some(Enum(_, _)), _)            => raise(s"enum value expected for $name, but got ${v.name}", None)
+                          case (Some(Scalar(_, _, decoder)), x) => raiseEither(decoder(x), None)
+                          case (Some(Input(_, fields)), Value.ObjectValue(m)) =>
+                            m
+                            fields
+                            ???
+                          // x match {
+                          //   case Enum(name, mappings)           =>
+                          //   case Input(name, fields)            =>
+                          //   case Scalar(name, encoder, decoder) =>
+                          // }
+                        }
+                    }
+                }
+
+                default
+            }
+          }
+        sel
       // TODO check variables and fill defaults
       // Also embed type information into the variable map that must be checked against the parameters in the schema
       // Json can be removed from the variables map since it will be decoded up-front

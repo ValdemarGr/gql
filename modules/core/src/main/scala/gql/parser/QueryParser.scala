@@ -32,20 +32,6 @@ object QueryParser {
 
   val comma = t(',')
 
-  val token =
-    punctuator |
-      name |
-      intValue |
-      floatValue |
-      stringValue
-
-  val ignored =
-    unicodeBOM |
-      whiteSpace |
-      lineTerminator |
-      comment |
-      comma
-
   sealed trait Punctuator
   object Punctuator {
     case object `!` extends Punctuator
@@ -220,7 +206,7 @@ object QueryParser {
   object Value {
     final case class VariableValue(v: String) extends Value
     final case class IntValue(v: BigInt) extends Value
-    final case class FloatValue(v: JsonNumber) extends Value
+    final case class FloatValue(v: BigDecimal) extends Value
     final case class StringValue(v: String) extends Value
     final case class BooleanValue(v: Boolean) extends Value
     case object NullValue extends Value
@@ -262,13 +248,14 @@ object QueryParser {
   lazy val objectField =
     name ~ (t(':') *> value)
 
-  final case class VariableDefinitions(nel: NonEmptyList[VariableDefinition])
+  final case class VariableDefinitions(nel: NonEmptyList[Pos[VariableDefinition]])
   lazy val variableDefinitions =
     variableDefinition.rep.between(t('('), t(')')).map(VariableDefinitions(_))
 
   final case class VariableDefinition(name: String, tpe: Type, defaultValue: Option[Value])
-  lazy val variableDefinition =
+  lazy val variableDefinition = Pos.pos {
     (variable ~ (t(':') *> `type`) ~ defaultValue.?).map { case ((n, t), d) => VariableDefinition(n, t, d) }
+  }
 
   lazy val variable =
     t('$') *> name
@@ -494,7 +481,7 @@ object QueryParser {
 
   lazy val integerPart = Numbers.bigInt
 
-  lazy val floatValue: P[JsonNumber] = w(Numbers.jsonNumber).map(JsonNumber.fromString).collect { case Some(x) => x }
+  lazy val floatValue: P[BigDecimal] = w(Numbers.jsonNumber).map(BigDecimal(_))
 
   lazy val stringValue: P[String] = w {
     val d = P.char('"')
