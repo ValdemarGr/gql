@@ -514,6 +514,20 @@ object PreparedQuery {
       case (i, _)                         => raise(s"expected ${inName(i)} type, but got ${pValueName(v)}", None)
     }
 
+  def defaultToValue(default: DefaultValue[_]): Value = {
+    import DefaultValue._
+    default match {
+      case Arr(values)       => Value.ArrayValue(values.toVector.map(defaultToValue))
+      case DefaultValue.Null => Value.NullValue
+      case Primitive(value, in) =>
+        in match {
+          case e @ Enum(_, _)    => Value.EnumValue(e.revm(value))
+          case Scalar(_, enc, _) => enc(value)
+        }
+      case Obj(fields) => Value.ObjectValue(fields.toList.toMap.view.mapValues(defaultToValue).toMap)
+    }
+  }
+
   def parseArg[F[_], A](arg: Arg[A], input: Map[String, P.Value], variableMap: Option[VariableMap[A]], ambigiousEnum: Boolean)(implicit
       F: MonadError[F, PositionalError],
       S: Stateful[F, Prep]
@@ -529,7 +543,7 @@ object PreparedQuery {
                 case None => raise[F, P.Value](s"required input ${a.name} was not provided and has no default value", None)
                 // TODO use function defied elsewhere that takes defaultvalue to value
                 // TODO this value being parsed can probably be cached, since the default is the same for every query
-                case Some(dv) => F.pure(dv.asInstanceOf[P.Value])
+                case Some(dv) => F.pure(valueToParserValue(defaultToValue(dv)))
               }
             case Some(x) => F.pure(x)
           }

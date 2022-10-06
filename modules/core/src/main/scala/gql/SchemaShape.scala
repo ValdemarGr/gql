@@ -305,22 +305,8 @@ object SchemaShape {
       }
     }
 
-    def defaultToValue(default: DefaultValue[_]): Value = {
-      import DefaultValue._
-      default match {
-        case Arr(values)       => Value.ArrayValue(values.toVector.map(defaultToValue))
-        case DefaultValue.Null => Value.NullValue
-        case Primitive(value, in) =>
-          in match {
-            case e @ Enum(_, _)    => Value.EnumValue(e.revm(value))
-            case Scalar(_, enc, _) => enc(value)
-          }
-        case Obj(fields) => Value.ObjectValue(fields.toList.toMap.view.mapValues(defaultToValue).toMap)
-      }
-    }
-
     def renderArgValueDoc(av: ArgValue[_]): Doc = {
-      val o = av.defaultValue.map(dv => Doc.text(" = ") + renderValueDoc(defaultToValue(dv))).getOrElse(Doc.empty)
+      val o = av.defaultValue.map(dv => Doc.text(" = ") + renderValueDoc(PreparedQuery.defaultToValue(dv))).getOrElse(Doc.empty)
       Doc.text(av.name) + Doc.text(": ") + getInputNameDoc(av.input.value) + o
     }
 
