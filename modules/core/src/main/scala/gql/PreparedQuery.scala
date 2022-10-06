@@ -119,50 +119,6 @@ object PreparedQuery {
     }
   }
 
-  // TODO use validated
-  def decodeInput[A](in: ast.In[A], value: Value): Either[String, A] =
-    in match {
-      case ast.InOpt(inner) =>
-        if (value.asJson.isNull) Right(None).asInstanceOf[Either[String, A]]
-        else decodeInput(inner, value).map(Some(_)).asInstanceOf[Either[String, A]]
-      case ast.InArr(inner) =>
-        value match {
-          case gql.Value.ArrayValue(v) => v.traverse(decodeInput(inner, _)).asInstanceOf[Either[String, A]]
-          case _                       => Left(s"expected array type, get ${value.name}")
-        }
-      case ast.Scalar(_, _, dec) => dec(value)
-      case e @ ast.Enum(name, mappings) =>
-        def decodeString(s: String): Either[String, A] =
-          e.m.lookup(s) match {
-            case Some(a) => Right(a)
-            case None    => Left(s"unknown value $s for enum $name")
-          }
-
-        value match {
-          case gql.Value.EnumValue(s) => decodeString(s)
-          case _                      => Left(s"expected enum $name, got ${value.name}")
-        }
-      // TODO unify this and arg decoding
-      case ast.Input(name, fields) =>
-        value match {
-          case gql.Value.ObjectValue(xs) =>
-            fields.entries
-              .traverse { a =>
-                val o =
-                  xs
-                    .get(a.name)
-                    .map(decodeInput(a.input.value, _)) match {
-                    case Some(outcome) => outcome
-                    case None          => a.default.toRight(s"missing field ${a.name} in input object $name")
-                  }
-                o.tupleLeft(a.name)
-              }
-              .map(_.toList.toMap)
-              .map(fields.decode)
-          case _ => Left(s"expected object for $name, got ${value.name}")
-        }
-    }
-
   def underlyingOutputTypename[G[_]](ot: Out[G, _]): String = ot match {
     case Enum(name, _)         => name
     case Union(name, _)        => name
@@ -181,34 +137,6 @@ object PreparedQuery {
     case Interface(name, _, _) => name
     case OutOpt(of)            => s"(${friendlyName(of)} | null)"
     case OutArr(of)            => s"[${friendlyName(of)}]"
-  }
-
-  def parserValueToValue[F[_]](value: P.Value, variableMap: Map[String, Json], caret: Caret)(implicit
-      S: Stateful[F, Prep],
-      F: MonadError[F, PositionalError],
-      D: Defer[F]
-  ): F[Value] = {
-    def go(x: P.Value): F[Value] =
-      x match {
-        case IntValue(v) => F.pure(Value.IntValue(v))
-        case ObjectValue(v) =>
-          D.defer {
-            v.traverse { case (k, v) =>
-              go(v).map(k -> _)
-            }.map(xs => Value.ObjectValue(xs.toMap))
-          }
-        case ListValue(v) =>
-          D.defer(v.toVector.traverse(go).map(Value.ArrayValue(_)))
-        case EnumValue(v) => F.pure(Value.EnumValue(v))
-        case VariableValue(v) =>
-          raiseOpt(variableMap.get(v).map(Value.fromJson(_)), s"variable $v not found", Some(caret))
-        case NullValue       => F.pure(Value.NullValue)
-        case BooleanValue(v) => F.pure(Value.BooleanValue(v))
-        case FloatValue(v)   => F.pure(Value.FloatValue(v))
-        case StringValue(v)  => F.pure(Value.StringValue(v))
-      }
-
-    go(value)
   }
 
   def nextId[F[_]: Monad](implicit S: Stateful[F, Prep]) =
@@ -331,28 +259,7 @@ object PreparedQuery {
       case nea @ NonEmptyArg(_, _)            => parseInputObj[F, Any](argObj, nea, Some(variableMap), ambigiousEnum = false)
     }
 
-    // val argResolution =
-    //   args.entries
-    //     .traverse { arg =>
-    //       val o =
-    //         providedMap
-    //           .get(arg.name) match {
-    //           case None => raiseOpt[F, Any](arg.default, s"missing argument ${arg.name}", Some(caret))
-    //           case Some(x) =>
-    //             parserValueToValue(x, variableMap, caret)
-    //               .flatMap(j => raiseEither[F, Any](decodeInput(arg.input.value, j), Some(caret)))
-    //         }
-    //       o.tupleLeft(arg.name)
-    //     }
-    //     .map(_.toList.toMap)
-
     decObj.map(a => resolve.contramap[Any]((_, a)))
-
-    // argResolution.map { m =>
-    //   val resolvedArg = args.decode(m)
-    //   val closed = resolve.contramap[Any]((_, resolvedArg))
-    //   closed
-    // }
   }
 
   def prepareField[F[_], G[_]: Applicative](
