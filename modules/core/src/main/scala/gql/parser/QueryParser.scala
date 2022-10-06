@@ -517,9 +517,10 @@ object QueryParser {
   }
   lazy val `type`: P[Type] = {
     import Type._
-    namedType |
-      P.defer(listType).map(List(_)) |
-      P.defer(nonNullType).map(NonNull(_))
+    (P.defer(namedType | listType.map(List(_))) ~ t('!').?).map {
+      case (x, Some(_)) => NonNull(x)
+      case (x, None)    => x
+    }
   }
 
   lazy val listType: P[Type] =

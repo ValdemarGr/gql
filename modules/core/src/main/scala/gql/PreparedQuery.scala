@@ -641,17 +641,16 @@ object PreparedQuery {
             .flatMap(_.nel.toList)
             .traverse { case Pos(caret, vd) =>
               def getTpe(p: P.Type, optional: Boolean = true): F[In[Any]] = {
-                val fa =
-                  p match {
-                    case P.Type.Named(name) =>
-                      raiseOpt(schema.shape.discover.inputs.get(name).asInstanceOf[Option[In[Any]]], s"type $name does not exist", None)
-                    case P.Type.List(of) =>
-                      getTpe(of).map(InArr[Any, Seq](_).asInstanceOf[In[Any]])
-                    case P.Type.NonNull(of) => getTpe(of, false)
-                  }
-
-                fa.map { tpe =>
+                def opt(tpe: In[Any]): In[Any] =
                   if (optional) InOpt(tpe).asInstanceOf[In[Any]] else tpe
+
+                p match {
+                  case P.Type.Named(name) =>
+                    raiseOpt(schema.shape.discover.inputs.get(name).asInstanceOf[Option[In[Any]]], s"type $name does not exist", None)
+                      .map(opt)
+                  case P.Type.List(of) =>
+                    getTpe(of).map(InArr[Any, Seq](_).asInstanceOf[In[Any]]).map(opt)
+                  case P.Type.NonNull(of) => getTpe(of, false)
                 }
               }
 

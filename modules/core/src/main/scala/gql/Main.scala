@@ -38,7 +38,7 @@ object Main extends App {
       .mkString_("")
   }*/
 
-  def showDiff_(fa: NonEmptyList[Planner.Node], fb: NonEmptyList[Planner.Node], maxEnd: Double): String = ""/*{
+  def showDiff_(fa: NonEmptyList[Planner.Node], fb: NonEmptyList[Planner.Node], maxEnd: Double): String = "" /*{
     fa.sortBy(_.id)
       .zip(fb.sortBy(_.id))
       .map { case (a, b) =>
@@ -793,8 +793,8 @@ object Test {
       )
 
     def subscriptionQuery = """
-subscription {
-  vpn(serverId: "secret_server") {
+subscription($serverId: String!) {
+  vpn(serverId: $serverId) {
     metadata {
       name
       createdAge
@@ -813,7 +813,7 @@ subscription {
     def runVPNSubscription(q: String, n: Int, subscription: Type[IO, Username] = root[IO]) =
       Schema.simple(SchemaShape[IO, Unit, Unit, Username](subscription = subscription.some)).flatMap { sch =>
         sch
-          .assemble(q, variables = Map.empty)
+          .assemble(q, variables = Map("serverId" -> Json.fromString("secret_server")))
           .traverse { case Executable.Subscription(run) =>
             run("john_doe").take(n).map(_.asGraphQL).compile.toList
           }
@@ -840,7 +840,7 @@ subscription {
         }.andThen(EffectResolver[F, VpnConnection[F], VpnConnection[F]](x => Applicative[F].pure(Ior.left("wak wak waa")))))
       )
 
-    println(runVPNSubscription(subscriptionQuery, 1, root2[IO]).unsafeRunSync())
+    println(runVPNSubscription(subscriptionQuery, 1, root2[IO]).unsafeRunSync().leftMap(_.prettyError.value))
 
 //     def bench(fa: IO[_]) =
 //       for {
