@@ -88,6 +88,10 @@ object PreparedQuery {
       cursor: PrepCursor
   )
 
+  object Prep {
+    val empty: Prep = Prep(Set.empty, 1, PrepCursor.empty)
+  }
+
   def flattenResolvers[F[_]: Monad, G[_]](parentName: String, resolver: Resolver[G, Any, Any])(implicit
       S: Stateful[F, Prep]
   ): F[(NonEmptyChain[PreparedEdge[G]], String)] =
@@ -479,34 +483,40 @@ object PreparedQuery {
                       if (name == otherName) F.unit
                       else raise(s"expected input $name for variable $v, but got input $otherName", None)
                     case _ =>
-                      // Print the whole type; Don't use lhs/rhs but rather tpe/varType
-                      raise(s"expected ${inName(tpe)} type for variable $v, but got ${inName(varType)}", None)
+                      raise(s"expected ${inName(lhs)} type for variable $v, but got ${inName(rhs)}", None)
                   }
 
                 cmpTpe(tpe, varType).as(a)
             }
         }
       case (e @ Enum(name, mappings), v) =>
-        val fa: F[String] = v match {
-          case P.Value.EnumValue(s)                    => F.pure(s)
-          case P.Value.StringValue(s) if ambigiousEnum => F.pure(s)
-          case _ =>
-            raise(s"enum value expected for $name, but got ${pValueName(v)}", None)
-        }
-        fa.flatMap { s =>
-          e.m.lookup(s) match {
-            case Some(x) => F.pure(x)
-            case None =>
-              val names = mappings.map { case (name, _) => name }
-              raise(
-                s"enum value $s does not occur in enum type $name, possible enum values are ${names.mkString_(", ")}",
-                None
-              )
+        ambientPath(name) {
+          val fa: F[String] = v match {
+            case P.Value.EnumValue(s)                    => F.pure(s)
+            case P.Value.StringValue(s) if ambigiousEnum => F.pure(s)
+            case _ =>
+              raise(s"enum value expected for $name, but got ${pValueName(v)}", None)
+          }
+          fa.flatMap { s =>
+            e.m.lookup(s) match {
+              case Some(x) => F.pure(x)
+              case None =>
+                val names = mappings.map { case (name, _) => name }
+                raise(
+                  s"enum value $s does not occur in enum type $name, possible enum values are ${names.mkString_(", ")}",
+                  None
+                )
+            }
           }
         }
-      case (Scalar(_, _, decoder), x) =>
-        parserValueToValue[F](x).flatMap(x => raiseEither(decoder(x), None))
-      case (Input(_, fields), o: P.Value.ObjectValue) => parseInputObj[F, A](o, fields, variableMap, ambigiousEnum)
+      case (Scalar(name, _, decoder), x) =>
+        ambientPath(name) {
+          parserValueToValue[F](x).flatMap(x => raiseEither(decoder(x), None))
+        }
+      case (Input(name, fields), o: P.Value.ObjectValue) =>
+        ambientPath(name) {
+          parseInputObj[F, A](o, fields, variableMap, ambigiousEnum)
+        }
       case (InArr(of), P.Value.ListValue(xs)) =>
         xs.traverse(parseInput[F, A](_, of, variableMap, ambigiousEnum)).map(_.toSeq.asInstanceOf[A])
       case (InOpt(of), P.Value.NullValue) => F.pure(None.asInstanceOf[A])
@@ -541,21 +551,22 @@ object PreparedQuery {
             case None =>
               a.defaultValue match {
                 case None => raise[F, P.Value](s"required input ${a.name} was not provided and has no default value", None)
-                // TODO use function defied elsewhere that takes defaultvalue to value
                 // TODO this value being parsed can probably be cached, since the default is the same for every query
                 case Some(dv) => F.pure(valueToParserValue(defaultToValue(dv)))
               }
             case Some(x) => F.pure(x)
           }
 
-        fa.flatMap(
-          parseInput[F, Any](
-            _,
-            a.input.value.asInstanceOf[In[Any]],
-            variableMap.asInstanceOf[Option[Map[String, (In[Any], Any)]]],
-            ambigiousEnum
-          )
-        ).tupleLeft(a.name)
+        ambientPath(a.name) {
+          fa.flatMap(
+            parseInput[F, Any](
+              _,
+              a.input.value.asInstanceOf[In[Any]],
+              variableMap.asInstanceOf[Option[Map[String, (In[Any], Any)]]],
+              ambigiousEnum
+            )
+          ).tupleLeft(a.name)
+        }
       }
 
     fieldsF.map(_.toList.toMap).map(arg.decode)
@@ -699,6 +710,8 @@ object PreparedQuery {
     }
   }
 
+  type H[A] = StateT[EitherT[Eval, PositionalError, *], Prep, A]
+
   def prepare[F[_]: Applicative](
       executabels: NonEmptyList[P.ExecutableDefinition],
       schema: Schema[F, _, _, _],
@@ -710,14 +723,12 @@ object PreparedQuery {
         case P.ExecutableDefinition.Fragment(frag) => Right(frag)
       }
 
-    type G[A] = StateT[EitherT[Eval, PositionalError, *], Prep, A]
-
     getOperationDefinition[Either[(String, List[Caret]), *]](ops, None) match {
       case Left((e, carets)) => Left(PositionalError(PrepCursor.empty, carets, e))
       case Right(op) =>
-        prepareParts[G, F](op, frags, schema, variableMap)
+        prepareParts[H, F](op, frags, schema, variableMap)
           .map { case (_, x) => x }
-          .runA(Prep(Set.empty, 1, PrepCursor.empty))
+          .runA(Prep.empty)
           .value
           .value
     }
@@ -733,13 +744,11 @@ object PreparedQuery {
       case P.ExecutableDefinition.Fragment(frag) => Right(frag)
     }
 
-    type G[A] = StateT[EitherT[Eval, PositionalError, *], Prep, A]
-
     getOperationDefinition[Either[(String, List[Caret]), *]](ops, None) match {
       case Left((e, carets)) => Left(PositionalError(PrepCursor.empty, carets, e))
       case Right(op) =>
-        prepareParts[G, F](op, frags, schema, variableMap)
-          .runA(Prep(Set.empty, 1, PrepCursor.empty))
+        prepareParts[H, F](op, frags, schema, variableMap)
+          .runA(Prep.empty)
           .value
           .value
     }

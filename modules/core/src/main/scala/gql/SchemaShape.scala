@@ -137,6 +137,9 @@ object SchemaShape {
     final case class DuplicateInterfaceInstance(conflict: String) extends ValidationError {
       def message: String = s"duplicate interface instance $conflict"
     }
+    final case class InvalidInput(pe: PreparedQuery.PositionalError) extends ValidationError {
+      def message: String = s"invalid input: ${pe.message}"
+    }
   }
 
   sealed trait ValidationEdge
@@ -228,13 +231,13 @@ object SchemaShape {
 
     def validateTypeName[G[_]](name: String)(implicit G: Monad[G], S: Stateful[G, ValidationState]): G[Unit] =
       QueryParser.name.parseAll(name) match {
-        case Left(_) => raise(InvalidTypeName(name))
+        case Left(_)  => raise(InvalidTypeName(name))
         case Right(_) => G.unit
       }
 
     def validateFieldName[G[_]](name: String)(implicit G: Monad[G], S: Stateful[G, ValidationState]): G[Unit] =
       QueryParser.name.parseAll(name) match {
-        case Left(_) => raise(InvalidFieldName(name))
+        case Left(_)  => raise(InvalidFieldName(name))
         case Right(_) => G.unit
       }
 
@@ -251,13 +254,38 @@ object SchemaShape {
       }
     }
 
-    def validateArg[G[_]: Monad](arg: Arg[_])(implicit S: Stateful[G, ValidationState]): G[Unit] =
-      allUnique[G](DuplicateArg, arg.entries.toList.map(_.name)) >>
-        arg.entries.traverse_ { entry =>
-          useEdge(ValidationEdge.Arg(entry.name)) {
-            validateFieldName[G](entry.name) >> validateInput[G](entry.input.value)
+    def validateArg[G[_]](arg: Arg[_])(implicit G: Monad[G], S: Stateful[G, ValidationState]): G[Unit] =
+      allUnique[G](DuplicateArg, arg.entries.toList.map(_.name)) >> {
+        // A trick;
+        // We check the arg like we would in a user-supplied query
+        // Expect, we use default as the "input" such that it is verified against the arg
+        val defaultedArgs =
+          arg.entries
+            .map(x => x.defaultValue.tupleRight(x))
+            .collect { case Some((dv, x)) =>
+              val pv = PreparedQuery.valueToParserValue(PreparedQuery.defaultToValue(dv))
+              (x, (x.name -> pv))
+            }
+        val checkArgsF = NonEmptyChain.fromChain(defaultedArgs).traverse_ { nec =>
+          val m = defaultedArgs.collect { case (_, kv) => kv }.toList.toMap
+          val synthetic = NonEmptyArg(nec.map { case (x, _) => x }, _ => ())
+          PreparedQuery
+            .parseArg[PreparedQuery.H, Unit](synthetic, m, None, ambigiousEnum = false)
+            .runA(PreparedQuery.Prep.empty)
+            .value
+            .value match {
+            case Left(err) => raise(InvalidInput(err))
+            case Right(_)  => G.unit
           }
         }
+
+        checkArgsF >>
+          arg.entries.traverse_ { entry =>
+            useEdge(ValidationEdge.Arg(entry.name)) {
+              validateFieldName[G](entry.name) >> validateInput[G](entry.input.value)
+            }
+          }
+      }
 
     def validateFields[G[_]: Monad](fields: NonEmptyList[(String, Field[F, _, _, _])])(implicit
         S: Stateful[G, ValidationState]

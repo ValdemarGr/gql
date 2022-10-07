@@ -268,7 +268,8 @@ query withNestedFragments {
 
     final case class InputData(
         value: Int,
-        val2: String
+        val2: String,
+        x3: Option[Seq[String]] = None
     )
 
     final case class ServerData(value: Int)
@@ -280,7 +281,8 @@ query withNestedFragments {
         "InputData",
         (
           arg[Int]("value", 42),
-          arg[String]("val2")
+          arg[String]("val2"),
+          dsl.arg[Option[Seq[String]]]("x3", dsl.default.none)
         ).mapN(InputData.apply)
       )
 
@@ -342,65 +344,65 @@ query withNestedFragments {
                 dsl.default.obj(
                   "value" -> dsl.default(422),
                   "val2" -> dsl.default("test"),
-                  "ar" -> dsl.default.arr(
+                  "x3" -> dsl.default.arr(
                     Seq(
                       dsl.default.obj(
                         "v3" -> dsl.default("@@")
                       )
                     )
                   ),
-                  "ar2" -> dsl.default.arr(
-                    Seq(
-                      dsl.default.obj(
-                        "v23" -> dsl.default("@@")
-                      )
-                    )
-                  ),
-                  "ar3" -> dsl.default.arr(
-                    Seq(
-                      dsl.default.obj(
-                        "v33" -> dsl.default("@@")
-                      )
-                    )
-                  ),
-                  "ar4" -> dsl.default.arr(
-                    Seq(
-                      dsl.default.obj(
-                        "v43" -> dsl.default("@@"),
-                        "v44" -> dsl.default("@@"),
-                        "v45" -> dsl.default("@@"),
-                        "v46" -> dsl.default("@@"),
-                        "v54" -> dsl.default("@@"),
-                        "v55" -> dsl.default("@@"),
-                        "v56" -> dsl.default("@@"),
-                        "v57" -> dsl.default("@@")
-                      ),
-                      dsl.default.obj(
-                        "v43" -> dsl.default("@@"),
-                        "v44" -> dsl.default("@@"),
-                        "v45" -> dsl.default("@@"),
-                        "v46" -> dsl.default("@@"),
-                        "v54" -> dsl.default("@@"),
-                        "v55" -> dsl.default("@@"),
-                        "v56" -> dsl.default("@@"),
-                        "v57" -> dsl.default("@@")
-                      )
-                    )
-                  ),
-                  "ar5" -> dsl.default.arr(
-                    Seq(
-                      dsl.default.obj(
-                        "v43" -> dsl.default("@@"),
-                        "v44" -> dsl.default("@@"),
-                        "v45" -> dsl.default("@@"),
-                        "v46" -> dsl.default("@@"),
-                        "v54" -> dsl.default("@@"),
-                        "v55" -> dsl.default("@@"),
-                        "v56" -> dsl.default("@@"),
-                        "v57" -> dsl.default("@@")
-                      )
-                    )
-                  )
+                  // "ar2" -> dsl.default.arr(
+                  //   Seq(
+                  //     dsl.default.obj(
+                  //       "v23" -> dsl.default("@@")
+                  //     )
+                  //   )
+                  // ),
+                  // "ar3" -> dsl.default.arr(
+                  //   Seq(
+                  //     dsl.default.obj(
+                  //       "v33" -> dsl.default("@@")
+                  //     )
+                  //   )
+                  // ),
+                  // "ar4" -> dsl.default.arr(
+                  //   Seq(
+                  //     dsl.default.obj(
+                  //       "v43" -> dsl.default("@@"),
+                  //       "v44" -> dsl.default("@@"),
+                  //       "v45" -> dsl.default("@@"),
+                  //       "v46" -> dsl.default("@@"),
+                  //       "v54" -> dsl.default("@@"),
+                  //       "v55" -> dsl.default("@@"),
+                  //       "v56" -> dsl.default("@@"),
+                  //       "v57" -> dsl.default("@@")
+                  //     ),
+                  //     dsl.default.obj(
+                  //       "v43" -> dsl.default("@@"),
+                  //       "v44" -> dsl.default("@@"),
+                  //       "v45" -> dsl.default("@@"),
+                  //       "v46" -> dsl.default("@@"),
+                  //       "v54" -> dsl.default("@@"),
+                  //       "v55" -> dsl.default("@@"),
+                  //       "v56" -> dsl.default("@@"),
+                  //       "v57" -> dsl.default("@@")
+                  //     )
+                  //   )
+                  // ),
+                  // "ar5" -> dsl.default.arr(
+                  //   Seq(
+                  //     dsl.default.obj(
+                  //       "v43" -> dsl.default("@@"),
+                  //       "v44" -> dsl.default("@@"),
+                  //       "v45" -> dsl.default("@@"),
+                  //       "v46" -> dsl.default("@@"),
+                  //       "v54" -> dsl.default("@@"),
+                  //       "v55" -> dsl.default("@@"),
+                  //       "v56" -> dsl.default("@@"),
+                  //       "v57" -> dsl.default("@@")
+                  //     )
+                  //   )
+                  // )
                 )
               )
             ) { case (_, _) => "" }
