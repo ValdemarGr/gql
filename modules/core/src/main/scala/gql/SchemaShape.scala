@@ -105,6 +105,40 @@ object SchemaShape {
       .value
   }
 
+  sealed trait ValidationError {
+    def message: String
+  }
+  object ValidationError {
+    final case class CyclicOutputType(typename: String) extends ValidationError {
+      def message: String =
+        s"cyclic type $typename is not reference equal use lazy val or `cats.Eval` to declare this type"
+    }
+    final case class CyclicInputType(typename: String) extends ValidationError {
+      def message: String =
+        s"cyclic input type $typename is not reference equal use lazy val or `cats.Eval` to declare this type"
+    }
+    final case class InvalidTypeName(name: String) extends ValidationError {
+      def message: String =
+        s"invalid type name $name, must match /[_A-Za-z][_0-9A-Za-z]*/"
+    }
+    final case class InvalidFieldName(name: String) extends ValidationError {
+      def message: String =
+        s"invalid field name $name, must match /[_A-Za-z][_0-9A-Za-z]*/"
+    }
+    final case class DuplicateArg(conflict: String) extends ValidationError {
+      def message: String = s"duplicate arg $conflict"
+    }
+    final case class DuplicateField(conflict: String) extends ValidationError {
+      def message: String = s"duplicate field $conflict"
+    }
+    final case class DuplicateUnionInstance(conflict: String) extends ValidationError {
+      def message: String = s"duplicate union instance $conflict"
+    }
+    final case class DuplicateInterfaceInstance(conflict: String) extends ValidationError {
+      def message: String = s"duplicate interface instance $conflict"
+    }
+  }
+
   sealed trait ValidationEdge
   object ValidationEdge {
     final case class Field(name: String) extends ValidationEdge
@@ -114,11 +148,11 @@ object SchemaShape {
   }
 
   final case class Problem(
-      message: String,
+      error: ValidationError,
       path: Chain[ValidationEdge]
   ) {
     override def toString() =
-      s"$message at ${path
+      s"${error.message} at ${path
         .map {
           case ValidationEdge.Field(name)      => s".$name"
           case ValidationEdge.OutputType(name) => s":$name"
@@ -129,16 +163,17 @@ object SchemaShape {
   }
   // TODO has really bad running time on some inputs
   // since it doesn't remember what references it has seen
-  def validate[F[_]](schema: SchemaShape[F, _, _, _]) = {
+  def validate[F[_]](schema: SchemaShape[F, _, _, _]): Chain[Problem] = {
     final case class ValidationState(
         problems: Chain[Problem],
         currentPath: Chain[ValidationEdge],
         seenOutputs: Map[String, OutToplevel[F, _]],
         seenInputs: Map[String, InToplevel[_]]
     )
+    import ValidationError._
 
-    def raise[G[_]](msg: String)(implicit S: Stateful[G, ValidationState]): G[Unit] =
-      S.modify(s => s.copy(problems = s.problems :+ Problem(msg, s.currentPath)))
+    def raise[G[_]](err: ValidationError)(implicit S: Stateful[G, ValidationState]): G[Unit] =
+      S.modify(s => s.copy(problems = s.problems :+ Problem(err, s.currentPath)))
 
     def useEdge[G[_], A](edge: ValidationEdge)(
         fa: G[A]
@@ -156,8 +191,7 @@ object SchemaShape {
         S.get.flatMap { s =>
           s.seenOutputs.get(ot.name) match {
             case Some(o) if (o eq ot) => G.unit
-            case Some(o) =>
-              raise(s"cyclic type ${ot.name} is not reference equal use lazy val or `cats.Eval` to declare this type")
+            case Some(o)              => raise(CyclicOutputType(ot.name))
             case None =>
               S.set(s.copy(seenOutputs = s.seenOutputs + (ot.name -> ot))) *>
                 fa <*
@@ -173,8 +207,7 @@ object SchemaShape {
         S.get.flatMap { s =>
           s.seenInputs.get(it.name) match {
             case Some(i) if (i eq it) => G.unit
-            case Some(i) =>
-              raise(s"cyclic input type ${it.name} is not reference equal use lazy val or `cats.Eval` to declare this type")
+            case Some(i)              => raise(CyclicInputType(it.name))
             case None =>
               S.set(s.copy(seenInputs = s.seenInputs + (it.name -> it))) *>
                 fa <*
@@ -183,22 +216,25 @@ object SchemaShape {
         }
       }
 
-    def allUnique[G[_]](context: String, xs: List[String])(implicit G: Applicative[G], S: Stateful[G, ValidationState]): G[Unit] =
+    def allUnique[G[_]](f: String => ValidationError, xs: List[String])(implicit
+        G: Applicative[G],
+        S: Stateful[G, ValidationState]
+    ): G[Unit] =
       xs
         .groupBy(identity)
         .toList
         .collect { case (name, xs) if xs.size > 1 => name }
-        .traverse_(name => raise(s"$context: $name"))
+        .traverse_(name => raise(f(name)))
 
     def validateTypeName[G[_]](name: String)(implicit G: Monad[G], S: Stateful[G, ValidationState]): G[Unit] =
       QueryParser.name.parseAll(name) match {
-        case Left(_)  => raise(s"invalid type name $name, must match /[_A-Za-z][_0-9A-Za-z]*/")
+        case Left(_) => raise(InvalidTypeName(name))
         case Right(_) => G.unit
       }
 
     def validateFieldName[G[_]](name: String)(implicit G: Monad[G], S: Stateful[G, ValidationState]): G[Unit] =
       QueryParser.name.parseAll(name) match {
-        case Left(_)  => raise(s"invalid field name $name, must match /[_A-Za-z][_0-9A-Za-z]*/")
+        case Left(_) => raise(InvalidFieldName(name))
         case Right(_) => G.unit
       }
 
@@ -216,7 +252,7 @@ object SchemaShape {
     }
 
     def validateArg[G[_]: Monad](arg: Arg[_])(implicit S: Stateful[G, ValidationState]): G[Unit] =
-      allUnique[G]("duplicate arg", arg.entries.toList.map(_.name)) >>
+      allUnique[G](DuplicateArg, arg.entries.toList.map(_.name)) >>
         arg.entries.traverse_ { entry =>
           useEdge(ValidationEdge.Arg(entry.name)) {
             validateFieldName[G](entry.name) >> validateInput[G](entry.input.value)
@@ -226,7 +262,7 @@ object SchemaShape {
     def validateFields[G[_]: Monad](fields: NonEmptyList[(String, Field[F, _, _, _])])(implicit
         S: Stateful[G, ValidationState]
     ): G[Unit] =
-      allUnique[G]("duplicate field", fields.toList.map { case (name, _) => name }) >>
+      allUnique[G](DuplicateField, fields.toList.map { case (name, _) => name }) >>
         fields.traverse_ { case (name, field) =>
           useEdge(ValidationEdge.Field(name)) {
             validateFieldName[G](name) >>
@@ -243,13 +279,13 @@ object SchemaShape {
             case Union(_, types) =>
               val ols = types.toList.map(_.ol)
 
-              allUnique[G]("duplicate union instance", ols.map(_.value.name)) >>
+              allUnique[G](DuplicateUnionInstance, ols.map(_.value.name)) >>
                 ols.traverse_(x => validateOutput[G](x.value))
             case Interface(_, instances, fields) =>
               val insts = instances
 
               val ols = insts.toList.map(_.ol)
-              allUnique[G]("duplicate interface instance", ols.map(_.value.name)) >>
+              allUnique[G](DuplicateInterfaceInstance, ols.map(_.value.name)) >>
                 ols.traverse_(x => validateOutput[G](x.value)) >>
                 validateFields[G](fields)
             case Enum(name, _)      => validateTypeName[G](name)
