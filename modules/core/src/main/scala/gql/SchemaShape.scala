@@ -142,7 +142,9 @@ object SchemaShape {
     }
   }
 
-  sealed trait ValidationEdge
+  sealed trait ValidationEdge {
+    def name: String
+  }
   object ValidationEdge {
     final case class Field(name: String) extends ValidationEdge
     final case class OutputType(name: String) extends ValidationEdge

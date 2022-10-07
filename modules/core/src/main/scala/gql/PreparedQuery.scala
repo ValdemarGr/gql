@@ -62,7 +62,7 @@ object PreparedQuery {
 
   final case class PreparedLeaf[F[_], A](name: String, encode: A => Json) extends Prepared[F, A]
 
-  final case class PositionalError[F[_]](position: PrepCursor[F], caret: List[Caret], message: String) {
+  final case class PositionalError(position: PrepCursor, caret: List[Caret], message: String) {
     lazy val asGraphQL: JsonObject = {
       import io.circe.syntax._
       Map(
@@ -73,58 +73,65 @@ object PreparedQuery {
     }
   }
 
-  sealed trait PrepEdge[F[_]] {
+  sealed trait PrepEdge {
     def name: String
   }
   object PrepEdge {
-    final case class Field[F[_]](name: String, field: ast.Field[F, _, _, _]) extends PrepEdge[F]
-    final case class OutputType[F[_]](ot: ast.OutToplevel[F, _]) extends PrepEdge[F] {
-      def name = ot.name
+    final case class ASTEdge(edge: SchemaShape.ValidationEdge) extends PrepEdge {
+      def name: String = edge.name
     }
-    final case class Arg[F[_]](arg: gql.ArgValue[_]) extends PrepEdge[F] {
-      def name = arg.name
-    }
-    final case class InputType[F[_]](it: ast.InToplevel[_]) extends PrepEdge[F] {
-      def name = it.name
-    }
+    final case class FragmentEdge(name: String) extends PrepEdge
   }
 
-  final case class PrepCursor[F[_]](position: Chain[PrepEdge[F]]) {
-    def add(edge: PrepEdge[F]): PrepCursor[F] = PrepCursor(position append edge)
-    def pop: PrepCursor[F] = PrepCursor(Chain.fromOption(position.initLast).flatMap { case (xs, _) => xs })
+  final case class PrepCursor(position: Chain[PrepEdge]) {
+    def add(edge: PrepEdge): PrepCursor = PrepCursor(position append edge)
+    def pop: PrepCursor = PrepCursor(Chain.fromOption(position.initLast).flatMap { case (xs, _) => xs })
   }
 
   object PrepCursor {
-    def empty[F[_]]: PrepCursor[F] = PrepCursor(Chain.empty)
+    val empty: PrepCursor = PrepCursor(Chain.empty)
   }
 
-  final case class Prep[F[_]](
+  final case class Prep(
       cycleSet: Set[String],
       nextId: Int,
-      cursor: PrepCursor[F]
+      cursor: PrepCursor
   )
 
   object Prep {
-    def empty[F[_]]: Prep[F] = Prep(Set.empty, 1, PrepCursor.empty[F])
+    val empty: Prep = Prep(Set.empty, 1, PrepCursor.empty)
   }
 
   def flattenResolvers[F[_]: Monad, G[_]](parentName: String, resolver: Resolver[G, Any, Any])(implicit
-      S: Stateful[F, Prep[G]]
+      S: Stateful[F, Prep]
   ): F[(NonEmptyChain[PreparedEdge[G]], String)] =
     resolver match {
       case r @ BatchResolver(id, run) =>
-        nextId[F, G].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, s"batch_${id.id}")), parentName))
+        nextId[F].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, s"batch_${id.id}")), parentName))
       case r @ EffectResolver(_) =>
         val thisName = s"${parentName}_effect"
-        nextId[F, G].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, thisName)), thisName))
+        nextId[F].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, thisName)), thisName))
       case r @ StreamResolver(_) =>
         val thisName = s"${parentName}_stream"
-        nextId[F, G].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, thisName)), thisName))
+        nextId[F].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, thisName)), thisName))
       case r @ CompositionResolver(left, right) =>
         flattenResolvers[F, G](parentName, left).flatMap { case (ys, newParentName) =>
           flattenResolvers[F, G](newParentName, right).map { case (zs, outName) => (ys ++ zs, outName) }
         }
     }
+
+  type M[A] = State[Prep, ValidatedNec[PositionalError, A]]
+
+  object M {
+    def pure[A](a: A): M[A] = State.pure(a.validNec)
+
+    def flatMap[A, B](fa: M[A])(f: A => M[B]): M[B] = {
+      fa.flatMap {
+        case Validated.Invalid(e) => State.pure(Validated.Invalid(e))
+        case Validated.Valid(a)   => f(a)
+      }
+    }
+  }
 
   def underlyingOutputTypename[G[_]](ot: Out[G, _]): String = ot match {
     case Enum(name, _)         => name
@@ -146,43 +153,46 @@ object PreparedQuery {
     case OutArr(of)            => s"[${friendlyName(of)}]"
   }
 
-  def nextId[F[_]: Monad, G[_]](implicit S: Stateful[F, Prep[G]]) =
+  def nextId[F[_]: Monad](implicit S: Stateful[F, Prep]) =
     S.inspect(_.nextId) <* S.modify(x => x.copy(nextId = x.nextId + 1))
 
-  def raise[F[_], G[_], A](s: String, caret: Option[Caret])(implicit S: Stateful[F, Prep[G]], F: MonadError[F, PositionalError[G]]): F[A] =
+  def raise[F[_], A](s: String, caret: Option[Caret])(implicit S: Stateful[F, Prep], F: MonadError[F, PositionalError]): F[A] =
     S.get.map(state => PositionalError(state.cursor, caret.toList, s)).flatMap(F.raiseError[A])
 
-  def raiseOpt[F[_], G[_], A](o: Option[A], s: String, caret: Option[Caret])(implicit
-      S: Stateful[F, Prep[G]],
-      F: MonadError[F, PositionalError[G]]
+  def raiseOpt[F[_], A](o: Option[A], s: String, caret: Option[Caret])(implicit
+      S: Stateful[F, Prep],
+      F: MonadError[F, PositionalError]
   ): F[A] =
-    o.map(_.pure[F]).getOrElse(raise[F, G, A](s, caret))
+    o.map(_.pure[F]).getOrElse(raise[F, A](s, caret))
 
-  def raiseEither[F[_], G[_], A](e: Either[String, A], caret: Option[Caret])(implicit
-      S: Stateful[F, Prep[G]],
-      F: MonadError[F, PositionalError[G]]
+  def raiseEither[F[_], A](e: Either[String, A], caret: Option[Caret])(implicit
+      S: Stateful[F, Prep],
+      F: MonadError[F, PositionalError]
   ): F[A] =
     e match {
-      case Left(value)  => raise[F, G, A](value, caret)
+      case Left(value)  => raise[F, A](value, caret)
       case Right(value) => F.pure(value)
     }
 
-  def ambientEdge[F[_]: Monad, G[_], A](edge: PrepEdge[G])(fa: F[A])(implicit S: Stateful[F, Prep[G]]): F[A] =
+  def ambientEdge[F[_]: Monad, A](edge: PrepEdge)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
     S.inspect(_.cursor).flatMap { c =>
       S.modify(_.copy(cursor = c.add(edge))) *> fa <* S.modify(_.copy(cursor = c))
     }
 
-  def ambientField[F[_]: Monad, G[_], A](name: String, field: Field[G, _, _, _])(fa: F[A])(implicit S: Stateful[F, Prep[G]]): F[A] =
-    ambientEdge[F, G, A](PrepEdge.Field(name, field))(fa)
+  def ambientField[F[_]: Monad, A](name: String)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
+    ambientEdge[F, A](PrepEdge.ASTEdge(SchemaShape.ValidationEdge.Field(name)))(fa)
 
-  def ambientOutputType[F[_]: Monad, G[_], A](ot: OutToplevel[G, _])(fa: F[A])(implicit S: Stateful[F, Prep[G]]): F[A] =
-    ambientEdge[F, G, A](PrepEdge.OutputType(ot))(fa)
+  def ambientOutputType[F[_]: Monad, A](name: String)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
+    ambientEdge[F, A](PrepEdge.ASTEdge(SchemaShape.ValidationEdge.OutputType(name)))(fa)
 
-  def ambientArg[F[_]: Monad, G[_], A](arg: ArgValue[_])(fa: F[A])(implicit S: Stateful[F, Prep[G]]): F[A] =
-    ambientEdge[F, G, A](PrepEdge.Arg(arg))(fa)
+  def ambientArg[F[_]: Monad, A](name: String)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
+    ambientEdge[F, A](PrepEdge.ASTEdge(SchemaShape.ValidationEdge.Arg(name)))(fa)
 
-  def ambientInputType[F[_]: Monad, G[_], A](it: InToplevel[_])(fa: F[A])(implicit S: Stateful[F, Prep[G]]): F[A] =
-    ambientEdge[F, G, A](PrepEdge.InputType(it))(fa)
+  def ambientInputType[F[_]: Monad, A](name: String)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
+    ambientEdge[F, A](PrepEdge.ASTEdge(SchemaShape.ValidationEdge.InputType(name)))(fa)
+
+  def ambientFragment[F[_]: Monad, A](name: String)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
+    ambientEdge[F, A](PrepEdge.FragmentEdge(name))(fa)
 
   def prepareSelections[F[_], G[_]](
       ol: Selectable[G, Any],
@@ -192,8 +202,8 @@ object PreparedQuery {
       currentTypename: String
   )(implicit
       G: Applicative[G],
-      S: Stateful[F, Prep[G]],
-      F: MonadError[F, PositionalError[G]],
+      S: Stateful[F, Prep],
+      F: MonadError[F, PositionalError],
       D: Defer[F]
   ): F[NonEmptyList[PreparedField[G, Any]]] = D.defer {
     // TODO this code shares much with the subtype interfaces below in matchType
@@ -222,7 +232,7 @@ object PreparedQuery {
         schemaMap.get(field.name) match {
           case None => raise(s"unknown field name ${field.name}", Some(caret))
           case Some(f: Field[G, Any, Any, Any]) =>
-            ambientField(field.name, f) {
+            ambientField(field.name) {
               prepareField[F, G](field, caret, f, variableMap, fragments, currentTypename)
             }
         }
@@ -237,15 +247,15 @@ object PreparedQuery {
             }
         }
       case Pos(caret, P.Selection.FragmentSpreadSelection(f)) =>
-        ambientPath(f.fragmentName) {
-          fragments.get(f.fragmentName) match {
-            case None => raise(s"unknown fragment name ${f.fragmentName}", Some(caret))
-            case Some(fd) =>
+        fragments.get(f.fragmentName) match {
+          case None => raise(s"unknown fragment name ${f.fragmentName}", Some(caret))
+          case Some(fd) =>
+            ambientFragment(f.fragmentName) {
               prepareFragment[F, G](ol, fd, variableMap, fragments, fd.value.typeCnd)
                 .flatMap[PreparedField[G, Any]] { fd =>
                   nextId[F].map(id => PreparedFragField(id, fd.typeCondition, fd.specify, Selection(fd.fields)))
                 }
-          }
+            }
         }
     }
   }
@@ -505,7 +515,7 @@ object PreparedQuery {
             }
         }
       case (e @ Enum(name, mappings), v) =>
-        ambientPath(name) {
+        ambientArg(name) {
           val fa: F[String] = v match {
             case P.Value.EnumValue(s)                    => F.pure(s)
             case P.Value.StringValue(s) if ambigiousEnum => F.pure(s)
@@ -525,11 +535,11 @@ object PreparedQuery {
           }
         }
       case (Scalar(name, _, decoder), x) =>
-        ambientPath(name) {
+        ambientArg(name) {
           parserValueToValue[F](x).flatMap(x => raiseEither(decoder(x), None))
         }
       case (Input(name, fields), o: P.Value.ObjectValue) =>
-        ambientPath(name) {
+        ambientArg(name) {
           parseInputObj[F, A](o, fields, variableMap, ambigiousEnum)
         }
       case (InArr(of), P.Value.ListValue(xs)) =>
@@ -569,7 +579,7 @@ object PreparedQuery {
         case Some(x) => F.pure(x)
       }
 
-    ambientPath(a.name) {
+    ambientArg(a.name) {
       fa.flatMap(parseInput[F, A](_, a.input.value, variableMap, ambigiousEnum))
     }
   }
