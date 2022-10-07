@@ -192,7 +192,15 @@ object ast extends AstImplicits.Implicits {
 
   object Scalar {
     def fromCirce[F[_], A](name: String)(implicit enc: Encoder[A], dec: Decoder[A]): Scalar[F, A] =
-      Scalar(name, a => Value.fromJson(enc(a)), value => dec.decodeJson(value.asJson).leftMap(_.show))
+      Scalar(
+        name,
+        a => Value.fromJson(enc(a)),
+        value =>
+          dec.decodeJson(value.asJson).leftMap { case df: io.circe.DecodingFailure =>
+            val maybeAt = if (df.history.size > 1) s" at ${io.circe.CursorOp.opsToPath(df.history)}" else ""
+            s"decoding failure for type $name$maybeAt with message ${df.message}"
+          }
+      )
   }
 }
 
