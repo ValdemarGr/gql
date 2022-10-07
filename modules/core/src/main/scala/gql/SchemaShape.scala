@@ -258,26 +258,24 @@ object SchemaShape {
       allUnique[G](DuplicateArg, arg.entries.toList.map(_.name)) >> {
         // A trick;
         // We check the arg like we would in a user-supplied query
-        // Expect, we use default as the "input" such that it is verified against the arg
-        val defaultedArgs =
+        // Except, we use default as the "input" such that it is verified against the arg
+        val checkArgsF =
           arg.entries
             .map(x => x.defaultValue.tupleRight(x))
             .collect { case Some((dv, x)) =>
               val pv = PreparedQuery.valueToParserValue(PreparedQuery.defaultToValue(dv))
-              (x, (x.name -> pv))
+              (x, pv)
             }
-        val checkArgsF = NonEmptyChain.fromChain(defaultedArgs).traverse_ { nec =>
-          val m = defaultedArgs.collect { case (_, kv) => kv }.toList.toMap
-          val synthetic = NonEmptyArg(nec.map { case (x, _) => x }, _ => ())
-          PreparedQuery
-            .parseArg[PreparedQuery.H, Unit](synthetic, m, None, ambigiousEnum = false)
-            .runA(PreparedQuery.Prep.empty)
-            .value
-            .value match {
-            case Left(err) => raise(InvalidInput(err))
-            case Right(_)  => G.unit
-          }
-        }
+            .traverse { case (a, pv) =>
+              PreparedQuery
+                .parseInput[PreparedQuery.H, Any](pv, a.input.value.asInstanceOf[In[Any]], None, ambigiousEnum = false)
+                .runA(PreparedQuery.Prep.empty)
+                .value
+                .value match {
+                case Left(err) => raise(InvalidInput(err))
+                case Right(_)  => G.unit
+              }
+            }
 
         checkArgsF >>
           arg.entries.traverse_ { entry =>
