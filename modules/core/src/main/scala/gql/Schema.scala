@@ -27,6 +27,10 @@ final case class Schema[F[_], Q, M, S](
 
   def assemble(query: String, variables: Map[String, Json])(implicit F: Async[F]): Either[ParseError, Executable[F, Q, M, S]] =
     parse(query).map(assemble(_, variables))
+
+  lazy val validate: Chain[SchemaShape.Problem] = shape.validate
+
+  lazy val render: String = shape.render
 }
 
 object Schema {
