@@ -160,9 +160,9 @@ object SchemaShape {
       s"${error.message} at ${path
         .map {
           case ValidationEdge.Field(name)      => s".$name"
-          case ValidationEdge.OutputType(name) => s":$name"
+          case ValidationEdge.OutputType(name) => s"($name)"
           case ValidationEdge.Arg(name)        => s".$name"
-          case ValidationEdge.InputType(name)  => s":$name"
+          case ValidationEdge.InputType(name)  => s"($name)"
         }
         .mkString_("")}"
   }
@@ -177,8 +177,8 @@ object SchemaShape {
     )
     import ValidationError._
 
-    def raise[G[_]](err: ValidationError)(implicit S: Stateful[G, ValidationState]): G[Unit] =
-      S.modify(s => s.copy(problems = s.problems :+ Problem(err, s.currentPath)))
+    def raise[G[_]](err: ValidationError, suffix: Chain[ValidationEdge] = Chain.empty)(implicit S: Stateful[G, ValidationState]): G[Unit] =
+      S.modify(s => s.copy(problems = s.problems :+ Problem(err, s.currentPath ++ suffix)))
 
     def useEdge[G[_], A](edge: ValidationEdge)(
         fa: G[A]
@@ -274,8 +274,10 @@ object SchemaShape {
                 .runA(PreparedQuery.Prep.empty)
                 .value
                 .value match {
-                case Left(err) => raise(InvalidInput(err))
-                case Right(_)  => G.unit
+                case Left(err) =>
+                  val suf = err.position.position.collect { case PreparedQuery.PrepEdge.ASTEdge(x) => x }
+                  raise(InvalidInput(err), suf)
+                case Right(_) => G.unit
               }
             }
 

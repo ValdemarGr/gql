@@ -515,7 +515,7 @@ object PreparedQuery {
             }
         }
       case (e @ Enum(name, mappings), v) =>
-        ambientArg(name) {
+        ambientInputType(name) {
           val fa: F[String] = v match {
             case P.Value.EnumValue(s)                    => F.pure(s)
             case P.Value.StringValue(s) if ambigiousEnum => F.pure(s)
@@ -535,11 +535,11 @@ object PreparedQuery {
           }
         }
       case (Scalar(name, _, decoder), x) =>
-        ambientArg(name) {
+        ambientInputType(name) {
           parserValueToValue[F](x).flatMap(x => raiseEither(decoder(x), None))
         }
       case (Input(name, fields), o: P.Value.ObjectValue) =>
-        ambientArg(name) {
+        ambientInputType(name) {
           parseInputObj[F, A](o, fields, variableMap, ambigiousEnum)
         }
       case (InArr(of), P.Value.ListValue(xs)) =>

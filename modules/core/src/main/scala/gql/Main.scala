@@ -291,7 +291,7 @@ query withNestedFragments {
           (
             arg[Int]("num", 42),
             arg[Int]("num2", 9),
-            arg[Int]("num", 99)
+            arg[Int]("num3", 99)
           ).mapN(_ + _ + _),
           arg[String]("text"),
           arg[Seq[String]]("xs", Seq.empty)
@@ -314,7 +314,7 @@ query withNestedFragments {
         )
 
       import gql.dsl.{stream, streamFallible, field}
-      implicit def dataType: Type[F, Data[F]] =
+      implicit lazy val dataType: Type[F, Data[F]] =
         obj2[F, Data[F]]("Data") { f =>
           fields(
             "dep" -> f(eff(_ => Ask.reader(_.v))),
@@ -346,9 +346,10 @@ query withNestedFragments {
                   "val2" -> dsl.default("test"),
                   "x3" -> dsl.default.arr(
                     Seq(
-                      dsl.default.obj(
-                        "v3" -> dsl.default("@@")
-                      )
+                      dsl.default("test"),
+                      // dsl.default.obj(
+                      //   "v3" -> dsl.default("@@")
+                      // )
                     )
                   ),
                   // "ar2" -> dsl.default.arr(
