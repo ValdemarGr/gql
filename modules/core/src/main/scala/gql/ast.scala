@@ -122,6 +122,8 @@ object ast extends AstImplicits.Implicits {
       resolve: Resolver[F, (I, A), T],
       output: Eval[Out[F, T]]
   ) {
+    type A0 = A
+
     def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Field[G, I, T, A] =
       Field[G, I, T, A](
         args,

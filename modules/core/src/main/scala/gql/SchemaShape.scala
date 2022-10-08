@@ -8,6 +8,8 @@ import cats.data._
 import gql.ast._
 import gql.parser.QueryParser
 import org.typelevel.paiges.Doc
+import gql.resolver.EffectResolver
+import gql.resolver.Resolver
 
 final case class SchemaShape[F[_], Q, M, S](
     query: Option[Type[F, Q]] = None,
