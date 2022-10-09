@@ -34,6 +34,11 @@ lazy val core = project
   .in(file("modules/core"))
   .settings(sharedSettings)
 
+lazy val graphqlWs = project
+  .in(file("modules/graphql-ws"))
+  .settings(sharedSettings)
+  .dependsOn(core)
+
 lazy val http4s = project
   .in(file("modules/http4s"))
   .dependsOn(core)

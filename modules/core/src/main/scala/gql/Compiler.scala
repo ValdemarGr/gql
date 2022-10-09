@@ -21,7 +21,7 @@ object Application {
 
 final case class CompilerParameters(
     query: String,
-    variables: Map[String, Json],
+    variables: Option[Map[String, Json]],
     operationName: Option[String]
 )
 
@@ -53,7 +53,7 @@ object Compiler { outer =>
         queryInput: F[Q] = F.unit,
         mutationInput: F[M] = F.unit,
         subscriptionInput: F[S] = F.unit
-    ) = compileWith(schema, CompilerParameters(query, variables, operationName), queryInput, mutationInput, subscriptionInput)
+    ) = compileWith(schema, CompilerParameters(query, Some(variables), operationName), queryInput, mutationInput, subscriptionInput)
 
     def compileWith[Q, M, S](
         schema: Schema[F, Q, M, S],
@@ -65,7 +65,7 @@ object Compiler { outer =>
       gql.parser.parse(cp.query) match {
         case Left(pe) => Left(CompilationError.Parse(pe))
         case Right(q) =>
-          PreparedQuery.prepare2(q, schema, cp.variables) match {
+          PreparedQuery.prepare2(q, schema, cp.variables.getOrElse(Map.empty)) match {
             case Left(pe) => Left(CompilationError.Preparation(pe))
             case Right((ot, exec)) =>
               implicit val s = schema.statistics
