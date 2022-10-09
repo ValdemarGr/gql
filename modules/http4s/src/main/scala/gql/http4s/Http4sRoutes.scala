@@ -8,113 +8,63 @@ import cats._
 import io.circe._
 import org.http4s._
 import org.http4s.implicits._
-import gql.Schema
 import org.http4s.dsl.Http4sDsl
 import fs2.{Stream, Pure}
-import gql.Executable
 import org.http4s.headers.Authorization
+import gql.interpreter.Interpreter
+import gql._
 
 object Http4sRoutes {
-  sealed trait HandlerOutcome
+  final case class Http4sCompilerParametes(
+      compilerParameters: CompilerParameters,
+      headers: Headers
+  )
 
-  trait Handler[F[_]] { self =>
-    def run(
-        req: Request[Pure],
-        query: NonEmptyList[P.ExecutableDefinition],
-        variables: Map[String, Json]
-    ): F[Either[Response[F], Executable[F, Unit, Unit, Unit]]]
-
-    def mapK[G[_]: Monad](fk: F ~> G): Handler[G] =
-      new Handler[G] {
-        def run(
-            req: Request[Pure],
-            query: NonEmptyList[P.ExecutableDefinition],
-            variables: Map[String, Json]
-        ): G[Either[Response[G], Executable[G, Unit, Unit, Unit]]] =
-          fk(self.run(req, query, variables)).map(_.leftMap(_.mapK(fk)).map(_.mapK(fk)))
-      }
+  trait Http4sCompiler[F[_]] {
+    def compile(params: Http4sCompilerParametes): F[Either[Response[F], Application[F]]]
   }
 
-  object Handler {
-    def full[F[_]: Monad](
-        f: (
-            Request[Pure],
-            NonEmptyList[P.ExecutableDefinition],
-            Map[String, Json]
-        ) => F[Either[Response[F], Executable[F, Unit, Unit, Unit]]]
-    ): Handler[F] = {
-      new Handler[F] {
-        def run(
-            req: Request[Pure],
-            query: NonEmptyList[P.ExecutableDefinition],
-            variables: Map[String, Json]
-        ): F[Either[Response[F], Executable[F, Unit, Unit, Unit]]] = f(req, query, variables)
-      }
-    }
+  object Http4sCompiler {
+    def apply[F[_]](compiler: Http4sCompilerParametes => F[Either[Response[F], Compiler.Outcome[F]]])(implicit
+        F: Async[F]
+    ): Http4sCompiler[F] =
+      new Http4sCompiler[F] {
+        def compile(params: Http4sCompilerParametes): F[Either[Response[F], Application[F]]] = {
+          val dsl = new org.http4s.dsl.Http4sDsl[F] {}
+          import dsl._
+          import org.http4s.circe._
+          import io.circe.syntax._
 
-    def fullSchema[F[_]: Async](
-        f: Request[Pure] => F[Either[Response[F], Schema[F, Unit, Unit, Unit]]]
-    ): Handler[F] = {
-      new Handler[F] {
-        def run(
-            req: Request[Pure],
-            query: NonEmptyList[P.ExecutableDefinition],
-            variables: Map[String, Json]
-        ): F[Either[Response[F], Executable[F, Unit, Unit, Unit]]] = f(req).map(_.map(_.assemble(query, variables)))
-      }
-    }
-
-    def simple[F[_]: Monad](
-        f: Request[Pure] => F[Either[Response[F], Executable[F, Unit, Unit, Unit]]]
-    ) = full[F]((req, _, _) => f(req))
-
-    def simpleSchema[F[_]: Async](
-        f: Request[Pure] => F[Either[Response[F], Schema[F, Unit, Unit, Unit]]]
-    ) = fullSchema[F](f)
-
-    def authorized[F[_], A](
-        authorize: Authorization => F[Option[A]],
-        f: (Request[Pure], A) => F[Either[Response[F], Executable[F, Unit, Unit, Unit]]]
-    )(implicit F: Monad[F]) = simple[F] { req =>
-      req.headers.get[Authorization] match {
-        case None => F.pure(Left(Response[F](Status.Forbidden)))
-        case Some(auth) =>
-          authorize(auth).flatMap {
-            case None    => F.pure(Left(Response[F](Status.Unauthorized)))
-            case Some(a) => f(req, a)
-          }
-      }
-    }
-
-    def authorizedSchema[F[_], A](
-        authorize: Authorization => F[Option[A]],
-        f: (Request[Pure], A) => F[Either[Response[F], Schema[F, Unit, Unit, Unit]]]
-    )(implicit F: Async[F]) =
-      fullSchema[F] { req =>
-        req.headers.get[Authorization] match {
-          case None => F.pure(Left(Response[F](Status.Forbidden)))
-          case Some(auth) =>
-            authorize(auth).flatMap {
-              case None    => F.pure(Left(Response[F](Status.Unauthorized)))
-              case Some(a) => f(req, a)
-            }
+          compiler(params).flatMap(_.flatTraverse {
+            case Left(compErr) =>
+              compErr match {
+                case CompilationError.Parse(pe)       => BadRequest(pe.asGraphQL.asJson).map(_.asLeft)
+                case CompilationError.Preparation(pe) => BadRequest(pe.asGraphQL.asJson).map(_.asLeft)
+              }
+            case Right(application) => F.pure(Right(application))
+          })
         }
       }
+
+    def fromCompiler[F[_]](compiler: Http4sCompilerParametes => F[Either[Response[F], Compiler[F]]])(implicit
+        F: Async[F]
+    ): Http4sCompiler[F] =
+      apply[F](params => compiler(params).flatMap(_.traverse(_.compile(params.compilerParameters))))
   }
 
   def runWithHandler[F[_]](
-    handler: Handler[F],
-    req: Request[Pure],
-    query: String,
-    operationName: Option[String],
-    variables: Option[Map[String, Json]],
+      handler: Http4sCompiler[F],
+      req: Request[Pure],
+      query: String,
+      operationName: Option[String],
+      variables: Option[Map[String, Json]]
   ) = {
     // gql.parser.parse()
   }
 
   def simple[F[_]: Monad, Q, M, S](
       schema: Schema[F, Q, M, S],
-      handler: Handler[F],
+      handler: Http4sCompiler[F],
       path: String = "graphql"
   ) = {
     val d = new Http4sDsl[F] {}
