@@ -52,26 +52,32 @@ object Http4sRoutes {
       apply[F](params => compiler(params).flatMap(_.traverse(_.compile(params.compilerParameters))))
   }
 
-  def runWithHandler[F[_]](
-      handler: Http4sCompiler[F],
-      req: Request[Pure],
-      query: String,
-      operationName: Option[String],
-      variables: Option[Map[String, Json]]
-  ) = {
-    // gql.parser.parse()
-  }
-
-  def simple[F[_]: Monad, Q, M, S](
+  def simple[F[_], Q, M, S](
       schema: Schema[F, Q, M, S],
-      handler: Http4sCompiler[F],
+      compiler: Http4sCompiler[F],
       path: String = "graphql"
-  ) = {
+  )(implicit F: Concurrent[F]) = {
     val d = new Http4sDsl[F] {}
     import d._
+    import io.circe.syntax._
+    import org.http4s.circe._
+    implicit lazy val cd = io.circe.generic.semiauto.deriveDecoder[CompilerParameters]
+    implicit lazy val ed = org.http4s.circe.jsonOf[F, CompilerParameters]
 
     HttpRoutes.of[F] { case r @ POST -> Root / `path` =>
-      ???
+      r.as[CompilerParameters].flatMap { params =>
+        compiler.compile(Http4sCompilerParametes(params, r.headers)).flatMap {
+          case Left(res) => F.pure(res)
+          case Right(app) =>
+            val fa = app match {
+              case Application.Mutation(run)     => run
+              case Application.Query(run)        => run
+              case Application.Subscription(run) => run.take(1).compile.lastOrError
+            }
+
+            fa.flatMap(qr => Ok(qr.asGraphQL.asJson))
+        }
+      }
     }
   }
 }

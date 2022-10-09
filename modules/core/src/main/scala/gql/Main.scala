@@ -346,12 +346,12 @@ query withNestedFragments {
                   "val2" -> dsl.default("test"),
                   "x3" -> dsl.default.arr(
                     Seq(
-                      dsl.default("test"),
+                      dsl.default("test")
                       // dsl.default.obj(
                       //   "v3" -> dsl.default("@@")
                       // )
                     )
-                  ),
+                  )
                   // "ar2" -> dsl.default.arr(
                   //   Seq(
                   //     dsl.default.obj(
@@ -815,11 +815,9 @@ subscription($serverId: String!) {
 
     def runVPNSubscription(q: String, n: Int, subscription: Type[IO, Username] = root[IO]) =
       Schema.simple(SchemaShape[IO, Unit, Unit, Username](subscription = subscription.some)).flatMap { sch =>
-        sch
-          .assemble(q, variables = Map("serverId" -> Json.fromString("secret_server")))
-          .traverse { case Executable.Subscription(run) =>
-            run("john_doe").take(n).map(_.asGraphQL).compile.toList
-          }
+        gql.Compiler[IO].compile(sch, q, subscriptionInput = IO.pure("john_doe")).traverse { case Application.Subscription(stream) =>
+          stream.take(n).map(_.asGraphQL).compile.toList
+        }
       }
 
     // runVPNSubscription(subscriptionQuery, 3).unsafeRunSync()
@@ -843,7 +841,9 @@ subscription($serverId: String!) {
         }.andThen(EffectResolver[F, VpnConnection[F], VpnConnection[F]](x => Applicative[F].pure(Ior.left("wak wak waa")))))
       )
 
-    println(runVPNSubscription(subscriptionQuery, 1, root2[IO]).unsafeRunSync().leftMap(_.prettyError.value))
+    println(runVPNSubscription(subscriptionQuery, 1, root2[IO]).unsafeRunSync() match {
+      case Left(CompilationError.Parse(pe)) => pe.prettyError.value
+    })
 
 //     def bench(fa: IO[_]) =
 //       for {

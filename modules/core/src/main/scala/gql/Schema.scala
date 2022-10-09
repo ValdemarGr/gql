@@ -20,14 +20,6 @@ final case class Schema[F[_], Q, M, S](
   def mapK[G[_]: MonadCancelThrow](fk: F ~> G)(implicit F: Functor[F]): Schema[G, Q, M, S] =
     Schema(shape.mapK(fk), state.mapK(fk), statistics.mapK(fk))
 
-  def assemble(query: NonEmptyList[P.ExecutableDefinition], variables: Map[String, Json])(implicit
-      F: Async[F]
-  ): Executable[F, Q, M, S] =
-    Executable.assemble[F, Q, M, S](query, this, variables)
-
-  def assemble(query: String, variables: Map[String, Json])(implicit F: Async[F]): Either[ParseError, Executable[F, Q, M, S]] =
-    parse(query).map(assemble(_, variables))
-
   lazy val validate: Chain[SchemaShape.Problem] = shape.validate
 
   lazy val render: String = shape.render
