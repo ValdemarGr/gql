@@ -22,10 +22,10 @@ object GraphqlWS {
     final case class Connected[F[_]](
         initPayload: Map[String, Json],
         compiler: Compiler[F],
-        subscriptions: Map[String, Option[SubscriptionState[F]]]
+        subscriptions: Map[String, F[Unit]]
     ) extends State[F]
     final case class Terminating[F[_]](
-        subscriptions: Map[String, Option[SubscriptionState[F]]]
+        subscriptions: Map[String, F[Unit]]
     ) extends State[F]
   }
 
@@ -49,7 +49,7 @@ object GraphqlWS {
             case State.Connected(_, _, m) => m
             case State.Terminating(m)     => m
           }
-          .flatMap(_.values.toList.parTraverse_(_.traverse_(_.close)))
+          .flatMap(_.values.toList.parSequence_)
       )
 
     stateR.flatMap { state =>
@@ -60,7 +60,12 @@ object GraphqlWS {
             F.sleep(30.seconds) >> toClient.offer(Left(TechnicalError(4408, "Connection initialisation timeout")))
 
           sup.supervise(timeoutF).map { timeoutFiber =>
-            def handleMessage(fc: FromClient): F[Option[Message]] =
+            def send(fc: FromServer): F[Unit] = toClient.offer(fc.asRight)
+
+            def err(m: Map[String, F[Unit]], code: Int, message: String): (State.Terminating[F], F[Unit]) =
+              (State.Terminating(m), toClient.offer(TechnicalError(code, message).asLeft))
+
+            def handleMessage(fc: FromClient): F[Unit] =
               F.uncancelable { _ =>
                 fc match {
                   case Bidirectional.Ping(payload) => F.pure(Some(Right(Bidirectional.Pong(payload))))
@@ -69,75 +74,73 @@ object GraphqlWS {
                     // If we remove the subscription, we need to close it
                     // Cancellation can occur between map removal and falttening
                     state
-                      .modify[F[Option[TechnicalError]]] {
-                        case State.Connecting() =>
-                          (State.Terminating(Map.empty), F.pure(Some(TechnicalError(4401, "Unauthorized"))))
-                        case State.Terminating(m) =>
-                          (State.Terminating(m), F.pure(None))
+                      .modify[F[Unit]] {
+                        case State.Connecting()   => err(Map.empty, 4401, "Unauthorized")
+                        case State.Terminating(m) => (State.Terminating(m), F.unit)
                         case c @ State.Connected(ip, compiler, m) =>
                           m.get(id) match {
-                            case None      => (c, F.pure(None))
-                            case Some(sub) => (State.Connected(ip, compiler, m - id), sub.traverse_(_.close).as(None))
+                            case None        => (c, F.unit)
+                            case Some(close) => (State.Connected(ip, compiler, m - id), close)
                           }
                       }
                       .flatten
-                      .map(_.map(Left(_)))
                   case FromClient.Subscribe(id, payload) =>
                     state
-                      .modify[F[Option[Message]]] {
-                        case State.Connecting() =>
-                          (State.Terminating(Map.empty), F.pure(Some(Left(TechnicalError(4401, "Unauthorized")))))
-                        case State.Terminating(m) =>
-                          (State.Terminating(m), F.pure(None))
+                      .modify[F[Unit]] {
+                        case State.Connecting()   => err(Map.empty, 4401, "Unauthorized")
+                        case State.Terminating(m) => (State.Terminating(m), F.unit)
                         case c @ State.Connected(ip, compiler, m) =>
                           m.get(id) match {
-                            case Some(sub) =>
-                              (State.Terminating(m), F.pure(Some(Left(TechnicalError(4409, s"Subscriber for $id already exists")))))
-                            case None =>
-                              val subscribeF: F[Option[Message]] =
-                                compiler.compile(payload).flatMap {
-                                  case Left(err) =>
-                                    val j = err match {
-                                      case CompilationError.Parse(p)       => p.asGraphQL
-                                      case CompilationError.Preparation(p) => p.asGraphQL
-                                    }
+                            case Some(sub) => err(m, 4409, s"Subscriber for $id already exists")
+                            case None      =>
+                              // Start out with F.unit
+                              val newState = State.Connected(ip, compiler, m + (id -> F.unit))
 
-                                    val cleanupF = state.modify {
-                                      case State.Connected(_, _, m2) =>
-                                        val releaseF = m2.get(id).traverse_(_.traverse_(_.close))
-                                        (State.Connected(ip, compiler, m2 - id), releaseF)
-                                      case x => (x, F.unit)
-                                    }.flatten
-
-                                    cleanupF >> F.pure(Some(Right(FromServer.Error(id, Chain(j)))))
-                                  case Right(app) =>
-                                    val s = app match {
-                                      case Application.Query(run)        => fs2.Stream.eval(run)
-                                      case Application.Mutation(run)     => fs2.Stream.eval(run)
-                                      case Application.Subscription(run) => run
-                                    }
-
-                                    val bgFiber =
-                                      sup.supervise {
-                                        (s.map(x => Right(FromServer.Next(id, x))) ++ fs2.Stream(Right(Bidirectional.Complete(id))))
-                                          .enqueueUnterminated(toClient)
-                                          .compile
-                                          .drain
+                              val subscribeF: F[Unit] =
+                                compiler
+                                  .compile(payload)
+                                  .flatMap {
+                                    // Failed during parsing or preparation
+                                    // Emit error and remove ourselves from the map
+                                    case Left(err) =>
+                                      val j = err match {
+                                        case CompilationError.Parse(p)       => p.asGraphQL
+                                        case CompilationError.Preparation(p) => p.asGraphQL
                                       }
 
-                                    bgFiber.flatMap { fib =>
-                                      state.modify {
-                                        case State.Connected(ip, compiler, m) =>
-                                          (State.Connected(ip, compiler, m + (id -> Some(SubscriptionState(fib.cancel)))), F.unit)
-                                        case x => (x, fib.cancel)
+                                      val cleanupF = state.modify {
+                                        case State.Connected(_, _, m2) =>
+                                          val releaseF = m2.get(id).sequence_
+                                          (State.Connected(ip, compiler, m2 - id), releaseF)
+                                        case x => (x, F.unit)
                                       }.flatten
-                                    } as None
-                                }
 
-                              // We add the subscriber as none initially
-                              // This disallows future arrivals to allocate the same id
-                              // This is nitpicking since the caller uses `evalMap` and not a concurrent combinator
-                              (State.Connected(ip, compiler, m + (id -> None)), subscribeF)
+                                      cleanupF >> send(FromServer.Error(id, Chain(j)))
+                                    case Right(app) =>
+                                      val s = app match {
+                                        case Application.Query(run)        => fs2.Stream.eval(run)
+                                        case Application.Mutation(run)     => fs2.Stream.eval(run)
+                                        case Application.Subscription(run) => run
+                                      }
+
+                                      val bgFiber =
+                                        sup.supervise {
+                                          (s.map(x => Right(FromServer.Next(id, x))) ++ fs2.Stream(Right(Bidirectional.Complete(id))))
+                                            .enqueueUnterminated(toClient)
+                                            .compile
+                                            .drain
+                                        }
+
+                                      bgFiber.flatMap { fib =>
+                                        state.modify {
+                                          case State.Connected(ip, compiler, m) =>
+                                            (State.Connected(ip, compiler, m + (id -> fib.cancel)), F.unit)
+                                          case x => (x, fib.cancel)
+                                        }.flatten
+                                      } as None
+                                  }
+
+                              (newState, subscribeF)
                           }
                       }
                       .flatten
@@ -145,31 +148,27 @@ object GraphqlWS {
                     timeoutFiber.cancel >>
                       getCompiler(payload).flatMap { ce =>
                         state
-                          .modify[Option[Message]] {
-                            case State.Terminating(m) =>
-                              (State.Terminating(m), None)
-                            case State.Connected(_, compiler, m) =>
-                              (State.Terminating(m), Some(Left(TechnicalError(4429, "Too many initialization requests"))))
+                          .modify[F[Unit]] {
+                            case State.Terminating(m)            => (State.Terminating(m), F.unit)
+                            case State.Connected(_, compiler, m) => err(m, 4429, "Too many initialization requests")
                             case State.Connecting() =>
                               ce match {
-                                case Left(x) => (State.Terminating(Map.empty), Some(Left(TechnicalError(4441, x))))
+                                case Left(x) => err(Map.empty, 4441, x)
                                 case Right(compiler) =>
-                                  (State.Connected(payload, compiler, Map.empty), Some(Right(FromServer.ConnectionAck(Map.empty))))
+                                  (State.Connected(payload, compiler, Map.empty), send(FromServer.ConnectionAck(Map.empty)))
                               }
                           }
+                          .flatten
                       }
                 }
               }
-
-            def handleRaise(fc: FromClient): F[Unit] =
-              handleMessage(fc).flatMap(_.traverse_(toClient.offer))
 
             val dequeue =
               fs2.Stream
                 .fromQueueUnterminated(toClient)
                 .takeWhile(_.isRight, takeFailure = true)
 
-            val handle: fs2.Pipe[F, FromClient, Unit] = _.evalMap(handleRaise)
+            val handle: fs2.Pipe[F, FromClient, Unit] = _.evalMap(handleMessage)
 
             (dequeue, handle)
           }
