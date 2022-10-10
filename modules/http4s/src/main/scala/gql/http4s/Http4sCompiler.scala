@@ -27,10 +27,12 @@ object Http4sCompiler {
 
         compiler(params).flatMap(_.flatTraverse {
           case Left(compErr) =>
-            compErr match {
-              case CompilationError.Parse(pe)       => BadRequest(pe.asGraphQL.asJson).map(_.asLeft)
-              case CompilationError.Preparation(pe) => BadRequest(pe.asGraphQL.asJson).map(_.asLeft)
-            }
+            Ok {
+              compErr match {
+                case CompilationError.Parse(pe)       => pe.asGraphQL.asJson
+                case CompilationError.Preparation(pe) => pe.asGraphQL.asJson
+              }
+            }.map(_.asLeft)
           case Right(application) => F.pure(Right(application))
         })
       }
