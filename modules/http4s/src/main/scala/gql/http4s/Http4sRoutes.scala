@@ -24,7 +24,7 @@ object Http4sRoutes {
   def sync[F[_]](
       compiler: Http4sCompiler[F],
       path: String = "graphql"
-  )(implicit F: Concurrent[F]) = {
+  )(implicit F: Concurrent[F]): HttpRoutes[F] = {
     val d = new Http4sDsl[F] {}
     import d._
     import io.circe.syntax._
@@ -51,7 +51,7 @@ object Http4sRoutes {
       getCompiler: Map[String, Json] => F[Either[String, Compiler[F]]],
       path: String = "ws",
       wsb: WebSocketBuilder[F]
-  )(implicit F: Async[F]) = {
+  )(implicit F: Async[F]): HttpRoutes[F] = {
     val d = new Http4sDsl[F] {}
     import d._
     import io.circe.syntax._
@@ -75,7 +75,6 @@ object Http4sRoutes {
                 .through(fromClient)
           )
       }
-      ???
     }
   }
 }
