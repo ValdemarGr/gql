@@ -52,11 +52,18 @@ lazy val http4s = project
       "org.http4s" %% "http4s-dsl" % "1.0.0-M36",
     ),
   )
-  .enablePlugins(NativeImagePlugin)
-  .settings(
-    Compile / mainClass := Some("gql.http4s.Http4sMain"),
-    nativeImageVersion := "22.2.0"
-  )
+  /* .enablePlugins(NativeImagePlugin) */
+  /* .settings( */
+  /*   Compile / mainClass := Some("gql.http4s.Http4sMain"), */
+  /*   nativeImageVersion := "22.2.0" */
+  /* ) */
+
+lazy val testbed = project
+  .in(file("modules/testbed"))
+  .dependsOn(core)
+  .dependsOn(graphqlWs)
+  .dependsOn(http4s)
+  .settings(sharedSettings)
 
 /* lazy val docs = project */
 /*   .in(file("modules/docs")) */

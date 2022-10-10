@@ -604,7 +604,7 @@ query withNestedFragments {
 }
   """
 
-  implicit def p[F[_]: Applicative] = Planner[F]
+      implicit def p[F[_]: Applicative] = Planner[F]
       F.fromOption(parseAndPrep(qn), new Exception(":((")).flatMap { x =>
         Statistics[F].flatMap { implicit stats =>
           Planner.costTree[F](x).flatMap { costTree =>
@@ -816,7 +816,7 @@ subscription($serverId: String!) {
 
     def runVPNSubscription(q: String, n: Int, subscription: Type[IO, Username] = root[IO]) =
       Schema.simple(SchemaShape[IO, Unit, Unit, Username](subscription = subscription.some)).flatMap { sch =>
-        gql.Compiler[IO].compile(sch, q, subscriptionInput = IO.pure("john_doe")).traverse { case Application.Subscription(stream) =>
+        Compiler[IO].compile(sch, q, variables = Map("serverId" -> Json.fromString("abc123")), subscriptionInput = IO.pure("john_doe")).traverse { case Application.Subscription(stream) =>
           stream.take(n).map(_.asGraphQL).compile.toList
         }
       }

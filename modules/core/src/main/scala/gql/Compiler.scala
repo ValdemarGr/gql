@@ -87,7 +87,7 @@ object Compiler { outer =>
                 case P.OperationType.Subscription =>
                   Right(Application.Subscription {
                     fs2.Stream.eval(subscriptionInput).flatMap { si =>
-                      Interpreter.runStreamed((), exec, schema.state).map { case (e, d) => QueryResult(e, d) }
+                      Interpreter.runStreamed(si, exec, schema.state).map { case (e, d) => QueryResult(e, d) }
                     }
                   })
               }
