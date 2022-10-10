@@ -42,6 +42,7 @@ lazy val graphqlWs = project
 lazy val http4s = project
   .in(file("modules/http4s"))
   .dependsOn(core)
+  .dependsOn(graphqlWs)
   .settings(sharedSettings)
   .settings(
     libraryDependencies ++= Seq(

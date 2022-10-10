@@ -14,6 +14,8 @@ import org.http4s.headers.Authorization
 import gql.interpreter.Interpreter
 import gql._
 import org.http4s.server.websocket.WebSocketBuilder
+import gql.graphqlws.GraphqlWS
+import org.http4s.websocket.WebSocketFrame
 
 object Http4sRoutes {
   implicit lazy val cd = io.circe.generic.semiauto.deriveDecoder[CompilerParameters]
@@ -46,16 +48,33 @@ object Http4sRoutes {
   }
 
   def ws[F[_]](
-      compiler: Map[String, Json] => F[Either[String, Compiler[F]]],
+      getCompiler: Map[String, Json] => F[Either[String, Compiler[F]]],
       path: String = "ws",
       wsb: WebSocketBuilder[F]
-  )(implicit F: Concurrent[F]) = {
+  )(implicit F: Async[F]) = {
     val d = new Http4sDsl[F] {}
     import d._
     import io.circe.syntax._
     import org.http4s.circe._
 
     HttpRoutes.of[F] { case r @ GET -> Root / `path` =>
+      GraphqlWS[F](getCompiler).allocated.flatMap { case ((toClient, fromClient), close) =>
+        wsb
+          .withOnClose(close)
+          .withFilterPingPongs(true)
+          .build(
+            toClient.evalMap[F, WebSocketFrame] {
+              case Left(te) => F.fromEither(WebSocketFrame.Close(te.code, te.message))
+              case Right(x) => F.pure(WebSocketFrame.Text(x.asJson.noSpaces))
+            },
+            in =>
+              in.evalMap[F, String] {
+                case WebSocketFrame.Text(x, true) => F.pure(x)
+                case other                        => F.raiseError(new Exception(s"Unexpected frame: $other"))
+              }.evalMap { x => F.fromEither(io.circe.parser.decode[GraphqlWS.FromClient](x)) }
+                .through(fromClient)
+          )
+      }
       ???
     }
   }

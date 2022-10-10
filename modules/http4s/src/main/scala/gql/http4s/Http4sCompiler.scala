@@ -36,8 +36,13 @@ object Http4sCompiler {
       }
     }
 
-  def fromCompiler[F[_]](compiler: Http4sCompilerParametes => F[Either[Response[F], Compiler[F]]])(implicit
+  def makeFromCompiler[F[_]](compiler: Http4sCompilerParametes => F[Either[Response[F], Compiler[F]]])(implicit
       F: Async[F]
   ): Http4sCompiler[F] =
     apply[F](params => compiler(params).flatMap(_.traverse(_.compile(params.compilerParameters))))
+
+  def fromCompiler[F[_]](compiler: Compiler[F])(implicit
+      F: Async[F]
+  ): Http4sCompiler[F] =
+    makeFromCompiler[F]((_: Http4sCompilerParametes) => F.pure(compiler.asRight))
 }
