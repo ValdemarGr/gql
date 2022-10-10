@@ -11,8 +11,6 @@ import gql.interpreter.EvalFailure
 import cats.effect.std._
 import fs2.Pull
 
-sealed trait GraphqlWS[F[_]] {}
-
 object GraphqlWS {
   final case class SubscriptionState[F[_]](
       close: F[Unit]
