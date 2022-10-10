@@ -816,9 +816,11 @@ subscription($serverId: String!) {
 
     def runVPNSubscription(q: String, n: Int, subscription: Type[IO, Username] = root[IO]) =
       Schema.simple(SchemaShape[IO, Unit, Unit, Username](subscription = subscription.some)).flatMap { sch =>
-        Compiler[IO].compile(sch, q, variables = Map("serverId" -> Json.fromString("abc123")), subscriptionInput = IO.pure("john_doe")).traverse { case Application.Subscription(stream) =>
-          stream.take(n).map(_.asGraphQL).compile.toList
-        }
+        Compiler[IO]
+          .compile(sch, q, variables = Map("serverId" -> Json.fromString("abc123")), subscriptionInput = IO.pure("john_doe"))
+          .traverse { case Application.Subscription(stream) =>
+            stream.take(n).map(_.asGraphQL).compile.toList
+          }
       }
 
     // runVPNSubscription(subscriptionQuery, 3).unsafeRunSync()
@@ -843,7 +845,9 @@ subscription($serverId: String!) {
       )
 
     println(runVPNSubscription(subscriptionQuery, 1, root2[IO]).unsafeRunSync() match {
-      case Left(CompilationError.Parse(pe)) => pe.prettyError.value
+      case Left(CompilationError.Parse(pe))       => pe.prettyError.value
+      case Left(CompilationError.Preparation(pe)) => pe.message
+      case Right(x) => x.toString()
     })
 
 //     def bench(fa: IO[_]) =
