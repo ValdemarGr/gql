@@ -121,8 +121,7 @@ object GraphqlWS {
 
                                     val bgFiber =
                                       sup.supervise {
-                                        s
-                                          .map(x => Right(FromServer.Next(id, x)))
+                                        (s.map(x => Right(FromServer.Next(id, x))) ++ fs2.Stream(Right(Bidirectional.Complete(id))))
                                           .enqueueUnterminated(toClient)
                                           .compile
                                           .drain
