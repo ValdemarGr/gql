@@ -46,7 +46,7 @@ object Http4sRoutes {
   }
 
   def ws[F[_]](
-      compiler: Http4sCompiler[F],
+      compiler: Map[String, Json] => F[Either[String, Compiler[F]]],
       path: String = "ws",
       wsb: WebSocketBuilder[F]
   )(implicit F: Concurrent[F]) = {
@@ -55,8 +55,8 @@ object Http4sRoutes {
     import io.circe.syntax._
     import org.http4s.circe._
 
-    HttpRoutes.of[F] {
-      case r @ GET -> Root / `path` => ???
+    HttpRoutes.of[F] { case r @ GET -> Root / `path` =>
+      ???
     }
   }
 }
