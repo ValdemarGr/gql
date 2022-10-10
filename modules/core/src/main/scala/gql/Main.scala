@@ -604,6 +604,7 @@ query withNestedFragments {
 }
   """
 
+  implicit def p[F[_]: Applicative] = Planner[F]
       F.fromOption(parseAndPrep(qn), new Exception(":((")).flatMap { x =>
         Statistics[F].flatMap { implicit stats =>
           Planner.costTree[F](x).flatMap { costTree =>

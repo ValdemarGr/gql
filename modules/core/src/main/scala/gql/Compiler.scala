@@ -69,6 +69,7 @@ object Compiler { outer =>
             case Left(pe) => Left(CompilationError.Preparation(pe))
             case Right((ot, exec)) =>
               implicit val s = schema.statistics
+              implicit val p = schema.planner
 
               ot match {
                 case P.OperationType.Query =>

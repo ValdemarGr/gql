@@ -67,7 +67,7 @@ object Interpreter {
       rootSel: NonEmptyList[PreparedField[F, Any]],
       schemaState: SchemaState[F],
       openTails: Boolean
-  )(implicit F: Async[F]): fs2.Stream[F, (Chain[EvalFailure], JsonObject)] =
+  )(implicit F: Async[F], planner: Planner[F]): fs2.Stream[F, (Chain[EvalFailure], JsonObject)] =
     StreamSupervisor[F, IorNec[String, Any]](openTails).flatMap { implicit streamSup =>
       val changeStream = streamSup.changes
         .map(_.toList.reverse.distinctBy { case (tok, _, _) => tok }.toNel)
@@ -90,7 +90,7 @@ object Interpreter {
                 }
               }
               .map(Planner.NodeTree(_))
-            planned = Planner.plan(costTree)
+            planned <- planner.plan(costTree)
             accumulator <- BatchAccumulator[F](schemaState, planned)
             res <- Supervisor[F].use { sup =>
               val interpreter = new InterpreterImpl[F](sma, accumulator, sup)
@@ -208,14 +208,14 @@ object Interpreter {
         }
     }
 
-  def runStreamed[F[_]: Statistics](
+  def runStreamed[F[_]: Statistics: Planner](
       rootInput: Any,
       rootSel: NonEmptyList[PreparedField[F, Any]],
       schemaState: SchemaState[F]
   )(implicit F: Async[F]): fs2.Stream[F, (Chain[EvalFailure], JsonObject)] =
     constructStream[F](rootInput, rootSel, schemaState, true)
 
-  def runSync[F[_]: Async: Statistics](
+  def runSync[F[_]: Async: Statistics: Planner](
       rootInput: Any,
       rootSel: NonEmptyList[PreparedField[F, Any]],
       schemaState: SchemaState[F]
