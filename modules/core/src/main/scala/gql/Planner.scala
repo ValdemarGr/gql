@@ -249,4 +249,7 @@ object Planner {
         go(default.root, displaced.map(_.root.map(x => x.edgeId -> x).toMap).getOrElse(Map.empty))
     }
   }
+  object NodeTree {
+    implicit lazy val showForNodeTree: Show[NodeTree] = Show.show[NodeTree](_.show(showImprovement = true))
+  }
 }
