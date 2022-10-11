@@ -197,6 +197,37 @@ object Planner {
       go(root).value
     }
 
+    lazy val batches: List[(BatchResolver.ResolverKey, NonEmptyChain[PreparedQuery.EdgeId])] =
+      flattened
+        .map(n => (n.batcher, n))
+        .collect { case (Some(batcherKey), node) => (batcherKey, node) }
+        .groupByNec { case (_, node) => node.end }
+        .toList
+        .flatMap { case (_, endGroup) =>
+          endGroup
+            .groupBy { case (batcherKey, _) => batcherKey }
+            .toSortedMap
+            .toList
+            .map { case (batcherKey, batch) =>
+              batcherKey -> batch.map { case (_, node) => node.edgeId }
+            }
+        }
+
+    def totalCost: Double = {
+      val thisFlat = flattened
+      val thisFlattenedMap = thisFlat.map(n => n.edgeId -> n).toMap
+      val thisBatches = batches.filter { case (_, edges) => edges.size > 1 }
+
+      val naiveCost = thisFlat.map(_.cost).sum
+
+      val batchSubtraction = thisBatches.map { case (_, xs) =>
+        // cost * (size - 1 )
+        thisFlattenedMap(xs.head).cost * (xs.size - 1)
+      }.sum
+
+      naiveCost - batchSubtraction
+    }
+
     def show(showImprovement: Boolean = false) = {
       val (default, displaced) =
         if (showImprovement)
@@ -215,10 +246,10 @@ object Planner {
 
       val prefix =
         displaced.as {
-          s"""
-          |$red old field schedule $reset
-          |$green new field offset (deferral of execution) $reset
-          """.stripMargin
+          s"""|
+          |${red}old field schedule$reset
+          |${green}new field offset (deferral of execution)$reset
+          |""".stripMargin
         }.mkString
 
       val per = math.max((maxEnd / 40d), 1)

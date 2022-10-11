@@ -245,12 +245,19 @@ query withNestedFragments {
     BatchResolver[IO, String, String](xs => IO(xs.map(x => x -> x).toMap)).map { r =>
       val fixed = r.contramap[String](Set(_)).map { case (i, o) => getPerson(o.values.toList.head) }
 
+      final case class Nest(name: String)
+      implicit lazy val nestType: Type[IO, Nest] = tpe[IO, Nest](
+        "Nest",
+        "person" -> field(fixed.contramap[Nest](_.name))
+      )
+
       SchemaShape[IO, Unit, Unit, Unit](
         Some(
           tpe[IO, Unit](
             "Query",
             "person1" -> field(fixed.contramap[Unit](_ => "John")),
-            "person2" -> field(fixed.contramap[Unit](_ => "Jane"))
+            "person2" -> field(fixed.contramap[Unit](_ => "Jane")),
+            "nest" -> pure(_ => Nest("Bob"))
           )
         )
       )
@@ -260,7 +267,9 @@ query withNestedFragments {
   val schema = schema0.copy(planner = new Planner[IO] {
     def plan(naive: Planner.NodeTree): IO[Planner.NodeTree] =
       schema0.planner.plan(naive).flatTap { output =>
-        IO.println(output.show(showImprovement = true))
+        IO.println(output.show(showImprovement = true)) >>
+          IO.println(naive.totalCost) >>
+          IO.println(output.totalCost)
       }
   })
 
@@ -282,6 +291,20 @@ query withNestedFragments {
           friends {
             name
             age
+          }
+        }
+        nest {
+          person {
+            name
+            age
+            friends {
+              name
+              age
+              friends {
+                name
+                age
+              }
+            }
           }
         }
       }

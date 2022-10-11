@@ -22,27 +22,8 @@ object BatchAccumulator {
       F: Async[F],
       stats: Statistics[F]
   ): F[BatchAccumulator[F]] = {
-    val flat = plan.flattened
-
-    // Group similar ends
-    // Then group the end-groups by batcher id
     val batches: Chain[(BatchResolver.ResolverKey, NonEmptyChain[PreparedQuery.EdgeId])] =
-      Chain.fromSeq {
-        flat
-          .map(n => (n.batcher, n))
-          .collect { case (Some(batcherKey), node) => (batcherKey, node) }
-          .groupByNec { case (_, node) => node.end }
-          .toList
-          .flatMap { case (_, endGroup) =>
-            endGroup
-              .groupBy { case (batcherKey, _) => batcherKey }
-              .toSortedMap
-              .toList
-              .map { case (batcherKey, batch) =>
-                batcherKey -> batch.map { case (_, node) => node.edgeId }
-              }
-          }
-      }
+      Chain.fromSeq(plan.batches)
 
     // Now we allocate a deferred for each id in each batch
     type BatchPromise = Option[Map[BatchKey, BatchValue]] => F[Unit]
