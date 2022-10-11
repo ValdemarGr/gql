@@ -12,9 +12,9 @@ import gql.resolver.EffectResolver
 import gql.resolver.Resolver
 
 final case class SchemaShape[F[_], Q, M, S](
-    query: Option[Type[F, Q]] = None,
-    mutation: Option[Type[F, M]] = None,
-    subscription: Option[Type[F, S]] = None
+    query: Option[Type[F, Q]] = Option.empty[Type[F, Unit]],
+    mutation: Option[Type[F, M]] = Option.empty[Type[F, Unit]],
+    subscription: Option[Type[F, S]] = Option.empty[Type[F, Unit]]
 ) {
   def mapK[G[_]: MonadCancelThrow](fk: F ~> G): SchemaShape[G, Q, M, S] =
     SchemaShape(query.map(_.mapK(fk)), mutation.map(_.mapK(fk)), subscription.map(_.mapK(fk)))

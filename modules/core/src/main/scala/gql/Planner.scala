@@ -15,6 +15,7 @@ import gql.PreparedQuery.Selection
 import cats.mtl.Stateful
 import scala.collection.immutable.TreeSet
 import cats._
+import scala.io.AnsiColor
 
 trait Planner[F[_]] { self =>
   def plan(naive: Planner.NodeTree): F[Planner.NodeTree]
@@ -26,19 +27,6 @@ trait Planner[F[_]] { self =>
 }
 
 object Planner {
-  final case class NodeTree(root: List[Node]) {
-    lazy val flattened: List[Node] = {
-      def go(xs: List[Node]): Eval[List[Node]] = Eval.defer {
-        xs.flatTraverse {
-          case n @ Node(_, _, _, _, Nil, _, _) => Eval.now(List(n))
-          case n @ Node(_, _, _, _, xs, _, _)  => go(xs).map(n :: _)
-        }
-      }
-
-      go(root).value
-    }
-  }
-
   final case class Node(
       name: String,
       end: Double,
@@ -187,7 +175,78 @@ object Planner {
         }
       }
 
-      F.pure(NodeTree(reConstruct(tree.root.map(_.edgeId)).value))
+      F.pure(tree.set(reConstruct(tree.root.map(_.edgeId)).value))
+    }
+  }
+
+  final case class NodeTree(
+      root: List[Node],
+      source: Option[NodeTree] = None
+  ) {
+    def set(newRoot: List[Node]): NodeTree =
+      NodeTree(newRoot, Some(this))
+
+    lazy val flattened: List[Node] = {
+      def go(xs: List[Node]): Eval[List[Node]] = Eval.defer {
+        xs.flatTraverse {
+          case n @ Node(_, _, _, _, Nil, _, _) => Eval.now(List(n))
+          case n @ Node(_, _, _, _, xs, _, _)  => go(xs).map(n :: _)
+        }
+      }
+
+      go(root).value
+    }
+
+    def show(showImprovement: Boolean = false) = {
+      val (default, displaced) =
+        if (showImprovement)
+          source match {
+            case Some(x) => (x, Some(this))
+            case None    => (this, None)
+          }
+        else (this, None)
+
+      val maxEnd = displaced.getOrElse(default).flattened.maxByOption(_.end).map(_.end).getOrElse(0d)
+
+      val red = AnsiColor.RED_B
+      val green = AnsiColor.GREEN_B
+      val blue = AnsiColor.BLUE_B
+      val reset = AnsiColor.RESET
+
+      val prefix =
+        displaced.as {
+          s"""
+          |$red old field schedule $reset
+          |$green new field offset (deferral of execution) $reset
+          """.stripMargin
+        }.mkString
+
+      val per = math.max((maxEnd / 40d), 1)
+
+      def go(default: List[Node], displacement: Map[PreparedQuery.EdgeId, Node]): String = {
+        default
+          .sortBy(_.edgeId.id)
+          .map { n =>
+            val disp = displacement.get(n.edgeId)
+            val basePrefix = " " * (n.start / per).toInt
+            val showDisp = disp
+              .filter(_.end.toInt != n.end.toInt)
+              .map { d =>
+                val pushedPrefix = blue + ">" * ((d.start - n.start) / per).toInt + green
+                s"$basePrefix${pushedPrefix}name: ${d.name}, cost: ${d.cost}, end: ${d.end}$reset"
+              }
+            val showHere =
+              s"$basePrefix${if (showDisp.isDefined) red else ""}name: ${n.name}, cost: ${n.cost}, end: ${n.end}$reset"
+
+            val all = showHere + showDisp.map("\n" + _).mkString
+            val children = go(n.children, disp.map(_.children.map(x => x.edgeId -> x).toMap).getOrElse(Map.empty))
+            all + "\n" + children
+          }
+          .mkString("")
+      }
+
+      prefix +
+        go(default.root, displaced.map(_.root.map(x => x.edgeId -> x).toMap).getOrElse(Map.empty))
     }
   }
 }
