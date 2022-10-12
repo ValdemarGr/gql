@@ -56,7 +56,7 @@ object GraphqlWS {
 
             def handleMessage(fc: FromClient): F[Unit] =
               fc match {
-                case Bidirectional.Ping(payload) => F.pure(Some(Right(Bidirectional.Pong(payload))))
+                case Bidirectional.Ping(payload) => send(Bidirectional.Pong(payload))
                 case Bidirectional.Pong(_)       => F.pure(None)
                 case Bidirectional.Complete(id)  =>
                   // If we remove the subscription, we need to close it
