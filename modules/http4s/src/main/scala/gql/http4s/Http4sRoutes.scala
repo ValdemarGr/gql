@@ -49,8 +49,8 @@ object Http4sRoutes {
 
   def ws[F[_]](
       getCompiler: Map[String, Json] => F[Either[String, Compiler[F]]],
-      path: String = "ws",
-      wsb: WebSocketBuilder[F]
+      wsb: WebSocketBuilder[F],
+      path: String = "ws"
   )(implicit F: Async[F]): HttpRoutes[F] = {
     val d = new Http4sDsl[F] {}
     import d._
@@ -67,12 +67,13 @@ object Http4sRoutes {
               case Left(te) => F.fromEither(WebSocketFrame.Close(te.code, te.message))
               case Right(x) => F.pure(WebSocketFrame.Text(x.asJson.noSpaces))
             },
-            in =>
-              in.evalMap[F, String] {
-                case WebSocketFrame.Text(x, true) => F.pure(x)
-                case other                        => F.raiseError(new Exception(s"Unexpected frame: $other"))
-              }.evalMap { x => F.fromEither(io.circe.parser.decode[GraphqlWS.FromClient](x)) }
-                .through(fromClient)
+            _.evalMap[F, Option[String]] {
+              case WebSocketFrame.Text(x, true)                   => F.pure(Some(x))
+              case c: WebSocketFrame.Close if c.closeCode == 1000 => F.pure(None)
+              case other                                          => F.raiseError(new Exception(s"Unexpected frame: $other"))
+            }.unNone
+              .evalMap { x => F.fromEither(io.circe.parser.decode[GraphqlWS.FromClient](x)) }
+              .through(fromClient)
           )
       }
     }

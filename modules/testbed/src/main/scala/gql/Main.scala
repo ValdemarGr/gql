@@ -25,8 +25,12 @@ import gql.parser.ParserUtil
 import gql.ast._
 import fs2.Pull
 import fs2.concurrent.SignallingRef
+import org.http4s.blaze.server.BlazeServerBuilder
+import gql.http4s.Http4sRoutes
+import gql.http4s.Http4sCompiler
 
-object Main extends App {
+object Main extends IOApp {
+
   def showTree(indent: Int, nodes: List[Planner.Node]): String = "" /*{
     val pad = "  " * indent
     nodes
@@ -263,19 +267,22 @@ query withNestedFragments {
       )
     }
 
-  val schema0 = Schema.stateful(schemaShape).unsafeRunSync()
-  val schema = schema0.copy(planner = new Planner[IO] {
-    def plan(naive: Planner.NodeTree): IO[Planner.NodeTree] =
-      schema0.planner.plan(naive).flatTap { output =>
-        IO.println(output.show(showImprovement = true)) >>
-          IO.println(naive.totalCost) >>
-          IO.println(output.totalCost)
-      }
-  })
+  override def run(args: List[String]): IO[ExitCode] = {
+    for {
+      schema0 <- Schema.stateful(schemaShape)
+      schema = schema0.copy(planner = new Planner[IO] {
+        def plan(naive: Planner.NodeTree): IO[Planner.NodeTree] =
+          schema0.planner.plan(naive).flatTap { output =>
+            IO.println(output.show(showImprovement = true)) >>
+              IO.println(naive.totalCost) >>
+              IO.println(output.totalCost)
+          }
+      })
 
-  Compiler[IO].compile(
-    schema,
-    """
+      _ <- {
+        Compiler[IO].compile(
+          schema,
+          """
       query {
         person1 {
           name
@@ -309,11 +316,27 @@ query withNestedFragments {
         }
       }
     """
-  ) match {
-    case Left(err) => println(err)
-    case Right(x) =>
-      x match {
-        case Application.Query(q) => println(q.unsafeRunSync())
+        ) match {
+          case Left(err) => IO.println(err)
+          case Right(x) =>
+            x match {
+              case Application.Query(q) => q.flatMap(IO.println)
+            }
+        }
       }
+
+      compiler = Compiler[IO].make(schema)
+
+      ec <- BlazeServerBuilder[IO]
+        .withHttpWebSocketApp { wsb =>
+          val s = Http4sRoutes.sync[IO](Http4sCompiler.fromCompiler[IO](compiler))
+          val ws = Http4sRoutes.ws[IO](_ => IO.pure(Right(compiler)), wsb)
+          (s <+> ws).orNotFound
+        }
+        .bindHttp(8080, "127.0.0.1")
+        .serve
+        .compile
+        .lastOrError
+    } yield ec
   }
 }
