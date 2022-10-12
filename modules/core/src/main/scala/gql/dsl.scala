@@ -5,6 +5,7 @@ import cats.implicits._
 import gql.ast._
 import gql.resolver._
 import cats.data._
+import org.tpolecat.sourcepos.SourcePos
 
 object dsl {
   def tpe[F[_], A](
@@ -16,19 +17,19 @@ object dsl {
   def input[A](
       name: String,
       fields: NonEmptyArg[A]
-  ): Input[A] = Input(name, fields)
+  )(implicit sp: SourcePos): Input[A] = Input(name, fields)
 
-  def arg[A](name: String)(implicit tpe: => In[A]): NonEmptyArg[A] = {
+  def arg[A](name: String)(implicit tpe: => In[A], sp: SourcePos): NonEmptyArg[A] = {
     implicit lazy val t0 = tpe
     Arg.make[A](name, None)
   }
 
-  def arg[A](name: String, defaultValue: A)(implicit tpe: => InLeaf[A]): NonEmptyArg[A] = {
+  def arg[A](name: String, defaultValue: A)(implicit tpe: => InLeaf[A], sp: SourcePos): NonEmptyArg[A] = {
     implicit lazy val t0 = tpe
     Arg.make[A](name, Some(default(defaultValue)))
   }
 
-  def arg[A](name: String, default: DefaultValue[A])(implicit tpe: => In[A]): NonEmptyArg[A] = {
+  def arg[A](name: String, default: DefaultValue[A])(implicit tpe: => In[A], sp: SourcePos): NonEmptyArg[A] = {
     implicit lazy val t0 = tpe
     Arg.make[A](name, Some(default))
   }

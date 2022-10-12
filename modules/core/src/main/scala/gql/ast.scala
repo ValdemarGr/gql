@@ -7,6 +7,7 @@ import cats.effect._
 import cats.data._
 import gql.resolver._
 import gql.Value._
+import org.tpolecat.sourcepos.SourcePos
 
 object ast extends AstImplicits.Implicits {
   sealed trait Out[F[_], A] {
@@ -50,7 +51,10 @@ object ast extends AstImplicits.Implicits {
       Type(name, fields.map { case (k, v) => k -> v.mapK(fk) })
   }
 
-  final case class Input[A](name: String, fields: NonEmptyArg[A]) extends InToplevel[A]
+  final case class Input[A](
+      name: String,
+      fields: NonEmptyArg[A]
+  ) extends InToplevel[A]
 
   final case class Union[F[_], A](
       name: String,

@@ -4,6 +4,7 @@ import cats.data._
 import cats._
 import cats.implicits._
 import gql.ast._
+import org.tpolecat.sourcepos.SourcePos
 
 trait Arg[A] {
   def entries: Chain[ArgValue[_]]
@@ -12,17 +13,8 @@ trait Arg[A] {
 }
 
 object Arg {
-  def onePrimitive[A](name: String, default: Option[A] = None)(implicit input: => InLeaf[A]): NonEmptyArg[A] =
-    NonEmptyArg[A](
-      NonEmptyChain.one(ArgValue(name, Eval.later(input), default, default.map(DefaultValue.Primitive(_, input)))),
-      _(name).asInstanceOf[A]
-    )
-
-  def one[A](name: String)(implicit input: => In[A]): NonEmptyArg[A] =
-    NonEmptyArg[A](NonEmptyChain.one(ArgValue(name, Eval.later(input), None, None)), _(name).asInstanceOf[A])
-
-  def make[A](name: String, default: Option[DefaultValue[A]])(implicit input: => In[A]): NonEmptyArg[A] =
-    NonEmptyArg[A](NonEmptyChain.one(ArgValue(name, Eval.later(input), None, default)), _(name).asInstanceOf[A])
+  def make[A](name: String, default: Option[DefaultValue[A]])(implicit input: => In[A], sp: SourcePos): NonEmptyArg[A] =
+    NonEmptyArg[A](NonEmptyChain.one(ArgValue(name, Eval.later(input), default)), _(name).asInstanceOf[A])
 
   implicit lazy val applicativeInstanceForArg: Applicative[Arg] = new Applicative[Arg] {
     override def pure[A](x: A): Arg[A] = PureArg(x)
@@ -51,9 +43,8 @@ object DefaultValue {
 final case class ArgValue[A](
     name: String,
     input: Eval[In[A]],
-    default: Option[A] = None,
-    defaultValue: Option[DefaultValue[A]] = None
-)
+    defaultValue: Option[DefaultValue[A]]
+)(implicit sp: SourcePos)
 
 final case class NonEmptyArg[A](
     nec: NonEmptyChain[ArgValue[_]],
