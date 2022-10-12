@@ -4,7 +4,6 @@ import cats.data._
 import cats._
 import cats.implicits._
 import gql.ast._
-import org.tpolecat.sourcepos.SourcePos
 
 trait Arg[A] {
   def entries: Chain[ArgValue[_]]
@@ -13,7 +12,7 @@ trait Arg[A] {
 }
 
 object Arg {
-  def make[A](name: String, default: Option[DefaultValue[A]])(implicit input: => In[A], sp: SourcePos): NonEmptyArg[A] =
+  def make[A](name: String, default: Option[DefaultValue[A]])(implicit input: => In[A]): NonEmptyArg[A] =
     NonEmptyArg[A](NonEmptyChain.one(ArgValue(name, Eval.later(input), default)), _(name).asInstanceOf[A])
 
   implicit lazy val applicativeInstanceForArg: Applicative[Arg] = new Applicative[Arg] {
@@ -44,7 +43,7 @@ final case class ArgValue[A](
     name: String,
     input: Eval[In[A]],
     defaultValue: Option[DefaultValue[A]]
-)(implicit sp: SourcePos)
+)
 
 final case class NonEmptyArg[A](
     nec: NonEmptyChain[ArgValue[_]],

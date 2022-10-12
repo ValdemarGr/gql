@@ -7,7 +7,6 @@ import cats.effect._
 import cats.data._
 import gql.resolver._
 import gql.Value._
-import org.tpolecat.sourcepos.SourcePos
 
 object ast extends AstImplicits.Implicits {
   sealed trait Out[F[_], A] {
