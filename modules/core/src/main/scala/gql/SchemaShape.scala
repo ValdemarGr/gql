@@ -88,7 +88,6 @@ object SchemaShape {
 
     def goInput[G[_]](inp: In[Any])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]]): G[Unit] =
       inp match {
-        // TODO
         case InArr(of) => goInput[G](of)
         case InOpt(of) => goInput[G](of)
         case t: InToplevel[Any] =>

@@ -636,7 +636,6 @@ object PreparedQuery {
       case Value.FloatValue(v)       => P.Value.FloatValue(v)
     }
 
-  // TODO positions for errors
   def getOperationDefinition[F[_]](
       ops: List[Pos[P.OperationDefinition]],
       operationName: Option[String]
