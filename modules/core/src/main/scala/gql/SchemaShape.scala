@@ -408,9 +408,9 @@ object SchemaShape {
         .filterNot(x => exclusion.contains(x.name))
         .map { tl =>
           tl match {
-            case Enum(name, mappings, _) =>
+            case e @ Enum(name, mappings, _) =>
               Doc.text(s"enum $name {") + Doc.hardLine +
-                Doc.intercalate(Doc.hardLine, mappings.toList.map { case (k, _) => Doc.text(k) }) +
+                Doc.intercalate(Doc.hardLine, e.m.keys.toList.map(Doc.text)) +
                 Doc.hardLine + Doc.text("}")
             case Input(name, fields, _) =>
               Doc.text(s"input $name") + (Doc.text(" {") + Doc.hardLine + Doc

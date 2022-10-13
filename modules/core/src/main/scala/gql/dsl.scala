@@ -89,7 +89,11 @@ object dsl {
     eff[F, I, T](i => F.pure(resolver(i)))
   }
 
-  def enum[F[_], A](name: String, hd: (String, A), tl: (String, A)*) = Enum[F, A](name, NonEmptyList(hd, tl.toList))
+  def enumInst[A](name: String, value: A): EnumInstance[A] =
+    EnumInstance(name, value)
+
+  def enum[F[_], A](name: String, hd: EnumInstance[A], tl: EnumInstance[A]*) =
+    Enum[F, A](name, NonEmptyList(hd, tl.toList))
 
   final case class PartiallyAppliedInstance[B](val dummy: Boolean = false) extends AnyVal {
     def apply[F[_], A](pf: PartialFunction[A, B])(implicit s: => Selectable[F, B]): Instance[F, A, B] =

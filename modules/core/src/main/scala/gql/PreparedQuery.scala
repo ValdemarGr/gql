@@ -526,7 +526,7 @@ object PreparedQuery {
             e.m.lookup(s) match {
               case Some(x) => F.pure(x)
               case None =>
-                val names = mappings.map { case (name, _) => name }
+                val names = e.m.keys.toList
                 raise(
                   s"enum value $s does not occur in enum type $name, possible enum values are ${names.mkString_(", ")}",
                   None

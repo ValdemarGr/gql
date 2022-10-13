@@ -128,9 +128,17 @@ object ast extends AstImplicits.Implicits {
       Scalar(name, encoder, decoder, description)
   }
 
+  final case class EnumInstance[A](
+      encodedName: String,
+      value: A,
+      description: Option[String] = None
+  ) {
+    def describe(description: String): EnumInstance[A] = copy(description = Some(description))
+  }
+
   final case class Enum[F[_], A](
       name: String,
-      mappings: NonEmptyList[(String, A)],
+      mappings: NonEmptyList[EnumInstance[A]],
       description: Option[String] = None
   ) extends OutToplevel[F, A]
       with InLeaf[A]
@@ -140,9 +148,11 @@ object ast extends AstImplicits.Implicits {
     override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Out[G, A] =
       Enum(name, mappings, description)
 
-    lazy val m = mappings.toNem
+    lazy val kv = mappings.map(x => x.encodedName -> x.value)
 
-    lazy val revm = mappings.map(_.swap).toList.toMap
+    lazy val m = kv.toNem
+
+    lazy val revm = kv.map(_.swap).toList.toMap
   }
 
   final case class Field[F[_], -I, T, A](

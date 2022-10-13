@@ -42,7 +42,8 @@ object DefaultValue {
 final case class ArgValue[A](
     name: String,
     input: Eval[In[A]],
-    defaultValue: Option[DefaultValue[A]]
+    defaultValue: Option[DefaultValue[A]],
+    description: Option[String] = None
 )
 
 final case class NonEmptyArg[A](
