@@ -259,10 +259,15 @@ query withNestedFragments {
         Some(
           tpe[IO, Unit](
             "Query",
-            "person1" -> field(fixed.contramap[Unit](_ => "John")),
-            "person2" -> field(fixed.contramap[Unit](_ => "Jane")),
+            "person1" -> field(fixed.contramap[Unit](_ => "John")).describe("John"),
+            "person2" -> field(fixed.contramap[Unit](_ => "Jane")).describe("Jane"),
             "nest" -> pure(_ => Nest("Bob"))
-          )
+          ).describe {
+            """|Query
+               |The Query type is the entrypoint for most operations.
+               |Something else cool.
+               |  Indented""".stripMargin
+          }
         )
       )
     }
@@ -326,6 +331,8 @@ query withNestedFragments {
       }
 
       compiler = Compiler[IO].make(schema)
+
+      _ <- IO.println(schema.shape.render)
 
       ec <- BlazeServerBuilder[IO]
         .withHttpWebSocketApp { wsb =>

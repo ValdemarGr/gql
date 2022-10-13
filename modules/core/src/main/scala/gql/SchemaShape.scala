@@ -342,6 +342,21 @@ object SchemaShape {
   }
 
   def render[F[_]](shape: SchemaShape[F, _, _, _]) = {
+
+    lazy val triple = Doc.text("\"\"\"")
+    def doc(d: Option[String]) =
+      d match {
+        case None => Doc.empty
+        case Some(x) =>
+          val o =
+            if (x.contains("\n")) {
+              triple + Doc.hardLine + Doc.text(x) + Doc.hardLine + triple
+            } else {
+              Doc.text("\"") + Doc.text(x) + Doc.text("\"")
+            }
+          o + Doc.hardLine
+      }
+
     def getInputNameDoc(in: In[_], optional: Boolean = false): Doc =
       in match {
         case t: Toplevel[_] => Doc.text(if (optional) t.name else t.name + "!")
@@ -375,7 +390,8 @@ object SchemaShape {
 
     def renderArgValueDoc(av: ArgValue[_]): Doc = {
       val o = av.defaultValue.map(dv => Doc.text(" = ") + renderValueDoc(PreparedQuery.defaultToValue(dv))).getOrElse(Doc.empty)
-      Doc.text(av.name) + Doc.text(": ") + getInputNameDoc(av.input.value) + o
+      doc(av.description) +
+        Doc.text(av.name) + Doc.text(": ") + getInputNameDoc(av.input.value) + o
     }
 
     def renderOutputDoc[G[_]](o: Out[G, _], optional: Boolean = false): Doc =
@@ -394,7 +410,9 @@ object SchemaShape {
           Doc.intercalate(Doc.comma + Doc.lineOrSpace, nec.toList.map(renderArgValueDoc)).tightBracketBy(Doc.char('('), Doc.char(')'))
         )
         .getOrElse(Doc.empty)
-      Doc.text(name) + args + Doc.text(": ") + renderOutputDoc(field.output.value)
+
+      doc(field.description) +
+        Doc.text(name) + args + Doc.text(": ") + renderOutputDoc(field.output.value)
     }
 
     val discovery: DiscoveryState[F] = shape.discover
@@ -408,17 +426,22 @@ object SchemaShape {
         .filterNot(x => exclusion.contains(x.name))
         .map { tl =>
           tl match {
-            case e @ Enum(name, mappings, _) =>
-              Doc.text(s"enum $name {") + Doc.hardLine +
-                Doc.intercalate(Doc.hardLine, e.m.keys.toList.map(Doc.text)) +
+            case e @ Enum(name, mappings, desc) =>
+              doc(desc) +
+                Doc.text(s"enum $name {") + Doc.hardLine +
+                Doc.intercalate(
+                  Doc.hardLine,
+                  e.mappings.toList.map(x => doc(x.description) + Doc.text(x.encodedName))
+                ) +
                 Doc.hardLine + Doc.text("}")
-            case Input(name, fields, _) =>
-              Doc.text(s"input $name") + (Doc.text(" {") + Doc.hardLine + Doc
-                .intercalate(Doc.hardLine, fields.nec.toList.map(renderArgValueDoc))
-                .indent(2) + Doc.hardLine + Doc.text("}"))
+            case Input(name, fields, desc) =>
+              doc(desc) +
+                Doc.text(s"input $name") + (Doc.text(" {") + Doc.hardLine + Doc
+                  .intercalate(Doc.hardLine, fields.nec.toList.map(renderArgValueDoc))
+                  .indent(2) + Doc.hardLine + Doc.text("}"))
             // Dont render built-in scalars
-            case Scalar(name, _, _, _) => Doc.text(s"scalar $name")
-            case Interface(name, _, fields, _) =>
+            case Scalar(name, _, _, desc) => doc(desc) + Doc.text(s"scalar $name")
+            case Interface(name, _, fields, desc) =>
               val fieldsDoc = Doc
                 .intercalate(
                   Doc.hardLine,
@@ -426,10 +449,11 @@ object SchemaShape {
                 )
                 .indent(2)
 
-              (Doc.text(s"interface $name") + Doc.text(" {") + Doc.hardLine +
-                fieldsDoc +
-                Doc.hardLine + Doc.text("}"))
-            case Type(name, fields, _) =>
+              doc(desc) +
+                (Doc.text(s"interface $name") + Doc.text(" {") + Doc.hardLine +
+                  fieldsDoc +
+                  Doc.hardLine + Doc.text("}"))
+            case Type(name, fields, desc) =>
               val fieldsDoc = Doc
                 .intercalate(
                   Doc.hardLine,
@@ -444,15 +468,17 @@ object SchemaShape {
                   .map { nel => Doc.text(" implements ") + Doc.intercalate(Doc.text(" & "), nel.toList.map(Doc.text)) }
                   .getOrElse(Doc.empty)
 
-              Doc.text(s"type $name") + interfaces + (Doc.text(" {") + Doc.hardLine +
-                fieldsDoc +
-                Doc.hardLine + Doc.text("}"))
-            case Union(name, types, _) =>
+              doc(desc) +
+                Doc.text(s"type $name") + interfaces + (Doc.text(" {") + Doc.hardLine +
+                  fieldsDoc +
+                  Doc.hardLine + Doc.text("}"))
+            case Union(name, types, desc) =>
               val names = types.toList.map(x => Doc.text(x.ol.value.name))
               val xs =
                 if (names.size <= 3) Doc.intercalate(Doc.text(" | "), names)
                 else Doc.hardLine + Doc.intercalate(Doc.hardLine, names.map(d => Doc.text("| ").indent(2) + d))
-              (Doc.text(s"union $name = ") + xs)
+
+              doc(desc) + (Doc.text(s"union $name = ") + xs)
           }
         }
 
