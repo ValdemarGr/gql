@@ -37,30 +37,39 @@ object ast extends AstImplicits.Implicits {
 
   final case class Type[F[_], A](
       name: String,
-      fields: NonEmptyList[(String, Field[F, A, _, _])]
+      fields: NonEmptyList[(String, Field[F, A, _, _])],
+      description: Option[String] = None
   ) extends Selectable[F, A] {
+    def describe(description: String): Type[F, A] = copy(description = Some(description))
+
     lazy val fieldsList: List[(String, Field[F, A, _, _])] = fields.toList
 
     override def contramap[B](f: B => A): Type[F, B] =
-      Type(name, fields.map { case (k, v) => k -> v.contramap(f) })
+      Type(name, fields.map { case (k, v) => k -> v.contramap(f) }, description)
 
     lazy val fieldMap = fields.toNem.toSortedMap.toMap
 
     def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Type[G, A] =
-      Type(name, fields.map { case (k, v) => k -> v.mapK(fk) })
+      Type(name, fields.map { case (k, v) => k -> v.mapK(fk) }, description)
   }
 
   final case class Input[A](
       name: String,
-      fields: NonEmptyArg[A]
-  ) extends InToplevel[A]
+      fields: NonEmptyArg[A],
+      description: Option[String] = None
+  ) extends InToplevel[A] {
+    def describe(description: String): Input[A] = copy(description = Some(description))
+  }
 
   final case class Union[F[_], A](
       name: String,
-      types: NonEmptyList[Instance[F, A, Any]]
+      types: NonEmptyList[Instance[F, A, Any]],
+      description: Option[String] = None
   ) extends Selectable[F, A] {
+    def describe(description: String): Union[F, A] = copy(description = Some(description))
+
     override def contramap[B](f: B => A): Union[F, B] =
-      Union(name, types.map(_.contramap(f)))
+      Union(name, types.map(_.contramap(f)), description)
 
     lazy val instanceMap = types.map(i => i.ol.value.name -> i).toList.toMap
 
@@ -71,15 +80,19 @@ object ast extends AstImplicits.Implicits {
     def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Union[G, A] =
       Union(
         name,
-        types.map(_.mapK(fk))
+        types.map(_.mapK(fk)),
+        description
       )
   }
 
   final case class Interface[F[_], A](
       name: String,
       instances: List[Instance[F, A, Any]],
-      fields: NonEmptyList[(String, Field[F, A, _, _])]
+      fields: NonEmptyList[(String, Field[F, A, _, _])],
+      description: Option[String] = None
   ) extends Selectable[F, A] {
+    def describe(description: String): Interface[F, A] = copy(description = Some(description))
+
     override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Interface[G, A] =
       copy[G, A](
         instances = instances.map(_.mapK(fk)),
@@ -96,24 +109,36 @@ object ast extends AstImplicits.Implicits {
       Interface(
         name,
         instances.map(_.contramap(g)),
-        fields.map { case (k, v) => k -> v.contramap(g) }
+        fields.map { case (k, v) => k -> v.contramap(g) },
+        description
       )
   }
 
-  final case class Scalar[F[_], A](name: String, encoder: A => Value, decoder: Value => Either[String, A])
-      extends OutToplevel[F, A]
+  final case class Scalar[F[_], A](
+      name: String,
+      encoder: A => Value,
+      decoder: Value => Either[String, A],
+      description: Option[String] = None
+  ) extends OutToplevel[F, A]
       with InLeaf[A]
       with InToplevel[A] {
+    def describe(description: String): Scalar[F, A] = copy(description = Some(description))
+
     override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Scalar[G, A] =
-      Scalar(name, encoder, decoder)
+      Scalar(name, encoder, decoder, description)
   }
 
-  final case class Enum[F[_], A](name: String, mappings: NonEmptyList[(String, A)])
-      extends OutToplevel[F, A]
+  final case class Enum[F[_], A](
+      name: String,
+      mappings: NonEmptyList[(String, A)],
+      description: Option[String] = None
+  ) extends OutToplevel[F, A]
       with InLeaf[A]
       with InToplevel[A] {
+    def describe(description: String): Enum[F, A] = copy(description = Some(description))
+
     override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Out[G, A] =
-      Enum(name, mappings)
+      Enum(name, mappings, description)
 
     lazy val m = mappings.toNem
 
@@ -123,22 +148,27 @@ object ast extends AstImplicits.Implicits {
   final case class Field[F[_], -I, T, A](
       args: Arg[A],
       resolve: Resolver[F, (I, A), T],
-      output: Eval[Out[F, T]]
+      output: Eval[Out[F, T]],
+      description: Option[String] = None
   ) {
+    def describe(description: String): Field[F, I, T, A] = copy(description = Some(description))
+
     type A0 = A
 
     def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Field[G, I, T, A] =
       Field[G, I, T, A](
         args,
         resolve.mapK(fk),
-        output.map(_.mapK(fk))
+        output.map(_.mapK(fk)),
+        description
       )
 
     def contramap[B](g: B => I): Field[F, B, T, A] =
       Field(
         args,
         resolve.contramap[(B, A)] { case (b, a) => (g(b), a) },
-        output
+        output,
+        description
       )
   }
 
@@ -192,7 +222,10 @@ object ast extends AstImplicits.Implicits {
 
   final case class ID[A](value: A) extends AnyVal
   implicit def idTpe[F[_], A](implicit s: Scalar[F, A]): In[ID[A]] = {
-    Scalar("ID", x => s.encoder(x.value), v => s.decoder(v).map(ID(_)))
+    Scalar[F, ID[A]]("ID", x => s.encoder(x.value), v => s.decoder(v).map(ID(_)))
+      .describe(
+        "The `ID` scalar type represents a unique identifier, often used to refetch an object or as key for a cache. The ID type appears in a JSON response as a String; however, it is not intended to be human-readable. When expected as an input type, any string (such as `\"4\"`) or integer (such as `4`) input value will be accepted as an ID."
+      )
   }
 
   object Scalar {
@@ -213,14 +246,50 @@ object AstImplicits {
   import ast._
 
   trait Implicits extends LowPriorityImplicits {
-    implicit def stringScalar[F[_]]: Scalar[F, String] = Scalar.fromCirce[F, String]("String")
-    implicit def intScalar[F[_]]: Scalar[F, Int] = Scalar.fromCirce[F, Int]("Int")
-    implicit def longScalar[F[_]]: Scalar[F, Long] = Scalar.fromCirce[F, Long]("Long")
-    implicit def floatScalar[F[_]]: Scalar[F, Float] = Scalar.fromCirce[F, Float]("Float")
-    implicit def doubleScalar[F[_]]: Scalar[F, Double] = Scalar.fromCirce[F, Double]("Double")
-    implicit def bigIntScalar[F[_]]: Scalar[F, BigInt] = Scalar.fromCirce[F, BigInt]("BigInt")
-    implicit def bigDecimalScalar[F[_]]: Scalar[F, BigDecimal] = Scalar.fromCirce[F, BigDecimal]("BigDecimal")
-    implicit def booleanScalar[F[_]]: Scalar[F, Boolean] = Scalar.fromCirce[F, Boolean]("Boolean")
+    implicit def stringScalar[F[_]]: Scalar[F, String] =
+      Scalar
+        .fromCirce[F, String]("String")
+        .describe("The `String` is a UTF-8 character sequence usually representing human-readable text.")
+    implicit def intScalar[F[_]]: Scalar[F, Int] =
+      Scalar
+        .fromCirce[F, Int]("Int")
+        .describe(
+          "The `Int` scalar type represents non-fractional signed whole numeric values. Int can represent values between -(2^31) and 2^31 - 1."
+        )
+    implicit def longScalar[F[_]]: Scalar[F, Long] =
+      Scalar
+        .fromCirce[F, Long]("Long")
+        .describe(
+          "The `Long` scalar type represents non-fractional signed whole numeric values. Long can represent values between -(2^63) and 2^63 - 1."
+        )
+    implicit def floatScalar[F[_]]: Scalar[F, Float] =
+      Scalar
+        .fromCirce[F, Float]("Float")
+        .describe(
+          "The `Float` scalar type represents signed double-precision fractional values as specified by [IEEE 754](http://en.wikipedia.org/wiki/IEEE_floating_point)."
+        )
+    implicit def doubleScalar[F[_]]: Scalar[F, Double] =
+      Scalar
+        .fromCirce[F, Double]("Double")
+        .describe(
+          "The `Double` scalar type represents signed double-precision fractional values as specified by [IEEE 754](http://en.wikipedia.org/wiki/IEEE_floating_point)."
+        )
+    implicit def bigIntScalar[F[_]]: Scalar[F, BigInt] =
+      Scalar
+        .fromCirce[F, BigInt]("BigInt")
+        .describe(
+          "The `BigInt` scalar type represents non-fractional signed whole numeric values. BigInt can represent values of arbitrary size."
+        )
+    implicit def bigDecimalScalar[F[_]]: Scalar[F, BigDecimal] =
+      Scalar
+        .fromCirce[F, BigDecimal]("BigDecimal")
+        .describe(
+          "The `BigDecimal` scalar type represents signed double-precision fractional values as specified by [IEEE 754](http://en.wikipedia.org/wiki/IEEE_floating_point)."
+        )
+    implicit def booleanScalar[F[_]]: Scalar[F, Boolean] =
+      Scalar
+        .fromCirce[F, Boolean]("Boolean")
+        .describe("The `Boolean` scalar type represents `true` or `false`.")
 
     implicit def gqlOutOption[F[_], A](implicit tpe: Out[F, A]): Out[F, Option[A]] = OutOpt(tpe)
 

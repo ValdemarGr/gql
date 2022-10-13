@@ -134,23 +134,23 @@ object PreparedQuery {
   }
 
   def underlyingOutputTypename[G[_]](ot: Out[G, _]): String = ot match {
-    case Enum(name, _)         => name
-    case Union(name, _)        => name
-    case Interface(name, _, _) => name
-    case Type(name, _)         => name
-    case Scalar(name, _, _)    => name
-    case OutOpt(of)            => underlyingOutputTypename(of)
-    case OutArr(of)            => underlyingOutputTypename(of)
+    case Enum(name, _, _)         => name
+    case Union(name, _, _)        => name
+    case Interface(name, _, _, _) => name
+    case Type(name, _, _)         => name
+    case Scalar(name, _, _, _)    => name
+    case OutOpt(of)               => underlyingOutputTypename(of)
+    case OutArr(of)               => underlyingOutputTypename(of)
   }
 
   def friendlyName[G[_], A](ot: Out[G, A]): String = ot match {
-    case Scalar(name, _, _)    => name
-    case Enum(name, _)         => name
-    case Type(name, _)         => name
-    case Union(name, _)        => name
-    case Interface(name, _, _) => name
-    case OutOpt(of)            => s"(${friendlyName(of)} | null)"
-    case OutArr(of)            => s"[${friendlyName(of)}]"
+    case Scalar(name, _, _, _)    => name
+    case Enum(name, _, _)         => name
+    case Type(name, _, _)         => name
+    case Union(name, _, _)        => name
+    case Interface(name, _, _, _) => name
+    case OutOpt(of)               => s"(${friendlyName(of)} | null)"
+    case OutArr(of)               => s"[${friendlyName(of)}]"
   }
 
   def nextId[F[_]: Monad](implicit S: Stateful[F, Prep]) =
@@ -209,9 +209,9 @@ object PreparedQuery {
     // TODO this code shares much with the subtype interfaces below in matchType
     def collectLeafPrisms(inst: Instance[G, Any, Any]): Chain[(Any => Option[Any], String)] =
       inst.ol.value match {
-        case Type(name, _)          => Chain((inst.specify, name))
-        case Union(_, types)        => Chain.fromSeq(types.toList).flatMap(collectLeafPrisms)
-        case Interface(_, types, _) => Chain.fromSeq(types).flatMap(collectLeafPrisms)
+        case Type(name, _, _)          => Chain((inst.specify, name))
+        case Union(_, types, _)        => Chain.fromSeq(types.toList).flatMap(collectLeafPrisms)
+        case Interface(_, types, _, _) => Chain.fromSeq(types).flatMap(collectLeafPrisms)
       }
 
     val allPrisms: Chain[(Any => Option[Any], String)] = collectLeafPrisms(Instance(Eval.now(ol))(Some(_)))
@@ -275,7 +275,7 @@ object PreparedQuery {
     val provided = gqlField.arguments.toList.flatMap(_.nel.toList)
     val providedMap = provided.map(x => x.name -> x.value).toMap
 
-    val Field(args, resolve, graphqlType) = field
+    val Field(args, resolve, graphqlType, _) = field
 
     // Treat input arguments as an object
     // Decode the args as-if an input
@@ -387,9 +387,9 @@ object PreparedQuery {
        AFrag resolves matches on B and picks that implementation.
        */
       sel match {
-        case Type(n, _) =>
+        case Type(n, _, _) =>
           raise(s"tried to match with type $name on type object type $n", Some(caret))
-        case i @ Interface(n, instances, fields) =>
+        case i @ Interface(n, instances, fields, _) =>
           // TODO follow sub-interfaces that occur in `instances`
           raiseOpt(
             i.instanceMap
@@ -398,7 +398,7 @@ object PreparedQuery {
             s"$name does not implement interface $n, possible implementations are ${i.instanceMap.keySet.mkString(", ")}",
             caret.some
           )
-        case u @ Union(n, types) =>
+        case u @ Union(n, types, _) =>
           raiseOpt(
             u.instanceMap
               .get(name)
@@ -452,11 +452,11 @@ object PreparedQuery {
     }
 
   def inName(in: In[_]): String = in match {
-    case InArr(of)          => s"list of ${inName(of)}"
-    case Enum(name, _)      => name
-    case Scalar(name, _, _) => name
-    case InOpt(of)          => s"optional of ${inName(of)}"
-    case Input(name, _)     => name
+    case InArr(of)             => s"list of ${inName(of)}"
+    case Enum(name, _, _)      => name
+    case Scalar(name, _, _, _) => name
+    case InOpt(of)             => s"optional of ${inName(of)}"
+    case Input(name, _, _)     => name
   }
 
   def parseInputObj[F[_], A](
@@ -497,14 +497,14 @@ object PreparedQuery {
                 def cmpTpe[A](lhs: In[_], rhs: In[_]): F[Unit] =
                   (lhs, rhs) match {
                     case (InArr(expected), InArr(other)) => cmpTpe(expected, other)
-                    case (Enum(name, _), Enum(otherName, _)) =>
+                    case (Enum(name, _, _), Enum(otherName, _, _)) =>
                       if (name == otherName) F.unit
                       else raise(s"expected enum $name for variable $v, but got enum $otherName", None)
-                    case (Scalar(name, _, _), Scalar(otherName, _, _)) =>
+                    case (Scalar(name, _, _, _), Scalar(otherName, _, _, _)) =>
                       if (name == otherName) F.unit
                       else raise(s"expected scalar $name for variable $v, but got scalar $otherName", None)
                     case (InOpt(expected), InOpt(other)) => cmpTpe(expected, other)
-                    case (Input(name, _), Input(otherName, _)) =>
+                    case (Input(name, _, _), Input(otherName, _, _)) =>
                       if (name == otherName) F.unit
                       else raise(s"expected input $name for variable $v, but got input $otherName", None)
                     case _ =>
@@ -514,7 +514,7 @@ object PreparedQuery {
                 cmpTpe(tpe, varType).as(a)
             }
         }
-      case (e @ Enum(name, mappings), v) =>
+      case (e @ Enum(name, mappings, _), v) =>
         ambientInputType(name) {
           val fa: F[String] = v match {
             case P.Value.EnumValue(s)                    => F.pure(s)
@@ -534,11 +534,11 @@ object PreparedQuery {
             }
           }
         }
-      case (Scalar(name, _, decoder), x) =>
+      case (Scalar(name, _, decoder, _), x) =>
         ambientInputType(name) {
           parserValueToValue[F](x).flatMap(x => raiseEither(decoder(x), None))
         }
-      case (Input(name, fields), o: P.Value.ObjectValue) =>
+      case (Input(name, fields, _), o: P.Value.ObjectValue) =>
         ambientInputType(name) {
           parseInputObj[F, A](o, fields, variableMap, ambigiousEnum)
         }
@@ -556,8 +556,8 @@ object PreparedQuery {
       case DefaultValue.Null => Value.NullValue
       case Primitive(value, in) =>
         in match {
-          case e @ Enum(_, _)    => Value.EnumValue(e.revm(value))
-          case Scalar(_, enc, _) => enc(value)
+          case e @ Enum(_, _, _)    => Value.EnumValue(e.revm(value))
+          case Scalar(_, enc, _, _) => enc(value)
         }
       case Obj(fields) => Value.ObjectValue(fields.toList.toMap.view.mapValues(defaultToValue).toMap)
     }

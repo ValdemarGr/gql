@@ -64,8 +64,8 @@ object SchemaShape {
               }
 
             t match {
-              case o @ Type(_, _) => handleFields(o)
-              case o @ Interface(_, instances, _) =>
+              case o @ Type(_, _, _) => handleFields(o)
+              case o @ Interface(_, instances, _, _) =>
                 S.modify { s =>
                   val newMap =
                     o.instanceMap.keySet.toList.foldLeft(s.interfaceImplementations) { case (m, instance) =>
@@ -79,7 +79,7 @@ object SchemaShape {
                 } >>
                   handleFields(o) >>
                   instances.traverse_(inst => handleFields(inst.ol.value))
-              case Union(_, instances) =>
+              case Union(_, instances, _) =>
                 instances.toList.traverse_(inst => goOutput[G](inst.ol.value))
               case _ => G.unit
             }
@@ -94,7 +94,7 @@ object SchemaShape {
         case t: InToplevel[Any] =>
           inputNotSeen(t) {
             t match {
-              case Input(_, fields) =>
+              case Input(_, fields, _) =>
                 fields.entries.traverse_(x => goInput[G](x.input.value.asInstanceOf[In[Any]]))
               case _ => G.unit
             }
@@ -249,12 +249,12 @@ object SchemaShape {
       input match {
         case InArr(of) => validateInput[G](of)
         case InOpt(of) => validateInput[G](of)
-        case t @ Input(name, fields) =>
+        case t @ Input(name, fields, _) =>
           useInputEdge(t) {
             validateTypeName[G](name) *> validateArg[G](fields)
           }
-        case Enum(name, _)      => validateTypeName[G](name)
-        case Scalar(name, _, _) => validateTypeName[G](name)
+        case Enum(name, _, _)      => validateTypeName[G](name)
+        case Scalar(name, _, _, _) => validateTypeName[G](name)
       }
     }
 
@@ -307,21 +307,21 @@ object SchemaShape {
       useOutputEdge[G](tl) {
         validateTypeName[G](tl.name) >> {
           tl match {
-            case Type(_, fields) => validateFields[G](fields)
-            case Union(_, types) =>
+            case Type(_, fields, _) => validateFields[G](fields)
+            case Union(_, types, _) =>
               val ols = types.toList.map(_.ol)
 
               allUnique[G](DuplicateUnionInstance, ols.map(_.value.name)) >>
                 ols.traverse_(x => validateOutput[G](x.value))
-            case Interface(_, instances, fields) =>
+            case Interface(_, instances, fields, _) =>
               val insts = instances
 
               val ols = insts.toList.map(_.ol)
               allUnique[G](DuplicateInterfaceInstance, ols.map(_.value.name)) >>
                 ols.traverse_(x => validateOutput[G](x.value)) >>
                 validateFields[G](fields)
-            case Enum(name, _)      => validateTypeName[G](name)
-            case Scalar(name, _, _) => validateTypeName[G](name)
+            case Enum(name, _, _)      => validateTypeName[G](name)
+            case Scalar(name, _, _, _) => validateTypeName[G](name)
           }
         }
       }
@@ -408,17 +408,17 @@ object SchemaShape {
         .filterNot(x => exclusion.contains(x.name))
         .map { tl =>
           tl match {
-            case Enum(name, mappings) =>
+            case Enum(name, mappings, _) =>
               Doc.text(s"enum $name {") + Doc.hardLine +
                 Doc.intercalate(Doc.hardLine, mappings.toList.map { case (k, _) => Doc.text(k) }) +
                 Doc.hardLine + Doc.text("}")
-            case Input(name, fields) =>
+            case Input(name, fields, _) =>
               Doc.text(s"input $name") + (Doc.text(" {") + Doc.hardLine + Doc
                 .intercalate(Doc.hardLine, fields.nec.toList.map(renderArgValueDoc))
                 .indent(2) + Doc.hardLine + Doc.text("}"))
             // Dont render built-in scalars
-            case Scalar(name, _, _) => Doc.text(s"scalar $name")
-            case Interface(name, _, fields) =>
+            case Scalar(name, _, _, _) => Doc.text(s"scalar $name")
+            case Interface(name, _, fields, _) =>
               val fieldsDoc = Doc
                 .intercalate(
                   Doc.hardLine,
@@ -429,7 +429,7 @@ object SchemaShape {
               (Doc.text(s"interface $name") + Doc.text(" {") + Doc.hardLine +
                 fieldsDoc +
                 Doc.hardLine + Doc.text("}"))
-            case Type(name, fields) =>
+            case Type(name, fields, _) =>
               val fieldsDoc = Doc
                 .intercalate(
                   Doc.hardLine,
@@ -447,7 +447,7 @@ object SchemaShape {
               Doc.text(s"type $name") + interfaces + (Doc.text(" {") + Doc.hardLine +
                 fieldsDoc +
                 Doc.hardLine + Doc.text("}"))
-            case Union(name, types) =>
+            case Union(name, types, _) =>
               val names = types.toList.map(x => Doc.text(x.ol.value.name))
               val xs =
                 if (names.size <= 3) Doc.intercalate(Doc.text(" | "), names)
