@@ -25,6 +25,9 @@ lazy val sharedSettings = Seq(
     "org.typelevel" %% "paiges-core" % "0.4.2",
     "org.typelevel" %% "log4cats-slf4j" % "2.4.0",
     "org.sangria-graphql" %% "sangria" % "3.2.0",
+
+    "org.scalameta" %% "munit" % "1.0.0-M6" % Test,
+    "org.typelevel" %% "munit-cats-effect" % "2.0.0-M3" % Test,
   ),
   addCompilerPlugin("org.typelevel" % "kind-projector" % "0.13.2" cross CrossVersion.full),
   addCompilerPlugin("com.olegpy" %% "better-monadic-for" % "0.3.1")
