@@ -259,10 +259,10 @@ query withNestedFragments {
         Some(
           tpe[IO, Unit](
             "Query",
-            "person1" -> field(fixed.contramap[Unit](_ => "John")).describe("John"),
-            "person2" -> field(fixed.contramap[Unit](_ => "Jane")).describe("Jane"),
+            "person1" -> field(fixed.contramap[Unit](_ => "John")).document("John"),
+            "person2" -> field(fixed.contramap[Unit](_ => "Jane")).document("Jane"),
             "nest" -> pure(_ => Nest("Bob"))
-          ).describe {
+          ).document {
             """|Query
                |The Query type is the entrypoint for most operations.
                |Something else cool.

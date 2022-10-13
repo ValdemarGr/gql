@@ -40,7 +40,7 @@ object ast extends AstImplicits.Implicits {
       fields: NonEmptyList[(String, Field[F, A, _, _])],
       description: Option[String] = None
   ) extends Selectable[F, A] {
-    def describe(description: String): Type[F, A] = copy(description = Some(description))
+    def document(description: String): Type[F, A] = copy(description = Some(description))
 
     lazy val fieldsList: List[(String, Field[F, A, _, _])] = fields.toList
 
@@ -58,7 +58,7 @@ object ast extends AstImplicits.Implicits {
       fields: NonEmptyArg[A],
       description: Option[String] = None
   ) extends InToplevel[A] {
-    def describe(description: String): Input[A] = copy(description = Some(description))
+    def document(description: String): Input[A] = copy(description = Some(description))
   }
 
   final case class Union[F[_], A](
@@ -66,7 +66,7 @@ object ast extends AstImplicits.Implicits {
       types: NonEmptyList[Instance[F, A, Any]],
       description: Option[String] = None
   ) extends Selectable[F, A] {
-    def describe(description: String): Union[F, A] = copy(description = Some(description))
+    def document(description: String): Union[F, A] = copy(description = Some(description))
 
     override def contramap[B](f: B => A): Union[F, B] =
       Union(name, types.map(_.contramap(f)), description)
@@ -91,7 +91,7 @@ object ast extends AstImplicits.Implicits {
       fields: NonEmptyList[(String, Field[F, A, _, _])],
       description: Option[String] = None
   ) extends Selectable[F, A] {
-    def describe(description: String): Interface[F, A] = copy(description = Some(description))
+    def document(description: String): Interface[F, A] = copy(description = Some(description))
 
     override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Interface[G, A] =
       copy[G, A](
@@ -122,7 +122,7 @@ object ast extends AstImplicits.Implicits {
   ) extends OutToplevel[F, A]
       with InLeaf[A]
       with InToplevel[A] {
-    def describe(description: String): Scalar[F, A] = copy(description = Some(description))
+    def document(description: String): Scalar[F, A] = copy(description = Some(description))
 
     override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Scalar[G, A] =
       Scalar(name, encoder, decoder, description)
@@ -133,7 +133,7 @@ object ast extends AstImplicits.Implicits {
       value: A,
       description: Option[String] = None
   ) {
-    def describe(description: String): EnumInstance[A] = copy(description = Some(description))
+    def document(description: String): EnumInstance[A] = copy(description = Some(description))
   }
 
   final case class Enum[F[_], A](
@@ -143,7 +143,7 @@ object ast extends AstImplicits.Implicits {
   ) extends OutToplevel[F, A]
       with InLeaf[A]
       with InToplevel[A] {
-    def describe(description: String): Enum[F, A] = copy(description = Some(description))
+    def document(description: String): Enum[F, A] = copy(description = Some(description))
 
     override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Out[G, A] =
       Enum(name, mappings, description)
@@ -161,7 +161,7 @@ object ast extends AstImplicits.Implicits {
       output: Eval[Out[F, T]],
       description: Option[String] = None
   ) {
-    def describe(description: String): Field[F, I, T, A] = copy(description = Some(description))
+    def document(description: String): Field[F, I, T, A] = copy(description = Some(description))
 
     type A0 = A
 
@@ -233,7 +233,7 @@ object ast extends AstImplicits.Implicits {
   final case class ID[A](value: A) extends AnyVal
   implicit def idTpe[F[_], A](implicit s: Scalar[F, A]): In[ID[A]] = {
     Scalar[F, ID[A]]("ID", x => s.encoder(x.value), v => s.decoder(v).map(ID(_)))
-      .describe(
+      .document(
         "The `ID` scalar type represents a unique identifier, often used to refetch an object or as key for a cache. The ID type appears in a JSON response as a String; however, it is not intended to be human-readable. When expected as an input type, any string (such as `\"4\"`) or integer (such as `4`) input value will be accepted as an ID."
       )
   }
@@ -259,47 +259,47 @@ object AstImplicits {
     implicit def stringScalar[F[_]]: Scalar[F, String] =
       Scalar
         .fromCirce[F, String]("String")
-        .describe("The `String` is a UTF-8 character sequence usually representing human-readable text.")
+        .document("The `String` is a UTF-8 character sequence usually representing human-readable text.")
     implicit def intScalar[F[_]]: Scalar[F, Int] =
       Scalar
         .fromCirce[F, Int]("Int")
-        .describe(
+        .document(
           "The `Int` scalar type represents non-fractional signed whole numeric values. Int can represent values between -(2^31) and 2^31 - 1."
         )
     implicit def longScalar[F[_]]: Scalar[F, Long] =
       Scalar
         .fromCirce[F, Long]("Long")
-        .describe(
+        .document(
           "The `Long` scalar type represents non-fractional signed whole numeric values. Long can represent values between -(2^63) and 2^63 - 1."
         )
     implicit def floatScalar[F[_]]: Scalar[F, Float] =
       Scalar
         .fromCirce[F, Float]("Float")
-        .describe(
+        .document(
           "The `Float` scalar type represents signed double-precision fractional values as specified by [IEEE 754](http://en.wikipedia.org/wiki/IEEE_floating_point)."
         )
     implicit def doubleScalar[F[_]]: Scalar[F, Double] =
       Scalar
         .fromCirce[F, Double]("Double")
-        .describe(
+        .document(
           "The `Double` scalar type represents signed double-precision fractional values as specified by [IEEE 754](http://en.wikipedia.org/wiki/IEEE_floating_point)."
         )
     implicit def bigIntScalar[F[_]]: Scalar[F, BigInt] =
       Scalar
         .fromCirce[F, BigInt]("BigInt")
-        .describe(
+        .document(
           "The `BigInt` scalar type represents non-fractional signed whole numeric values. BigInt can represent values of arbitrary size."
         )
     implicit def bigDecimalScalar[F[_]]: Scalar[F, BigDecimal] =
       Scalar
         .fromCirce[F, BigDecimal]("BigDecimal")
-        .describe(
+        .document(
           "The `BigDecimal` scalar type represents signed double-precision fractional values as specified by [IEEE 754](http://en.wikipedia.org/wiki/IEEE_floating_point)."
         )
     implicit def booleanScalar[F[_]]: Scalar[F, Boolean] =
       Scalar
         .fromCirce[F, Boolean]("Boolean")
-        .describe("The `Boolean` scalar type represents `true` or `false`.")
+        .document("The `Boolean` scalar type represents `true` or `false`.")
 
     implicit def gqlOutOption[F[_], A](implicit tpe: Out[F, A]): Out[F, Option[A]] = OutOpt(tpe)
 
