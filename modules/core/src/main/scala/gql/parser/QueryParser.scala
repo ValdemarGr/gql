@@ -16,6 +16,10 @@ object QueryParser {
 
   val lineTerminator = Rfc5234.lf | Rfc5234.crlf | Rfc5234.cr
 
+  val sep = lineTerminator | whiteSpace | P.char(',')
+  val seps = sep.rep.void
+  val seps0 = sep.rep0.void
+
   def w[A](p: P[A]): P[A] = p.surroundedBy((whiteSpace | lineTerminator).rep0)
   def t(c: Char): P[Unit] = w(P.char(c))
   def s(s: String): P[Unit] = w(P.string(s))
@@ -115,10 +119,11 @@ object QueryParser {
   }
   lazy val operationDefinition = {
     import OperationDefinition._
-    (operationType ~ name.? ~ variableDefinitions.? ~ directives.? ~ selectionSet).map { case ((((opt, name), vars), ds), ss) =>
-      Detailed(opt, name, vars, ds, ss)
-    } |
-      selectionSet.map(Simple(_))
+    P.backtrack(selectionSet).map(Simple(_)) |
+      (operationType ~ name.? ~ variableDefinitions.? ~ directives.? ~ selectionSet).map { case ((((opt, name), vars), ds), ss) =>
+        Detailed(opt, name, vars, ds, ss)
+      }
+
   }
 
   sealed trait OperationType
@@ -151,7 +156,7 @@ object QueryParser {
     import Selection._
     field.map(FieldSelection(_)) |
       // expects on, backtrack on failure
-      P.backtrack(inlineFragment).map(InlineFragmentSelection(_)) |
+      inlineFragment.map(InlineFragmentSelection(_)) |
       fragmentSpread.map(FragmentSpreadSelection(_))
   }
 
@@ -171,7 +176,7 @@ object QueryParser {
 
   final case class Arguments(nel: NonEmptyList[Argument])
   lazy val arguments =
-    argument.repSep(w(P.char(','))).between(t('('), t(')')).map(Arguments)
+    argument.repSep(seps).between(t('('), t(')')).map(Arguments)
 
   final case class Argument(name: String, value: Value)
   lazy val argument =
@@ -179,11 +184,11 @@ object QueryParser {
 
   final case class FragmentSpread(fragmentName: String, directives: Option[Directives])
   lazy val fragmentSpread =
-    s("...") *> (fragmentName ~ directives.?).map { case (n, d) => FragmentSpread(n, d) }
+    (s("...") *> fragmentName ~ directives.?).map { case (n, d) => FragmentSpread(n, d) }
 
   final case class InlineFragment(typeCondition: Option[String], directives: Option[Directives], selectionSet: SelectionSet)
   lazy val inlineFragment =
-    (s("...") *> typeCondition.? ~ directives.? ~ selectionSet).map { case ((t, d), s) => InlineFragment(t, d, s) }
+    ((s("...") *> typeCondition.? ~ directives.?).soft ~ selectionSet).map { case ((t, d), s) => InlineFragment(t, d, s) }
 
   final case class FragmentDefinition(
       name: String,
@@ -250,7 +255,10 @@ object QueryParser {
 
   final case class VariableDefinitions(nel: NonEmptyList[Pos[VariableDefinition]])
   lazy val variableDefinitions =
-    variableDefinition.rep.between(t('('), t(')')).map(VariableDefinitions(_))
+    variableDefinition
+      .repSep(seps)
+      .between(t('('), t(')'))
+      .map(VariableDefinitions(_))
 
   final case class VariableDefinition(name: String, tpe: Type, defaultValue: Option[Value])
   lazy val variableDefinition = Pos.pos {
@@ -260,7 +268,7 @@ object QueryParser {
   lazy val variable =
     t('$') *> name
 
-  lazy val defaultValue = value
+  lazy val defaultValue = t('=') *> value
 
   lazy val namedType = name.map(Type.Named(_))
 

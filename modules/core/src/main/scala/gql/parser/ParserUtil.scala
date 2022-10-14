@@ -30,7 +30,7 @@ object ParserUtil {
             )
           )
         case ExpectedFailureAt(_, matched) =>
-          Eval.now(Chain(s"expected failure at $matched"))
+          Eval.now(Chain(s"expected $matched"))
       }
     }
   }
