@@ -99,7 +99,7 @@ object QueryParser {
     final case class Operation(o: Pos[OperationDefinition]) extends ExecutableDefinition
     final case class Fragment(f: Pos[FragmentDefinition]) extends ExecutableDefinition
   }
-  lazy val executableDefinition = {
+  lazy val executableDefinition = w {
     import ExecutableDefinition._
     Pos.pos(fragmentDefinition).map(Fragment(_)) |
       Pos.pos(operationDefinition).map(Operation(_))
