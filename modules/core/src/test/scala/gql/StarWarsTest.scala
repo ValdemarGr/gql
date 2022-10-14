@@ -1,0 +1,4 @@
+package gql
+
+class StarWarsTest {
+}
