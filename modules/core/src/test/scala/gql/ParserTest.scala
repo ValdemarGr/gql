@@ -216,15 +216,15 @@ fragment frag on Friend @onFragmentDefinition {
 query {
   __typename
 }
-  """
-  ,"""
+  """,
+    """
         query HeroNameQuery {
           hero {
             name
           }
         }
-  """
-  ,"""
+  """,
+    """
         query HeroNameAndFriendsQuery {
           hero {
             id
@@ -234,8 +234,8 @@ query {
             }
           }
         }
-  """
-  ,"""
+  """,
+    """
         query NestedQuery {
           hero {
             name
@@ -248,8 +248,8 @@ query {
             }
           }
         }
-  """
-  ,"""
+  """,
+    """
         query FetchLukeAndC3POQuery {
           human(id: "1000") {
             name
@@ -258,22 +258,22 @@ query {
             name
           }
         }
-  """
-  ,"""
+  """,
+    """
         query FetchSomeIDQuery($someId: String!) {
           human(id: $someId) {
             name
           }
         }
-  """
-  ,"""
+  """,
+    """
         query humanQuery($id: String!) {
           human(id: $id) {
             name
           }
         }
-  """
-  ,"""
+  """,
+    """
         query UseFragment {
           luke: human(id: "1000") {
             ...HumanFragment
@@ -286,32 +286,32 @@ query {
           name
           homePlanet
         }
-  """
-  ,"""
+  """,
+    """
         query CheckTypeOfR2 {
           hero {
             __typename
             name
           }
         }
-  """
-  ,"""
+  """,
+    """
         query CheckTypeOfLuke {
           hero(episode: EMPIRE) {
             __typename
             name
           }
         }
-  """
-  ,"""
+  """,
+    """
         query HeroNameQuery {
           mainHero: hero {
             name
             story: secretBackstory
           }
         }
-  """
-  ,"""
+  """,
+    """
         query NestedQueryWithFragment {
           hero {
             ...NameAndAppearances
@@ -327,31 +327,31 @@ query {
           name
           appearsIn
         }
-  """
-  ,"""
+  """,
+    """
       {
         id
         name
       }
-  """
-  ,"""
+  """,
+    """
       query ($foo: TestType) @testDirective {
         id
         name
       }
-  """
-  ,"""
+  """,
+    """
       query ($foo: TestType = { a: 123 }) {
         id
       }
-  """
-  ,"""
+  """,
+    """
 query ($foo: TestType = { a: 123 }) { id }
-  """
-  ,"""
+  """,
+    """
 {trip(wheelchair:false arriveBy:false includePlannedCancellations:true transitDistanceReluctance:2000){dateTime}}
-  """
-  ,"""
+  """,
+    """
       {
         ...rootQueryFragment @defer
       }
@@ -360,8 +360,8 @@ query ($foo: TestType = { a: 123 }) { id }
           body
         }
       }
-  """
-  ,"""
+  """,
+    """
       {
         ... @defer {
           message {
@@ -369,8 +369,8 @@ query ($foo: TestType = { a: 123 }) { id }
           }
         }
       }
-  """
-  ,"""
+  """,
+    """
       mutation {
         ...rootFragment @defer
       }
@@ -379,8 +379,8 @@ query ($foo: TestType = { a: 123 }) { id }
           body
         }
       }
-  """
-  ,"""
+  """,
+    """
       mutation {
         ... @defer {
           mutationField {
@@ -388,8 +388,8 @@ query ($foo: TestType = { a: 123 }) { id }
           }
         }
       }
-  """
-  ,"""
+  """,
+    """
       subscription {
         ...rootFragment @defer
       }
@@ -398,8 +398,8 @@ query ($foo: TestType = { a: 123 }) { id }
           body
         }
       }
-  """
-  ,"""
+  """,
+    """
       subscription {
         ... @defer {
           subscriptionField {
@@ -407,8 +407,8 @@ query ($foo: TestType = { a: 123 }) { id }
           }
         }
       }
-  """
-  ,"""
+  """,
+    """
       subscription {
         subscriptionField {
           ...nestedFragment
@@ -417,8 +417,8 @@ query ($foo: TestType = { a: 123 }) { id }
       fragment nestedFragment on Message {
         body
       }
-  """
-  ,"""
+  """,
+    """
       mutation {
         ...rootFragment
       }
@@ -427,8 +427,8 @@ query ($foo: TestType = { a: 123 }) { id }
           name
         }
       }
-  """
-  ,"""
+  """,
+    """
       query Foo($a: String, $b: String, $c: String) {
         field(a: $a) {
           field(b: $b) {
@@ -436,8 +436,8 @@ query ($foo: TestType = { a: 123 }) { id }
           }
         }
       }
-  """
-  ,"""
+  """,
+    """
       query Foo($a: String, $b: String, $c: String) {
         ... on Type {
           field(a: $a) {
@@ -449,8 +449,8 @@ query ($foo: TestType = { a: 123 }) { id }
           }
         }
       }
-  """
-  ,"""
+  """,
+    """
       query Foo($a: String, $b: String, $c: String) {
         ...FragA
       }
@@ -467,8 +467,8 @@ query ($foo: TestType = { a: 123 }) { id }
       fragment FragC on Type {
         field(c: $c)
       }
-  """
-  ,"""
+  """,
+    """
       query Foo($a: String, $b: String) {
         ...FragA
       }
@@ -485,8 +485,8 @@ query ($foo: TestType = { a: 123 }) { id }
       fragment FragC on Type {
         field(c: $c)
       }
-  """
-  ,"""
+  """,
+    """
       query Foo($b: String) {
         ...FragAB
       }
@@ -501,8 +501,8 @@ query ($foo: TestType = { a: 123 }) { id }
       fragment FragC on Type {
         field2(c: $c)
       }
-  """
-  ,"""
+  """,
+    """
       fragment booleanArgFrag on ComplicatedArgs {
         booleanArgField(booleanArg: $booleanArg)
       }
@@ -512,8 +512,8 @@ query ($foo: TestType = { a: 123 }) { id }
           ...booleanArgFrag
         }
       }
-  """
-  ,"""
+  """,
+    """
       query Query($booleanArg: Boolean)
       {
         complicatedArgs {
@@ -523,8 +523,8 @@ query ($foo: TestType = { a: 123 }) { id }
       fragment booleanArgFrag on ComplicatedArgs {
         booleanArgField(booleanArg: $booleanArg)
       }
-  """
-  ,"""
+  """,
+    """
       query {
         human {
           pets {
