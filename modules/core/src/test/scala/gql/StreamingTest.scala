@@ -82,7 +82,7 @@ class StreamingTest extends CatsEffectSuite {
             value
           }
         }
-      }
+     }
     """
 
     assertJsonStream(query(q))(
