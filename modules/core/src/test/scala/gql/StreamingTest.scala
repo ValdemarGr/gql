@@ -14,11 +14,13 @@ final case class Level1(value: Int)
 final case class Level2(value: Int)
 
 class StreamingTest extends CatsEffectSuite {
-  @volatile var level1Users = 0
-  val level1Resource = Resource.make(IO { level1Users += 1 })(_ => IO { level1Users -= 1 })
+  val level1UsersRef = IO.ref(0).unsafeRunSync()
+  def level1Users = level1UsersRef.get.unsafeRunSync()
+  val level1Resource = Resource.make(level1UsersRef.update(_ + 1))(_ => level1UsersRef.update(_ - 1))
 
-  @volatile var level2Users = 0
-  val level2Resource = Resource.make(IO { level2Users += 1 })(_ => IO { level2Users -= 1 })
+  val level2UsersRef = IO.ref(0).unsafeRunSync()
+  def level2Users = level2UsersRef.get.unsafeRunSync()
+  val level2Resource = Resource.make(level2UsersRef.update(_ + 1))(_ => level2UsersRef.update(_ - 1))
 
   implicit lazy val level1: Type[IO, Level1] =
     tpe[IO, Level1](
@@ -93,7 +95,10 @@ class StreamingTest extends CatsEffectSuite {
       }
     }
 
-  test("should stream out some elements") {
+  test("should stream out some elements".only) {
+    assertEquals(clue(level1Users), 0)
+    assertEquals(clue(level2Users), 0)
+
     val q = """
       subscription {
         level1 {
@@ -114,7 +119,10 @@ class StreamingTest extends CatsEffectSuite {
         assert(x < y)
       }
       .compile
-      .drain
+      .drain >> IO {
+      assertEquals(clue(level1Users), 0)
+      assertEquals(clue(level2Users), 0)
+    }
   }
 
   test("should stream out some nested elements") {
