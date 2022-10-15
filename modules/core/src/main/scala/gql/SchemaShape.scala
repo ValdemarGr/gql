@@ -181,7 +181,7 @@ object SchemaShape {
         .mkString_("")}"
   }
   // TODO has really bad running time on some inputs
-  // since it doesn't remember what references it has seen
+  // since it doesn't remember what it has seen
   def validate[F[_]](schema: SchemaShape[F, _, _, _]): Chain[Problem] = {
     final case class ValidationState(
         problems: Chain[Problem],
