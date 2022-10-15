@@ -343,11 +343,15 @@ object SchemaShape {
         case OutOpt(of)           => validateOutput[G](of)
       }
 
-    (schema.query ++ schema.mutation ++ schema.subscription).toList
-      .traverse_(validateOutput[State[ValidationState, *]])
-      .runS(ValidationState(Chain.empty, Chain.empty, Map.empty, Map.empty))
-      .value
-      .problems
+    Chain.fromSeq {
+      (schema.query ++ schema.mutation ++ schema.subscription).toList
+        .traverse_(validateOutput[State[ValidationState, *]])
+        .runS(ValidationState(Chain.empty, Chain.empty, Map.empty, Map.empty))
+        .value
+        .problems
+        .toList
+        .distinct
+    }
   }
 
   def render[F[_]](shape: SchemaShape[F, _, _, _]) = {

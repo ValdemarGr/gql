@@ -8,7 +8,7 @@ import gql.dsl._
 import cats.effect._
 import cats.implicits._
 
-class ValidationTest {
+class ValidationTest extends CatsEffectSuite {
   import ValidationTest._
 
   implicit def cyclicInput: Input[CyclicInput] =
@@ -36,7 +36,7 @@ class ValidationTest {
 
   implicit lazy val badStructure: Type[IO, BadStructure] =
     tpe[IO, BadStructure](
-      "BadTypeName",
+      "BadStructure",
       "0value" -> pure(arg[String]("@value")) { case _ => 42 },
       "real" -> pure(_ => 24),
       "real" -> pure((arg[String]("x"), arg[String]("x")).tupled) { case _ => 24 },
@@ -54,22 +54,72 @@ class ValidationTest {
 
   implicit lazy val duplicateUnion =
     union[IO, MutRecUnion](
-      "MutRec",
-      instance[MutuallyRecursive1] { case x: MutuallyRecursive1 => x },
+      "MutRecUnion",
       instance[MutuallyRecursive2] { case x: MutuallyRecursive2 => x },
-      instance[MutuallyRecursive1] { case x: MutuallyRecursive1 => x }
+      instance[MutuallyRecursive1] { case x: MutuallyRecursive1 => x },
+      instance[MutuallyRecursive2] { case x: MutuallyRecursive2 => x }
     )
 
   implicit lazy val duplicateInterface =
     interface[IO, MutRecInterface](
-      "MutRec",
+      "MutRecInterface",
       "value" -> pure(_.value),
       "missing" -> pure(_ => 42)
     )(
-      instance[MutuallyRecursive1] { case x: MutuallyRecursive1 => x },
       instance[MutuallyRecursive2] { case x: MutuallyRecursive2 => x },
-      instance[MutuallyRecursive1] { case x: MutuallyRecursive1 => x }
+      instance[MutuallyRecursive1] { case x: MutuallyRecursive1 => x },
+      instance[MutuallyRecursive2] { case x: MutuallyRecursive2 => x }
     )
+
+  lazy val schemaShape = SchemaShape[IO, Unit, Unit, Unit](
+    Some(
+      tpe[IO, Unit](
+        "Query",
+        "badStructure" -> pure(_ => BadStructure()),
+        "duplicateUnion" -> pure(_ => (MutuallyRecursive1(42): MutRecUnion)),
+        "duplicateInterface" -> pure(_ => (MutuallyRecursive1(42): MutRecInterface))
+      )
+    )
+  )
+
+  lazy val schema = Schema.simple(schemaShape).unsafeRunSync()
+
+  lazy val errors = schema.validate.toList.map(x => (x.error, x.path))
+
+  test("no errors") {
+    assertEquals(errors, Nil)
+  }
+
+  test("should catch cyclic outputs that are not reference equal".only) {
+    val err = errors.collect { case (SchemaShape.ValidationError.CyclicOutputType("MutuallyRecursive1"), path) =>
+      path.toList
+    }
+
+    assert(clue(err).size == 2)
+    val s = err.toSet
+    assert(clue(s).contains {
+      SchemaShape.ValidationEdge.OutputType("Query") ::
+        SchemaShape.ValidationEdge.Field("duplicateUnion") ::
+        SchemaShape.ValidationEdge.OutputType("MutRecUnion") ::
+        SchemaShape.ValidationEdge.OutputType("MutuallyRecursive1") ::
+        SchemaShape.ValidationEdge.Field("two") ::
+        SchemaShape.ValidationEdge.OutputType("MutuallyRecursive2") ::
+        SchemaShape.ValidationEdge.Field("one") ::
+        SchemaShape.ValidationEdge.OutputType("MutuallyRecursive1") ::
+        Nil
+    })
+    assert(clue(s).contains {
+      SchemaShape.ValidationEdge.OutputType("Query") ::
+        SchemaShape.ValidationEdge.Field("duplicateInterface") ::
+        SchemaShape.ValidationEdge.OutputType("MutRecInterface") ::
+        SchemaShape.ValidationEdge.OutputType("MutuallyRecursive1") ::
+        SchemaShape.ValidationEdge.Field("two") ::
+        SchemaShape.ValidationEdge.OutputType("MutuallyRecursive2") ::
+        SchemaShape.ValidationEdge.Field("one") ::
+        SchemaShape.ValidationEdge.OutputType("MutuallyRecursive1") ::
+        Nil
+    })
+  }
 }
 
 object ValidationTest {
