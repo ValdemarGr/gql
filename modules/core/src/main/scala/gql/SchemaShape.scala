@@ -151,6 +151,9 @@ object SchemaShape {
         s"type $typename does not implement all of the fields defined in interface $interfaceName, missing fields: $missingFields"
       }
     }
+    final case class CyclicInterfaceImplementation(typename: String) extends ValidationError {
+      def message: String = s"$typename is an interface implementation of itself"
+    }
   }
 
   sealed trait ValidationEdge {
