@@ -8,6 +8,7 @@ import gql.ast._
 import gql.dsl._
 import cats.effect._
 import cats.implicits._
+import fs2.Pull
 
 final case class Level1(value: Int)
 final case class Level2(value: Int)
@@ -149,5 +150,87 @@ class StreamingTest extends CatsEffectSuite {
       }
       .compile
       .drain
+  }
+
+  test("nesting with fragments works") {
+    val q = """
+      subscription {
+        level1 {
+          ... A
+        }
+      }
+
+      fragment A on Level1 {
+        level2 {
+          ... B
+        }
+        value
+      }
+
+      fragment B on Level2 {
+        level1 {
+          ... C
+        }
+        value
+      }
+
+      fragment C on Level1 {
+        level2 {
+          ... D
+        }
+        value
+      }
+
+      fragment D on Level2 {
+        level1 {
+          value
+        }
+        value
+      }
+    """
+
+    query(q)
+      .take(10)
+      .map(Json.fromJsonObject(_).field("data").field("level1"))
+      .compile
+      .drain
+  }
+
+  test("resource aquisition should work as expected") {
+    assertEquals(clue(level1Users), 0)
+    assertEquals(clue(level2Users), 0)
+
+    val q = """
+      subscription {
+        level1 {
+          level2 {
+            level1 {
+              value
+            }
+            value
+          }
+        }
+      }
+    """
+
+    query(q).pull.uncons1
+      .flatMap {
+        case None => ???
+        case Some((hd, _)) =>
+          Pull.eval {
+            IO {
+              // There should be one lease on both resources
+              assert(clue(level1Users) >= 1)
+              assert(clue(level2Users) >= 1)
+            }
+          }
+      }
+      .stream
+      .compile
+      .drain >>
+      IO {
+        assert(clue(level1Users) == 0)
+        assert(clue(level2Users) == 0)
+      }
   }
 }
