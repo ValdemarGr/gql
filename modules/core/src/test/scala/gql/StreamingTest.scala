@@ -95,6 +95,10 @@ class StreamingTest extends CatsEffectSuite {
       }
     }
 
+  test("the schema should be valid") {
+    assert(clue(schema.validate).isEmpty)
+  }
+
   test("should stream out some elements") {
     assertEquals(clue(level1Users), 0)
     assertEquals(clue(level2Users), 0)

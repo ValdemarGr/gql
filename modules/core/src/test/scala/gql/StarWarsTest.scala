@@ -159,6 +159,10 @@ class StarWarsTest extends CatsEffectSuite {
       assertEquals(jo.asJson, p.toOption.get)
     }
 
+  test("the schema should be valid") {
+    assert(clue(schema.validate).isEmpty)
+  }
+
   test("hero name query") {
     val q = """
       query HeroNameQuery {
