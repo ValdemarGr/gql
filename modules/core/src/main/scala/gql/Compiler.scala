@@ -71,7 +71,7 @@ object Compiler { outer =>
       gql.parser.parse(cp.query) match {
         case Left(pe) => Left(CompilationError.Parse(pe))
         case Right(q) =>
-          PreparedQuery.prepare2(q, schema, cp.variables.getOrElse(Map.empty)) match {
+          PreparedQuery.prepare(q, schema, cp.variables.getOrElse(Map.empty), cp.operationName) match {
             case Left(pe) => Left(CompilationError.Preparation(pe))
             case Right((ot, exec)) =>
               implicit val s = schema.statistics

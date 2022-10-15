@@ -760,36 +760,15 @@ object PreparedQuery {
   def prepare[F[_]: Applicative](
       executabels: NonEmptyList[P.ExecutableDefinition],
       schema: Schema[F, _, _, _],
-      variableMap: Map[String, Json]
-  ): Either[PositionalError, NonEmptyList[PreparedField[F, Any]]] = {
-    val (ops, frags) =
-      executabels.toList.partitionEither {
-        case P.ExecutableDefinition.Operation(op)  => Left(op)
-        case P.ExecutableDefinition.Fragment(frag) => Right(frag)
-      }
-
-    getOperationDefinition[Either[(String, List[Caret]), *]](ops, None) match {
-      case Left((e, carets)) => Left(PositionalError(PrepCursor.empty, carets, e))
-      case Right(op) =>
-        prepareParts[H, F](op, frags, schema, variableMap)
-          .map { case (_, x) => x }
-          .runA(Prep.empty)
-          .value
-          .value
-    }
-  }
-
-  def prepare2[F[_]: Applicative](
-      executabels: NonEmptyList[P.ExecutableDefinition],
-      schema: Schema[F, _, _, _],
-      variableMap: Map[String, Json]
+      variableMap: Map[String, Json],
+      operationName: Option[String]
   ): Either[PositionalError, (P.OperationType, NonEmptyList[PreparedField[F, Any]])] = {
     val (ops, frags) = executabels.toList.partitionEither {
       case P.ExecutableDefinition.Operation(op)  => Left(op)
       case P.ExecutableDefinition.Fragment(frag) => Right(frag)
     }
 
-    getOperationDefinition[Either[(String, List[Caret]), *]](ops, None) match {
+    getOperationDefinition[Either[(String, List[Caret]), *]](ops, operationName) match {
       case Left((e, carets)) => Left(PositionalError(PrepCursor.empty, carets, e))
       case Right(op) =>
         prepareParts[H, F](op, frags, schema, variableMap)
