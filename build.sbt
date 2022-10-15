@@ -44,7 +44,7 @@ lazy val graphqlWs = project
 
 lazy val http4s = project
   .in(file("modules/http4s"))
-  .dependsOn(core)
+  .dependsOn(core % "compile->compile;test->test")
   .dependsOn(graphqlWs)
   .settings(sharedSettings)
   .settings(
@@ -53,6 +53,8 @@ lazy val http4s = project
       "org.http4s" %% "http4s-blaze-server" % "1.0.0-M36",
       "org.http4s" %% "http4s-circe" % "1.0.0-M36",
       "org.http4s" %% "http4s-dsl" % "1.0.0-M36",
+
+      "org.http4s" %% "http4s-client" % "1.0.0-M36" % Test,
     ),
   )
   /* .enablePlugins(NativeImagePlugin) */
