@@ -284,8 +284,10 @@ object PreparedQuery {
 
     val decObj = args match {
       case PureArg(value) if provided.isEmpty => F.pure(value)
-      case PureArg(_)                         => raise(s"field ${gqlField.name} does not accept arguments", Some(caret))
-      case nea @ NonEmptyArg(_, _)            => parseInputObj[F, Any](argObj, nea, Some(variableMap), ambigiousEnum = false)
+      case PureArg(_) =>
+        raise(s"field ${gqlField.name} does not accept arguments", Some(caret))
+      case nea @ NonEmptyArg(_, _) =>
+        parseInputObj[F, Any](argObj, nea, Some(variableMap), ambigiousEnum = false)
     }
 
     decObj.map(a => resolve.contramap[Any]((_, a)))
@@ -572,7 +574,12 @@ object PreparedQuery {
       input.get(a.name) match {
         case None =>
           a.defaultValue match {
-            case None => raise[F, P.Value](s"required input ${a.name} was not provided and has no default value", None)
+            case None =>
+              a.input.value match {
+                case InOpt(_) => F.pure(P.Value.NullValue)
+                case _ =>
+                  raise[F, P.Value](s"required input ${a.name} was not provided and has no default value", None)
+              }
             // TODO this value being parsed can probably be cached, since the default is the same for every query
             case Some(dv) => F.pure(valueToParserValue(defaultToValue(dv)))
           }
@@ -713,9 +720,16 @@ object PreparedQuery {
               getTpe(vd.tpe).flatMap { tpe =>
                 val resolvedInput =
                   (variableMap.get(vd.name), vd.defaultValue) match {
-                    case (None, None) => raise[F, Any](s"variable ${vd.name} was not provided and has no default value", Some(caret))
-                    case (Some(j), _) => parseInput[F, Any](valueToParserValue(Value.fromJson(j)), tpe, None, ambigiousEnum = true)
-                    case (None, Some(default)) => parseInput[F, Any](default, tpe, None, ambigiousEnum = false)
+                    case (Some(j), _) =>
+                      parseInput[F, Any](valueToParserValue(Value.fromJson(j)), tpe, None, ambigiousEnum = true)
+                    case (None, Some(default)) =>
+                      parseInput[F, Any](default, tpe, None, ambigiousEnum = false)
+                    case (None, None) =>
+                      tpe match {
+                        case InOpt(_) => F.pure(None.asInstanceOf[Any])
+                        case _ =>
+                          raise[F, Any](s"variable ${vd.name} was not provided and has no default value", Some(caret))
+                      }
                   }
 
                 resolvedInput.map(v => vd.name -> ((tpe, v)))
