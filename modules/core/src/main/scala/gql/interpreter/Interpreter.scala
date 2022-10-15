@@ -296,9 +296,9 @@ object Interpreter {
               }
               .getOrElse(JsonObject.empty)
           case df @ PreparedDataField(id, name, alias, cont) =>
+            val n = alias.getOrElse(name)
             JsonObject(
-              alias.getOrElse(name) ->
-                reconstructField(cont.cont, m.get(Some(GraphArc.Field(id, name))).toList.flatten)
+              n -> reconstructField(cont.cont, m.get(Some(GraphArc.Field(id, n))).toList.flatten)
             )
         }
       }
@@ -459,5 +459,5 @@ class InterpreterImpl[F[_]](
   }
 
   def runDataField(df: PreparedDataField[F, Any, Any], input: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] =
-    runEdge(input.map(_.modify(_.field(df.id, df.name))), df.cont.edges.toList, df.cont.cont)
+    runEdge(input.map(_.modify(_.field(df.id, df.alias.getOrElse(df.name)))), df.cont.edges.toList, df.cont.cont)
 }

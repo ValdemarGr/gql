@@ -728,7 +728,7 @@ object PreparedQuery {
                       tpe match {
                         case InOpt(_) => F.pure(None.asInstanceOf[Any])
                         case _ =>
-                          raise[F, Any](s"variable ${vd.name} was not provided and has no default value", Some(caret))
+                          raise[F, Any](s"Variable '$$${vd.name}' is required but was not provided.", Some(caret))
                       }
                   }
 

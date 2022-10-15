@@ -6,10 +6,16 @@ import cats.effect._
 import gql.parser.{QueryParser => P}
 import gql.interpreter.Interpreter
 
-sealed trait CompilationError
+sealed trait CompilationError {
+  def asGraphQL: JsonObject
+}
 object CompilationError {
-  final case class Parse(error: gql.parser.ParseError) extends CompilationError
-  final case class Preparation(error: gql.PreparedQuery.PositionalError) extends CompilationError
+  final case class Parse(error: gql.parser.ParseError) extends CompilationError {
+    lazy val asGraphQL: JsonObject = JsonObject("errors" -> Json.arr(Json.fromJsonObject(error.asGraphQL)))
+  }
+  final case class Preparation(error: gql.PreparedQuery.PositionalError) extends CompilationError {
+    lazy val asGraphQL: JsonObject = JsonObject("errors" -> Json.arr(Json.fromJsonObject(error.asGraphQL)))
+  }
 }
 
 sealed trait Application[F[_]]

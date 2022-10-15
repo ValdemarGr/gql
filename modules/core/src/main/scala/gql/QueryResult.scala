@@ -12,7 +12,7 @@ final case class QueryResult(
   lazy val asGraphQL: JsonObject = {
     import io.circe.syntax._
     Map(
-      "errors" -> errors.map(_.asGraphQL).toList.toNel.map(_.asJson),
+      "errors" -> errors.map(_.asGraphQL).toList.flatMap(_.toList).toNel.map(_.asJson),
       "data" -> Some(data).filter(_.nonEmpty).map(_.asJson)
     ).collect { case (k, Some(v)) => k -> v }.asJsonObject
   }
