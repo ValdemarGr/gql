@@ -1,6 +1,7 @@
 package gql.interpreter
 
 import cats.data._
+import cats._
 
 sealed trait GraphArc
 object GraphArc {
@@ -33,6 +34,11 @@ final case class Cursor(path: Chain[GraphArc]) {
 
 object Cursor {
   def empty = Cursor(Chain.empty)
+
+  implicit lazy val semigroupForCursor = new Semigroup[Cursor] {
+    override def combine(x: Cursor, y: Cursor): Cursor =
+      Cursor(x.path ++ y.path)
+  }
 }
 
 final case class EvalNode[A](cursor: Cursor, value: A) {

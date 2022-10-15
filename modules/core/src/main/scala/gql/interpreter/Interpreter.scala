@@ -74,27 +74,28 @@ object Interpreter {
         .unNone
 
       final case class RunInput(
+          position: Cursor,
           edges: List[PreparedEdge[F]],
           cont: Prepared[F, Any],
           inputValue: Any
       )
 
       def evaluate(metas: NonEmptyList[RunInput]): F[(Chain[EvalFailure], NonEmptyList[Json], Map[Unique.Token, StreamMetadata[F]])] =
-        StreamMetadataAccumulator[F, StreamMetadata[F], IorNec[String, Any]].flatMap { sma =>
-          for {
-            costTree <- metas.toList
-              .flatTraverse { ri =>
-                NonEmptyChain.fromSeq(ri.edges) match {
-                  case None      => Planner.costForPrepared[F](ri.cont, 0d)
-                  case Some(nec) => Planner.costForEdges[F](nec, ri.cont, 0d).map(_.toList)
-                }
+        for {
+          costTree <- metas.toList
+            .flatTraverse { ri =>
+              NonEmptyChain.fromSeq(ri.edges) match {
+                case None      => Planner.costForPrepared[F](ri.cont, 0d)
+                case Some(nec) => Planner.costForEdges[F](nec, ri.cont, 0d).map(_.toList)
               }
-              .map(Planner.NodeTree(_))
-            planned <- planner.plan(costTree)
-            accumulator <- BatchAccumulator[F](schemaState, planned)
-            res <- Supervisor[F].use { sup =>
-              val interpreter = new InterpreterImpl[F](sma, accumulator, sup)
-              metas.parTraverse { ri =>
+            }
+            .map(Planner.NodeTree(_))
+          planned <- planner.plan(costTree)
+          accumulator <- BatchAccumulator[F](schemaState, planned)
+          res <- Supervisor[F].use { sup =>
+            metas.parTraverse { ri =>
+              StreamMetadataAccumulator[F, StreamMetadata[F], IorNec[String, Any]].flatMap { sma =>
+                val interpreter = new InterpreterImpl[F](sma, accumulator, sup)
                 interpreter
                   .runEdge(Chain(EvalNode.empty(ri.inputValue)), ri.edges, ri.cont)
                   .run
@@ -103,108 +104,112 @@ object Interpreter {
                     val j = reconstructField[F](ri.cont, comb.toList)
                     (fail, j)
                   }
+                  .flatMap { case (fail, j) =>
+                    // All the cursors in sma should be prefixed with the start position
+                    sma.getState
+                      .map(_.fmap(x => x.copy(cursor = ri.position |+| x.cursor)))
+                      .map((fail, j, _))
+                  }
               }
             }
-            smaState <- sma.getState
-            bes <- accumulator.getErrors
-            allErrors = Chain.fromSeq(res.toList).flatMap { case (errs, _) => errs } ++ Chain.fromSeq(bes)
-          } yield (allErrors, res.map { case (_, j) => j }, smaState)
-        }
+          }
+          smas = res.foldMapK { case (_, _, sma) => sma }
+          bes <- accumulator.getErrors
+          allErrors = Chain.fromSeq(res.toList).flatMap { case (errs, _, _) => errs } ++ Chain.fromSeq(bes)
+        } yield (allErrors, res.map { case (_, j, _) => j }, smas)
 
-      val inital = RunInput(Nil, PreparedQuery.Selection(rootSel), rootInput)
+      val inital = RunInput(Cursor.empty, Nil, PreparedQuery.Selection(rootSel), rootInput)
 
       fs2.Stream
         .eval(evaluate(NonEmptyList.one(inital)))
         .flatMap { case (initialFails, initialSuccs, initialSM) =>
           val jo: JsonObject = initialSuccs.reduceLeft(_ deepMerge _).asObject.get
 
-          fs2.Stream(jo).flatMap { initialOutput =>
-            fs2.Stream.emit((initialFails, initialOutput)) ++
-              changeStream
-                .evalMapAccumulate((initialOutput, initialSM)) { case ((prevOutput, activeStreams), changes) =>
-                  changes
-                    .map { case (k, rt, v) => activeStreams.get(k).map((k, rt, v, _)) }
-                    .collect { case Some(x) => x }
-                    .toNel
-                    .flatTraverse { activeChanges =>
-                      val s = activeChanges.toList.map { case (k, _, _, _) => k }.toSet
+          fs2.Stream.emit((initialFails, jo)) ++
+            changeStream
+              .evalMapAccumulate((jo, initialSM)) { case ((prevOutput, activeStreams), changes) =>
+                changes
+                  .map { case (k, rt, v) => activeStreams.get(k).map((k, rt, v, _)) }
+                  .collect { case Some(x) => x }
+                  .toNel
+                  .flatTraverse { activeChanges =>
+                    val s = activeChanges.toList.map { case (k, _, _, _) => k }.toSet
 
-                      val allSigNodes = activeStreams.toList.map { case (k, sm) =>
-                        // The cursor is to the parent, traversing the arc for df.name will get us to the changed node
-                        (sm.cursor, k)
+                    val allSigNodes = activeStreams.toList.map { case (k, sm) =>
+                      // The cursor is to the parent, traversing the arc for df.name will get us to the changed node
+                      (sm.cursor, k)
+                    }
+
+                    val meta = recompute(allSigNodes, s)
+
+                    // The root nodes are the highest common signal ancestors
+                    val rootNodes = activeChanges.filter { case (k, _, _, _) => meta.hcsa.contains(k) }
+
+                    val preparedRoots =
+                      rootNodes.map { case (st, rt, in, sm) =>
+                        in match {
+                          case Left(ex) =>
+                            (Chain(EvalFailure.StreamTailResolution(sm.cursor, Left(ex))), None, sm.cursor)
+                          case Right(nec) =>
+                            (
+                              Chain.fromOption(nec.left).flatMap(_.toChain).map { msg =>
+                                EvalFailure.StreamTailResolution(sm.cursor, Right(msg))
+                              },
+                              nec.right.map(RunInput(sm.cursor, sm.edges, sm.cont, _)),
+                              sm.cursor
+                            )
+                        }
                       }
 
-                      val meta = recompute(allSigNodes, s)
-
-                      // The root nodes are the highest common signal ancestors
-                      val rootNodes = activeChanges.filter { case (k, _, _, _) => meta.hcsa.contains(k) }
-
-                      val preparedRoots =
-                        rootNodes.map { case (st, rt, in, sm) =>
-                          in match {
-                            case Left(ex) =>
-                              (Chain(EvalFailure.StreamTailResolution(sm.cursor, Left(ex))), None, sm.cursor)
-                            case Right(nec) =>
-                              (
-                                Chain.fromOption(nec.left).flatMap(_.toChain).map { msg =>
-                                  EvalFailure.StreamTailResolution(sm.cursor, Right(msg))
-                                },
-                                nec.right.map(RunInput(sm.edges, sm.cont, _)),
-                                sm.cursor
-                              )
-                          }
+                    preparedRoots.toNel
+                      .traverse { xs =>
+                        val paddedErrors = xs.toList.mapFilter {
+                          case (_, None, c)    => Some((Json.Null, c))
+                          case (_, Some(_), _) => None
                         }
 
-                      preparedRoots.toNel
-                        .traverse { xs =>
-                          val paddedErrors = xs.toList.mapFilter {
-                            case (_, None, c)    => Some((Json.Null, c))
-                            case (_, Some(_), _) => None
-                          }
+                        val defined = xs.collect { case (_, Some(x), c) => (x, c) }
 
-                          val defined = xs.collect { case (_, Some(x), c) => (x, c) }
+                        val evalled =
+                          defined
+                            .collect { case (x, _) => x }
+                            .toNel
+                            .traverse(evaluate)
+                            .flatMap[(List[(Json, Cursor)], Chain[EvalFailure], Map[Unique.Token, StreamMetadata[F]])] {
+                              case None => F.pure((Nil, Chain.empty, activeStreams))
+                              case Some((newFails, newOutputs, newStreams)) =>
+                                val succWithInfo = newOutputs.toList zip defined.map { case (_, c) => c }
 
-                          val evalled =
-                            defined
-                              .collect { case (x, _) => x }
-                              .toNel
-                              .traverse(evaluate)
-                              .flatMap[(List[(Json, Cursor)], Chain[EvalFailure], Map[Unique.Token, StreamMetadata[F]])] {
-                                case None => F.pure((Nil, Chain.empty, activeStreams))
-                                case Some((newFails, newSuccs, newStreams)) =>
-                                  val succWithInfo = newSuccs.toList zip defined.map { case (_, c) => c }
+                                val withNew = newStreams ++ activeStreams
+                                // All nodes that occured in the tree but are not in the HCSA are dead
+                                val garbageCollected = withNew -- meta.toRemove
 
-                                  val withNew = newStreams ++ activeStreams
-                                  // All nodes that occured in the tree but are not in the HCSA are dead
-                                  val garbageCollected = withNew -- meta.toRemove
+                                // Also remove the subscriptions and dead resources
+                                val releasesF = streamSup.release(meta.toRemove.toSet)
 
-                                  // Also remove the subscriptions and dead resources
-                                  val releasesF = streamSup.release(meta.toRemove.toSet)
+                                val freeF = activeChanges
+                                  .collect { case (k, rt, _, _) if meta.hcsa.contains(k) => (k, rt) }
+                                  .traverse_ { case (k, rt) => streamSup.freeUnused(k, rt) }
 
-                                  val freeF = activeChanges
-                                    .collect { case (k, rt, _, _) if meta.hcsa.contains(k) => (k, rt) }
-                                    .traverse_ { case (k, rt) => streamSup.freeUnused(k, rt) }
-
-                                  releasesF >> freeF as (succWithInfo, newFails, garbageCollected)
-                              }
-
-                          evalled.map { case (jsons, errs, finalStreams) =>
-                            val allJsons = jsons ++ paddedErrors
-                            val allErrs = errs ++ Chain.fromSeq(xs.toList).flatMap { case (es, _, _) => es }
-
-                            val stitched = allJsons.foldLeft(prevOutput) { case (accum, (patch, pos)) =>
-                              stitchInto(accum.asJson, patch, pos).asObject.get
+                                releasesF >> freeF as (succWithInfo, newFails, garbageCollected)
                             }
 
-                            ((stitched, finalStreams), Some((allErrs, stitched)))
+                        evalled.map { case (jsons, errs, finalStreams) =>
+                          val allJsons = jsons ++ paddedErrors
+                          val allErrs = errs ++ Chain.fromSeq(xs.toList).flatMap { case (es, _, _) => es }
+
+                          val stitched = allJsons.foldLeft(prevOutput) { case (accum, (patch, pos)) =>
+                            stitchInto(accum.asJson, patch, pos).asObject.get
                           }
+
+                          ((stitched, finalStreams), Some((allErrs, stitched)))
                         }
-                    }
-                    .map(_.getOrElse(((initialOutput, activeStreams), None)))
-                }
-                .map { case (_, x) => x }
-                .unNone
-          }
+                      }
+                  }
+                  .map(_.getOrElse(((jo, activeStreams), None)))
+              }
+              .map { case (_, x) => x }
+              .unNone
         }
     }
 
