@@ -95,7 +95,7 @@ class StreamingTest extends CatsEffectSuite {
       }
     }
 
-  test("should stream out some elements".only) {
+  test("should stream out some elements") {
     assertEquals(clue(level1Users), 0)
     assertEquals(clue(level2Users), 0)
 
