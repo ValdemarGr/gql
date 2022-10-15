@@ -139,7 +139,17 @@ object SchemaShape {
       def message: String = s"duplicate interface instance $conflict"
     }
     final case class InvalidInput(pe: PreparedQuery.PositionalError) extends ValidationError {
-      def message: String = s"invalid input: ${pe.message}"
+      def message: String = s"invalid argument input: ${pe.message}"
+    }
+    final case class MissingInterfaceFields(
+        typename: String,
+        interfaceName: String,
+        missing: List[(String, String)]
+    ) extends ValidationError {
+      def message: String = {
+        val missingFields = missing.map { case (name, tpe) => s"$name: $tpe" }.mkString(", ")
+        s"type $typename does not implement all of the fields defined in interface $interfaceName, missing fields: $missingFields"
+      }
     }
   }
 
