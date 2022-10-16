@@ -22,52 +22,7 @@ object Introspection {
     case object NON_NULL extends __TypeKind
   }
 
-  final case class __Field(
-      name: String,
-      description: Option[String],
-      args: List[__InputValue],
-      `type`: __Type,
-      isDeprecated: Boolean,
-      deprecationReason: Option[String]
-  )
-
-  final case class __EnumValue(
-      name: String,
-      description: Option[String],
-      isDeprecated: Boolean,
-      deprecationReason: Option[String]
-  )
-
-  final case class __InputValue(
-      name: String,
-      description: Option[String],
-      `type`: __Type,
-      defaultValue: Option[String]
-  )
-
-  final case class __Type(
-      kind: __TypeKind,
-      name: Option[String],
-      description: Option[String],
-      fields: Option[List[__Field]],
-      interfaces: Option[List[__Type]],
-      possibleTypes: Option[List[__Type]],
-      enumValues: Option[List[__EnumValue]],
-      inputFields: Option[List[__InputValue]],
-      ofType: Option[__Type]
-  )
-
-  final case class __Directive()
-
-  final case class __Schema(
-      types: List[__Type],
-      queryType: __Type,
-      mutationType: Option[__Type],
-      subscriptionType: Option[__Type],
-      directives: List[__Directive]
-  )
-
-  def fromSchemaShape[F[_]: Monad](ss: SchemaShape[F, _, _, _]): __Schema = {
+  def fromSchemaShape[F[_]: Monad](ss: SchemaShape[F, _, _, _]) = {
     val d = ss.discover
 
     implicit lazy val __typeKind = enum[F, __TypeKind](
@@ -268,37 +223,26 @@ object Introspection {
       "deprecationReason" -> pure(_ => Option.empty[String])
     )
 
-    // val all = d.inputs.fmap(Left(_)) ++ d.outputs.fmap(Right(_))
+    case object PhantomSchema
+    implicit lazy val schema: Type[F, PhantomSchema.type] = tpe[F, PhantomSchema.type](
+      "__Schema",
+      "types" -> pure(_ => d.outputs.values.toList.map[TypeInfo](TypeInfo.OutInfo(_))),
+      "queryType" -> pure(_ => TypeInfo.OutInfo(ss.query): TypeInfo),
+      "mutationType" -> pure(_ => ss.mutation.map[TypeInfo](TypeInfo.OutInfo(_))),
+      "subscriptionType" -> pure(_ => ss.subscription.map[TypeInfo](TypeInfo.OutInfo(_))),
+      "directives" -> pure(_ => List.empty[String])
+    )
 
-    // def makeOutputType(ot: OutToplevel[G, _]): __Type = ot match {
-    //   case Enum(name, mappings, desc) =>
-    //     __Type(
-    //       __TypeKind.ENUM,
-    //       name.some,
-    //       desc,
-    //       None,
-    //       None,
-    //       None,
-    //       Some(mappings.toList.map { ev => __EnumValue(ev.encodedName, ev.description, false, None) }),
-    //       None,
-    //       None
-    //     )
-    //   case Scalar(name, _, _, description) =>
-    //     __Type(__TypeKind.SCALAR, name.some, description, None, None, None, None, None, None)
-    //   case Union(name, types, description) =>
-    //     __Type(
-    //       __TypeKind.UNION,
-    //       name.some,
-    //       description,
-    //       None,
-    //       None,
-    //       Some(types.toList.map(makeOutputType)),
-    //       None,
-    //       None,
-    //       None
-    //     )
-
-    // }
+    lazy val rootFields: NonEmptyList[(String, Field[F, Unit, _, _])] =
+      NonEmptyList.of(
+        "__schema" -> pure(_ => PhantomSchema),
+        "__type" -> pure(arg[String]("name")) { case (_, name) =>
+          d.inputs
+            .get(name)
+            .map[TypeInfo](TypeInfo.InInfo(_))
+            .orElse(d.outputs.get(name).map[TypeInfo](TypeInfo.OutInfo(_)))
+        }
+      )
 
     ???
   }

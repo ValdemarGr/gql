@@ -684,7 +684,7 @@ object PreparedQuery {
 
     val rootSchema: F[Type[G, _]] =
       ot match {
-        case P.OperationType.Query        => raiseOpt(schema.shape.query, "no query defined in schema", None)
+        case P.OperationType.Query        => F.pure(schema.shape.query)
         case P.OperationType.Mutation     => raiseOpt(schema.shape.mutation, "no mutation defined in schema", None)
         case P.OperationType.Subscription => raiseOpt(schema.shape.subscription, "no subscription defined in schema", None)
       }

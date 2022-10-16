@@ -38,10 +38,10 @@ object Schema {
     Statistics[F].map(stateful(_)(fa))
 
   def query[F[_]: Applicative, Q](statistics: Statistics[F])(query: Type[F, Q]): Schema[F, Q, Unit, Unit] =
-    stateful(statistics)(State.pure(SchemaShape(Some(query), None, None)))
+    stateful(statistics)(State.pure(SchemaShape(query, None, None)))
 
   def query[F[_]: Async, Q](query: Type[F, Q]): F[Schema[F, Q, Unit, Unit]] =
-    stateful(State.pure(SchemaShape(Some(query), None, None)))
+    stateful(State.pure(SchemaShape(query, None, None)))
 
   def simple[F[_]: Async, Q, M, S](shape: SchemaShape[F, Q, M, S]): F[Schema[F, Q, M, S]] =
     Statistics[F].map(Schema(shape, Empty[SchemaState[F]].empty, _, Planner[F]))

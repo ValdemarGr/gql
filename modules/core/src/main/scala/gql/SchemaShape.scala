@@ -12,12 +12,12 @@ import gql.resolver.EffectResolver
 import gql.resolver.Resolver
 
 final case class SchemaShape[F[_], Q, M, S](
-    query: Option[Type[F, Q]] = Option.empty[Type[F, Unit]],
+    query: Type[F, Q],
     mutation: Option[Type[F, M]] = Option.empty[Type[F, Unit]],
     subscription: Option[Type[F, S]] = Option.empty[Type[F, Unit]]
 ) {
   def mapK[G[_]: MonadCancelThrow](fk: F ~> G): SchemaShape[G, Q, M, S] =
-    SchemaShape(query.map(_.mapK(fk)), mutation.map(_.mapK(fk)), subscription.map(_.mapK(fk)))
+    SchemaShape(query.mapK(fk), mutation.map(_.mapK(fk)), subscription.map(_.mapK(fk)))
 
   lazy val discover = SchemaShape.discover[F](this)
 
@@ -100,7 +100,7 @@ object SchemaShape {
           }
       }
 
-    (shape.query ++ shape.mutation ++ shape.subscription).toList
+    (shape.query :: (shape.mutation ++ shape.subscription).toList)
       .traverse_(goOutput[State[DiscoveryState[F], *]])
       .runS(DiscoveryState(Map.empty, Map.empty, Map.empty))
       .value
@@ -347,7 +347,7 @@ object SchemaShape {
       }
 
     Chain.fromSeq {
-      (schema.query ++ schema.mutation ++ schema.subscription).toList
+      (schema.query :: (schema.mutation ++ schema.subscription).toList)
         .traverse_(validateOutput[State[ValidationState, *]])
         .runS(ValidationState(Chain.empty, Chain.empty, Map.empty, Map.empty))
         .value

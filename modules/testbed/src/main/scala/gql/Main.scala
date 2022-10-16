@@ -256,19 +256,17 @@ query withNestedFragments {
       )
 
       SchemaShape[IO, Unit, Unit, Unit](
-        Some(
-          tpe[IO, Unit](
-            "Query",
-            "person1" -> field(fixed.contramap[Unit](_ => "John")).document("John"),
-            "person2" -> field(fixed.contramap[Unit](_ => "Jane")).document("Jane"),
-            "nest" -> pure(_ => Nest("Bob"))
-          ).document {
-            """|Query
+        tpe[IO, Unit](
+          "Query",
+          "person1" -> field(fixed.contramap[Unit](_ => "John")).document("John"),
+          "person2" -> field(fixed.contramap[Unit](_ => "Jane")).document("Jane"),
+          "nest" -> pure(_ => Nest("Bob"))
+        ).document {
+          """|Query
                |The Query type is the entrypoint for most operations.
                |Something else cool.
                |  Indented""".stripMargin
-          }
-        )
+        }
       )
     }
 
