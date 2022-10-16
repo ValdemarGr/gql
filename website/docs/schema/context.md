@@ -42,15 +42,16 @@ Statistics[IO].flatMap{ stats =>
   val schema =
     Schema.query(stats.mapK(Kleisli.liftK[IO, Context]))(queries[G])
     
-  schema.assemble(query, variables = Map.empty)
-    .traverse { case Executable.Query(run) => run(()).map(_.asGraphQL) }
-    .run(Context("john_doe"))
+  Compiler[G].compile(schema, query) match {
+    case Right(Application.Query(fa)) => 
+      fa
+        .run(Context("john_doe"))
+        .map(_.asGraphQL)
+  }
 }.unsafeRunSync()
-// res0: Either[gql.parser.package.ParseError, JsonObject] = Right(
-//   value = object[data -> {
+// res0: JsonObject = object[data -> {
 //   "me" : "john_doe"
 // }]
-// )
 ```
 
 ## Working in a specific effect

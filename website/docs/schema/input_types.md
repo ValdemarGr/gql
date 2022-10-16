@@ -21,67 +21,117 @@ import gql.dsl._
 import gql.ast._
 
 arg[Int]("superCoolArg")
-// res0: gql.Arg[Int] = Arg(
-//   entries = Vector(
-//     ArgParam(
+// res0: gql.NonEmptyArg[Int] = NonEmptyArg(
+//   nec = Singleton(
+//     a = ArgValue(
 //       name = "superCoolArg",
-//       input = Scalar(name = "Int", codec = io.circe.Codec$$anon$4@977510a),
-//       default = None
+//       input = cats.Later@12b4240c,
+//       defaultValue = None,
+//       description = None
 //     )
 //   ),
-//   decode = gql.Arg$$$Lambda$13771/0x00000001035ba040@735f6998
+//   decode = gql.Arg$$$Lambda$6795/0x0000000101e7f040@2fdaf0e3
 // )
 ```
 Args can also have default values:
 ```scala
-arg[Int]("superCoolArg", Some(42))
-// res1: gql.Arg[Int] = Arg(
-//   entries = Vector(
-//     ArgParam(
+arg[Int]("superCoolArg", 42)
+// res1: gql.NonEmptyArg[Int] = NonEmptyArg(
+//   nec = Singleton(
+//     a = ArgValue(
 //       name = "superCoolArg",
-//       input = Scalar(name = "Int", codec = io.circe.Codec$$anon$4@3d070bca),
-//       default = Some(value = 42)
+//       input = cats.Later@5e272502,
+//       defaultValue = Some(
+//         value = Primitive(
+//           value = 42,
+//           in = Scalar(
+//             name = "Int",
+//             encoder = gql.ast$Scalar$$$Lambda$6965/0x0000000101f4f840@91913c,
+//             decoder = gql.ast$Scalar$$$Lambda$6966/0x0000000101f4e840@33364166,
+//             description = Some(
+//               value = "The `Int` scalar type represents non-fractional signed whole numeric values. Int can represent values between -(2^31) and 2^31 - 1."
+//             )
+//           )
+//         )
+//       ),
+//       description = None
 //     )
 //   ),
-//   decode = gql.Arg$$$Lambda$13771/0x00000001035ba040@735f6998
+//   decode = gql.Arg$$$Lambda$6795/0x0000000101e7f040@4b93f20b
 // )
 ```
 Args also have an `Applicative` instance defined for them:
 ```scala
 import cats.implicits._
 
-(arg[Int]("arg1"), arg[Int]("arg2", Some(43))).mapN(_ + _)
-// res2: gql.Arg[Int] = Arg(
-//   entries = Vector(
-//     ArgParam(
-//       name = "arg1",
-//       input = Scalar(name = "Int", codec = io.circe.Codec$$anon$4@d76210b),
-//       default = None
+(arg[Int]("arg1"), arg[Int]("arg2", 43)).mapN(_ + _)
+// res2: gql.NonEmptyArg[Int] = NonEmptyArg(
+//   nec = Append(
+//     leftNE = Singleton(
+//       a = ArgValue(
+//         name = "arg1",
+//         input = cats.Later@2c7bd14e,
+//         defaultValue = None,
+//         description = None
+//       )
 //     ),
-//     ArgParam(
-//       name = "arg2",
-//       input = Scalar(name = "Int", codec = io.circe.Codec$$anon$4@a20f492),
-//       default = Some(value = 43)
+//     rightNE = Singleton(
+//       a = ArgValue(
+//         name = "arg2",
+//         input = cats.Later@20efbd8c,
+//         defaultValue = Some(
+//           value = Primitive(
+//             value = 43,
+//             in = Scalar(
+//               name = "Int",
+//               encoder = gql.ast$Scalar$$$Lambda$6965/0x0000000101f4f840@2153e586,
+//               decoder = gql.ast$Scalar$$$Lambda$6966/0x0000000101f4e840@7504480d,
+//               description = Some(
+//                 value = "The `Int` scalar type represents non-fractional signed whole numeric values. Int can represent values between -(2^31) and 2^31 - 1."
+//               )
+//             )
+//           )
+//         ),
+//         description = None
+//       )
 //     )
 //   ),
-//   decode = gql.Arg$$anon$1$$Lambda$14684/0x0000000103949040@396c1bdd
+//   decode = scala.Function1$$Lambda$6865/0x0000000101eef840@7071642
 // )
 
-arg[Int]("arg1") *> arg[Int]("arg2", Some(44))
-// res3: gql.Arg[Int] = Arg(
-//   entries = Vector(
-//     ArgParam(
-//       name = "arg1",
-//       input = Scalar(name = "Int", codec = io.circe.Codec$$anon$4@3c301e61),
-//       default = None
+arg[Int]("arg1") *> arg[Int]("arg2", 44)
+// res3: gql.NonEmptyArg[Int] = NonEmptyArg(
+//   nec = Append(
+//     leftNE = Singleton(
+//       a = ArgValue(
+//         name = "arg1",
+//         input = cats.Later@5ad9d8f3,
+//         defaultValue = None,
+//         description = None
+//       )
 //     ),
-//     ArgParam(
-//       name = "arg2",
-//       input = Scalar(name = "Int", codec = io.circe.Codec$$anon$4@721e95),
-//       default = Some(value = 44)
+//     rightNE = Singleton(
+//       a = ArgValue(
+//         name = "arg2",
+//         input = cats.Later@641879fb,
+//         defaultValue = Some(
+//           value = Primitive(
+//             value = 44,
+//             in = Scalar(
+//               name = "Int",
+//               encoder = gql.ast$Scalar$$$Lambda$6965/0x0000000101f4f840@330b0155,
+//               decoder = gql.ast$Scalar$$$Lambda$6966/0x0000000101f4e840@c01a470,
+//               description = Some(
+//                 value = "The `Int` scalar type represents non-fractional signed whole numeric values. Int can represent values between -(2^31) and 2^31 - 1."
+//               )
+//             )
+//           )
+//         ),
+//         description = None
+//       )
 //     )
 //   ),
-//   decode = gql.Arg$$anon$1$$Lambda$14684/0x0000000103949040@d7bfe6d
+//   decode = gql.NonEmptyArg$$anon$2$$Lambda$7664/0x0000000101325840@188bfb43
 // )
 ```
 
@@ -94,7 +144,7 @@ final case class Data(str: String)
 
 tpe[IO, Data](
   "Something",
-  "field" -> pure(arg[String]("arg1", Some("default"))){ case (data, arg1) => data.str + arg1 }
+  "field" -> pure(arg[String]("arg1", "default")){ case (data, arg1) => data.str + arg1 }
 )
 // res4: Type[IO, Data] = Type(
 //   name = "Something",
@@ -102,27 +152,39 @@ tpe[IO, Data](
 //     head = (
 //       "field",
 //       Field(
-//         args = Arg(
-//           entries = Vector(
-//             ArgParam(
+//         args = NonEmptyArg(
+//           nec = Singleton(
+//             a = ArgValue(
 //               name = "arg1",
-//               input = Scalar(
-//                 name = "String",
-//                 codec = io.circe.Codec$$anon$4@5490aeec
+//               input = cats.Later@3f7b9e08,
+//               defaultValue = Some(
+//                 value = Primitive(
+//                   value = "default",
+//                   in = Scalar(
+//                     name = "String",
+//                     encoder = gql.ast$Scalar$$$Lambda$6965/0x0000000101f4f840@5491211b,
+//                     decoder = gql.ast$Scalar$$$Lambda$6966/0x0000000101f4e840@55b22ddd,
+//                     description = Some(
+//                       value = "The `String` is a UTF-8 character sequence usually representing human-readable text."
+//                     )
+//                   )
+//                 )
 //               ),
-//               default = Some(value = "default")
+//               description = None
 //             )
 //           ),
-//           decode = gql.Arg$$$Lambda$13771/0x00000001035ba040@735f6998
+//           decode = gql.Arg$$$Lambda$6795/0x0000000101e7f040@122495cb
 //         ),
 //         resolve = EffectResolver(
-//           resolve = gql.dsl$$$Lambda$13774/0x00000001035be040@68ef6109
+//           resolve = gql.dsl$$$Lambda$6798/0x0000000101e7d040@71ccd259
 //         ),
-//         output = cats.Later@78f95c37
+//         output = cats.Later@2c88ac82,
+//         description = None
 //       )
 //     ),
 //     tail = List()
-//   )
+//   ),
+//   description = None
 // )
 ```
 
@@ -140,25 +202,44 @@ input[InputData](
   "InputData",
   (
     arg[String]("name"),
-    arg[Int]("age", Some(42))
+    arg[Int]("age", 42)
   ).mapN(InputData.apply)
 )
 // res5: Input[InputData] = Input(
 //   name = "InputData",
-//   fields = Arg(
-//     entries = Vector(
-//       ArgParam(
-//         name = "name",
-//         input = Scalar(name = "String", codec = io.circe.Codec$$anon$4@2a235dd3),
-//         default = None
+//   fields = NonEmptyArg(
+//     nec = Append(
+//       leftNE = Singleton(
+//         a = ArgValue(
+//           name = "name",
+//           input = cats.Later@6890b00b,
+//           defaultValue = None,
+//           description = None
+//         )
 //       ),
-//       ArgParam(
-//         name = "age",
-//         input = Scalar(name = "Int", codec = io.circe.Codec$$anon$4@7b9561b5),
-//         default = Some(value = 42)
+//       rightNE = Singleton(
+//         a = ArgValue(
+//           name = "age",
+//           input = cats.Later@5eacea1f,
+//           defaultValue = Some(
+//             value = Primitive(
+//               value = 42,
+//               in = Scalar(
+//                 name = "Int",
+//                 encoder = gql.ast$Scalar$$$Lambda$6965/0x0000000101f4f840@4965a589,
+//                 decoder = gql.ast$Scalar$$$Lambda$6966/0x0000000101f4e840@20e0ec9b,
+//                 description = Some(
+//                   value = "The `Int` scalar type represents non-fractional signed whole numeric values. Int can represent values between -(2^31) and 2^31 - 1."
+//                 )
+//               )
+//             )
+//           ),
+//           description = None
+//         )
 //       )
 //     ),
-//     decode = gql.Arg$$anon$1$$Lambda$14684/0x0000000103949040@6861b0e7
-//   )
+//     decode = scala.Function1$$Lambda$6865/0x0000000101eef840@4d9d0064
+//   ),
+//   description = None
 // )
 ```

@@ -26,7 +26,7 @@ import cats.effect.unsafe.implicits.global
 def multifailSchema = 
   tpe[IO, Unit](
     "Query", 
-    "field" -> fallible(arg[Int]("i", Some(10))){ 
+    "field" -> fallible(arg[Int]("i", 10)){ 
       case (_, 0) => IO.pure(Ior.left("fail gracefully"))
       case (_, 1) => IO.raiseError(new Exception("fail hard"))
       case (_, i) => IO.pure(Ior.right(i))
@@ -35,79 +35,69 @@ def multifailSchema =
 
 def go(query: String, tpe: Type[IO, Unit] = multifailSchema) = 
   Schema.query(tpe).flatMap { sch =>
-    sch.assemble(query, variables = Map.empty)
-      .traverse { 
-        case Executable.Query(run) => 
-          run(()).map{x => println(x.errors);x.asGraphQL }
-        case Executable.ValidationError(msg) =>
-          println(msg)
-          IO.pure(msg.asGraphQL)
-      }
+    Compiler[IO].compile(sch, query) match {
+      case Left(err) => 
+        println(err)
+        IO.pure(err.asGraphQL)
+      case Right(Application.Query(fa)) => 
+        fa.map{x => println(x.errors);x.asGraphQL }
+    }
   }.unsafeRunSync()
   
 go("query { field }")
 // Chain()
-// res0: Either[parser.package.ParseError, io.circe.JsonObject] = Right(
-//   value = object[data -> {
+// res0: io.circe.JsonObject = object[data -> {
 //   "field" : 10
 // }]
-// )
 ```
 
 A query can fail gracefully by returning `Ior.left`:
 ```scala
 go("query { field(i: 0) }")
-// Chain(EffectResolution(CursorGroup(Cursor(Chain()),Cursor(Chain(Field(1,field))),1),Right(fail gracefully),()))
-// res1: Either[parser.package.ParseError, io.circe.JsonObject] = Right(
-//   value = object[errors -> [
-//   [
-//     {
-//       "message" : "fail gracefully",
-//       "path" : [
-//         "field"
-//       ]
-//     }
-//   ]
+// Chain(EffectResolution(Cursor(Chain(Field(1,field))),Right(fail gracefully),()))
+// res1: io.circe.JsonObject = object[errors -> [
+//   {
+//     "message" : "fail gracefully",
+//     "path" : [
+//       "field"
+//     ]
+//   }
 // ],data -> {
 //   "field" : null
 // }]
-// )
 ```
 
 A query can fail hard by raising an exception:
 ```scala
 go("query { field(i: 1) }")
-// Chain(EffectResolution(CursorGroup(Cursor(Chain()),Cursor(Chain(Field(1,field))),1),Left(java.lang.Exception: fail hard),()))
-// res2: Either[parser.package.ParseError, io.circe.JsonObject] = Right(
-//   value = object[errors -> [
-//   [
-//     {
-//       "message" : "internal error",
-//       "path" : [
-//         "field"
-//       ]
-//     }
-//   ]
+// Chain(EffectResolution(Cursor(Chain(Field(1,field))),Left(java.lang.Exception: fail hard),()))
+// res2: io.circe.JsonObject = object[errors -> [
+//   {
+//     "message" : "internal error",
+//     "path" : [
+//       "field"
+//     ]
+//   }
 // ],data -> {
 //   "field" : null
 // }]
-// )
 ```
 
 A query can also fail before even evaluating the query:
 ```scala
 go("query { nonExisting }")
-// PositionalError(PrepCursor(List(nonExisting)),List(Caret(0,20,20)),unknown field name nonExisting)
-// res3: Either[parser.package.ParseError, io.circe.JsonObject] = Right(
-//   value = object[message -> "unknown field name nonExisting",locations -> [
+// Preparation(PositionalError(PrepCursor(Chain()),List(Caret(0,20,20)),unknown field name nonExisting))
+// res3: io.circe.JsonObject = object[errors -> [
 //   {
-//     "line" : 0,
-//     "column" : 20
+//     "message" : "unknown field name nonExisting",
+//     "locations" : [
+//       {
+//         "line" : 0,
+//         "column" : 20
+//       }
+//     ]
 //   }
-// ],path -> [
-//   "nonExisting"
 // ]]
-// )
 ```
 
 And finally, it can fail if it isn't parsable:
@@ -124,27 +114,20 @@ def largerQuery = """
   }
 """
 
-go(largerQuery).leftMap(_.prettyError.value)
-// res4: Either[String, io.circe.JsonObject] = Left(
-//   value = """failed at offset 80 on line 7 with code 45
-// one of "..."
-// in char in range A to Z (code 65 to 90)
-// in char in range _ to _ (code 95 to 95)
-// in char in range a to z (code 97 to 122)
-// in query:
-// | 
-// |   query {
-// |     field1
-// |     field2(test: 42)
-// |   }
-// |   
-// |   fragment test on Test {
-// |     -value1
-// | >^^^^^^^ line:7 code:45
-// |     value2 
-// |   }
-// | """
-// )
+go(largerQuery)
+// Parse(ParseError(Caret(8,4,80),cats.Later@49d641af))
+// res4: io.circe.JsonObject = object[errors -> [
+//   {
+//     "message" : "could not parse query",
+//     "locations" : [
+//       {
+//         "line" : 8,
+//         "column" : 4
+//       }
+//     ],
+//     "error" : "\u001b[34mfailed at offset 80 on line 7 with code 45\none of \"...\"\nin char in range A to Z (code 65 to 90)\nin char in range _ to _ (code 95 to 95)\nin char in range a to z (code 97 to 122)\nin query:\n\u001b[0m\u001b[32m| \u001b[0m\u001b[32m\n|   query {\n|     field1\n|     field2(test: 42)\n|   }\n|   \n|   fragment test on Test {\n|     \u001b[41m\u001b[30m-\u001b[0m\u001b[32mvalue1\n| \u001b[31m>^^^^^^^ line:7 code:45\u001b[0m\u001b[32m\n|     value2 \n|   }\n| \u001b[0m\u001b[0m"
+//   }
+// ]]
 ```
 Parser errors also look nice in ANSI terminals:
 
@@ -162,29 +145,22 @@ val res =
       "field" -> eff(_ => IO.raiseError[String](MyException("fail hard", 42)))
     )
   ).flatMap { sch =>
-    sch.assemble("query { field } ", variables = Map.empty)
-      .traverse { case Executable.Query(run) => run(()) }
+    Compiler[IO].compile(sch, "query { field } ") match {
+      case Right(Application.Query(run)) => run
+    }
   }.unsafeRunSync()
-// res: Either[parser.package.ParseError, QueryResult] = Right(
-//   value = QueryResult(
-//     errors = Singleton(
-//       a = EffectResolution(
-//         path = CursorGroup(
-//           startPosition = Cursor(path = Chain()),
-//           relativePath = Cursor(
-//             path = Singleton(a = Field(id = 1, name = "field"))
-//           ),
-//           groupId = 1
-//         ),
-//         error = Left(value = MyException(msg = "fail hard", data = 42)),
-//         input = ()
-//       )
-//     ),
-//     data = object[field -> null]
-//   )
+// res: QueryResult = QueryResult(
+//   errors = Singleton(
+//     a = EffectResolution(
+//       path = Cursor(path = Singleton(a = Field(id = 1, name = "field"))),
+//       error = Left(value = MyException(msg = "fail hard", data = 42)),
+//       input = ()
+//     )
+//   ),
+//   data = object[field -> null]
 // )
   
-res.toOption.flatMap(_.errors.headOption).flatMap(_.exception) match {
+res.errors.headOption.flatMap(_.exception) match {
   case Some(MyException(_, data)) => println(s"Got data: $data")
   case _ => println("No data")
 }

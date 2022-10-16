@@ -70,12 +70,12 @@ lazy val testbed = project
   .dependsOn(http4s)
   .settings(sharedSettings)
 
-/* lazy val docs = project */
-/*   .in(file("modules/docs")) */
-/*   .settings( */
-/*     moduleName := "gql-docs", */
-/*     mdocOut := file("website/docs") */
-/*   ) */
-/*   .dependsOn(core) */
-/*   .dependsOn(http4s) */
-/*   .enablePlugins(MdocPlugin, DocusaurusPlugin) */
+lazy val docs = project
+  .in(file("modules/docs"))
+  .settings(
+    moduleName := "gql-docs",
+    mdocOut := file("website/docs")
+  )
+  .dependsOn(core)
+  .dependsOn(http4s)
+  .enablePlugins(MdocPlugin, DocusaurusPlugin)

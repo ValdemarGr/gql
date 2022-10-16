@@ -26,7 +26,7 @@ import cats.effect.unsafe.implicits.global
 def multifailSchema = 
   tpe[IO, Unit](
     "Query", 
-    "field" -> fallible(arg[Int]("i", Some(10))){ 
+    "field" -> fallible(arg[Int]("i", 10)){ 
       case (_, 0) => IO.pure(Ior.left("fail gracefully"))
       case (_, 1) => IO.raiseError(new Exception("fail hard"))
       case (_, i) => IO.pure(Ior.right(i))
@@ -35,14 +35,13 @@ def multifailSchema =
 
 def go(query: String, tpe: Type[IO, Unit] = multifailSchema) = 
   Schema.query(tpe).flatMap { sch =>
-    sch.assemble(query, variables = Map.empty)
-      .traverse { 
-        case Executable.Query(run) => 
-          run(()).map{x => println(x.errors);x.asGraphQL }
-        case Executable.ValidationError(msg) =>
-          println(msg)
-          IO.pure(msg.asGraphQL)
-      }
+    Compiler[IO].compile(sch, query) match {
+      case Left(err) => 
+        println(err)
+        IO.pure(err.asGraphQL)
+      case Right(Application.Query(fa)) => 
+        fa.map{x => println(x.errors);x.asGraphQL }
+    }
   }.unsafeRunSync()
   
 go("query { field }")
@@ -77,7 +76,7 @@ def largerQuery = """
   }
 """
 
-go(largerQuery).leftMap(_.prettyError.value)
+go(largerQuery)
 ```
 Parser errors also look nice in ANSI terminals:
 
@@ -95,11 +94,12 @@ val res =
       "field" -> eff(_ => IO.raiseError[String](MyException("fail hard", 42)))
     )
   ).flatMap { sch =>
-    sch.assemble("query { field } ", variables = Map.empty)
-      .traverse { case Executable.Query(run) => run(()) }
+    Compiler[IO].compile(sch, "query { field } ") match {
+      case Right(Application.Query(run)) => run
+    }
   }.unsafeRunSync()
   
-res.toOption.flatMap(_.errors.headOption).flatMap(_.exception) match {
+res.errors.headOption.flatMap(_.exception) match {
   case Some(MyException(_, data)) => println(s"Got data: $data")
   case _ => println("No data")
 }

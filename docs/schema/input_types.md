@@ -24,15 +24,15 @@ arg[Int]("superCoolArg")
 ```
 Args can also have default values:
 ```scala mdoc
-arg[Int]("superCoolArg", Some(42))
+arg[Int]("superCoolArg", 42)
 ```
 Args also have an `Applicative` instance defined for them:
 ```scala mdoc
 import cats.implicits._
 
-(arg[Int]("arg1"), arg[Int]("arg2", Some(43))).mapN(_ + _)
+(arg[Int]("arg1"), arg[Int]("arg2", 43)).mapN(_ + _)
 
-arg[Int]("arg1") *> arg[Int]("arg2", Some(44))
+arg[Int]("arg1") *> arg[Int]("arg2", 44)
 ```
 
 Args can naturally be used in field definitions:
@@ -44,7 +44,7 @@ final case class Data(str: String)
 
 tpe[IO, Data](
   "Something",
-  "field" -> pure(arg[String]("arg1", Some("default"))){ case (data, arg1) => data.str + arg1 }
+  "field" -> pure(arg[String]("arg1", "default")){ case (data, arg1) => data.str + arg1 }
 )
 ```
 
@@ -62,7 +62,7 @@ input[InputData](
   "InputData",
   (
     arg[String]("name"),
-    arg[Int]("age", Some(42))
+    arg[Int]("age", 42)
   ).mapN(InputData.apply)
 )
 ```

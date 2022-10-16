@@ -24,8 +24,11 @@ gql comes with a few predefined scalars, but you can also define your own.
 For instance, the `ID` type is defined for any `Scalar` as follows:
 ```scala mdoc
 final case class ID[A](value: A)
-implicit def idScalar[F[_], A](implicit inner: Scalar[F, A]): Scalar[F, ID[A]] =
-  Scalar("ID", inner.codec.imap(ID(_))(_.value))
+implicit def idScalar[F[_], A](implicit s: Scalar[F, A]): Scalar[F, ID[A]] =
+  Scalar[F, ID[A]]("ID", x => s.encoder(x.value), v => s.decoder(v).map(ID(_)))
+    .document(
+      "The `ID` scalar type represents a unique identifier, often used to refetch an object or as key for a cache. The ID type appears in a JSON response as a String; however, it is not intended to be human-readable. When expected as an input type, any string (such as `\"4\"`) or integer (such as `4`) input value will be accepted as an ID."
+    )
   
 implicitly[Scalar[Id, ID[String]]]
 ```
@@ -40,15 +43,12 @@ object Color {
   case object Blue extends Color
 }
 
-implicit def color[F[_]] = 
-  Enum(
-    "Color",
-    NonEmptyList.of(
-      "RED" -> Color.Red,
-      "GREEN" -> Color.Green,
-      "BLUE" -> Color.Blue
-    )
-  )
+implicit def color[F[_]] = enum[F, Color](
+  "Color",
+  enumInst("RED", Color.Red),
+  enumInst("GREEN", Color.Green),
+  enumInst("BLUE", Color.Blue)
+)
 ```
 
 `Enum` types have no constraints on the values they can encode or decode, so they can in fact, be dynamically typed:
@@ -56,28 +56,15 @@ implicit def color[F[_]] =
 final case class UntypedEnum(s: String)
 
 implicit def untypedEnum[F[_]] = 
-  Enum(
+  enum[F, UntypedEnum](
     "UntypedEnum",
-    NonEmptyList.of(
-      "FIRST" -> UntypedEnum("FIRST")
-    )
+    enumInst("FIRST", UntypedEnum("FIRST"))
   )
 ```
 :::caution
 Encoding a value that has not been defined in the enum will result in a GraphQL error.
 Therefore, it is recommended to enumerate the image of the enum; only use `sealed trait`s
 :::
-
-`Enum` types can also be constructed with the `dsl`.
-```scala mdoc
-implicit def color2[F[_]]: Enum[F, Color] = 
-  enum(
-    "Color",
-    "RED" -> Color.Red,
-    "GREEN" -> Color.Green,
-    "BLUE" -> Color.Blue
-  )
-```
 
 ## Field
 `Field` is a type that represents a field in a graphql `type` or `interface`.

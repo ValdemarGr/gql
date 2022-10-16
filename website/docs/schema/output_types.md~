@@ -24,8 +24,11 @@ gql comes with a few predefined scalars, but you can also define your own.
 For instance, the `ID` type is defined for any `Scalar` as follows:
 ```scala mdoc
 final case class ID[A](value: A)
-implicit def idScalar[F[_], A](implicit inner: Scalar[F, A]): Scalar[F, ID[A]] =
-  Scalar("ID", inner.codec.imap(ID(_))(_.value))
+implicit def idScalar[F[_], A](implicit s: Scalar[F, A]): Scalar[F, ID[A]] =
+  Scalar[F, ID[A]]("ID", x => s.encoder(x.value), v => s.decoder(v).map(ID(_)))
+    .document(
+      "The `ID` scalar type represents a unique identifier, often used to refetch an object or as key for a cache. The ID type appears in a JSON response as a String; however, it is not intended to be human-readable. When expected as an input type, any string (such as `\"4\"`) or integer (such as `4`) input value will be accepted as an ID."
+    )
   
 implicitly[Scalar[Id, ID[String]]]
 ```
@@ -40,15 +43,12 @@ object Color {
   case object Blue extends Color
 }
 
-implicit def color[F[_]] = 
-  Enum(
-    "Color",
-    NonEmptyList.of(
-      "RED" -> Color.Red,
-      "GREEN" -> Color.Green,
-      "BLUE" -> Color.Blue
-    )
-  )
+implicit def color[F[_]] = enum[F, Color](
+  "Color",
+  enumInst("RED", Color.Red),
+  enumInst("GREEN", Color.Green),
+  enumInst("BLUE", Color.Blue)
+)
 ```
 
 `Enum` types have no constraints on the values they can encode or decode, so they can in fact, be dynamically typed:
@@ -56,11 +56,9 @@ implicit def color[F[_]] =
 final case class UntypedEnum(s: String)
 
 implicit def untypedEnum[F[_]] = 
-  Enum(
+  enum[F, UntypedEnum](
     "UntypedEnum",
-    NonEmptyList.of(
-      "FIRST" -> UntypedEnum("FIRST")
-    )
+    enumInst("FIRST", UntypedEnum("FIRST"))
   )
 ```
 :::caution
@@ -68,24 +66,13 @@ Encoding a value that has not been defined in the enum will result in a GraphQL 
 Therefore, it is recommended to enumerate the image of the enum; only use `sealed trait`s
 :::
 
-`Enum` types can also be constructed with the `dsl`.
-```scala mdoc
-implicit def color2[F[_]]: Enum[F, Color] = 
-  enum(
-    "Color",
-    "RED" -> Color.Red,
-    "GREEN" -> Color.Green,
-    "BLUE" -> Color.Blue
-  )
-```
-
 ## Field
 `Field` is a type that represents a field in a graphql `type` or `interface`.
 A `Field[F, I, T, A]` has arguments `Arg[A]`, a continuation `Out[F, T]` and a resolver that takes `(I, A)` to `F[T]`.
 Field also lazily captures `Out[F, T]`, to allow recursive types.
 The `dsl` lazily captures `Out[F, T]` definitions in the implicit scope.
 :::tip
-Check out the [resolver section](./resolvers) for more info on how resolvers work.
+Check out the [resolver section](./resolvers.md) for more info on how resolvers work.
 :::
 
 ## Type (object)
@@ -120,8 +107,8 @@ implicit def domain[F[_]](implicit F: Applicative[F]): Type[F, Domain] =
 implicit def domain2[F[_]: Applicative]: Type[F, Domain] =
   tpe(
     "Domain",
-    "name" -> field(pure(_.name)),
-    "amount" -> field(pure(_.amount))
+    "name" -> pure(_.name),
+    "amount" -> pure(_.amount)
   )
 ```
 
@@ -133,8 +120,8 @@ sealed trait Animal
 final case class Dog(name: String) extends Animal
 final case class Cat(name: String) extends Animal
 
-implicit def dog[F[_]: Applicative] = tpe[F, Dog]("Dog", "name" -> field(pure(_.name)))
-implicit def cat[F[_]: Applicative] = tpe[F, Cat]("Cat", "name" -> field(pure(_.name)))
+implicit def dog[F[_]: Applicative] = tpe[F, Dog]("Dog", "name" -> pure(_.name))
+implicit def cat[F[_]: Applicative] = tpe[F, Cat]("Cat", "name" -> pure(_.name))
 implicit def animal[F[_]: Applicative] =
   union[F, Animal](
     "Animal",
@@ -218,27 +205,27 @@ final case class Company(
 implicit def person[F[_]: Applicative] = 
   tpe[F, Person](
     "Person",
-    "name" -> field(pure(_.name)),
-    "id" -> field(pure(x => ID(x.id)))
+    "name" -> pure(_.name),
+    "id" -> pure(x => ID(x.id))
   )
   
 implicit def company[F[_]: Applicative] =
   tpe[F, Company](
     "Company",
-    "name" -> field(pure(_.name)),
-    "id" -> field(pure(x => ID(x.id)))
+    "name" -> pure(_.name),
+    "id" -> pure(x => ID(x.id))
   )
   
 implicit def node[F[_]: Applicative] =
   interface[F, Node](
     "Node",
-    "id" -> field(pure(x => ID(x.id)))
+    "id" -> pure(x => ID(x.id))
   )(
     instance[Person]{ case x: Person => x },
     instance[Company]{ case x: Company => x }
   )
 ```
-:::info
+:::note
 In most GraphQL implementations types define the interfaces they implement, 
 but in gql the interfaces define the types that extends it.
 Defining interface implementations the other way around is ambiguous,

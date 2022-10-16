@@ -70,9 +70,9 @@ def schema[F[_]: Async](implicit repo: Repository[F]) = {
     import Episode._
     enum(
       "Episode",
-      "NEWHOPE" -> NewHope,
-      "EMPIRE" -> Empire,
-      "JEDI" -> Jedi
+      enumInst("NEWHOPE", NewHope),
+      enumInst("EMPIRE", Empire),
+      enumInst("JEDI", Jedi)
     )
   }
 
@@ -155,17 +155,15 @@ def query = """
 
 Now we can parse, plan and evaluate the query:
 ```scala
-schema[IO].flatMap { sch =>
-  sch.assemble(query, variables = Map.empty)
-    .traverse { case Executable.Query(run) => run(()).map(_.asGraphQL) }
-}.unsafeRunSync()
-// res0: Either[parser.package.ParseError, io.circe.JsonObject] = Right(
-//   value = object[data -> {
+schema[IO]
+  .map(Compiler[IO].compile(_, query))
+  .flatMap { case Right(Application.Query(run)) => run.map(_.asGraphQL) }
+  .unsafeRunSync()
+// res0: io.circe.JsonObject = object[data -> {
 //   "hero" : {
 //     "primaryFunction" : "Astromech",
 //     "name" : "R2-D2",
 //     "id" : "1000"
 //   }
 // }]
-// )
 ```

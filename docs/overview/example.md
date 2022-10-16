@@ -70,9 +70,9 @@ def schema[F[_]: Async](implicit repo: Repository[F]) = {
     import Episode._
     enum(
       "Episode",
-      "NEWHOPE" -> NewHope,
-      "EMPIRE" -> Empire,
-      "JEDI" -> Jedi
+      enumInst("NEWHOPE", NewHope),
+      enumInst("EMPIRE", Empire),
+      enumInst("JEDI", Jedi)
     )
   }
 
@@ -155,8 +155,8 @@ def query = """
 
 Now we can parse, plan and evaluate the query:
 ```scala mdoc
-schema[IO].flatMap { sch =>
-  sch.assemble(query, variables = Map.empty)
-    .traverse { case Executable.Query(run) => run(()).map(_.asGraphQL) }
-}.unsafeRunSync()
+schema[IO]
+  .map(Compiler[IO].compile(_, query))
+  .flatMap { case Right(Application.Query(run)) => run.map(_.asGraphQL) }
+  .unsafeRunSync()
 ```

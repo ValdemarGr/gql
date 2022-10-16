@@ -305,12 +305,11 @@ object AstImplicits {
         .document("The `Boolean` scalar type represents `true` or `false`.")
 
     implicit def gqlOutOption[F[_], A](implicit tpe: Out[F, A]): Out[F, Option[A]] = OutOpt(tpe)
-
     implicit def gqlInOption[A](implicit tpe: In[A]): In[Option[A]] = InOpt(tpe)
   }
 
   trait LowPriorityImplicits {
     implicit def gqlOutSeq[F[_], A, G[_] <: Seq[_]](implicit tpe: Out[F, A]): Out[F, G[A]] = OutArr(tpe)
-    implicit def gqlSeq[A](implicit tpe: In[A]): In[Seq[A]] = InArr(tpe)
+    implicit def gqlInSeq[A](implicit tpe: In[A]): In[Seq[A]] = InArr(tpe)
   }
 }

@@ -389,10 +389,11 @@ def runVPNSubscription(q: String, n: Int, subscription: Type[IO, Username] = roo
       tpe[IO, Unit]("Query", "queryCannotBeEmpty" -> pure(_ => 42)),
       subscription = subscription.some)
     )
-    .map(Compiler[IO].compile(_, q, subscriptionInput = IO.pure("john_doe")))
+    .map(Compiler[IO].compile(_, q))
     .flatMap{ case Right(Application.Subscription(stream)) => 
-      stream.take(n).map(_.asGraphQL).compile.toList 
+      run("john_doe").take(n).map(_.asGraphQL).compile.toList 
     }
+  }
   
 runVPNSubscription(subscriptionQuery, 3).unsafeRunSync()
 ```
@@ -442,6 +443,6 @@ def root2[F[_]: Async] =
     })
   )
   
-runVPNSubscription(subscriptionQuery, 13, root2[IO]).unsafeRunSync().takeRight(3)
+runVPNSubscription(subscriptionQuery, 13, root2[IO]).unsafeRunSync().map(_.takeRight(3))
 ```
 
