@@ -22,10 +22,10 @@ object Introspection {
     case object NON_NULL extends __TypeKind
   }
 
-  def fromSchemaShape[F[_]: Monad](ss: SchemaShape[F, _, _, _]) = {
+  def fromSchemaShape[F[_]](ss: SchemaShape[F, _, _, _]): NonEmptyList[(String, Field[Id, Unit, _, _])] = {
     val d = ss.discover
 
-    implicit lazy val __typeKind = enum[F, __TypeKind](
+    implicit lazy val __typeKind = enum[Id, __TypeKind](
       "__TypeKind",
       enumInst("SCALAR", __TypeKind.SCALAR),
       enumInst("OBJECT", __TypeKind.OBJECT),
@@ -37,7 +37,7 @@ object Introspection {
       enumInst("NON_NULL", __TypeKind.NON_NULL)
     )
 
-    implicit lazy val __inputValue: Type[F, ArgValue[_]] = tpe[F, ArgValue[_]](
+    implicit lazy val __inputValue: Type[Id, ArgValue[_]] = tpe[Id, ArgValue[_]](
       "__InputValue",
       "name" -> pure(_.name),
       "description" -> pure(_.description),
@@ -51,7 +51,7 @@ object Introspection {
         field: Field[F, _, _, _]
     )
 
-    implicit lazy val namedField = tpe[F, NamedField](
+    implicit lazy val namedField = tpe[Id, NamedField](
       "__Field",
       "name" -> pure(_.name),
       "description" -> pure(_.field.description),
@@ -128,9 +128,9 @@ object Introspection {
     }
     def inclDeprecated = arg[Boolean]("includeDeprecated", false)
 
-    implicit lazy val __type: Type[F, TypeInfo] = tpe[F, TypeInfo](
+    implicit lazy val __type: Type[Id, TypeInfo] = tpe[Id, TypeInfo](
       "__Type",
-      "kind" -> pure[F, TypeInfo, __TypeKind] {
+      "kind" -> pure[Id, TypeInfo, __TypeKind] {
         case TypeInfo.ModifierStack(x) =>
           x.head match {
             case TypeInfo.Modifier.List    => __TypeKind.LIST
@@ -215,7 +215,7 @@ object Introspection {
       }
     )
 
-    implicit lazy val enumValue: Type[F, EnumInstance[_]] = tpe[F, EnumInstance[_]](
+    implicit lazy val enumValue: Type[Id, EnumInstance[_]] = tpe[Id, EnumInstance[_]](
       "__EnumValue",
       "name" -> pure(_.encodedName),
       "description" -> pure(_.description),
@@ -224,7 +224,7 @@ object Introspection {
     )
 
     case object PhantomSchema
-    implicit lazy val schema: Type[F, PhantomSchema.type] = tpe[F, PhantomSchema.type](
+    implicit lazy val schema: Type[Id, PhantomSchema.type] = tpe[Id, PhantomSchema.type](
       "__Schema",
       "types" -> pure(_ => d.outputs.values.toList.map[TypeInfo](TypeInfo.OutInfo(_))),
       "queryType" -> pure(_ => TypeInfo.OutInfo(ss.query): TypeInfo),
@@ -233,7 +233,7 @@ object Introspection {
       "directives" -> pure(_ => List.empty[String])
     )
 
-    lazy val rootFields: NonEmptyList[(String, Field[F, Unit, _, _])] =
+    lazy val rootFields: NonEmptyList[(String, Field[Id, Unit, _, _])] =
       NonEmptyList.of(
         "__schema" -> pure(_ => PhantomSchema),
         "__type" -> pure(arg[String]("name")) { case (_, name) =>
@@ -244,6 +244,6 @@ object Introspection {
         }
       )
 
-    ???
+    rootFields
   }
 }

@@ -12,7 +12,7 @@ object ast extends AstImplicits.Implicits {
   sealed trait AnyType
 
   sealed trait Out[F[_], A] {
-    def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Out[G, A]
+    def mapK[G[_]: Functor](fk: F ~> G): Out[G, A]
   }
 
   sealed trait In[A]
@@ -33,7 +33,7 @@ object ast extends AstImplicits.Implicits {
 
     def fieldMap: Map[String, Field[F, A, _, _]]
 
-    override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Selectable[G, A]
+    override def mapK[G[_]: Functor](fk: F ~> G): Selectable[G, A]
 
     def contramap[B](f: B => A): Out[F, B]
   }
@@ -52,7 +52,7 @@ object ast extends AstImplicits.Implicits {
 
     lazy val fieldMap = fields.toNem.toSortedMap.toMap
 
-    def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Type[G, A] =
+    def mapK[G[_]: Functor](fk: F ~> G): Type[G, A] =
       Type(name, fields.map { case (k, v) => k -> v.mapK(fk) }, description)
   }
 
@@ -80,7 +80,7 @@ object ast extends AstImplicits.Implicits {
 
     lazy val fieldsList: List[(String, Field[F, A, _, _])] = Nil
 
-    def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Union[G, A] =
+    def mapK[G[_]: Functor](fk: F ~> G): Union[G, A] =
       Union(
         name,
         types.map(_.mapK(fk)),
@@ -96,7 +96,7 @@ object ast extends AstImplicits.Implicits {
   ) extends Selectable[F, A] {
     def document(description: String): Interface[F, A] = copy(description = Some(description))
 
-    override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Interface[G, A] =
+    override def mapK[G[_]: Functor](fk: F ~> G): Interface[G, A] =
       copy[G, A](
         instances = instances.map(_.mapK(fk)),
         fields = fields.map { case (k, v) => k -> v.mapK(fk) }
@@ -127,7 +127,7 @@ object ast extends AstImplicits.Implicits {
       with InToplevel[A] {
     def document(description: String): Scalar[F, A] = copy(description = Some(description))
 
-    override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Scalar[G, A] =
+    override def mapK[G[_]: Functor](fk: F ~> G): Scalar[G, A] =
       Scalar(name, encoder, decoder, description)
   }
 
@@ -148,7 +148,7 @@ object ast extends AstImplicits.Implicits {
       with InToplevel[A] {
     def document(description: String): Enum[F, A] = copy(description = Some(description))
 
-    override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Out[G, A] =
+    override def mapK[G[_]: Functor](fk: F ~> G): Out[G, A] =
       Enum(name, mappings, description)
 
     lazy val kv = mappings.map(x => x.encodedName -> x.value)
@@ -168,7 +168,7 @@ object ast extends AstImplicits.Implicits {
 
     type A0 = A
 
-    def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Field[G, I, T, A] =
+    def mapK[G[_]: Functor](fk: F ~> G): Field[G, I, T, A] =
       Field[G, I, T, A](
         args,
         resolve.mapK(fk),
@@ -186,7 +186,7 @@ object ast extends AstImplicits.Implicits {
   }
 
   final case class Instance[F[_], A, B](ol: Eval[Selectable[F, B]])(implicit val specify: A => Option[B]) {
-    def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Instance[G, A, B] =
+    def mapK[G[_]: Functor](fk: F ~> G): Instance[G, A, B] =
       Instance(ol.map(_.mapK(fk)))
 
     def contramap[C](g: C => A): Instance[F, C, B] =
@@ -194,7 +194,7 @@ object ast extends AstImplicits.Implicits {
   }
 
   final case class OutOpt[F[_], A](of: Out[F, A]) extends Out[F, Option[A]] {
-    def mapK[G[_]: MonadCancelThrow](fk: F ~> G): OutOpt[G, A] = OutOpt(of.mapK(fk))
+    def mapK[G[_]: Functor](fk: F ~> G): OutOpt[G, A] = OutOpt(of.mapK(fk))
   }
   object OutOpt {
     def unapply[G[_], A](p: Out[G, A]): Option[Out[G, A]] =
@@ -205,7 +205,7 @@ object ast extends AstImplicits.Implicits {
   }
 
   final case class OutArr[F[_], A, C[_] <: Seq[_]](of: Out[F, A]) extends Out[F, C[A]] {
-    def mapK[G[_]: MonadCancelThrow](fk: F ~> G): OutArr[G, A, C] = OutArr(of.mapK(fk))
+    def mapK[G[_]: Functor](fk: F ~> G): OutArr[G, A, C] = OutArr(of.mapK(fk))
   }
   object OutArr {
     def unapply[G[_], A](p: Out[G, A]): Option[Out[G, A]] =

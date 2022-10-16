@@ -684,7 +684,14 @@ object PreparedQuery {
 
     val rootSchema: F[Type[G, _]] =
       ot match {
-        case P.OperationType.Query        => F.pure(schema.shape.query)
+        // We sneak the introspection query in here
+        case P.OperationType.Query =>
+          val i = schema.shape.introspection
+          val lifted = i.map { case (k, v) =>
+            k -> v.mapK(new (Id ~> G) { def apply[A](a: Id[A]): G[A] = Applicative[G].pure(a) })
+          }
+          val q = schema.shape.query
+          F.pure(q.copy(fields = q.fields concatNel lifted))
         case P.OperationType.Mutation     => raiseOpt(schema.shape.mutation, "no mutation defined in schema", None)
         case P.OperationType.Subscription => raiseOpt(schema.shape.subscription, "no subscription defined in schema", None)
       }

@@ -24,6 +24,8 @@ final case class SchemaShape[F[_], Q, M, S](
   lazy val validate = SchemaShape.validate[F](this)
 
   lazy val render = SchemaShape.render[F](this)
+
+  lazy val introspection = Introspection.fromSchemaShape(this)
 }
 
 object SchemaShape {

@@ -5,7 +5,7 @@ import cats._
 import cats.data._
 
 trait Resolver[F[_], -I, A] {
-  def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Resolver[G, I, A]
+  def mapK[G[_]: Functor](fk: F ~> G): Resolver[G, I, A]
 
   def contramap[B](g: B => I): Resolver[F, B, A]
 
@@ -13,14 +13,8 @@ trait Resolver[F[_], -I, A] {
     CompositionResolver(this.asInstanceOf[Resolver[F, I, Any]], next.asInstanceOf[Resolver[F, Any, O2]])
 }
 
-trait LeafResolver[F[_], I, A] extends Resolver[F, I, A] {
-  override def mapK[G[_]: MonadCancelThrow](fk: F ~> G): LeafResolver[G, I, A]
-
-  override def contramap[B](g: B => I): LeafResolver[F, B, A]
-}
-
-final case class EffectResolver[F[_], I, A](resolve: I => F[Ior[String, A]]) extends LeafResolver[F, I, A] {
-  def mapK[G[_]: MonadCancelThrow](fk: F ~> G): EffectResolver[G, I, A] =
+final case class EffectResolver[F[_], I, A](resolve: I => F[Ior[String, A]]) extends Resolver[F, I, A] {
+  override def mapK[G[_]: Functor](fk: F ~> G): EffectResolver[G, I, A] =
     EffectResolver(resolve.andThen(fk.apply))
 
   def contramap[B](g: B => I): EffectResolver[F, B, A] =
