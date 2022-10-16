@@ -72,13 +72,11 @@ class ValidationTest extends CatsEffectSuite {
     )
 
   lazy val schemaShape = SchemaShape[IO, Unit, Unit, Unit](
-    Some(
-      tpe[IO, Unit](
-        "Query",
-        "badStructure" -> pure(_ => BadStructure()),
-        "duplicateUnion" -> pure(_ => (MutuallyRecursive1(42): MutRecUnion)),
-        "duplicateInterface" -> pure(_ => (MutuallyRecursive1(42): MutRecInterface))
-      )
+    tpe[IO, Unit](
+      "Query",
+      "badStructure" -> pure(_ => BadStructure()),
+      "duplicateUnion" -> pure(_ => (MutuallyRecursive1(42): MutRecUnion)),
+      "duplicateInterface" -> pure(_ => (MutuallyRecursive1(42): MutRecInterface))
     )
   )
 

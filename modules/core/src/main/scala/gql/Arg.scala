@@ -33,7 +33,7 @@ object Arg {
 
 sealed trait DefaultValue[+A]
 object DefaultValue {
-  final case class Primitive[A](value: A, in: InLeaf[A]) extends DefaultValue[A] //{
+  final case class Primitive[A](value: A, in: InLeaf[A]) extends DefaultValue[A]
   final case class Arr[A](values: Seq[DefaultValue[A]]) extends DefaultValue[Seq[A]]
   final case class Obj(fields: NonEmptyChain[(String, DefaultValue[_])]) extends DefaultValue[Nothing]
   case object Null extends DefaultValue[Nothing]

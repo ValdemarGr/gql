@@ -37,6 +37,9 @@ object dsl {
     def apply[A](value: A)(implicit tpe: => InLeaf[A]): DefaultValue.Primitive[A] =
       DefaultValue.Primitive(value, tpe)
 
+    def some[A](value: DefaultValue[A]): DefaultValue[Option[A]] =
+      value.asInstanceOf[DefaultValue[Option[A]]]
+
     def obj(hd: (String, DefaultValue[_]), tl: (String, DefaultValue[_])*): DefaultValue.Obj =
       DefaultValue.Obj(NonEmptyChain.of(hd, tl: _*))
 

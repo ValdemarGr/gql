@@ -40,6 +40,10 @@ class StreamingTest extends CatsEffectSuite {
   )
 
   lazy val schemaShape = SchemaShape[IO, Unit, Unit, Unit](
+    tpe[IO, Unit](
+      "Query",
+      "level1" -> pure(_ => Level1(0))
+    ),
     subscription = Some(
       tpe[IO, Unit](
         "Subscription",

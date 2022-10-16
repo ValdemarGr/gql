@@ -129,13 +129,11 @@ object StarWarsSchema {
       )
 
     SchemaShape[IO, Unit, Unit, Unit](
-      Some(
-        tpe[IO, Unit](
-          "Query",
-          "hero" -> eff(arg[Option[Episode]]("episode")) { case (_, ep) => getHero(ep) },
-          "human" -> eff(arg[String]("id")) { case (_, id) => getHuman(id) },
-          "droid" -> eff(arg[String]("id")) { case (_, id) => getDroid(id) }
-        )
+      tpe[IO, Unit](
+        "Query",
+        "hero" -> eff(arg[Option[Episode]]("episode")) { case (_, ep) => getHero(ep) },
+        "human" -> eff(arg[String]("id")) { case (_, id) => getHuman(id) },
+        "droid" -> eff(arg[String]("id")) { case (_, id) => getDroid(id) }
       )
     )
   }
