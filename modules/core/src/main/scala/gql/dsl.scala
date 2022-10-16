@@ -84,7 +84,7 @@ object dsl {
     eff[F, I, T, A](arg)((i, a) => F.pure(resolver(i, a)))
   }
 
-  def pure[F[_], I, T](resolver: I => T)(implicit F: Applicative[F], tpe: => Out[F, T]): Field[F, I, T, Unit] = {
+  def pure[F[_], I, T](resolver: I => Id[T])(implicit F: Applicative[F], tpe: => Out[F, T]): Field[F, I, T, Unit] = {
     implicit lazy val t0 = tpe
     eff[F, I, T](i => F.pure(resolver(i)))
   }

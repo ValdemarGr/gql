@@ -9,6 +9,8 @@ import gql.resolver._
 import gql.Value._
 
 object ast extends AstImplicits.Implicits {
+  sealed trait AnyType
+
   sealed trait Out[F[_], A] {
     def mapK[G[_]: MonadCancelThrow](fk: F ~> G): Out[G, A]
   }
@@ -19,6 +21,7 @@ object ast extends AstImplicits.Implicits {
 
   sealed trait Toplevel[+A] {
     def name: String
+    def description: Option[String]
   }
 
   sealed trait OutToplevel[F[_], A] extends Out[F, A] with Toplevel[A]
