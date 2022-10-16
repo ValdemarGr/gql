@@ -16,7 +16,7 @@ final case class SchemaShape[F[_], Q, M, S](
     mutation: Option[Type[F, M]] = Option.empty[Type[F, Unit]],
     subscription: Option[Type[F, S]] = Option.empty[Type[F, Unit]]
 ) {
-  def mapK[G[_]: MonadCancelThrow](fk: F ~> G): SchemaShape[G, Q, M, S] =
+  def mapK[G[_]: Functor](fk: F ~> G): SchemaShape[G, Q, M, S] =
     SchemaShape(query.mapK(fk), mutation.map(_.mapK(fk)), subscription.map(_.mapK(fk)))
 
   lazy val discover = SchemaShape.discover[F](this)
@@ -184,6 +184,7 @@ object SchemaShape {
   }
   // TODO has really bad running time on some inputs
   // since it doesn't remember what it has seen
+  // Update: when #55 is fixed, this should be implicitly be fixed
   def validate[F[_]](schema: SchemaShape[F, _, _, _]): Chain[Problem] = {
     final case class ValidationState(
         problems: Chain[Problem],

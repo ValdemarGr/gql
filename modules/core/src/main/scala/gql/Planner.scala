@@ -20,7 +20,7 @@ import scala.io.AnsiColor
 trait Planner[F[_]] { self =>
   def plan(naive: Planner.NodeTree): F[Planner.NodeTree]
 
-  def mapK[G[_]: MonadCancelThrow](fk: F ~> G)(implicit F: Functor[F]): Planner[G] =
+  def mapK[G[_]](fk: F ~> G)(implicit F: Functor[F]): Planner[G] =
     new Planner[G] {
       def plan(naive: Planner.NodeTree): G[Planner.NodeTree] = fk(self.plan(naive))
     }

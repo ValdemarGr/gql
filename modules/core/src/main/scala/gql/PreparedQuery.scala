@@ -120,19 +120,6 @@ object PreparedQuery {
         }
     }
 
-  type M[A] = State[Prep, ValidatedNec[PositionalError, A]]
-
-  object M {
-    def pure[A](a: A): M[A] = State.pure(a.validNec)
-
-    def flatMap[A, B](fa: M[A])(f: A => M[B]): M[B] = {
-      fa.flatMap {
-        case Validated.Invalid(e) => State.pure(Validated.Invalid(e))
-        case Validated.Valid(a)   => f(a)
-      }
-    }
-  }
-
   def underlyingOutputTypename[G[_]](ot: Out[G, _]): String = ot match {
     case Enum(name, _, _)         => name
     case Union(name, _, _)        => name

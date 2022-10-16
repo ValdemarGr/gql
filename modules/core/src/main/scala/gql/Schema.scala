@@ -18,7 +18,7 @@ final case class Schema[F[_], Q, M, S](
 ) {
   protected implicit lazy val s = statistics
 
-  def mapK[G[_]: MonadCancelThrow](fk: F ~> G)(implicit F: Functor[F]): Schema[G, Q, M, S] =
+  def mapK[G[_]: Functor](fk: F ~> G)(implicit F: Functor[F]): Schema[G, Q, M, S] =
     Schema(shape.mapK(fk), state.mapK(fk), statistics.mapK(fk), planner.mapK(fk))
 
   lazy val validate: Chain[SchemaShape.Problem] = shape.validate
