@@ -43,10 +43,10 @@ class ValidationTest extends CatsEffectSuite {
       "ci" -> pure(
         arg[CyclicInput](
           "ci",
-          default.obj(
-            "nonExistent" -> default(42),
-            "value" -> default("42"),
-            "value" -> default(42)
+          value.obj(
+            "nonExistent" -> value.scalar(42),
+            "value" -> value.scalar("42"),
+            "value" -> value.scalar(42)
           )
         )
       ) { case _ => 24 }

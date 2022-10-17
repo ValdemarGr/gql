@@ -39,9 +39,9 @@ object ast extends AstImplicits.Implicits {
   }
 
   final case class Type[F[_], A](
-      name: String,
-      fields: NonEmptyList[(String, Field[F, A, _, _])],
-      description: Option[String] = None
+    name: String,
+    fields: NonEmptyList[(String, Field[F, A, _, _])],
+    description: Option[String] = None
   ) extends Selectable[F, A] {
     def document(description: String): Type[F, A] = copy(description = Some(description))
 
@@ -57,17 +57,17 @@ object ast extends AstImplicits.Implicits {
   }
 
   final case class Input[A](
-      name: String,
-      fields: NonEmptyArg[A],
-      description: Option[String] = None
+    name: String,
+    fields: NonEmptyArg[A],
+    description: Option[String] = None
   ) extends InToplevel[A] {
     def document(description: String): Input[A] = copy(description = Some(description))
   }
 
   final case class Union[F[_], A](
-      name: String,
-      types: NonEmptyList[Instance[F, A, Any]],
-      description: Option[String] = None
+    name: String,
+    types: NonEmptyList[Instance[F, A, Any]],
+    description: Option[String] = None
   ) extends Selectable[F, A] {
     def document(description: String): Union[F, A] = copy(description = Some(description))
 
@@ -89,10 +89,10 @@ object ast extends AstImplicits.Implicits {
   }
 
   final case class Interface[F[_], A](
-      name: String,
-      instances: List[Instance[F, A, Any]],
-      fields: NonEmptyList[(String, Field[F, A, _, _])],
-      description: Option[String] = None
+    name: String,
+    instances: List[Instance[F, A, Any]],
+    fields: NonEmptyList[(String, Field[F, A, _, _])],
+    description: Option[String] = None
   ) extends Selectable[F, A] {
     def document(description: String): Interface[F, A] = copy(description = Some(description))
 
@@ -118,10 +118,10 @@ object ast extends AstImplicits.Implicits {
   }
 
   final case class Scalar[F[_], A](
-      name: String,
-      encoder: A => Value,
-      decoder: Value => Either[String, A],
-      description: Option[String] = None
+    name: String,
+    encoder: A => Value,
+    decoder: Value => Either[String, A],
+    description: Option[String] = None
   ) extends OutToplevel[F, A]
       with InLeaf[A]
       with InToplevel[A] {
@@ -129,20 +129,23 @@ object ast extends AstImplicits.Implicits {
 
     override def mapK[G[_]: Functor](fk: F ~> G): Scalar[G, A] =
       Scalar(name, encoder, decoder, description)
+
+    def eimap[B](f: A => Either[String, B])(g: B => A): Scalar[F, B] =
+      Scalar(name, encoder.compose(g), decoder.andThen(_.flatMap(f)), description)
   }
 
   final case class EnumInstance[A](
-      encodedName: String,
-      value: A,
-      description: Option[String] = None
+    encodedName: String,
+    value: A,
+    description: Option[String] = None
   ) {
     def document(description: String): EnumInstance[A] = copy(description = Some(description))
   }
 
   final case class Enum[F[_], A](
-      name: String,
-      mappings: NonEmptyList[EnumInstance[A]],
-      description: Option[String] = None
+    name: String,
+    mappings: NonEmptyList[EnumInstance[A]],
+    description: Option[String] = None
   ) extends OutToplevel[F, A]
       with InLeaf[A]
       with InToplevel[A] {
@@ -159,10 +162,10 @@ object ast extends AstImplicits.Implicits {
   }
 
   final case class Field[F[_], -I, T, A](
-      args: Arg[A],
-      resolve: Resolver[F, (I, A), T],
-      output: Eval[Out[F, T]],
-      description: Option[String] = None
+    args: Arg[A],
+    resolve: Resolver[F, (I, A), T],
+    output: Eval[Out[F, T]],
+    description: Option[String] = None
   ) {
     def document(description: String): Field[F, I, T, A] = copy(description = Some(description))
 
@@ -234,12 +237,11 @@ object ast extends AstImplicits.Implicits {
   }
 
   final case class ID[A](value: A) extends AnyVal
-  implicit def idTpe[F[_], A](implicit s: Scalar[F, A]): In[ID[A]] = {
+  implicit def idTpe[F[_], A](implicit s: Scalar[F, A]): In[ID[A]] =
     Scalar[F, ID[A]]("ID", x => s.encoder(x.value), v => s.decoder(v).map(ID(_)))
       .document(
         "The `ID` scalar type represents a unique identifier, often used to refetch an object or as key for a cache. The ID type appears in a JSON response as a String; however, it is not intended to be human-readable. When expected as an input type, any string (such as `\"4\"`) or integer (such as `4`) input value will be accepted as an ID."
       )
-  }
 
   object Scalar {
     def fromCirce[F[_], A](name: String)(implicit enc: Encoder[A], dec: Decoder[A]): Scalar[F, A] =
