@@ -520,7 +520,7 @@ object SchemaShape {
     import gql.dsl._
     val d = ss.discover
 
-    implicit lazy val __typeKind = enum[Id, __TypeKind](
+    implicit lazy val __typeKind = enum[__TypeKind](
       "__TypeKind",
       enumInst("SCALAR", __TypeKind.SCALAR),
       enumInst("OBJECT", __TypeKind.OBJECT),
@@ -633,7 +633,7 @@ object SchemaShape {
         case oi: TypeInfo.OutInfo =>
           oi.inner match {
             case _: Scalar[_]       => __TypeKind.SCALAR
-            case _: Enum[F, _]      => __TypeKind.ENUM
+            case _: Enum[_]         => __TypeKind.ENUM
             case _: Type[F, _]      => __TypeKind.OBJECT
             case _: Interface[F, _] => __TypeKind.INTERFACE
             case _: Union[F, _]     => __TypeKind.UNION

@@ -32,7 +32,7 @@ object dsl {
     def scalar[A](value: A)(implicit tpe: => Scalar[A]) =
       tpe.encoder(value)
 
-    def fromEnum[F[_], A](value: A)(implicit tpe: => Enum[F, A]) =
+    def fromEnum[A](value: A)(implicit tpe: => Enum[A]) =
       tpe.revm.get(value).map(enumValue)
 
     def enumValue(value: String) = Value.EnumValue(value)
@@ -90,8 +90,8 @@ object dsl {
   def enumInst[A](name: String, value: A): EnumInstance[A] =
     EnumInstance(name, value)
 
-  def enum[F[_], A](name: String, hd: EnumInstance[A], tl: EnumInstance[A]*) =
-    Enum[F, A](name, NonEmptyList(hd, tl.toList))
+  def enum[A](name: String, hd: EnumInstance[A], tl: EnumInstance[A]*) =
+    Enum[A](name, NonEmptyList(hd, tl.toList))
 
   final case class PartiallyAppliedInstance[B](val dummy: Boolean = false) extends AnyVal {
     def apply[F[_], A](pf: PartialFunction[A, B])(implicit s: => Selectable[F, B]): Instance[F, A, B] =

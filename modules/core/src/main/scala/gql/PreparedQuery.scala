@@ -309,7 +309,7 @@ object PreparedQuery {
           case (ol: Selectable[G, Any], Some(ss)) =>
             prepareSelections[F, G](ol, ss, variableMap, fragments, tn)
               .map(Selection(_))
-          case (e: Enum[G, Any], None) =>
+          case (e: Enum[Any], None) =>
             F.pure(PreparedLeaf(e.name, x => Json.fromString(e.revm(x))))
           case (s: Scalar[Any], None) =>
             F.pure(PreparedLeaf(s.name, x => s.encoder(x).asJson))

@@ -93,8 +93,8 @@ object StarWarsSchema {
     IO(droidData.get(id))
 
   lazy val schemaShape = {
-    implicit lazy val episode: Enum[IO, Episode] =
-      enum[IO, Episode](
+    implicit lazy val episode: Enum[Episode] =
+      enum[Episode](
         "Episode",
         enumInst("NEWHOPE", Episode.NEWHOPE),
         enumInst("EMPIRE", Episode.EMPIRE),

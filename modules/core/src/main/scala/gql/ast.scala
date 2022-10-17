@@ -142,16 +142,16 @@ object ast extends AstImplicits.Implicits {
     def document(description: String): EnumInstance[A] = copy(description = Some(description))
   }
 
-  final case class Enum[+F[_], A](
+  final case class Enum[A](
       name: String,
       mappings: NonEmptyList[EnumInstance[A]],
       description: Option[String] = None
-  ) extends OutToplevel[F, A]
+  ) extends OutToplevel[fs2.Pure, A]
       with InLeaf[A]
       with InToplevel[A] {
-    def document(description: String): Enum[F, A] = copy(description = Some(description))
+    def document(description: String): Enum[A] = copy(description = Some(description))
 
-    override def mapK[F2[x] >: F[x], G[_]: Functor](fk: F2 ~> G): Out[G, A] =
+    override def mapK[F2[x] >: fs2.Pure[x], G[_]: Functor](fk: F2 ~> G): Out[G, A] =
       Enum(name, mappings, description)
 
     lazy val kv = mappings.map(x => x.encodedName -> x.value)
