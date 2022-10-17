@@ -344,4 +344,15 @@ query withNestedFragments {
         .lastOrError
     } yield ec
   }
+
+  final case class Test()
+  implicit lazy val testType = tpe[fs2.Pure, Test](
+    "Test",
+    "value" -> pure(_ => 42)
+  )
+
+  lazy val superType = tpe[Id, Unit](
+    "Super",
+    "test" -> pure(_ => Test())
+  )
 }

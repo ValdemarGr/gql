@@ -355,6 +355,8 @@ class InterpreterImpl[F[_]](
       case edge :: xs =>
         val edgeRes: WriterT[F, Chain[EvalFailure], Chain[EvalNode[Any]]] =
           edge.resolver match {
+            case PureResolver(resolve) =>
+              W.pure(inputs.map(en => en.setValue(resolve(en.value))))
             case EffectResolver(resolve) =>
               inputs.parFlatTraverse { in =>
                 attemptUser(

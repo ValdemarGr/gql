@@ -16,8 +16,8 @@ final case class SchemaShape[F[_], Q, M, S](
     mutation: Option[Type[F, M]] = Option.empty[Type[F, Unit]],
     subscription: Option[Type[F, S]] = Option.empty[Type[F, Unit]]
 ) {
-  def mapK[G[_]: Functor](fk: F ~> G): SchemaShape[G, Q, M, S] =
-    SchemaShape(query.mapK(fk), mutation.map(_.mapK(fk)), subscription.map(_.mapK(fk)))
+  // def mapK[G[_]: Functor](fk: F ~> G): SchemaShape[G, Q, M, S] =
+  //   SchemaShape(query.mapK(fk), mutation.map(_.mapK(fk)), subscription.map(_.mapK(fk)))
 
   lazy val discover = SchemaShape.discover[F](this)
 
@@ -632,7 +632,7 @@ object SchemaShape {
           }
         case oi: TypeInfo.OutInfo =>
           oi.inner match {
-            case _: Scalar[F, _]    => __TypeKind.SCALAR
+            case _: Scalar[_]       => __TypeKind.SCALAR
             case _: Enum[F, _]      => __TypeKind.ENUM
             case _: Type[F, _]      => __TypeKind.OBJECT
             case _: Interface[F, _] => __TypeKind.INTERFACE

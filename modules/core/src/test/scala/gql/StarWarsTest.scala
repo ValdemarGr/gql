@@ -53,7 +53,7 @@ class StarWarsTest extends CatsEffectSuite {
     }
   }
 
-  test("id and friends of R2D2") {
+  test("id and friends of R2D2".only) {
     val q = """
       query HeroNameQuery {
         hero {

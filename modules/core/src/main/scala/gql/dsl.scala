@@ -29,7 +29,7 @@ object dsl {
   }
 
   object value {
-    def scalar[F[_], A](value: A)(implicit tpe: => Scalar[F, A]) =
+    def scalar[A](value: A)(implicit tpe: => Scalar[A]) =
       tpe.encoder(value)
 
     def fromEnum[F[_], A](value: A)(implicit tpe: => Enum[F, A]) =
@@ -77,14 +77,14 @@ object dsl {
   }
 
   // Not sure if this is a compiler bug or something since all type parameters except I are invariant?
-  def pure[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => Id[T])(implicit F: Applicative[F], tpe: => Out[F, T]): Field[F, I, T, A] = {
+  def pure[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T, A] = {
     implicit lazy val t0 = tpe
-    eff[F, I, T, A](arg)((i, a) => F.pure(resolver(i, a)))
+    field(arg)(PureResolver[(I, A), T] { case (i, a) => resolver(i, a) })
   }
 
-  def pure[F[_], I, T](resolver: I => Id[T])(implicit F: Applicative[F], tpe: => Out[F, T]): Field[F, I, T, Unit] = {
+  def pure[F[_], I, T](resolver: I => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T, Unit] = {
     implicit lazy val t0 = tpe
-    eff[F, I, T](i => F.pure(resolver(i)))
+    field(PureResolver[I, T](resolver))
   }
 
   def enumInst[A](name: String, value: A): EnumInstance[A] =

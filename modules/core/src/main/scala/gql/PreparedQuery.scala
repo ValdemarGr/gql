@@ -111,6 +111,9 @@ object PreparedQuery {
       case r @ EffectResolver(_) =>
         val thisName = s"${parentName}_effect"
         nextId[F].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, thisName)), thisName))
+      case r @ PureResolver(_) =>
+        val thisName = s"${parentName}_pure"
+        nextId[F].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, thisName)), thisName))
       case r @ StreamResolver(_) =>
         val thisName = s"${parentName}_stream"
         nextId[F].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, thisName)), thisName))
@@ -270,7 +273,7 @@ object PreparedQuery {
       P.Value.ObjectValue(provided.map(a => a.name -> a.value))
 
     val decObj = args match {
-      case PureArg(value) if provided.isEmpty => F.pure(value)
+      case PureArg(value) if provided.isEmpty => value.fold(nec => raise(nec.head, None), F.pure(_))
       case PureArg(_) =>
         raise(s"field ${gqlField.name} does not accept arguments", Some(caret))
       case nea @ NonEmptyArg(_, _) =>
@@ -308,7 +311,7 @@ object PreparedQuery {
               .map(Selection(_))
           case (e: Enum[G, Any], None) =>
             F.pure(PreparedLeaf(e.name, x => Json.fromString(e.revm(x))))
-          case (s: Scalar[G, Any], None) =>
+          case (s: Scalar[Any], None) =>
             F.pure(PreparedLeaf(s.name, x => s.encoder(x).asJson))
           case (o, Some(_)) => raise(s"type ${friendlyName[G, Any](o)} cannot have selections", Some(selCaret))
           case (o, None)    => raise(s"object like type ${friendlyName[G, Any](o)} must have a selection", Some(selCaret))
@@ -583,8 +586,8 @@ object PreparedQuery {
 
     fieldsF
       .map(_.toList.toMap)
-      // TODO
-      .flatMap(x => arg.decode(x).fold(_ => ???, x => F.pure(x)))
+      // TODO use whole of validated
+      .flatMap(arg.decode(_).fold(nec => raise(nec.head, None), F.pure(_)))
   }
 
   def parserValueToValue[F[_]](v: P.Value)(implicit
@@ -734,7 +737,7 @@ object PreparedQuery {
         )
       }
 
-      fa.tupleLeft(ot)
+      fa tupleLeft ot
     }
   }
 
