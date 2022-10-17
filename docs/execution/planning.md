@@ -1,6 +1,7 @@
 ---
 title: Planning
 ---
+## Planner algorithm
 Initially there must be a schema and query:
 ```scala mdoc
 type B = String
@@ -95,3 +96,6 @@ Said in another way, nodes that do not participate in batching will be evaluated
 
 Nodes that do participate in a batch, will semantically block until all inputs have arrived.
 :::
+
+## Debugging
+TODO show query plan printing

@@ -66,7 +66,7 @@ Both smart constructors are overloaded with a variant that take an explicit "nex
 
 The `StreamResolver` and `BatchResolver` can be lifted into a `Field` via the `field` smart constructor.
 
-## Sturctures
+## Structures
 `Type`s, `Enum`s, `Interface`s and `Union`s are constructed via the `tpe`, `enum`, `interface` and `union` smart constructors respectively.
 The structural type smart constructors take a varargs argument structural values that are converted into non empty lists.
 
@@ -92,8 +92,5 @@ val it =
   )(instance[Dog.type]{ case Dog => Dog })
 ```
 
-## Arg
-TODO
-
-## Input
-TODO
+## Input types
+Review the [Input types](./input_types) section for more information.

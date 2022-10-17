@@ -7,7 +7,7 @@ The source code for the DSL is very easy to follow and as such, the best documen
 ## Fields
 The simplest form of field construction comes from the `field` smart constructor.
 It simply lifts a resolver (and optionally an argument) into a field.
-```scala
+```scala mdoc
 import cats.data._
 import cats.effect._
 import cats.implicits._
@@ -20,22 +20,6 @@ def intArg = arg[Int]("intArg")
 val withArg = field(intArg)(EffectResolver[IO, (String, Int), String]{ case (s, i) => 
   IO.pure((s + i.toString()).rightIor)
 })
-// withArg: gql.ast.Field[[A]IO[A], String, String, Int] = Field(
-//   args = NonEmptyArg(
-//     nec = Singleton(
-//       a = ArgValue(
-//         name = "intArg",
-//         input = cats.Later@314e4675,
-//         defaultValue = None,
-//         description = None
-//       )
-//     ),
-//     decode = gql.Arg$$$Lambda$6795/0x0000000101e7f040@6c94978c
-//   ),
-//   resolve = EffectResolver(resolve = <function1>),
-//   output = cats.Later@5e57c928,
-//   description = None
-// )
 ```
 
 ### Value resolution
@@ -46,7 +30,7 @@ We must decide if the field is pure, an effect or a fallible effect:
 :::note
 The effect constructor is named `eff` to avoid collisions with cats-effect.
 :::
-```scala
+```scala mdoc
 final case class Person(
   name: String
 )
@@ -62,7 +46,7 @@ def t =
   )
 ```
 Thereafter we must decide if any of the fields requires arguments:
-```scala
+```scala mdoc
 def familyName = arg[String]("familyName")
 
 def t2 =
@@ -82,7 +66,7 @@ Both smart constructors are overloaded with a variant that take an explicit "nex
 
 The `StreamResolver` and `BatchResolver` can be lifted into a `Field` via the `field` smart constructor.
 
-## Sturctures
+## Structures
 `Type`s, `Enum`s, `Interface`s and `Union`s are constructed via the `tpe`, `enum`, `interface` and `union` smart constructors respectively.
 The structural type smart constructors take a varargs argument structural values that are converted into non empty lists.
 
@@ -91,7 +75,7 @@ The structural type smart constructors take a varargs argument structural values
 The implementations are called `Instance`s and consist of a `PartialFunction` that goes from the unifying type to an implementing type and a gql type for the implementing type.
 
 The `instance` smart constructor partially applies the implementing type parameter required for an `Instance`, such that the scala compiler can be leveraged to infer the remaining type parameters:
-```scala
+```scala mdoc
 trait Animal {
   def sound: String
 }
@@ -106,29 +90,7 @@ val it =
     "Animal",
     "sound" -> pure(_.sound)
   )(instance[Dog.type]{ case Dog => Dog })
-// it: gql.ast.Interface[[_]IO[_], Animal] = Interface(
-//   name = "Animal",
-//   instances = List(Instance(ol = cats.Later@6c504e56)),
-//   fields = NonEmptyList(
-//     head = (
-//       "sound",
-//       Field(
-//         args = PureArg(value = ()),
-//         resolve = EffectResolver(
-//           resolve = gql.dsl$$$Lambda$6798/0x0000000101e7d040@112b5fa8
-//         ),
-//         output = cats.Later@1b9e702a,
-//         description = None
-//       )
-//     ),
-//     tail = List()
-//   ),
-//   description = None
-// )
 ```
 
-## Arg
-TODO
-
-## Input
-TODO
+## Input types
+Review the [Input types](./input_types) section for more information.

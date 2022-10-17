@@ -23,30 +23,25 @@ object dsl {
     Arg.make[A](name, None)
   }
 
-  def arg[A](name: String, defaultValue: A)(implicit tpe: => InLeaf[A]): NonEmptyArg[A] = {
-    implicit lazy val t0 = tpe
-    Arg.make[A](name, Some(default(defaultValue)))
-  }
-
-  def arg[A](name: String, default: DefaultValue[A])(implicit tpe: => In[A]): NonEmptyArg[A] = {
+  def arg[A](name: String, default: Value)(implicit tpe: => In[A]): NonEmptyArg[A] = {
     implicit lazy val t0 = tpe
     Arg.make[A](name, Some(default))
   }
 
-  object default {
-    def apply[A](value: A)(implicit tpe: => InLeaf[A]): DefaultValue.Primitive[A] =
-      DefaultValue.Primitive(value, tpe)
+  object value {
+    def scalar[F[_], A](value: A)(implicit tpe: => Scalar[F, A]) =
+      tpe.encoder(value)
 
-    def some[A](value: DefaultValue[A]): DefaultValue[Option[A]] =
-      value.asInstanceOf[DefaultValue[Option[A]]]
+    def fromEnum[F[_], A](value: A)(implicit tpe: => Enum[F, A]) =
+      tpe.revm.get(value).map(enumValue)
 
-    def obj(hd: (String, DefaultValue[_]), tl: (String, DefaultValue[_])*): DefaultValue.Obj =
-      DefaultValue.Obj(NonEmptyChain.of(hd, tl: _*))
+    def enumValue(value: String) = Value.EnumValue(value)
 
-    def arr[A](xs: Seq[DefaultValue[A]]): DefaultValue.Arr[A] =
-      DefaultValue.Arr(xs)
+    def arr(xs: Value*) = Value.ArrayValue(xs.toVector)
 
-    def none: DefaultValue.Null.type = DefaultValue.Null
+    def obj(xs: (String, Value)*) = Value.ObjectValue(xs.toMap)
+
+    def nullValue = Value.NullValue
   }
 
   def field[F[_], I, T, A](arg: Arg[A])(resolver: Resolver[F, (I, A), T])(implicit tpe: => Out[F, T]): Field[F, I, T, A] =

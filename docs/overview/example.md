@@ -117,7 +117,6 @@ def schema[F[_]: Async](implicit repo: Repository[F]) = {
 Lets construct a simple in-memory repository and query:
 ```scala mdoc
 import cats.effect._
-import cats.effect.unsafe.implicits.global
 
 implicit def repo = new Repository[IO] {
   def getHero(episode: Episode): IO[Character] =
@@ -154,9 +153,22 @@ def query = """
 ```
 
 Now we can parse, plan and evaluate the query:
-```scala mdoc
+
+```scala mdoc:passthrough
+mdoc.IORunPrint(
 schema[IO]
   .map(Compiler[IO].compile(_, query))
   .flatMap { case Right(Application.Query(run)) => run.map(_.asGraphQL) }
-  .unsafeRunSync()
+)("""
+schema[IO]
+  .map(Compiler[IO].compile(_, query))
+  .flatMap { case Right(Application.Query(run)) => run.map(_.asGraphQL) }
+""")
 ```
+
+<!-- <details> 
+<summary>Output</summary>
+
+lol
+
+</details> --->

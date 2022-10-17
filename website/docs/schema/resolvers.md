@@ -1,9 +1,8 @@
 ---
 title: Resolvers
 ---
-Resolvers are where the most interest should lie, since they act as the layer between input type and next continuation.
-The raw resolver types are as expressive as possible to allow as many use cases as possible, which can cause a lot of noise in the daily use of gql.
-Therefore the `dsl` should be enough to get started and this section should act as an introduction for the curious.
+Resolvers are where the most interest should be placed, since they act as the layer between input type and next continuation;
+Resolvers are effectively the edges in the graph.
 
 :::note
 The error types have been omitted from the resolver types for brevity.
@@ -41,7 +40,7 @@ import gql.resolver._
 import cats.effect._
 
 val brState = BatchResolver[IO, Int, Int](keys => IO.pure(keys.map(k => k -> (k * 2)).toMap))
-// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@1d78e267
+// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@48ce0f03
 ```
 A `State` monad is used to keep track of the batchers that have been created and unique id generation.
 During schema construction, `State` can be composed using `Monad`ic operations.
@@ -51,6 +50,7 @@ The `Schema` companion object contains smart constructors that run the `State` m
 ```scala
 import gql._
 import gql.dsl._
+import gql.ast._
 import cats._
 import cats.implicits._
 
@@ -109,6 +109,32 @@ def orderedBr: BatchResolver[IO, List[Int], List[String]] =
 :::
 :::tip
 For more information on how the batch resolver works, check out the [planning section](./../execution/planning.md).
+:::
+:::tip
+The `BatchResolver` can also be used to fetch multiple fields of different value efficiently and lazily.
+
+Say you had a document store that had may fields, but you only wanted to fetch a few of them.
+You also don't want the interpreter to construct a new request for each field.
+```scala
+type DocId = String
+
+final case class DocumentQuery(id: DocId, field: String)
+sealed trait DocumentValue
+
+// Do some groupBy id to collect all requested fields for a DocId
+def documentResolver: BatchResolver[IO, Set[DocumentQuery], Map[DocumentQuery, DocumentValue]] = ???
+
+lazy val adjusted = documentResolver.contramap[DocumentQuery](Set(_)).map{ case (q, m) => m(q) }
+
+implicit lazy val documentValue: Out[IO, DocumentValue] = ???
+
+def document = tpe[IO, DocId](
+  "Document",
+  "someField" -> field(adjusted.contramap(DocumentQuery(_, "someField"))),
+  "otherField" -> field(adjusted.contramap(DocumentQuery(_, "otherField"))),
+  "anotherField" -> field(adjusted.contramap(DocumentQuery(_, "anotherField")))
+)
+```
 :::
 
 ### Example of a database batcher
@@ -210,7 +236,7 @@ final case class DomainBatchers[F[_]](
     .map[Int]{ case (_, m) => m.values.toList.combineAll }
   )
 ).mapN(DomainBatchers.apply)
-// res2: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], DomainBatchers[[A]IO[A]]] = cats.data.IndexedStateT@2c01144d
+// res2: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], DomainBatchers[[A]IO[A]]] = cats.data.IndexedStateT@790a2b54
 ```
 
 ## StreamResolver
@@ -413,7 +439,7 @@ runVPNSubscription(subscriptionQuery, 3).unsafeRunSync()
 // emitting for user john_doe
 // emitting for user john_doe
 // emitting for user john_doe
-// Disconnecting from VPN after 715ms for john_doe ...
+// Disconnecting from VPN after 665ms for john_doe ...
 // res3: List[io.circe.JsonObject] = List(
 //   object[data -> {
 //   "vpn" : {
@@ -484,8 +510,8 @@ bench(runVPNSubscription(subscriptionQuery, 10)).unsafeRunSync()
 // emitting for user john_doe
 // emitting for user john_doe
 // emitting for user john_doe
-// Disconnecting from VPN after 1025ms for john_doe ...
-// res4: String = "duration was 1046ms"
+// Disconnecting from VPN after 1011ms for john_doe ...
+// res4: String = "duration was 1020ms"
 
 bench(runVPNSubscription(subscriptionQuery, 3)).unsafeRunSync()
 // Connecting to VPN for john_doe ...
@@ -493,15 +519,15 @@ bench(runVPNSubscription(subscriptionQuery, 3)).unsafeRunSync()
 // emitting for user john_doe
 // emitting for user john_doe
 // emitting for user john_doe
-// Disconnecting from VPN after 668ms for john_doe ...
-// res5: String = "duration was 686ms"
+// Disconnecting from VPN after 657ms for john_doe ...
+// res5: String = "duration was 670ms"
 
 bench(runVPNSubscription(subscriptionQuery, 1)).unsafeRunSync()
 // Connecting to VPN for john_doe ...
 // Connected to VPN for john_doe!
 // emitting for user john_doe
-// Disconnecting from VPN after 569ms for john_doe ...
-// res6: String = "duration was 588ms"
+// Disconnecting from VPN after 562ms for john_doe ...
+// res6: String = "duration was 568ms"
 
 def fastQuery = """
   subscription {
@@ -510,7 +536,7 @@ def fastQuery = """
 """
 
 bench(runVPNSubscription(fastQuery, 1)).unsafeRunSync()
-// res7: String = "duration was 6ms"
+// res7: String = "duration was 3ms"
 ```
 
 Say that the VPN connection was based on a OAuth token that needed to be refreshed every 600 milliseconds.
@@ -554,14 +580,14 @@ runVPNSubscription(subscriptionQuery, 13, root2[IO]).unsafeRunSync().takeRight(3
 // emitting for user token-john_doe-0
 // Connected to VPN for token-john_doe-1!
 // emitting for user token-john_doe-0
-// emitting for user token-john_doe-1
 // emitting for user token-john_doe-0
-// Disconnecting from VPN after 1157ms for token-john_doe-0 ...
+// emitting for user token-john_doe-1
+// Disconnecting from VPN after 1165ms for token-john_doe-0 ...
 // a new token was issued: token-john_doe-2
 // Connecting to VPN for token-john_doe-2 ...
 // emitting for user token-john_doe-1
 // Connection for token-john_doe-2 cancelled while connecting!
-// Disconnecting from VPN after 608ms for token-john_doe-1 ...
+// Disconnecting from VPN after 615ms for token-john_doe-1 ...
 // res8: List[io.circe.JsonObject] = List(
 //   object[data -> {
 //   "vpn" : {
@@ -611,3 +637,10 @@ runVPNSubscription(subscriptionQuery, 13, root2[IO]).unsafeRunSync().takeRight(3
 // )
 ```
 
+## Resolver composition
+Resolvers can also be composed via the `andThen` method that exists on all resolvers.
+This means that the output of one resolver can be used as the input of another resolver.
+This also means that `Stream`, `Batch` and `Effect` resolvers can be combined in any order.
+
+For instance, one can efficiently fetch some list of ids, then subscribe to the data of each id and for all changed ids, efficiently fetch the changed data.
+This can be achieved by composing `Batch`, `Stream` and then `Batch` again.

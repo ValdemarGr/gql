@@ -16,127 +16,38 @@ More information can be found in the [output types](./output_types#enum) section
 The arg type has a couple of uses.
 The first and simplest way of using args is for, well, arguments.
 The dsl has a smart constructor for arguments that summons the `In[A]` type from the implicit scope, for the argument.
-```scala
+```scala mdoc:silent
 import gql.dsl._
 import gql.ast._
 
+
 arg[Int]("superCoolArg")
-// res0: gql.NonEmptyArg[Int] = NonEmptyArg(
-//   nec = Singleton(
-//     a = ArgValue(
-//       name = "superCoolArg",
-//       input = cats.Later@12b4240c,
-//       defaultValue = None,
-//       description = None
-//     )
-//   ),
-//   decode = gql.Arg$$$Lambda$6795/0x0000000101e7f040@2fdaf0e3
-// )
 ```
-Args can also have default values:
-```scala
-arg[Int]("superCoolArg", 42)
-// res1: gql.NonEmptyArg[Int] = NonEmptyArg(
-//   nec = Singleton(
-//     a = ArgValue(
-//       name = "superCoolArg",
-//       input = cats.Later@5e272502,
-//       defaultValue = Some(
-//         value = Primitive(
-//           value = 42,
-//           in = Scalar(
-//             name = "Int",
-//             encoder = gql.ast$Scalar$$$Lambda$6965/0x0000000101f4f840@91913c,
-//             decoder = gql.ast$Scalar$$$Lambda$6966/0x0000000101f4e840@33364166,
-//             description = Some(
-//               value = "The `Int` scalar type represents non-fractional signed whole numeric values. Int can represent values between -(2^31) and 2^31 - 1."
-//             )
-//           )
-//         )
-//       ),
-//       description = None
-//     )
-//   ),
-//   decode = gql.Arg$$$Lambda$6795/0x0000000101e7f040@4b93f20b
-// )
+Args can also have default values that can be constructed with the smart constructors from the value dsl `gql.dsl.value`.
+```scala mdoc:silent
+import gql.dsl.value._
+
+arg[Int]("superCoolArg", scalar(42))
 ```
+:::info
+Default values are not type-safe, so you can pass any value you want.
+The default value will however be checked during schema validation, and again during query evaluation, so you will get an error if you pass a value of the wrong type.
+
+Input objects makes it impossibly difficult to construct a type-safe default value dsl, since input objects might have default values themselves that allow uses of them to only supply a subset of fields.
+Consult the [Default values for input objects](./input_types#default-values-for-input-objects) subsection for more information.
+:::
+
 Args also have an `Applicative` instance defined for them:
-```scala
+```scala mdoc:silent
 import cats.implicits._
 
-(arg[Int]("arg1"), arg[Int]("arg2", 43)).mapN(_ + _)
-// res2: gql.NonEmptyArg[Int] = NonEmptyArg(
-//   nec = Append(
-//     leftNE = Singleton(
-//       a = ArgValue(
-//         name = "arg1",
-//         input = cats.Later@2c7bd14e,
-//         defaultValue = None,
-//         description = None
-//       )
-//     ),
-//     rightNE = Singleton(
-//       a = ArgValue(
-//         name = "arg2",
-//         input = cats.Later@20efbd8c,
-//         defaultValue = Some(
-//           value = Primitive(
-//             value = 43,
-//             in = Scalar(
-//               name = "Int",
-//               encoder = gql.ast$Scalar$$$Lambda$6965/0x0000000101f4f840@2153e586,
-//               decoder = gql.ast$Scalar$$$Lambda$6966/0x0000000101f4e840@7504480d,
-//               description = Some(
-//                 value = "The `Int` scalar type represents non-fractional signed whole numeric values. Int can represent values between -(2^31) and 2^31 - 1."
-//               )
-//             )
-//           )
-//         ),
-//         description = None
-//       )
-//     )
-//   ),
-//   decode = scala.Function1$$Lambda$6865/0x0000000101eef840@7071642
-// )
+(arg[Int]("arg1"), arg[Int]("arg2", scalar(43))).mapN(_ + _)
 
-arg[Int]("arg1") *> arg[Int]("arg2", 44)
-// res3: gql.NonEmptyArg[Int] = NonEmptyArg(
-//   nec = Append(
-//     leftNE = Singleton(
-//       a = ArgValue(
-//         name = "arg1",
-//         input = cats.Later@5ad9d8f3,
-//         defaultValue = None,
-//         description = None
-//       )
-//     ),
-//     rightNE = Singleton(
-//       a = ArgValue(
-//         name = "arg2",
-//         input = cats.Later@641879fb,
-//         defaultValue = Some(
-//           value = Primitive(
-//             value = 44,
-//             in = Scalar(
-//               name = "Int",
-//               encoder = gql.ast$Scalar$$$Lambda$6965/0x0000000101f4f840@330b0155,
-//               decoder = gql.ast$Scalar$$$Lambda$6966/0x0000000101f4e840@c01a470,
-//               description = Some(
-//                 value = "The `Int` scalar type represents non-fractional signed whole numeric values. Int can represent values between -(2^31) and 2^31 - 1."
-//               )
-//             )
-//           )
-//         ),
-//         description = None
-//       )
-//     )
-//   ),
-//   decode = gql.NonEmptyArg$$anon$2$$Lambda$7664/0x0000000101325840@188bfb43
-// )
+arg[Int]("arg1") *> arg[Int]("arg2", scalar(44))
 ```
 
 Args can naturally be used in field definitions:
-```scala
+```scala mdoc:silent
 import cats._
 import cats.effect._
 
@@ -144,55 +55,15 @@ final case class Data(str: String)
 
 tpe[IO, Data](
   "Something",
-  "field" -> pure(arg[String]("arg1", "default")){ case (data, arg1) => data.str + arg1 }
+  "field" -> pure(arg[String]("arg1", scalar("default"))){ case (data, arg1) => data.str + arg1 }
 )
-// res4: Type[IO, Data] = Type(
-//   name = "Something",
-//   fields = NonEmptyList(
-//     head = (
-//       "field",
-//       Field(
-//         args = NonEmptyArg(
-//           nec = Singleton(
-//             a = ArgValue(
-//               name = "arg1",
-//               input = cats.Later@3f7b9e08,
-//               defaultValue = Some(
-//                 value = Primitive(
-//                   value = "default",
-//                   in = Scalar(
-//                     name = "String",
-//                     encoder = gql.ast$Scalar$$$Lambda$6965/0x0000000101f4f840@5491211b,
-//                     decoder = gql.ast$Scalar$$$Lambda$6966/0x0000000101f4e840@55b22ddd,
-//                     description = Some(
-//                       value = "The `String` is a UTF-8 character sequence usually representing human-readable text."
-//                     )
-//                   )
-//                 )
-//               ),
-//               description = None
-//             )
-//           ),
-//           decode = gql.Arg$$$Lambda$6795/0x0000000101e7f040@122495cb
-//         ),
-//         resolve = EffectResolver(
-//           resolve = gql.dsl$$$Lambda$6798/0x0000000101e7d040@71ccd259
-//         ),
-//         output = cats.Later@2c88ac82,
-//         description = None
-//       )
-//     ),
-//     tail = List()
-//   ),
-//   description = None
-// )
 ```
 
 ## Input
 Input is the record type for `In`.
 Input consists of a `name` along with some fields.
 It turns out that arguments and fields have the same properties and as such, `Arg` is used for fields.
-```scala
+```scala mdoc
 final case class InputData(
   name: String,
   age: Int
@@ -202,44 +73,47 @@ input[InputData](
   "InputData",
   (
     arg[String]("name"),
-    arg[Int]("age", 42)
+    arg[Int]("age", scalar(42))
   ).mapN(InputData.apply)
 )
-// res5: Input[InputData] = Input(
-//   name = "InputData",
-//   fields = NonEmptyArg(
-//     nec = Append(
-//       leftNE = Singleton(
-//         a = ArgValue(
-//           name = "name",
-//           input = cats.Later@6890b00b,
-//           defaultValue = None,
-//           description = None
-//         )
-//       ),
-//       rightNE = Singleton(
-//         a = ArgValue(
-//           name = "age",
-//           input = cats.Later@5eacea1f,
-//           defaultValue = Some(
-//             value = Primitive(
-//               value = 42,
-//               in = Scalar(
-//                 name = "Int",
-//                 encoder = gql.ast$Scalar$$$Lambda$6965/0x0000000101f4f840@4965a589,
-//                 decoder = gql.ast$Scalar$$$Lambda$6966/0x0000000101f4e840@20e0ec9b,
-//                 description = Some(
-//                   value = "The `Int` scalar type represents non-fractional signed whole numeric values. Int can represent values between -(2^31) and 2^31 - 1."
-//                 )
-//               )
-//             )
-//           ),
-//           description = None
-//         )
-//       )
-//     ),
-//     decode = scala.Function1$$Lambda$6865/0x0000000101eef840@4d9d0064
-//   ),
-//   description = None
-// )
+```
+### Default values for input objects
+For input objects however, a default value cannot be properly type checked at compile time, since the default value might be partial.
+For instance, cosider the following input type:
+```scala mdoc
+final case class SomeInput(
+  a: Int,
+  b: String,
+  c: Seq[Int],
+  d: Option[Int]
+)
+
+implicit lazy val someInput = input[SomeInput](
+  "SomeInput",
+  (
+    arg[Int]("a", scalar(42)),
+    arg[String]("b"),
+    arg[Seq[Int]]("c", arr(scalar(1), scalar(2), scalar(3))),
+    arg[Option[Int]]("d", scalar(42))
+  ).mapN(SomeInput.apply)
+)
+```
+Two valid uses of this type could for instance be:
+```scala mdoc:silent
+arg[SomeInput](
+  "someInput1",
+  obj(
+    "a" -> scalar(42),
+    "b" -> scalar("hello1"),
+    "c" -> arr(Seq(1, 2, 3).map(scalar(_)): _*)
+  )
+)
+
+arg[SomeInput](
+  "someInput2",
+  obj(
+    "b" -> scalar("hello2"),
+    "d" -> nullValue
+  )
+)
 ```

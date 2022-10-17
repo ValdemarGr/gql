@@ -117,7 +117,6 @@ def schema[F[_]: Async](implicit repo: Repository[F]) = {
 Lets construct a simple in-memory repository and query:
 ```scala
 import cats.effect._
-import cats.effect.unsafe.implicits.global
 
 implicit def repo = new Repository[IO] {
   def getHero(episode: Episode): IO[Character] =
@@ -154,12 +153,12 @@ def query = """
 ```
 
 Now we can parse, plan and evaluate the query:
+
 ```scala
 schema[IO]
   .map(Compiler[IO].compile(_, query))
   .flatMap { case Right(Application.Query(run)) => run.map(_.asGraphQL) }
-  .unsafeRunSync()
-// res0: io.circe.JsonObject = object[data -> {
+// object[data -> {
 //   "hero" : {
 //     "primaryFunction" : "Astromech",
 //     "name" : "R2-D2",
@@ -167,3 +166,10 @@ schema[IO]
 //   }
 // }]
 ```
+
+<!-- <details> 
+<summary>Output</summary>
+
+lol
+
+</details> --->

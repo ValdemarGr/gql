@@ -12,7 +12,7 @@ trait Arg[A] {
 }
 
 object Arg {
-  def make[A](name: String, default: Option[DefaultValue[A]])(implicit input: => In[A]): NonEmptyArg[A] =
+  def make[A](name: String, default: Option[Value])(implicit input: => In[A]): NonEmptyArg[A] =
     NonEmptyArg[A](NonEmptyChain.one(ArgValue(name, Eval.later(input), default)), _(name).asInstanceOf[A])
 
   implicit lazy val applicativeInstanceForArg: Applicative[Arg] = new Applicative[Arg] {
@@ -31,18 +31,18 @@ object Arg {
   }
 }
 
-sealed trait DefaultValue[+A]
-object DefaultValue {
-  final case class Primitive[A](value: A, in: InLeaf[A]) extends DefaultValue[A]
-  final case class Arr[A](values: Seq[DefaultValue[A]]) extends DefaultValue[Seq[A]]
-  final case class Obj(fields: NonEmptyChain[(String, DefaultValue[_])]) extends DefaultValue[Nothing]
-  case object Null extends DefaultValue[Nothing]
-}
+// sealed trait DefaultValue[+A]
+// object DefaultValue {
+//   final case class Primitive[A](value: A, in: InLeaf[A]) extends DefaultValue[A]
+//   final case class Arr[A](values: Seq[DefaultValue[A]]) extends DefaultValue[Seq[A]]
+//   final case class Obj(fields: NonEmptyChain[(String, DefaultValue[_])]) extends DefaultValue[Nothing]
+//   case object Null extends DefaultValue[Nothing]
+// }
 
 final case class ArgValue[A](
     name: String,
     input: Eval[In[A]],
-    defaultValue: Option[DefaultValue[A]],
+    defaultValue: Option[Value],
     description: Option[String] = None
 )
 

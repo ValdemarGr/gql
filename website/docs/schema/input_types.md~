@@ -19,14 +19,13 @@ The dsl has a smart constructor for arguments that summons the `In[A]` type from
 ```scala mdoc:silent
 import gql.dsl._
 import gql.ast._
+import gql.dsl.value._
 
 
 arg[Int]("superCoolArg")
 ```
-Args can also have default values that can be constructed with the smart constructors from the value dsl `gql.dsl.value`.
+Args can also have default values.
 ```scala mdoc:silent
-import gql.dsl.value._
-
 arg[Int]("superCoolArg", scalar(42))
 ```
 :::info

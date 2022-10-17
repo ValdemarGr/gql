@@ -37,16 +37,27 @@ const sidebars = {
         "schema/schema",
         "schema/context",
         "schema/error_handling",
+        "schema/compiler",
         "schema/graph_philosophy",
       ]
     },
     {
-      collapsed: false,
+      collapsed: true,
       type: 'category',
       label: "Execution",
       items: [
         "execution/planning",
         "execution/statistics",
+      ]
+    },
+    {
+      collapsed: false,
+      type: 'category',
+      label: "Integrations",
+      items: [
+        "integrations/http4s",
+        "integrations/graphqlws",
+        "integrations/natchez",
       ]
     }
   ]

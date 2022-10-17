@@ -1,9 +1,8 @@
 ---
 title: Resolvers
 ---
-Resolvers are where the most interest should lie, since they act as the layer between input type and next continuation.
-The raw resolver types are as expressive as possible to allow as many use cases as possible, which can cause a lot of noise in the daily use of gql.
-Therefore the `dsl` should be enough to get started and this section should act as an introduction for the curious.
+Resolvers are where the most interest should be placed, since they act as the layer between input type and next continuation;
+Resolvers are effectively the edges in the graph.
 
 :::note
 The error types have been omitted from the resolver types for brevity.
@@ -50,6 +49,7 @@ The `Schema` companion object contains smart constructors that run the `State` m
 ```scala mdoc
 import gql._
 import gql.dsl._
+import gql.ast._
 import cats._
 import cats.implicits._
 
@@ -105,6 +105,32 @@ def orderedBr: BatchResolver[IO, List[Int], List[String]] =
 :::
 :::tip
 For more information on how the batch resolver works, check out the [planning section](./../execution/planning.md).
+:::
+:::tip
+The `BatchResolver` can also be used to fetch multiple fields of different value efficiently and lazily.
+
+Say you had a document store that had may fields, but you only wanted to fetch a few of them.
+You also don't want the interpreter to construct a new request for each field.
+```scala mdoc:silent
+type DocId = String
+
+final case class DocumentQuery(id: DocId, field: String)
+sealed trait DocumentValue
+
+// Do some groupBy id to collect all requested fields for a DocId
+def documentResolver: BatchResolver[IO, Set[DocumentQuery], Map[DocumentQuery, DocumentValue]] = ???
+
+lazy val adjusted = documentResolver.contramap[DocumentQuery](Set(_)).map{ case (q, m) => m(q) }
+
+implicit lazy val documentValue: Out[IO, DocumentValue] = ???
+
+def document = tpe[IO, DocId](
+  "Document",
+  "someField" -> field(adjusted.contramap(DocumentQuery(_, "someField"))),
+  "otherField" -> field(adjusted.contramap(DocumentQuery(_, "otherField"))),
+  "anotherField" -> field(adjusted.contramap(DocumentQuery(_, "anotherField")))
+)
+```
 :::
 
 ### Example of a database batcher
@@ -445,3 +471,10 @@ def root2[F[_]: Async] =
 runVPNSubscription(subscriptionQuery, 13, root2[IO]).unsafeRunSync().takeRight(3)
 ```
 
+## Resolver composition
+Resolvers can also be composed via the `andThen` method that exists on all resolvers.
+This means that the output of one resolver can be used as the input of another resolver.
+This also means that `Stream`, `Batch` and `Effect` resolvers can be combined in any order.
+
+For instance, one can efficiently fetch some list of ids, then subscribe to the data of each id and for all changed ids, efficiently fetch the changed data.
+This can be achieved by composing `Batch`, `Stream` and then `Batch` again.

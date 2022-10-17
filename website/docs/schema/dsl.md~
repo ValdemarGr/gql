@@ -66,7 +66,7 @@ Both smart constructors are overloaded with a variant that take an explicit "nex
 
 The `StreamResolver` and `BatchResolver` can be lifted into a `Field` via the `field` smart constructor.
 
-## Sturctures
+## Structures
 `Type`s, `Enum`s, `Interface`s and `Union`s are constructed via the `tpe`, `enum`, `interface` and `union` smart constructors respectively.
 The structural type smart constructors take a varargs argument structural values that are converted into non empty lists.
 
@@ -74,4 +74,26 @@ The structural type smart constructors take a varargs argument structural values
 `Union`s and `Interface`s require implementations of their type.
 The implementations are called `Instance`s and consist of a `PartialFunction` that goes from the unifying type to an implementing type and a gql type for the implementing type.
 
-The `instance` smart constructor partially applies the implementing type parameter required for an `Instance`.
+The `instance` smart constructor partially applies the implementing type parameter required for an `Instance`, such that the scala compiler can be leveraged to infer the remaining type parameters:
+```scala mdoc
+trait Animal {
+  def sound: String
+}
+
+case object Dog extends Animal {
+  def sound = "woof"
+}
+implicit def dogType = tpe[IO, Dog.type]("Dog", "sound" -> pure(_.sound))
+
+val it =
+  interface[IO, Animal](
+    "Animal",
+    "sound" -> pure(_.sound)
+  )(instance[Dog.type]{ case Dog => Dog })
+```
+
+## Arg
+TODO
+
+## Input
+TODO

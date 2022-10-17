@@ -282,7 +282,7 @@ object SchemaShape {
           arg.entries
             .map(x => x.defaultValue.tupleRight(x))
             .collect { case Some((dv, x)) =>
-              val pv = PreparedQuery.valueToParserValue(PreparedQuery.defaultToValue(dv))
+              val pv = PreparedQuery.valueToParserValue(dv)
               (x, pv)
             }
             .traverse { case (a, pv) =>
@@ -408,7 +408,7 @@ object SchemaShape {
     import io.circe._
 
     def renderArgValueDoc(av: ArgValue[_]): Doc = {
-      val o = av.defaultValue.map(dv => Doc.text(" = ") + renderValueDoc(PreparedQuery.defaultToValue(dv))).getOrElse(Doc.empty)
+      val o = av.defaultValue.map(dv => Doc.text(" = ") + renderValueDoc(dv)).getOrElse(Doc.empty)
       doc(av.description) +
         Doc.text(av.name) + Doc.text(": ") + getInputNameDoc(av.input.value) + o
     }
@@ -537,7 +537,7 @@ object SchemaShape {
       "name" -> pure(_.name),
       "description" -> pure(_.description),
       "type" -> pure(x => (TypeInfo.InInfo(x.input.value): TypeInfo)),
-      "defaultValue" -> pure(x => x.defaultValue.map(PreparedQuery.defaultToValue).map(renderValueDoc(_).render(80)))
+      "defaultValue" -> pure(x => x.defaultValue.map(renderValueDoc(_).render(80)))
     )
 
     final case class NamedField(
@@ -620,7 +620,7 @@ object SchemaShape {
         override val asToplevel = None
       }
     }
-    def inclDeprecated = arg[Boolean]("includeDeprecated", false)
+    def inclDeprecated = arg[Boolean]("includeDeprecated", value.scalar(false))
 
     implicit lazy val __type: Type[Id, TypeInfo] = tpe[Id, TypeInfo](
       "__Type",

@@ -4,6 +4,8 @@ title: The schema
 ## SchemaShape
 The `SchemaShape` consists of the roots that make up your gql schema; A query, mutation and subscription type.
 
+TODO talk about schema validation
+
 ## Schema
 A `Schema` is a collection of some components that are required to execute a query.
 The `Schema` contains a `SchemaShape`, a `Statistics` instance and state regarding `BatchResolver` implementations.
@@ -14,4 +16,3 @@ Also, checkout the [resolver section](./resolvers) for more information on `Batc
 :::
 
 The most powerful `Schema` constructor `stateful`, converts a `State[SchemaState[F], SchemaShape[F, Q, M, S]]` to a `Schema[F, Q, M, S]`.
-

@@ -70,6 +70,10 @@ lazy val testbed = project
   .dependsOn(http4s)
   .settings(sharedSettings)
 
+lazy val mdocExt = project
+  .in(file("modules/mdoc-ext"))
+  .settings(sharedSettings)
+
 lazy val docs = project
   .in(file("modules/docs"))
   .settings(
@@ -78,4 +82,6 @@ lazy val docs = project
   )
   .dependsOn(core)
   .dependsOn(http4s)
+  .dependsOn(graphqlWs)
+  .dependsOn(mdocExt)
   .enablePlugins(MdocPlugin, DocusaurusPlugin)

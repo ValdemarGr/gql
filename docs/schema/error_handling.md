@@ -17,6 +17,7 @@ Let's setup the scene:
 ```scala mdoc
 import gql.ast._
 import gql.dsl._
+import gql.dsl.value._
 import gql._
 import cats.implicits._
 import cats.data._
@@ -26,7 +27,7 @@ import cats.effect.unsafe.implicits.global
 def multifailSchema = 
   tpe[IO, Unit](
     "Query", 
-    "field" -> fallible(arg[Int]("i", 10)){ 
+    "field" -> fallible(arg[Int]("i", scalar(10))){ 
       case (_, 0) => IO.pure(Ior.left("fail gracefully"))
       case (_, 1) => IO.raiseError(new Exception("fail hard"))
       case (_, i) => IO.pure(Ior.right(i))
