@@ -581,7 +581,10 @@ object PreparedQuery {
           .tupleLeft(a.name)
       }
 
-    fieldsF.map(_.toList.toMap).map(arg.decode)
+    fieldsF
+      .map(_.toList.toMap)
+      // TODO
+      .flatMap(x => arg.decode(x).fold(_ => ???, x => F.pure(x)))
   }
 
   def parserValueToValue[F[_]](v: P.Value)(implicit
