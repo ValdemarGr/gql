@@ -345,14 +345,39 @@ query withNestedFragments {
     } yield ec
   }
 
-  final case class Test()
-  implicit lazy val testType = tpe[fs2.Pure, Test](
-    "Test",
-    "value" -> pure(_ => 42)
-  )
+  // Auto apply + covariance
 
-  lazy val superType = tpe[Id, Unit](
-    "Super",
-    "test" -> pure(_ => Test())
-  )
+  sealed trait Cov[+F[_], A]
+  // sealed trait Inv[F[_], A] extends Cov[F, A]
+
+  case class Sc[F[_], A]() extends Cov[F, A]
+
+  // case class EitherOne[F[_], A](
+  //     value: Either[Cov[F, A], Inv[F, A]]
+  // )
+  // object Inv {
+  //   implicit def covAsInv[F[_], A](implicit cov: Cov[F, A]) = cov match {
+  //     case i: Inv[F, A] => i
+  //   }
+  // }
+
+  // implicitly[Poly[IO]]
+
+  implicit def sc[F[_]: Monad]: Sc[F, String] = Sc[F, String]()
+  implicit def sc2: Sc[fs2.Pure, Int] = Sc[fs2.Pure, Int]()
+  // implicitly[Cov[IO, String]]
+  implicitly[Cov[IO, Int]]
+  implicitly[Cov[fs2.Pure, Int]]
+
+  final case class W[F[_]]()
+
+  // implicit def s[F[_]: Monad] = W[F]()
+  // implicitly[W[IO]]
+  // implicitly[W1[IO]]
+  implicit def s2[F[x] >: fs2.Pure[x] <: Any: Async] = W[F]()
+  implicitly[W[IO]]
+
+  def run[F[_]](implicit w: W[F]): String = ???
+
+  run[IO]
 }

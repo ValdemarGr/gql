@@ -7,7 +7,7 @@ The source code for the DSL is very easy to follow and as such, the best documen
 ## Fields
 The simplest form of field construction comes from the `field` smart constructor.
 It simply lifts a resolver (and optionally an argument) into a field.
-```scala mdoc
+```scala
 import cats.data._
 import cats.effect._
 import cats.implicits._
@@ -20,6 +20,22 @@ def intArg = arg[Int]("intArg")
 val withArg = field(intArg)(EffectResolver[IO, (String, Int), String]{ case (s, i) => 
   IO.pure((s + i.toString()).rightIor)
 })
+// withArg: gql.ast.Field[[A]IO[A], String, String, Int] = Field(
+//   args = NonEmptyArg(
+//     nec = Singleton(
+//       a = ArgValue(
+//         name = "intArg",
+//         input = cats.Later@1b76ec7f,
+//         defaultValue = None,
+//         description = None
+//       )
+//     ),
+//     decode = gql.Arg$$$Lambda$20655/0x0000000105496040@66827dc6
+//   ),
+//   resolve = EffectResolver(resolve = <function1>),
+//   output = cats.Later@1e661d99,
+//   description = None
+// )
 ```
 
 ### Value resolution
@@ -30,7 +46,7 @@ We must decide if the field is pure, an effect or a fallible effect:
 :::note
 The effect constructor is named `eff` to avoid collisions with cats-effect.
 :::
-```scala mdoc
+```scala
 final case class Person(
   name: String
 )
@@ -46,7 +62,7 @@ def t =
   )
 ```
 Thereafter we must decide if any of the fields requires arguments:
-```scala mdoc
+```scala
 def familyName = arg[String]("familyName")
 
 def t2 =
@@ -75,7 +91,7 @@ The structural type smart constructors take a varargs argument structural values
 The implementations are called `Instance`s and consist of a `PartialFunction` that goes from the unifying type to an implementing type and a gql type for the implementing type.
 
 The `instance` smart constructor partially applies the implementing type parameter required for an `Instance`, such that the scala compiler can be leveraged to infer the remaining type parameters:
-```scala mdoc
+```scala
 trait Animal {
   def sound: String
 }
@@ -90,6 +106,25 @@ val it =
     "Animal",
     "sound" -> pure(_.sound)
   )(instance[Dog.type]{ case Dog => Dog })
+// it: gql.ast.Interface[[_]IO[_], Animal] = Interface(
+//   name = "Animal",
+//   instances = List(Instance(ol = cats.Later@1bc6467c)),
+//   fields = NonEmptyList(
+//     head = (
+//       "sound",
+//       Field(
+//         args = PureArg(value = Valid(a = ())),
+//         resolve = PureResolver(
+//           resolve = scala.Function1$$Lambda$9566/0x000000010291f840@7fda4488
+//         ),
+//         output = cats.Later@51fe143f,
+//         description = None
+//       )
+//     ),
+//     tail = List()
+//   ),
+//   description = None
+// )
 ```
 
 ## Input types

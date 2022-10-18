@@ -9,9 +9,17 @@ import gql.resolver._
 import gql.Value._
 
 object ast extends AstImplicits.Implicits {
-  sealed trait AnyType
+  // sealed trait OutCovariant[+F[_], A] {
+  //   def mapK[F2[x] >: F[x], G[_]: Functor](fk: F2 ~> G): Out[G, A]
+  // }
+  // object OutCovariant {
+  //   implicit def makeInvariant[F[_], A](implicit cov: OutCovariant[F, A]): Out[F, A] = 
+  //     cov match {
+  //     case inv: Out[F, A] => inv
+  //   }
+  // }
 
-  sealed trait Out[+F[_], A] {
+  sealed trait Out[+F[_], A]/* extends OutCovariant[F, A]*/ {
     def mapK[F2[x] >: F[x], G[_]: Functor](fk: F2 ~> G): Out[G, A]
   }
 

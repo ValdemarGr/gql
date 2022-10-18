@@ -14,7 +14,7 @@ For instance, the `EffectResolver[F, I, A]` wraps the function `I => F[Ior[Strin
 
 ## Examples
 Let's setup the scene:
-```scala mdoc
+```scala
 import gql.ast._
 import gql.dsl._
 import gql.dsl.value._
@@ -46,25 +46,63 @@ def go(query: String, tpe: Type[IO, Unit] = multifailSchema) =
   }.unsafeRunSync()
   
 go("query { field }")
+// Chain()
+// res0: io.circe.JsonObject = object[data -> {
+//   "field" : 10
+// }]
 ```
 
 A query can fail gracefully by returning `Ior.left`:
-```scala mdoc
+```scala
 go("query { field(i: 0) }")
+// Chain(EffectResolution(Cursor(Chain(Field(1,field))),Right(fail gracefully),()))
+// res1: io.circe.JsonObject = object[errors -> [
+//   {
+//     "message" : "fail gracefully",
+//     "path" : [
+//       "field"
+//     ]
+//   }
+// ],data -> {
+//   "field" : null
+// }]
 ```
 
 A query can fail hard by raising an exception:
-```scala mdoc
+```scala
 go("query { field(i: 1) }")
+// Chain(EffectResolution(Cursor(Chain(Field(1,field))),Left(java.lang.Exception: fail hard),()))
+// res2: io.circe.JsonObject = object[errors -> [
+//   {
+//     "message" : "internal error",
+//     "path" : [
+//       "field"
+//     ]
+//   }
+// ],data -> {
+//   "field" : null
+// }]
 ```
 
 A query can also fail before even evaluating the query:
-```scala mdoc
+```scala
 go("query { nonExisting }")
+// Preparation(PositionalError(PrepCursor(Chain()),List(Caret(0,20,20)),unknown field name nonExisting))
+// res3: io.circe.JsonObject = object[errors -> [
+//   {
+//     "message" : "unknown field name nonExisting",
+//     "locations" : [
+//       {
+//         "line" : 0,
+//         "column" : 20
+//       }
+//     ]
+//   }
+// ]]
 ```
 
 And finally, it can fail if it isn't parsable:
-```scala mdoc
+```scala
 def largerQuery = """
   query {
     field1
@@ -78,6 +116,19 @@ def largerQuery = """
 """
 
 go(largerQuery)
+// Parse(ParseError(Caret(8,4,80),cats.Later@356c991a))
+// res4: io.circe.JsonObject = object[errors -> [
+//   {
+//     "message" : "could not parse query",
+//     "locations" : [
+//       {
+//         "line" : 8,
+//         "column" : 4
+//       }
+//     ],
+//     "error" : "\u001b[34mfailed at offset 80 on line 7 with code 45\none of \"...\"\nin char in range A to Z (code 65 to 90)\nin char in range _ to _ (code 95 to 95)\nin char in range a to z (code 97 to 122)\nin query:\n\u001b[0m\u001b[32m| \u001b[0m\u001b[32m\n|   query {\n|     field1\n|     field2(test: 42)\n|   }\n|   \n|   fragment test on Test {\n|     \u001b[41m\u001b[30m-\u001b[0m\u001b[32mvalue1\n| \u001b[31m>^^^^^^^ line:7 code:45\u001b[0m\u001b[32m\n|     value2 \n|   }\n| \u001b[0m\u001b[0m"
+//   }
+// ]]
 ```
 Parser errors also look nice in ANSI terminals:
 
@@ -85,7 +136,7 @@ Parser errors also look nice in ANSI terminals:
 
 ### Exception trick
 If for whatever reason you wish to pass information through exceptions, that is also possible:
-```scala mdoc
+```scala
 final case class MyException(msg: String, data: Int) extends Exception(msg)
 
 val res = 
@@ -99,9 +150,20 @@ val res =
       case Right(Application.Query(run)) => run
     }
   }.unsafeRunSync()
+// res: QueryResult = QueryResult(
+//   errors = Singleton(
+//     a = EffectResolution(
+//       path = Cursor(path = Singleton(a = Field(id = 1, name = "field"))),
+//       error = Left(value = MyException(msg = "fail hard", data = 42)),
+//       input = ()
+//     )
+//   ),
+//   data = object[field -> null]
+// )
   
 res.errors.headOption.flatMap(_.exception) match {
   case Some(MyException(_, data)) => println(s"Got data: $data")
   case _ => println("No data")
 }
+// Got data: 42
 ```

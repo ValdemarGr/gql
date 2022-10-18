@@ -8,7 +8,7 @@ gql has no such concept, it is rather a by-product of being written in tagless s
 ## MTL
 We can emulate context by using a `ReaderT`/`Kleisli` monad transformer from `cats`.
 Writing `ReaderT`/`Kleisli` everywhere is tedious, instead consider opting for `cats.mtl.Ask`:
-```scala mdoc
+```scala
 import gql._
 import gql.dsl._
 import gql.ast._
@@ -49,6 +49,9 @@ Statistics[IO].flatMap{ stats =>
         .map(_.asGraphQL)
   }
 }.unsafeRunSync()
+// res0: JsonObject = object[data -> {
+//   "me" : "john_doe"
+// }]
 ```
 
 ## Working in a specific effect

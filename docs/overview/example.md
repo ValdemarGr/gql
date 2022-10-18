@@ -66,7 +66,7 @@ trait Repository[F[_]] {
 }
 
 def schema[F[_]: Async](implicit repo: Repository[F]) = {
-  implicit val episode: Enum[F, Episode] = {
+  implicit lazy val episode: Enum[Episode] = {
     import Episode._
     enum(
       "Episode",
