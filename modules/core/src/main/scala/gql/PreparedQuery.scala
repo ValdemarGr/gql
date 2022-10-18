@@ -435,15 +435,15 @@ object PreparedQuery {
 
   def pValueName(v: P.Value): String =
     v match {
-      case ObjectValue(_)   => "object"
-      case StringValue(_)   => "string"
-      case ListValue(_)     => "list"
-      case EnumValue(_)     => "enum"
-      case BooleanValue(_)  => "boolean"
-      case NullValue        => "null"
-      case FloatValue(_)    => "float"
-      case IntValue(_)      => "int"
-      case VariableValue(_) => "variable"
+      case ObjectValue(_)       => "object"
+      case StringValue(_)       => "string"
+      case ListValue(_)         => "list"
+      case P.Value.EnumValue(_) => "enum"
+      case BooleanValue(_)      => "boolean"
+      case NullValue            => "null"
+      case FloatValue(_)        => "float"
+      case IntValue(_)          => "int"
+      case VariableValue(_)     => "variable"
     }
 
   def inName(in: In[_]): String = in match {
@@ -598,9 +598,9 @@ object PreparedQuery {
       S: Stateful[F, Prep]
   ): F[Value] =
     v match {
-      case NullValue     => F.pure(Value.NullValue)
-      case FloatValue(v) => F.pure(Value.FloatValue(v))
-      case EnumValue(v)  => F.pure(Value.EnumValue(v))
+      case NullValue            => F.pure(Value.NullValue)
+      case FloatValue(v)        => F.pure(Value.FloatValue(v))
+      case P.Value.EnumValue(v) => F.pure(Value.EnumValue(v))
       case ListValue(v) =>
         v.toVector.traverse(parserValueToValue[F]).map(Value.ArrayValue(_))
       case IntValue(v)      => F.pure(Value.IntValue(v))

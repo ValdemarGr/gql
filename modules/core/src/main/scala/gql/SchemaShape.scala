@@ -450,7 +450,7 @@ object SchemaShape {
                 Doc.text(s"enum $name {") + Doc.hardLine +
                 Doc.intercalate(
                   Doc.hardLine,
-                  e.mappings.toList.map(x => doc(x.description) + Doc.text(x.encodedName))
+                  e.mappings.toList.map { case (name, value) => doc(value.description) + Doc.text(name) }
                 ) +
                 Doc.hardLine + Doc.text("}")
             case Input(name, fields, desc) =>
@@ -522,14 +522,14 @@ object SchemaShape {
 
     implicit lazy val __typeKind = enumType[Id, __TypeKind](
       "__TypeKind",
-      enumInst("SCALAR", __TypeKind.SCALAR),
-      enumInst("OBJECT", __TypeKind.OBJECT),
-      enumInst("INTERFACE", __TypeKind.INTERFACE),
-      enumInst("UNION", __TypeKind.UNION),
-      enumInst("ENUM", __TypeKind.ENUM),
-      enumInst("INPUT_OBJECT", __TypeKind.INPUT_OBJECT),
-      enumInst("LIST", __TypeKind.LIST),
-      enumInst("NON_NULL", __TypeKind.NON_NULL)
+      "SCALAR" -> enumVal(__TypeKind.SCALAR),
+      "OBJECT" -> enumVal(__TypeKind.OBJECT),
+      "INTERFACE" -> enumVal(__TypeKind.INTERFACE),
+      "UNION" -> enumVal(__TypeKind.UNION),
+      "ENUM" -> enumVal(__TypeKind.ENUM),
+      "INPUT_OBJECT" -> enumVal(__TypeKind.INPUT_OBJECT),
+      "LIST" -> enumVal(__TypeKind.LIST),
+      "NON_NULL" -> enumVal(__TypeKind.NON_NULL)
     )
 
     implicit lazy val __inputValue: Type[Id, ArgValue[_]] = tpe[Id, ArgValue[_]](
@@ -694,7 +694,7 @@ object SchemaShape {
         case _ => None
       },
       "enumValues" -> pure(inclDeprecated) { case (ti, _) =>
-        ti.asToplevel.collect { case Enum(_, m, _) => m.toList }
+        ti.asToplevel.collect { case Enum(_, m, _) => m.toList.map { case (k, v) => NamedEnumValue(k, v) } }
       },
       "inputFields" -> pure {
         case ii: TypeInfo.InInfo =>
@@ -711,10 +711,14 @@ object SchemaShape {
       }
     )
 
-    implicit lazy val enumValue: Type[Id, EnumInstance[_]] = tpe[Id, EnumInstance[_]](
+    final case class NamedEnumValue(
+        name: String,
+        value: EnumValue[_]
+    )
+    implicit lazy val enumValue: Type[Id, NamedEnumValue] = tpe[Id, NamedEnumValue](
       "__EnumValue",
-      "name" -> pure(_.encodedName),
-      "description" -> pure(_.description),
+      "name" -> pure(_.name),
+      "description" -> pure(_.value.description),
       "isDeprecated" -> pure(_ => false),
       "deprecationReason" -> pure(_ => Option.empty[String])
     )

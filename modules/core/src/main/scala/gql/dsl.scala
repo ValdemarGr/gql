@@ -91,18 +91,11 @@ object dsl {
     field(PureResolver[F, I, T](resolver))
   }
 
-  def enumInst[A](name: String, value: A): EnumInstance[A] =
-    EnumInstance(name, value)
+  def enumVal[A](value: A): EnumValue[A] =
+    EnumValue(value)
 
-  def enumType[F[_], A](name: String, hd: EnumInstance[A], tl: EnumInstance[A]*) =
+  def enumType[F[_], A](name: String, hd: (String, EnumValue[A]), tl: (String, EnumValue[A])*) =
     Enum[F, A](name, NonEmptyList(hd, tl.toList))
-
-  final case class PartiallyAppliedInstance[B](val dummy: Boolean = false) extends AnyVal {
-    def apply[F[_], A](pf: PartialFunction[A, B])(implicit s: => Selectable[F, B]): Instance[F, A, B] =
-      Instance[F, A, B](Eval.later(s))(pf.lift)
-  }
-
-  def instance[B]: PartiallyAppliedInstance[B] = PartiallyAppliedInstance[B]()
 
   object Internal {
     def inst[F[_], A, B](pf: PartialFunction[A, B], s: => Selectable[F, B]): Instance[F, A, Any] =

@@ -96,9 +96,9 @@ object StarWarsSchema {
     implicit lazy val episode: Enum[IO, Episode] =
       enumType[IO, Episode](
         "Episode",
-        enumInst("NEWHOPE", Episode.NEWHOPE),
-        enumInst("EMPIRE", Episode.EMPIRE),
-        enumInst("JEDI", Episode.JEDI)
+        "NEWHOPE" -> enumVal(Episode.NEWHOPE),
+        "EMPIRE" -> enumVal(Episode.EMPIRE),
+        "JEDI" -> enumVal(Episode.JEDI)
       )
 
     implicit lazy val character: Interface[IO, Character] =
