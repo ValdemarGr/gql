@@ -520,7 +520,7 @@ object SchemaShape {
     import gql.dsl._
     val d = ss.discover
 
-    implicit lazy val __typeKind = enum[__TypeKind](
+    implicit lazy val __typeKind = enumType[Id, __TypeKind](
       "__TypeKind",
       enumInst("SCALAR", __TypeKind.SCALAR),
       enumInst("OBJECT", __TypeKind.OBJECT),
@@ -622,6 +622,8 @@ object SchemaShape {
     }
     def inclDeprecated = arg[Boolean]("includeDeprecated", value.scalar(false))
 
+    implicitly[Out[Id, Option[String]]]
+
     implicit lazy val __type: Type[Id, TypeInfo] = tpe[Id, TypeInfo](
       "__Type",
       "kind" -> pure[Id, TypeInfo, __TypeKind] {
@@ -632,8 +634,8 @@ object SchemaShape {
           }
         case oi: TypeInfo.OutInfo =>
           oi.inner match {
-            case _: Scalar[_]       => __TypeKind.SCALAR
-            case _: Enum[_]         => __TypeKind.ENUM
+            case _: Scalar[F, _]    => __TypeKind.SCALAR
+            case _: Enum[F, _]      => __TypeKind.ENUM
             case _: Type[F, _]      => __TypeKind.OBJECT
             case _: Interface[F, _] => __TypeKind.INTERFACE
             case _: Union[F, _]     => __TypeKind.UNION
@@ -646,7 +648,7 @@ object SchemaShape {
           }
       },
       "name" -> pure(_.asToplevel.map(_.name)),
-      "description" -> pure(_.asToplevel.map(_.description)),
+      "description" -> pure(_.asToplevel.flatMap(_.description)),
       "fields" -> pure(inclDeprecated) {
         case (oi: TypeInfo.OutInfo, _) =>
           oi.inner match {

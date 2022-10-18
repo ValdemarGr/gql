@@ -309,9 +309,9 @@ object PreparedQuery {
           case (ol: Selectable[G, Any], Some(ss)) =>
             prepareSelections[F, G](ol, ss, variableMap, fragments, tn)
               .map(Selection(_))
-          case (e: Enum[Any], None) =>
+          case (e: Enum[G, Any], None) =>
             F.pure(PreparedLeaf(e.name, x => Json.fromString(e.revm(x))))
-          case (s: Scalar[Any], None) =>
+          case (s: Scalar[G, Any], None) =>
             F.pure(PreparedLeaf(s.name, x => s.encoder(x).asJson))
           case (o, Some(_)) => raise(s"type ${friendlyName[G, Any](o)} cannot have selections", Some(selCaret))
           case (o, None)    => raise(s"object like type ${friendlyName[G, Any](o)} must have a selection", Some(selCaret))

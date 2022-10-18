@@ -347,37 +347,32 @@ query withNestedFragments {
 
   // Auto apply + covariance
 
-  sealed trait Cov[+F[_], A]
-  // sealed trait Inv[F[_], A] extends Cov[F, A]
+  trait Base[+F[_], A]
 
-  case class Sc[F[_], A]() extends Cov[F, A]
+  trait InvariantBase[F[_], A] extends Base[F, A]
 
-  // case class EitherOne[F[_], A](
-  //     value: Either[Cov[F, A], Inv[F, A]]
-  // )
-  // object Inv {
-  //   implicit def covAsInv[F[_], A](implicit cov: Cov[F, A]) = cov match {
-  //     case i: Inv[F, A] => i
-  //   }
+  // trait Inv[B[f[_], y] <: Base[f, y]] {
+  //   type B0[F[_], A] = B[F, A]
   // }
+  // implicit def autoApplyInv[B[f[_], y] <: Base[f, y]]: Inv[B] =
 
-  // implicitly[Poly[IO]]
+  final case class Impl[+F[_], A]() extends Base[F, A]
 
-  implicit def sc[F[_]: Monad]: Sc[F, String] = Sc[F, String]()
-  implicit def sc2: Sc[fs2.Pure, Int] = Sc[fs2.Pure, Int]()
-  // implicitly[Cov[IO, String]]
-  implicitly[Cov[IO, Int]]
-  implicitly[Cov[fs2.Pure, Int]]
+  sealed trait Other[F[_], A]
 
-  final case class W[F[_]]()
+  def fromBase[F[_], A](implicit base: Base[F, A]): Other[F, A] = ???
 
-  // implicit def s[F[_]: Monad] = W[F]()
-  // implicitly[W[IO]]
-  // implicitly[W1[IO]]
-  implicit def s2[F[x] >: fs2.Pure[x] <: Any: Async] = W[F]()
-  implicitly[W[IO]]
+  // def pure[F[_], A](f: Unit => A)(implicit base: Base[F, A]): Other[F, A] = ???
 
-  def run[F[_]](implicit w: W[F]): String = ???
+  implicit def impl1[F[_]]: Impl[F, Int] = Impl[F, Int]()
 
-  run[IO]
+  implicit lazy val impl2: Impl[Nothing, String] = Impl[Nothing, String]()
+
+  implicit def impl3[F[_]: Monad]: Impl[F, Boolean] = Impl[F, Boolean]()
+
+  // "field1" -> pure[IO, Boolean](_ => true)
+
+  fromBase[IO, Int]
+  fromBase[IO, String]
+  // fromBase[IO, Boolean]
 }

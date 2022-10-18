@@ -30,7 +30,11 @@ lazy val sharedSettings = Seq(
     "org.typelevel" %% "munit-cats-effect" % "2.0.0-M3" % Test,
   ),
   addCompilerPlugin("org.typelevel" % "kind-projector" % "0.13.2" cross CrossVersion.full),
-  addCompilerPlugin("com.olegpy" %% "better-monadic-for" % "0.3.1")
+  addCompilerPlugin("com.olegpy" %% "better-monadic-for" % "0.3.1"),
+  scalacOptions ++= Seq(
+    "-Vimplicits",
+    "-Vimplicits-verbose-tree"
+  )
 )
 
 lazy val core = project

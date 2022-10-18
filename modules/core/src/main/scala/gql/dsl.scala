@@ -29,10 +29,10 @@ object dsl {
   }
 
   object value {
-    def scalar[A](value: A)(implicit tpe: => Scalar[A]) =
+    def scalar[F[_], A](value: A)(implicit tpe: => Scalar[F, A]) =
       tpe.encoder(value)
 
-    def fromEnum[A](value: A)(implicit tpe: => Enum[A]) =
+    def fromEnum[F[_], A](value: A)(implicit tpe: => Enum[F, A]) =
       tpe.revm.get(value).map(enumValue)
 
     def enumValue(value: String) = Value.EnumValue(value)
@@ -79,19 +79,19 @@ object dsl {
   // Not sure if this is a compiler bug or something since all type parameters except I are invariant?
   def pure[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T, A] = {
     implicit lazy val t0 = tpe
-    field(arg)(PureResolver[(I, A), T] { case (i, a) => resolver(i, a) })
+    field(arg)(PureResolver[F, (I, A), T] { case (i, a) => resolver(i, a) })
   }
 
   def pure[F[_], I, T](resolver: I => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T, Unit] = {
     implicit lazy val t0 = tpe
-    field(PureResolver[I, T](resolver))
+    field(PureResolver[F, I, T](resolver))
   }
 
   def enumInst[A](name: String, value: A): EnumInstance[A] =
     EnumInstance(name, value)
 
-  def enum[A](name: String, hd: EnumInstance[A], tl: EnumInstance[A]*) =
-    Enum[A](name, NonEmptyList(hd, tl.toList))
+  def enumType[F[_], A](name: String, hd: EnumInstance[A], tl: EnumInstance[A]*) =
+    Enum[F, A](name, NonEmptyList(hd, tl.toList))
 
   final case class PartiallyAppliedInstance[B](val dummy: Boolean = false) extends AnyVal {
     def apply[F[_], A](pf: PartialFunction[A, B])(implicit s: => Selectable[F, B]): Instance[F, A, B] =
