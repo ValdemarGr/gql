@@ -93,8 +93,8 @@ object StarWarsSchema {
     IO(droidData.get(id))
 
   lazy val schemaShape = {
-    implicit lazy val episode: Enum[Episode] =
-      enum[Episode](
+    implicit lazy val episode: Enum[IO, Episode] =
+      enumType[IO, Episode](
         "Episode",
         enumInst("NEWHOPE", Episode.NEWHOPE),
         enumInst("EMPIRE", Episode.EMPIRE),
@@ -109,10 +109,9 @@ object StarWarsSchema {
         "friends" -> eff(getFriends),
         "appearsIn" -> pure(_.appearsIn),
         "secretBackstory" -> fallible(_ => IO("secretBackstory is secret.".leftIor[String]))
-      )(
-        instance[Human] { case h: Human => h },
-        instance[Droid] { case d: Droid => d }
       )
+        .instance { case h: Human => h }
+        .instance { case d: Droid => d }
 
     implicit lazy val human: Type[IO, Human] =
       tpe[IO, Human](

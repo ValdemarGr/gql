@@ -65,11 +65,10 @@ class ValidationTest extends CatsEffectSuite {
       "MutRecInterface",
       "value" -> pure(_.value),
       "missing" -> pure(_ => 42)
-    )(
-      instance[MutuallyRecursive2] { case x: MutuallyRecursive2 => x },
-      instance[MutuallyRecursive1] { case x: MutuallyRecursive1 => x },
-      instance[MutuallyRecursive2] { case x: MutuallyRecursive2 => x }
     )
+      .instance { case x: MutuallyRecursive2 => x }
+      .instance { case x: MutuallyRecursive1 => x }
+      .instance { case x: MutuallyRecursive2 => x }
 
   lazy val schemaShape = SchemaShape[IO, Unit, Unit, Unit](
     tpe[IO, Unit](

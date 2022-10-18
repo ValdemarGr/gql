@@ -104,19 +104,31 @@ object dsl {
 
   def instance[B]: PartiallyAppliedInstance[B] = PartiallyAppliedInstance[B]()
 
+  object Internal {
+    def inst[F[_], A, B](pf: PartialFunction[A, B], s: => Selectable[F, B]): Instance[F, A, Any] =
+      Instance[F, A, B](Eval.later(s))(pf.lift).asInstanceOf[Instance[F, A, Any]]
+  }
+
+  implicit class InterfaceSyntax[F[_], A](val tpe: Interface[F, A]) extends AnyVal {
+    def instance[B](pf: PartialFunction[A, B])(implicit s: => Selectable[F, B]): Interface[F, A] =
+      tpe.copy(instances = Internal.inst[F, A, B](pf, s) :: tpe.instances)
+  }
+
   def interface[F[_], A](
       name: String,
       hd: (String, Field[F, A, _, _]),
       tl: (String, Field[F, A, _, _])*
-  )(
-      instanceHd: Instance[F, A, _],
-      instanceTl: Instance[F, A, _]*
-  ) =
-    Interface(
-      name,
-      instanceHd.asInstanceOf[Instance[F, A, Any]] :: instanceTl.toList.asInstanceOf[List[Instance[F, A, Any]]],
-      NonEmptyList(hd, tl.toList)
-    )
+  ) = Interface[F, A](name, Nil, NonEmptyList(hd, tl.toList))
+
+  final case class PartiallyAppliedUnion1[F[_], A](name: String, hd: Instance[F, A, Any]) {
+    def variant[B](pf: PartialFunction[A, B])(implicit s: => Selectable[F, B]): Union[F, A] =
+      Union[F, A](name, NonEmptyList.of(hd, Internal.inst[F, A, B](pf, s)), None)
+  }
+
+  final case class PartiallyAppliedUnion0[F[_], A](name: String) {
+    def variant[B](pf: PartialFunction[A, B])(implicit s: => Selectable[F, B]): PartiallyAppliedUnion1[F, A] =
+      PartiallyAppliedUnion1[F, A](name, Internal.inst[F, A, B](pf, s))
+  }
 
   def union[F[_], A](
       name: String,
