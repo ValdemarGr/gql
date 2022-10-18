@@ -52,13 +52,10 @@ class ValidationTest extends CatsEffectSuite {
       ) { case _ => 24 }
     )
 
-  implicit lazy val duplicateUnion =
-    union[IO, MutRecUnion](
-      "MutRecUnion",
-      instance[MutuallyRecursive2] { case x: MutuallyRecursive2 => x },
-      instance[MutuallyRecursive1] { case x: MutuallyRecursive1 => x },
-      instance[MutuallyRecursive2] { case x: MutuallyRecursive2 => x }
-    )
+  implicit lazy val duplicateUnion = union[IO, MutRecUnion]("MutRecUnion")
+    .variant { case x: MutuallyRecursive2 => x }
+    .variant { case x: MutuallyRecursive1 => x }
+    .variant { case x: MutuallyRecursive2 => x }
 
   implicit lazy val duplicateInterface =
     interface[IO, MutRecInterface](
