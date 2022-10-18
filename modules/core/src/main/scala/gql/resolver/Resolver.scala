@@ -13,7 +13,15 @@ trait Resolver[F[_], -I, A] {
     CompositionResolver(this.asInstanceOf[Resolver[F2, I, Any]], next.asInstanceOf[Resolver[F2, Any, O2]])
 }
 
-final case class EffectResolver[F[_], I, A](resolve: I => F[Ior[String, A]]) extends Resolver[F, I, A] {
+final case class FallibleResolver[F[_], I, A](resolve: I => F[Ior[String, A]]) extends Resolver[F, I, A] {
+  def mapK[G[_]: Functor](fk: F ~> G): FallibleResolver[G, I, A] =
+    FallibleResolver(resolve.andThen(fk.apply))
+
+  def contramap[B](g: B => I): FallibleResolver[F, B, A] =
+    FallibleResolver(g andThen resolve)
+}
+
+final case class EffectResolver[F[_], I, A](resolve: I => F[A]) extends Resolver[F, I, A] {
   def mapK[G[_]: Functor](fk: F ~> G): EffectResolver[G, I, A] =
     EffectResolver(resolve.andThen(fk.apply))
 
@@ -22,12 +30,8 @@ final case class EffectResolver[F[_], I, A](resolve: I => F[Ior[String, A]]) ext
 }
 
 final case class PureResolver[F[_], I, A](resolve: I => A) extends Resolver[F, I, A] {
-
-  override def mapK[G[_]: Functor](fk: F ~> G): Resolver[G,I,A] = ???
-
-  // override def mapK[G[_]: Functor](fk: Nothing ~> G): Resolver[G, I, A] = ???
-
-  // override def mapK[G[_]: Functor](fk: Nothing ~> G): PureResolver[I, A] = this
+  override def mapK[G[_]: Functor](fk: F ~> G): PureResolver[G, I, A] =
+    PureResolver(resolve)
 
   def contramap[B](g: B => I): PureResolver[F, B, A] =
     PureResolver(g andThen resolve)

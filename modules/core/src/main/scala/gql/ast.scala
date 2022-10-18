@@ -8,6 +8,7 @@ import cats.data._
 import gql.resolver._
 import gql.Value._
 import fs2.Pure
+import java.util.UUID
 
 object ast extends AstImplicits.Implicits {
   sealed trait Out[F[_], A] {
@@ -38,9 +39,9 @@ object ast extends AstImplicits.Implicits {
   }
 
   final case class Type[F[_], A](
-      name: String,
-      fields: NonEmptyList[(String, Field[F, A, _, _])],
-      description: Option[String] = None
+    name: String,
+    fields: NonEmptyList[(String, Field[F, A, _, _])],
+    description: Option[String] = None
   ) extends Selectable[F, A] {
     def document(description: String): Type[F, A] = copy(description = Some(description))
 
@@ -56,17 +57,17 @@ object ast extends AstImplicits.Implicits {
   }
 
   final case class Input[A](
-      name: String,
-      fields: NonEmptyArg[A],
-      description: Option[String] = None
+    name: String,
+    fields: NonEmptyArg[A],
+    description: Option[String] = None
   ) extends InToplevel[A] {
     def document(description: String): Input[A] = copy(description = Some(description))
   }
 
   final case class Union[F[_], A](
-      name: String,
-      types: NonEmptyList[Instance[F, A, Any]],
-      description: Option[String] = None
+    name: String,
+    types: NonEmptyList[Instance[F, A, Any]],
+    description: Option[String] = None
   ) extends Selectable[F, A] {
     def document(description: String): Union[F, A] = copy(description = Some(description))
 
@@ -88,10 +89,10 @@ object ast extends AstImplicits.Implicits {
   }
 
   final case class Interface[F[_], A](
-      name: String,
-      instances: List[Instance[F, A, Any]],
-      fields: NonEmptyList[(String, Field[F, A, _, _])],
-      description: Option[String] = None
+    name: String,
+    instances: List[Instance[F, A, Any]],
+    fields: NonEmptyList[(String, Field[F, A, _, _])],
+    description: Option[String] = None
   ) extends Selectable[F, A] {
     def document(description: String): Interface[F, A] = copy(description = Some(description))
 
@@ -117,10 +118,10 @@ object ast extends AstImplicits.Implicits {
   }
 
   final case class Scalar[F[_], A](
-      name: String,
-      encoder: A => Value,
-      decoder: Value => Either[String, A],
-      description: Option[String] = None
+    name: String,
+    encoder: A => Value,
+    decoder: Value => Either[String, A],
+    description: Option[String] = None
   ) extends OutToplevel[F, A]
       with InLeaf[A]
       with InToplevel[A] {
@@ -131,20 +132,22 @@ object ast extends AstImplicits.Implicits {
 
     def eimap[B](f: A => Either[String, B])(g: B => A): Scalar[F, B] =
       Scalar(name, encoder.compose(g), decoder.andThen(_.flatMap(f)), description)
+
+    def rename(newName: String): Scalar[F, A] = copy(name = newName)
   }
 
   final case class EnumInstance[A](
-      encodedName: String,
-      value: A,
-      description: Option[String] = None
+    encodedName: String,
+    value: A,
+    description: Option[String] = None
   ) {
     def document(description: String): EnumInstance[A] = copy(description = Some(description))
   }
 
   final case class Enum[F[_], A](
-      name: String,
-      mappings: NonEmptyList[EnumInstance[A]],
-      description: Option[String] = None
+    name: String,
+    mappings: NonEmptyList[EnumInstance[A]],
+    description: Option[String] = None
   ) extends OutToplevel[F, A]
       with InLeaf[A]
       with InToplevel[A] {
@@ -162,10 +165,10 @@ object ast extends AstImplicits.Implicits {
   }
 
   final case class Field[F[_], -I, T, A](
-      args: Arg[A],
-      resolve: Resolver[F, (I, A), T],
-      output: Eval[Out[F, T]],
-      description: Option[String] = None
+    args: Arg[A],
+    resolve: Resolver[F, (I, A), T],
+    output: Eval[Out[F, T]],
+    description: Option[String] = None
   ) {
     def document(description: String): Field[F, I, T, A] = copy(description = Some(description))
 
@@ -254,6 +257,11 @@ object ast extends AstImplicits.Implicits {
             s"decoding failure for type $name$maybeAt with message ${df.message}"
           }
       )
+
+    implicit def invariantForScalar[F[_]] = new Invariant[Scalar[F, *]] {
+      override def imap[A, B](fa: Scalar[F, A])(f: A => B)(g: B => A): Scalar[F, B] =
+        Scalar(fa.name, fa.encoder.compose(g), fa.decoder.andThen(_.map(f)), fa.description)
+    }
   }
 }
 
@@ -288,19 +296,28 @@ object AstImplicits {
       .document(
         "The `Double` scalar type represents signed double-precision fractional values as specified by [IEEE 754](http://en.wikipedia.org/wiki/IEEE_floating_point)."
       )
+
     implicit def bigIntScalar[F[_]]: Scalar[F, BigInt] = Scalar
       .fromCirce[F, BigInt]("BigInt")
       .document(
         "The `BigInt` scalar type represents non-fractional signed whole numeric values. BigInt can represent values of arbitrary size."
       )
+
     implicit def bigDecimalScalar[F[_]]: Scalar[F, BigDecimal] = Scalar
       .fromCirce[F, BigDecimal]("BigDecimal")
       .document(
         "The `BigDecimal` scalar type represents signed double-precision fractional values as specified by [IEEE 754](http://en.wikipedia.org/wiki/IEEE_floating_point)."
       )
+
     implicit def booleanScalar[F[_]]: Scalar[F, Boolean] = Scalar
       .fromCirce[F, Boolean]("Boolean")
       .document("The `Boolean` scalar type represents `true` or `false`.")
+
+    implicit def uuidScalar[F[_]]: Scalar[F, UUID] = Scalar
+      .fromCirce[F, UUID]("UUID")
+      .document(
+        "The `UUID` scalar type represents a UUID v4 as specified by [RFC 4122](https://tools.ietf.org/html/rfc4122)."
+      )
 
     implicit def gqlInOption[A](implicit tpe: In[A]): In[Option[A]] = InOpt(tpe)
     implicit def gqlOutOption[F[_], A](implicit tpe: Out[F, A]): Out[F, Option[A]] = OutOpt(tpe)

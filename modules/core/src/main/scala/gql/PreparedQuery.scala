@@ -114,6 +114,9 @@ object PreparedQuery {
       case r @ PureResolver(_) =>
         val thisName = s"${parentName}_pure"
         nextId[F].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, thisName)), thisName))
+      case r @ FallibleResolver(_) =>
+        val thisName = s"${parentName}_fallible"
+        nextId[F].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, thisName)), thisName))
       case r @ StreamResolver(_) =>
         val thisName = s"${parentName}_stream"
         nextId[F].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, thisName)), thisName))
@@ -209,7 +212,7 @@ object PreparedQuery {
     val syntheticTypename =
       Field[G, Any, String, Unit](
         Applicative[Arg].unit,
-        EffectResolver[G, (Any, Unit), String] { case (input, _) =>
+        FallibleResolver[G, (Any, Unit), String] { case (input, _) =>
           val x = allPrisms.collectFirstSome { case (p, name) => p(input).as(name) }
           G.pure(x.toRightIor("typename could not be determined, this is an implementation error"))
         },

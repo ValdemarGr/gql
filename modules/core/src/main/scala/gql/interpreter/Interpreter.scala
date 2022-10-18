@@ -353,23 +353,26 @@ class InterpreterImpl[F[_]](
     edges match {
       case Nil => startNext(cont, inputs)
       case edge :: xs =>
+        def evalEffect(resolve: Any => F[Ior[String, Any]]) =
+          inputs.parFlatTraverse { in =>
+            attemptUser(
+              IorT(resolve(in.value)).timed
+                .semiflatMap { case (dur, v) =>
+                  val out = Chain(in.setValue(v))
+                  submit(edge.statisticsName, dur, 1) as out
+                }
+                .value
+                .map(_.leftMap(NonEmptyChain.one)),
+              EvalFailure.EffectResolution(in.cursor, _, in.value)
+            )
+          }
+
         val edgeRes: WriterT[F, Chain[EvalFailure], Chain[EvalNode[Any]]] =
           edge.resolver match {
             case PureResolver(resolve) =>
               W.pure(inputs.map(en => en.setValue(resolve(en.value))))
-            case EffectResolver(resolve) =>
-              inputs.parFlatTraverse { in =>
-                attemptUser(
-                  IorT(resolve(in.value)).timed
-                    .semiflatMap { case (dur, v) =>
-                      val out = Chain(in.setValue(v))
-                      submit(edge.statisticsName, dur, 1) as out
-                    }
-                    .value
-                    .map(_.leftMap(NonEmptyChain.one)),
-                  EvalFailure.EffectResolution(in.cursor, _, in.value)
-                )
-              }
+            case EffectResolver(resolve)   => evalEffect(a => resolve(a).map(_.rightIor))
+            case FallibleResolver(resolve) => evalEffect(resolve)
             case CompositionResolver(_, _) =>
               W.raiseError(new IllegalStateException("composition resolvers cannot appear in edge interpreter"))
             case StreamResolver(stream) =>
