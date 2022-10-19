@@ -7,19 +7,22 @@ import cats.data._
 
 abstract case class BatchResolver[F[_], I, O](
     id: BatchResolver.ResolverKey,
-    run: I => F[IorNec[String, (Set[Any], Map[Any, Any] => F[IorNec[String, O]])]]
+    run: I => (Set[Any], Map[Any, Any] => O)
 ) extends Resolver[F, I, O] {
   override def mapK[G[_]: Functor](fk: F ~> G): BatchResolver[G, I, O] =
-    new BatchResolver[G, I, O](id, i => fk(run(i)).map(_.map { case (ks, f) => (ks, m => fk(f(m))) })) {}
-
-  def contramapF[B](g: B => F[IorNec[String, I]])(implicit F: Monad[F]): BatchResolver[F, B, O] =
-    new BatchResolver[F, B, O](id, b => IorT(g(b)).flatMap(i => IorT(run(i))).value) {}
+    new BatchResolver[G, I, O](id, run) {}
 
   override def contramap[B](g: B => I): BatchResolver[F, B, O] =
     new BatchResolver[F, B, O](id, b => run(g(b))) {}
 
-  def map[O2](f: (I, O) => O2)(implicit F: Functor[F]): BatchResolver[F, I, O2] =
-    new BatchResolver[F, I, O2](id, i => run(i).map(_.map { case (ks, g) => (ks, g.andThen(_.map(_.map(o => f(i, o))))) })) {}
+  def mapBoth[O2](f: (I, O) => O2)(implicit F: Functor[F]): BatchResolver[F, I, O2] =
+    new BatchResolver[F, I, O2](
+      id,
+      { i =>
+        val (keys, finalize) = run(i)
+        (keys, finalize.andThen(f(i, _)))
+      }
+    ) {}
 }
 
 object BatchResolver {
@@ -37,11 +40,7 @@ object BatchResolver {
       val rk = ResolverKey(id)
       val r = new BatchResolver[F, Set[K], Map[K, T]](
         rk,
-        k =>
-          F.pure(
-            (k.asInstanceOf[Set[Any]], (m: Map[Any, Any]) => F.pure(m.asInstanceOf[Map[K, T]].rightIor[NonEmptyChain[String]]))
-              .rightIor[NonEmptyChain[String]]
-          )
+        k => (k.asInstanceOf[Set[Any]], (m: Map[Any, Any]) => m.asInstanceOf[Map[K, T]])
       ) {}
       val entry = f.asInstanceOf[Set[Any] => F[Map[Any, Any]]]
       (s.copy(nextId = id + 1, batchers = s.batchers + (rk -> entry)), r)

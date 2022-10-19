@@ -394,35 +394,22 @@ class InterpreterImpl[F[_]](
                 )
               }
             case BatchResolver(_, run) =>
-              val resolveds =
-                inputs.parFlatTraverse { en =>
-                  attemptUser(
-                    run(en.value).map(_.map(res => Chain((res, en.cursor)))),
-                    EvalFailure.BatchPartitioning(en.cursor, _, en.value)
-                  )
+              val xs = inputs.map(en => (run(en.value), en.cursor))
+
+              val allKeys = xs.map { case ((keys, _), cg) => (cg, keys) }
+
+              lift(batchAccumulator.submit(edge.id, allKeys))
+                .flatMap {
+                  case None => W.pure(Chain.empty[EvalNode[Any]])
+                  case Some(resultMap) =>
+                    xs.parFlatTraverse { case ((keys, reassoc), cg) =>
+                      val missingKeys =
+                        keys.toList.collect { case k if !resultMap.contains(k) => k }.toSet
+                      if (missingKeys.nonEmpty) {
+                        failM[E](EvalFailure.BatchMissingKey(cg, resultMap, keys, missingKeys))
+                      } else W.pure(Chain(EvalNode(cg, reassoc(resultMap))))
+                    }
                 }
-
-              resolveds.flatMap { xs =>
-                val allKeys = xs.map { case ((keys, _), cg) => (cg, keys) }
-
-                lift(batchAccumulator.submit(edge.id, allKeys))
-                  .flatMap {
-                    case None => W.pure(Chain.empty[EvalNode[Any]])
-                    case Some(resultMap) =>
-                      xs.parFlatTraverse { case ((keys, reassoc), cg) =>
-                        val missingKeys =
-                          keys.toList.collect { case k if !resultMap.contains(k) => k }.toSet
-                        if (missingKeys.nonEmpty) {
-                          failM[E](EvalFailure.BatchMissingKey(cg, resultMap, keys, missingKeys))
-                        } else {
-                          attemptUserE(
-                            reassoc(resultMap).map(_.map(res => Chain(EvalNode(cg, res)))),
-                            EvalFailure.BatchPostProcessing(cg, _, resultMap)
-                          )
-                        }
-                      }
-                  }
-              }
           }
 
         edgeRes.flatMap(runEdge(_, xs, cont))

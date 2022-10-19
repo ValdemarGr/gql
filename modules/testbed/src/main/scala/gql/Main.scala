@@ -247,7 +247,7 @@ query withNestedFragments {
 
   val schemaShape =
     BatchResolver[IO, String, String](xs => IO(xs.map(x => x -> x).toMap)).map { r =>
-      val fixed = r.contramap[String](Set(_)).map { case (i, o) => getPerson(o.values.toList.head) }
+      val fixed = r.contramap[String](Set(_)).mapBoth { case (i, o) => getPerson(o.values.toList.head) }
 
       final case class Nest(name: String)
       implicit lazy val nestType: Type[IO, Nest] = tpe[IO, Nest](
