@@ -9,14 +9,14 @@ import scala.reflect.ClassTag
 
 object dsl {
   def tpe[F[_], A](
-    name: String,
-    hd: (String, Field[F, A, _, _]),
-    tl: (String, Field[F, A, _, _])*
+      name: String,
+      hd: (String, Field[F, A, _, _]),
+      tl: (String, Field[F, A, _, _])*
   ) = Type[F, A](name, NonEmptyList(hd, tl.toList), Nil)
 
   def input[A](
-    name: String,
-    fields: NonEmptyArg[A]
+      name: String,
+      fields: NonEmptyArg[A]
   ): Input[A] = Input(name, fields)
 
   def arg[A](name: String)(implicit tpe: => In[A]): NonEmptyArg[A] = {
@@ -46,7 +46,7 @@ object dsl {
   }
 
   def field[F[_], I, T, A](arg: Arg[A])(resolver: Resolver[F, (I, A), T])(implicit
-    tpe: => Out[F, T]
+      tpe: => Out[F, T]
   ): Field[F, I, T, A] =
     Field[F, I, T, A](arg, resolver, Eval.later(tpe))
 
@@ -60,7 +60,7 @@ object dsl {
     StreamResolver(f)
 
   def fallible[F[_], I, T, A](
-    arg: Arg[A]
+      arg: Arg[A]
   )(resolver: (I, A) => F[Ior[String, T]])(implicit tpe: => Out[F, T]): Field[F, I, T, A] = {
     implicit lazy val t0 = tpe
     field(arg)(FallibleResolver[F, (I, A), T] { case (i, a) => resolver(i, a) })
@@ -99,12 +99,29 @@ object dsl {
     Enum[F, A](name, NonEmptyList(hd, tl.toList))
 
   def interface[F[_], A](
-    name: String,
-    hd: (String, Field[F, A, _, _]),
-    tl: (String, Field[F, A, _, _])*
+      name: String,
+      hd: (String, Field[F, A, _, _]),
+      tl: (String, Field[F, A, _, _])*
   ) = Interface[F, A](name, NonEmptyList(hd, tl.toList), Nil)
 
   def union[F[_], A](name: String) = PartiallyAppliedUnion0[F, A](name)
+
+  implicit class ResolverSyntax[F[_], I, A](val resolver: Resolver[F, I, A]) extends AnyVal {
+    def andThen[O2](next: Resolver[F, A, O2]): Resolver[F, I, O2] =
+      CompositionResolver(resolver, next)
+
+    def streamMap[O2](f: A => fs2.Stream[F, IorNec[String, O2]]): Resolver[F, I, O2] =
+      resolver.andThen(StreamResolver(f))
+
+    def fallibleMap[O2](f: A => F[Ior[String, O2]]): Resolver[F, I, O2] =
+      resolver.andThen(FallibleResolver[F, A, O2](f))
+
+    def evalMap[O2](f: A => F[O2]): Resolver[F, I, O2] =
+      resolver.andThen(EffectResolver[F, A, O2](f))
+
+    def map[O2](f: A => O2): Resolver[F, I, O2] =
+      resolver.andThen(PureResolver[F, A, O2](f))
+  }
 
   implicit class TypeSyntax[F[_], A](val tpe: Type[F, A]) extends AnyVal {
     def implements[B](pf: PartialFunction[B, A])(implicit interface: => Interface[F, B]): Type[F, A] =

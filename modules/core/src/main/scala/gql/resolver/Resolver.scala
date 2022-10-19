@@ -8,9 +8,6 @@ trait Resolver[F[_], -I, A] {
   def mapK[G[_]: Functor](fk: F ~> G): Resolver[G, I, A]
 
   def contramap[B](g: B => I): Resolver[F, B, A]
-
-  def andThen[F2[x] >: F[x], O2](next: Resolver[F2, A, O2]): Resolver[F2, I, O2] =
-    CompositionResolver(this.asInstanceOf[Resolver[F2, I, Any]], next.asInstanceOf[Resolver[F2, Any, O2]])
 }
 
 final case class FallibleResolver[F[_], I, A](resolve: I => F[Ior[String, A]]) extends Resolver[F, I, A] {

@@ -379,16 +379,12 @@ class InterpreterImpl[F[_]](
               inputs.parFlatTraverse { in =>
                 attemptUserE(
                   streamAccumulator
-                    .add(
-                      Interpreter.StreamMetadata(in.cursor, xs, cont),
-                      stream(in.value)
-                    )
+                    .add(Interpreter.StreamMetadata(in.cursor, xs, cont), stream(in.value))
                     .timed
                     .map { case (dur, (_, fb)) => fb.tupleLeft(dur) }
                     .rethrow
                     .flatMap { case (dur, xs) =>
-                      submit(edge.statisticsName, dur, 1) as
-                        xs.map(hd => Chain(in.setValue(hd)))
+                      submit(edge.statisticsName, dur, 1) as xs.map(hd => Chain(in.setValue(hd)))
                     },
                   EvalFailure.StreamHeadResolution(in.cursor, _, in.value)
                 )
