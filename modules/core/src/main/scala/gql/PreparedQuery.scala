@@ -127,23 +127,23 @@ object PreparedQuery {
     }
 
   def underlyingOutputTypename[G[_]](ot: Out[G, _]): String = ot match {
-    case Enum(name, _, _)         => name
-    case Union(name, _, _)        => name
-    case Interface(name, _, _, _) => name
-    case Type(name, _, _)         => name
-    case Scalar(name, _, _, _)    => name
-    case OutOpt(of)               => underlyingOutputTypename(of)
-    case OutArr(of)               => underlyingOutputTypename(of)
+    case Enum(name, _, _)            => name
+    case Union(name, _, _)           => name
+    case Interface(name, _, _, _, _) => name
+    case Type(name, _, _, _)         => name
+    case Scalar(name, _, _, _)       => name
+    case OutOpt(of)                  => underlyingOutputTypename(of)
+    case OutArr(of)                  => underlyingOutputTypename(of)
   }
 
   def friendlyName[G[_], A](ot: Out[G, A]): String = ot match {
-    case Scalar(name, _, _, _)    => name
-    case Enum(name, _, _)         => name
-    case Type(name, _, _)         => name
-    case Union(name, _, _)        => name
-    case Interface(name, _, _, _) => name
-    case OutOpt(of)               => s"(${friendlyName(of)} | null)"
-    case OutArr(of)               => s"[${friendlyName(of)}]"
+    case Scalar(name, _, _, _)       => name
+    case Enum(name, _, _)            => name
+    case Type(name, _, _, _)         => name
+    case Union(name, _, _)           => name
+    case Interface(name, _, _, _, _) => name
+    case OutOpt(of)                  => s"(${friendlyName(of)} | null)"
+    case OutArr(of)                  => s"[${friendlyName(of)}]"
   }
 
   def nextId[F[_]: Monad](implicit S: Stateful[F, Prep]) =
@@ -192,7 +192,8 @@ object PreparedQuery {
       s: P.SelectionSet,
       variableMap: VariableMap[Any],
       fragments: Map[String, Pos[P.FragmentDefinition]],
-      currentTypename: String
+      currentTypename: String,
+      discoveryState: SchemaShape.DiscoveryState[G]
   )(implicit
       G: Applicative[G],
       S: Stateful[F, Prep],
@@ -202,9 +203,9 @@ object PreparedQuery {
     // TODO this code shares much with the subtype interfaces below in matchType
     def collectLeafPrisms(inst: Instance[G, Any, Any]): Chain[(Any => Option[Any], String)] =
       inst.ol.value match {
-        case Type(name, _, _)          => Chain((inst.specify, name))
-        case Union(_, types, _)        => Chain.fromSeq(types.toList).flatMap(collectLeafPrisms)
-        case Interface(_, types, _, _) => Chain.fromSeq(types).flatMap(collectLeafPrisms)
+        case Type(name, _, _, _)          => Chain((inst.specify, name))
+        case Union(_, types, _)           => Chain.fromSeq(types.toList).flatMap(collectLeafPrisms)
+        case Interface(_, types, _, _, _) => Chain.fromSeq(types).flatMap(collectLeafPrisms)
       }
 
     val allPrisms: Chain[(Any => Option[Any], String)] = collectLeafPrisms(Instance(Eval.now(ol))(Some(_)))
@@ -226,15 +227,15 @@ object PreparedQuery {
           case None => raise(s"unknown field name ${field.name}", Some(caret))
           case Some(f: Field[G, Any, Any, Any]) =>
             ambientField(field.name) {
-              prepareField[F, G](field, caret, f, variableMap, fragments, currentTypename)
+              prepareField[F, G](field, caret, f, variableMap, fragments, currentTypename, discoveryState)
             }
         }
       case Pos(caret, P.Selection.InlineFragmentSelection(f)) =>
         f.typeCondition match {
           case None => raise(s"inline fragment must have a type condition", Some(caret))
           case Some(typeCnd) =>
-            matchType[F, G](typeCnd, ol, caret).flatMap { case (ol, specialize) =>
-              prepareSelections[F, G](ol, f.selectionSet, variableMap, fragments, typeCnd)
+            matchType[F, G](typeCnd, ol, caret, discoveryState).flatMap { case (ol, specialize) =>
+              prepareSelections[F, G](ol, f.selectionSet, variableMap, fragments, typeCnd, discoveryState)
                 .map(Selection(_))
                 .flatMap[PreparedField[G, Any]](s => nextId[F].map(id => PreparedFragField(id, typeCnd, specialize, s)))
             }
@@ -244,7 +245,7 @@ object PreparedQuery {
           case None => raise(s"unknown fragment name ${f.fragmentName}", Some(caret))
           case Some(fd) =>
             ambientFragment(f.fragmentName) {
-              prepareFragment[F, G](ol, fd, variableMap, fragments, fd.value.typeCnd)
+              prepareFragment[F, G](ol, fd, variableMap, fragments, fd.value.typeCnd, discoveryState)
                 .flatMap[PreparedField[G, Any]] { fd =>
                   nextId[F].map(id => PreparedFragField(id, fd.typeCondition, fd.specify, Selection(fd.fields)))
                 }
@@ -292,7 +293,8 @@ object PreparedQuery {
       field: Field[G, Any, Any, Any],
       variableMap: VariableMap[Any],
       fragments: Map[String, Pos[P.FragmentDefinition]],
-      currentTypename: String
+      currentTypename: String,
+      discoveryState: SchemaShape.DiscoveryState[G]
   )(implicit
       S: Stateful[F, Prep],
       F: MonadError[F, PositionalError],
@@ -310,7 +312,7 @@ object PreparedQuery {
           case (OutArr(inner), _) => typePrep(inner).map(PreparedList(_))
           case (OutOpt(inner), _) => typePrep(inner).map(PreparedOption(_))
           case (ol: Selectable[G, Any], Some(ss)) =>
-            prepareSelections[F, G](ol, ss, variableMap, fragments, tn)
+            prepareSelections[F, G](ol, ss, variableMap, fragments, tn, discoveryState)
               .map(Selection(_))
           case (e: Enum[G, Any], None) =>
             F.pure(PreparedLeaf(e.name, x => Json.fromString(e.revm(x))))
@@ -339,7 +341,8 @@ object PreparedQuery {
   def matchType[F[_], G[_]: Applicative](
       name: String,
       sel: Selectable[G, Any],
-      caret: Caret
+      caret: Caret,
+      discoveryState: SchemaShape.DiscoveryState[G]
   )(implicit F: MonadError[F, PositionalError], S: Stateful[F, Prep]): F[(Selectable[G, Any], Any => Option[Any])] =
     if (sel.name == name) F.pure((sel, Some(_)))
     else {
@@ -382,17 +385,23 @@ object PreparedQuery {
        AFrag resolves matches on B and picks that implementation.
        */
       sel match {
-        case Type(n, _, _) =>
+        case Type(n, _, _, _) =>
           raise(s"tried to match with type $name on type object type $n", Some(caret))
-        case i @ Interface(n, instances, fields, _) =>
+        // What types implement this interface?
+        case i @ Interface(n, instances, fields, _, _) =>
           // TODO follow sub-interfaces that occur in `instances`
+
           raiseOpt(
-            i.instanceMap
-              .get(name)
-              .map(i => (i.ol.value, i.specify)),
-            s"$name does not implement interface $n, possible implementations are ${i.instanceMap.keySet.mkString(", ")}",
+            discoveryState.implementations.get(i.name),
+            s"the interface ${i.name} is not implemented by any type",
             caret.some
-          )
+          ).flatMap { m =>
+            raiseOpt(
+              m.get(name),
+              s"$name does not implement interface $n, possible implementations are ${i.instanceMap.keySet.mkString(", ")}",
+              caret.some
+            )
+          }
         case u @ Union(n, types, _) =>
           raiseOpt(
             u.instanceMap
@@ -409,7 +418,8 @@ object PreparedQuery {
       f: Pos[P.FragmentDefinition],
       variableMap: VariableMap[Any],
       fragments: Map[String, Pos[P.FragmentDefinition]],
-      currentTypename: String
+      currentTypename: String,
+      discoveryState: SchemaShape.DiscoveryState[G]
   )(implicit
       S: Stateful[F, Prep],
       F: MonadError[F, PositionalError],
@@ -423,9 +433,9 @@ object PreparedQuery {
           val afterF: F[Unit] = S.modify(s => s.copy(cycleSet = s.cycleSet - f.value.name))
 
           val programF: F[FragmentDefinition[G, Any]] =
-            matchType[F, G](f.value.typeCnd, ol, f.caret)
+            matchType[F, G](f.value.typeCnd, ol, f.caret, discoveryState)
               .flatMap { case (t, specify) =>
-                prepareSelections[F, G](t, f.value.selectionSet, variableMap, fragments, currentTypename)
+                prepareSelections[F, G](t, f.value.selectionSet, variableMap, fragments, currentTypename, discoveryState)
                   .map(FragmentDefinition(f.value.name, f.value.typeCnd, specify, _))
               }
 
@@ -664,18 +674,20 @@ object PreparedQuery {
   ): F[(P.OperationType, NonEmptyList[PreparedField[G, Any]])] = {
     val ot = operationType(op)
 
-    val rootSchema: F[Type[G, _]] =
+    val rootSchema: F[Type[G, Any]] =
       ot match {
         // We sneak the introspection query in here
         case P.OperationType.Query =>
-          val i = schema.shape.introspection
-          val lifted = i.map { case (k, v) =>
+          val i: NonEmptyList[(String, Field[Id, Unit, _, _])] = schema.shape.introspection
+          val lifted: NonEmptyList[(String, Field[G, Unit, _, _])] = i.map { case (k, v) =>
             k -> v.mapK(new (Id ~> G) { def apply[A](a: Id[A]): G[A] = Applicative[G].pure(a) })
           }
-          val q = schema.shape.query
-          F.pure(q.copy(fields = q.fields concatNel lifted))
-        case P.OperationType.Mutation     => raiseOpt(schema.shape.mutation, "no mutation defined in schema", None)
-        case P.OperationType.Subscription => raiseOpt(schema.shape.subscription, "no subscription defined in schema", None)
+          val q = schema.shape.query.asInstanceOf[Type[G, Any]]
+          F.pure(q.copy(fields = q.fields concatNel lifted.map { case (k, v) => k -> v.contramap[Any](_ => ()) }))
+        case P.OperationType.Mutation =>
+          raiseOpt(schema.shape.mutation.map(_.asInstanceOf[Type[G, Any]]), "no mutation defined in schema", None)
+        case P.OperationType.Subscription =>
+          raiseOpt(schema.shape.subscription.map(_.asInstanceOf[Type[G, Any]]), "no subscription defined in schema", None)
       }
 
     val rootTypename =
@@ -736,7 +748,8 @@ object PreparedQuery {
           sel,
           vm,
           frags.map(f => f.value.name -> f).toMap,
-          rootTypename
+          rootTypename,
+          schema.shape.discover
         )
       }
 

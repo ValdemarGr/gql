@@ -38,22 +38,29 @@ object ast extends AstImplicits.Implicits {
     def contramap[B](f: B => A): Out[F, B]
   }
 
+  sealed trait ObjectLike[F[_], A] extends Selectable[F, A] {
+    def implementsMap: Map[String, Implementation[F, A, _]]
+  }
+
   final case class Type[F[_], A](
       name: String,
       fields: NonEmptyList[(String, Field[F, A, _, _])],
+      implements: List[Implementation[F, A, _]],
       description: Option[String] = None
-  ) extends Selectable[F, A] {
+  ) extends ObjectLike[F, A] {
     def document(description: String): Type[F, A] = copy(description = Some(description))
 
     lazy val fieldsList: List[(String, Field[F, A, _, _])] = fields.toList
 
     override def contramap[B](f: B => A): Type[F, B] =
-      Type(name, fields.map { case (k, v) => k -> v.contramap(f) }, description)
+      Type(name, fields.map { case (k, v) => k -> v.contramap(f) }, implements.map(_.contramap(f)), description)
 
     lazy val fieldMap = fields.toNem.toSortedMap.toMap
 
+    lazy val implementsMap = implements.map(i => i.implementation.value.name -> i).toMap
+
     def mapK[G[_]: Functor](fk: F ~> G): Type[G, A] =
-      Type(name, fields.map { case (k, v) => k -> v.mapK(fk) }, description)
+      Type(name, fields.map { case (k, v) => k -> v.mapK(fk) }, implements.map(_.mapK(fk)), description)
   }
 
   final case class Input[A](
@@ -88,23 +95,35 @@ object ast extends AstImplicits.Implicits {
       )
   }
 
+  final case class Implementation[F[_], A, B](implementation: Eval[Interface[F, B]])(implicit val specify: A => Option[B]) {
+    def mapK[G[_]: Functor](fk: F ~> G): Implementation[G, A, B] =
+      Implementation(implementation.map(_.mapK(fk)))
+
+    def contramap[C](g: C => A): Implementation[F, C, B] =
+      Implementation[F, C, B](implementation)(c => specify(g(c)))
+  }
+
   final case class Interface[F[_], A](
       name: String,
       instances: List[Instance[F, A, Any]],
       fields: NonEmptyList[(String, Field[F, A, _, _])],
+      implements: List[Implementation[F, A, _]],
       description: Option[String] = None
-  ) extends Selectable[F, A] {
+  ) extends ObjectLike[F, A] {
     def document(description: String): Interface[F, A] = copy(description = Some(description))
 
     override def mapK[G[_]: Functor](fk: F ~> G): Interface[G, A] =
       copy[G, A](
         instances = instances.map(_.mapK(fk)),
+        implements = implements.map(_.mapK(fk)),
         fields = fields.map { case (k, v) => k -> v.mapK(fk) }
       )
 
     lazy val fieldsList = fields.toList
 
     lazy val fieldMap = fields.toNem.toSortedMap.toMap
+
+    lazy val implementsMap = implements.map(i => i.implementation.value.name -> i).toMap
 
     lazy val instanceMap = instances.map(x => x.ol.value.name -> x).toMap
 
@@ -113,6 +132,7 @@ object ast extends AstImplicits.Implicits {
         name,
         instances.map(_.contramap(g)),
         fields.map { case (k, v) => k -> v.contramap(g) },
+        implements.map(_.contramap(g)),
         description
       )
   }

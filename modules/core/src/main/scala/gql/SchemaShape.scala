@@ -33,7 +33,14 @@ object SchemaShape {
       inputs: Map[String, InToplevel[_]],
       outputs: Map[String, OutToplevel[F, _]],
       // Key is the type, values are the interfaces it implements
-      interfaceImplementations: Map[String, Set[String]]
+      interfaceImplementations: Map[String, Set[String]],
+      // Key is the interface
+      // Values:
+      //   Key is the typename of the object
+      //   Values:
+      //     1. The object like type that extends the interface
+      //     2. The function to map from the interface to the object)
+      implementations: Map[String, Map[String, (ObjectLike[F, Any], Any => Option[Any])]]
   )
 
   def discover[F[_]](shape: SchemaShape[F, _, _, _]): DiscoveryState[F] = {
@@ -66,18 +73,19 @@ object SchemaShape {
               }
 
             t match {
-              case o @ Type(_, _, _) => handleFields(o)
-              case o @ Interface(_, instances, _, _) =>
+              case o @ Type(_, _, _, _) => handleFields(o)
+              case o @ Interface(_, instances, _, implements, _) =>
                 S.modify { s =>
-                  val newMap =
-                    o.instanceMap.keySet.toList.foldLeft(s.interfaceImplementations) { case (m, instance) =>
-                      val y = m.get(instance) match {
-                        case None    => Set(o.name)
-                        case Some(x) => x + o.name
-                      }
-                      m + (instance -> y)
+                  val newImpls = implements.foldLeft(s.implementations) { case (accum, next) =>
+                    val name = next.implementation.value.name
+                    val thisEntry = (o.name -> ((o, next.specify)).asInstanceOf[(gql.ast.ObjectLike[F, Any], Any => Option[Any])])
+                    accum.get(name) match {
+                      case None    => accum + (name -> Map(thisEntry))
+                      case Some(m) => accum + (name -> (m + thisEntry))
                     }
-                  s.copy(interfaceImplementations = newMap)
+                  }
+
+                  s.copy(implementations = newImpls)
                 } >>
                   handleFields(o) >>
                   instances.traverse_(inst => handleFields(inst.ol.value))
@@ -104,7 +112,7 @@ object SchemaShape {
 
     (shape.query :: (shape.mutation ++ shape.subscription).toList)
       .traverse_(goOutput[State[DiscoveryState[F], *]])
-      .runS(DiscoveryState(Map.empty, Map.empty, Map.empty))
+      .runS(DiscoveryState(Map.empty, Map.empty, Map.empty, Map.empty))
       .value
   }
 
@@ -322,13 +330,13 @@ object SchemaShape {
       useOutputEdge[G](tl) {
         validateTypeName[G](tl.name) >> {
           tl match {
-            case Type(_, fields, _) => validateFields[G](fields)
+            case Type(_, fields, _, _) => validateFields[G](fields)
             case Union(_, types, _) =>
               val ols = types.toList.map(_.ol)
 
               allUnique[G](DuplicateUnionInstance, ols.map(_.value.name)) >>
                 ols.traverse_(x => validateOutput[G](x.value))
-            case Interface(_, instances, fields, _) =>
+            case Interface(_, instances, fields, _, _) =>
               val insts = instances
 
               val ols = insts.toList.map(_.ol)
@@ -460,7 +468,7 @@ object SchemaShape {
                   .indent(2) + Doc.hardLine + Doc.text("}"))
             // Dont render built-in scalars
             case Scalar(name, _, _, desc) => doc(desc) + Doc.text(s"scalar $name")
-            case Interface(name, _, fields, desc) =>
+            case Interface(name, _, fields, _, desc) =>
               val fieldsDoc = Doc
                 .intercalate(
                   Doc.hardLine,
@@ -472,7 +480,7 @@ object SchemaShape {
                 (Doc.text(s"interface $name") + Doc.text(" {") + Doc.hardLine +
                   fieldsDoc +
                   Doc.hardLine + Doc.text("}"))
-            case Type(name, fields, desc) =>
+            case Type(name, fields, _, desc) =>
               val fieldsDoc = Doc
                 .intercalate(
                   Doc.hardLine,
@@ -652,16 +660,16 @@ object SchemaShape {
       "fields" -> pure(inclDeprecated) {
         case (oi: TypeInfo.OutInfo, _) =>
           oi.inner match {
-            case Type(_, fields, _)         => Some(fields.toList.map { case (k, v) => NamedField(k, v) })
-            case Interface(_, _, fields, _) => Some(fields.toList.map { case (k, v) => NamedField(k, v) })
-            case _                          => None
+            case Type(_, fields, _, _)         => Some(fields.toList.map { case (k, v) => NamedField(k, v) })
+            case Interface(_, _, fields, _, _) => Some(fields.toList.map { case (k, v) => NamedField(k, v) })
+            case _                             => None
           }
         case _ => None
       },
       "interfaces" -> pure {
         case oi: TypeInfo.OutInfo =>
           oi.inner match {
-            case Type(name, _, _) =>
+            case Type(name, _, _, _) =>
               val interfaces = d.interfaceImplementations.get(name).toList.flatMap(_.toList)
               interfaces
                 .map(d.outputs.apply)
@@ -670,7 +678,7 @@ object SchemaShape {
                   case x: Type[F, _]      => TypeInfo.OutInfo(x)
                 }
                 .some
-            case Interface(name, _, _, _) =>
+            case Interface(name, _, _, _, _) =>
               d.interfaceImplementations.get(name)
               val interfaces = d.interfaceImplementations.get(name).toList.flatMap(_.toList)
               interfaces
@@ -687,9 +695,9 @@ object SchemaShape {
       "possibleTypes" -> pure {
         case oi: TypeInfo.OutInfo =>
           oi.inner match {
-            case Interface(_, instances, _, _) => instances.map[TypeInfo](x => TypeInfo.OutInfo(x.ol.value)).some
-            case Union(_, instances, _)        => instances.toList.map[TypeInfo](x => TypeInfo.OutInfo(x.ol.value)).some
-            case _                             => None
+            case Interface(_, instances, _, _, _) => instances.map[TypeInfo](x => TypeInfo.OutInfo(x.ol.value)).some
+            case Union(_, instances, _)           => instances.toList.map[TypeInfo](x => TypeInfo.OutInfo(x.ol.value)).some
+            case _                                => None
           }
         case _ => None
       },

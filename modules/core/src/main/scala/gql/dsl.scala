@@ -11,7 +11,7 @@ object dsl {
       name: String,
       hd: (String, Field[F, A, _, _]),
       tl: (String, Field[F, A, _, _])*
-  ) = Type[F, A](name, NonEmptyList(hd, tl.toList))
+  ) = Type[F, A](name, NonEmptyList(hd, tl.toList), Nil)
 
   def input[A](
       name: String,
@@ -111,7 +111,7 @@ object dsl {
       name: String,
       hd: (String, Field[F, A, _, _]),
       tl: (String, Field[F, A, _, _])*
-  ) = Interface[F, A](name, Nil, NonEmptyList(hd, tl.toList))
+  ) = Interface[F, A](name, Nil, NonEmptyList(hd, tl.toList), Nil)
 
   implicit class UnionSyntax[F[_], A](val tpe: Union[F, A]) extends AnyVal {
     def variant[B](pf: PartialFunction[A, B])(implicit s: => Selectable[F, B]): Union[F, A] =
