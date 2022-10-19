@@ -114,16 +114,16 @@ object StarWarsSchema {
     implicit lazy val human: Type[IO, Human] =
       tpe[IO, Human](
         "Human",
-        "homePlanet" -> pure(_.homePlanet),
-        character.fields.toList: _*
+        "homePlanet" -> pure(_.homePlanet)
       ).subtypeOf[Character]
+        .addFields(character.fields.toList: _*)
 
     implicit lazy val droid: Type[IO, Droid] =
       tpe[IO, Droid](
         "Droid",
-        "primaryFunction" -> pure(_.primaryFunction),
-        character.fields.toList: _*
+        "primaryFunction" -> pure(_.primaryFunction)
       ).subtypeOf[Character]
+        .addFields(character.fields.toList: _*)
 
     SchemaShape[IO, Unit, Unit, Unit](
       tpe[IO, Unit](
