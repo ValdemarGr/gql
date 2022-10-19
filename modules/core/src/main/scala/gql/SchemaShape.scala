@@ -18,8 +18,8 @@ final case class SchemaShape[F[_], Q, M, S](
     outputTypes: List[OutToplevel[F, _]] = Nil,
     inputTypes: List[InToplevel[_]] = Nil
 ) {
-  // def mapK[G[_]: Functor](fk: F ~> G): SchemaShape[G, Q, M, S] =
-  //   SchemaShape(query.mapK(fk), mutation.map(_.mapK(fk)), subscription.map(_.mapK(fk)))
+  def mapK[G[_]: Functor](fk: F ~> G): SchemaShape[G, Q, M, S] =
+    SchemaShape(query.mapK(fk), mutation.map(_.mapK(fk)), subscription.map(_.mapK(fk)), outputTypes.map(_.mapK(fk)), inputTypes)
 
   lazy val discover = SchemaShape.discover[F](this)
 

@@ -24,7 +24,9 @@ object ast extends AstImplicits.Implicits {
     def description: Option[String]
   }
 
-  sealed trait OutToplevel[F[_], A] extends Out[F, A] with Toplevel[A]
+  sealed trait OutToplevel[F[_], A] extends Out[F, A] with Toplevel[A] {
+    override def mapK[G[_]: Functor](fk: F ~> G): OutToplevel[G, A]
+  }
 
   sealed trait InToplevel[A] extends In[A] with Toplevel[A]
 
