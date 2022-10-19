@@ -20,12 +20,20 @@ class ValidationTest extends CatsEffectSuite {
       ).mapN(CyclicInput.apply)
     )
 
+  implicit lazy val duplicateInterface = interface[IO, MutRecInterface](
+    "MutRecInterface",
+    "value" -> pure(_.value),
+    "missing" -> pure(_ => 42)
+  )
+
   implicit def mr1: Type[IO, MutuallyRecursive1] =
     tpe[IO, MutuallyRecursive1](
       "MutuallyRecursive1",
       "value" -> pure(_.value),
       "two" -> pure(x => MutuallyRecursive2(x.value * 2))
     )
+      .subtypeOf[MutRecInterface]
+      .subtypeOf[MutRecInterface]
 
   implicit lazy val mr2: Type[IO, MutuallyRecursive2] =
     tpe[IO, MutuallyRecursive2](
@@ -33,6 +41,7 @@ class ValidationTest extends CatsEffectSuite {
       "value" -> pure(_.value),
       "one" -> pure(x => MutuallyRecursive1(x.value * 2))
     )
+      .subtypeOf[MutRecInterface]
 
   implicit lazy val badStructure: Type[IO, BadStructure] =
     tpe[IO, BadStructure](
@@ -56,16 +65,6 @@ class ValidationTest extends CatsEffectSuite {
     .variant { case x: MutuallyRecursive2 => x }
     .variant { case x: MutuallyRecursive1 => x }
     .variant { case x: MutuallyRecursive2 => x }
-
-  implicit lazy val duplicateInterface =
-    interface[IO, MutRecInterface](
-      "MutRecInterface",
-      "value" -> pure(_.value),
-      "missing" -> pure(_ => 42)
-    )
-      .instance { case x: MutuallyRecursive2 => x }
-      .instance { case x: MutuallyRecursive1 => x }
-      .instance { case x: MutuallyRecursive2 => x }
 
   lazy val schemaShape = SchemaShape[IO, Unit, Unit, Unit](
     tpe[IO, Unit](

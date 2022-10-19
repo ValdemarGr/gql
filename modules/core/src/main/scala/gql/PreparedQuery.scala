@@ -127,23 +127,23 @@ object PreparedQuery {
     }
 
   def underlyingOutputTypename[G[_]](ot: Out[G, _]): String = ot match {
-    case Enum(name, _, _)            => name
-    case Union(name, _, _)           => name
-    case Interface(name, _, _, _, _) => name
-    case Type(name, _, _, _)         => name
-    case Scalar(name, _, _, _)       => name
-    case OutOpt(of)                  => underlyingOutputTypename(of)
-    case OutArr(of)                  => underlyingOutputTypename(of)
+    case Enum(name, _, _)         => name
+    case Union(name, _, _)        => name
+    case Interface(name, _, _, _) => name
+    case Type(name, _, _, _)      => name
+    case Scalar(name, _, _, _)    => name
+    case OutOpt(of)               => underlyingOutputTypename(of)
+    case OutArr(of)               => underlyingOutputTypename(of)
   }
 
   def friendlyName[G[_], A](ot: Out[G, A]): String = ot match {
-    case Scalar(name, _, _, _)       => name
-    case Enum(name, _, _)            => name
-    case Type(name, _, _, _)         => name
-    case Union(name, _, _)           => name
-    case Interface(name, _, _, _, _) => name
-    case OutOpt(of)                  => s"(${friendlyName(of)} | null)"
-    case OutArr(of)                  => s"[${friendlyName(of)}]"
+    case Scalar(name, _, _, _)    => name
+    case Enum(name, _, _)         => name
+    case Type(name, _, _, _)      => name
+    case Union(name, _, _)        => name
+    case Interface(name, _, _, _) => name
+    case OutOpt(of)               => s"(${friendlyName(of)} | null)"
+    case OutArr(of)               => s"[${friendlyName(of)}]"
   }
 
   def nextId[F[_]: Monad](implicit S: Stateful[F, Prep]) =
@@ -200,22 +200,25 @@ object PreparedQuery {
       F: MonadError[F, PositionalError],
       D: Defer[F]
   ): F[NonEmptyList[PreparedField[G, Any]]] = D.defer {
-    // TODO this code shares much with the subtype interfaces below in matchType
-    def collectLeafPrisms(inst: Instance[G, Any, Any]): Chain[(Any => Option[Any], String)] =
-      inst.ol.value match {
-        case Type(name, _, _, _)          => Chain((inst.specify, name))
-        case Union(_, types, _)           => Chain.fromSeq(types.toList).flatMap(collectLeafPrisms)
-        case Interface(_, types, _, _, _) => Chain.fromSeq(types).flatMap(collectLeafPrisms)
-      }
-
-    val allPrisms: Chain[(Any => Option[Any], String)] = collectLeafPrisms(Instance(Eval.now(ol))(Some(_)))
-
     val syntheticTypename =
       Field[G, Any, String, Unit](
         Applicative[Arg].unit,
         FallibleResolver[G, (Any, Unit), String] { case (input, _) =>
-          val x = allPrisms.collectFirstSome { case (p, name) => p(input).as(name) }
-          G.pure(x.toRightIor("typename could not be determined, this is an implementation error"))
+          // TODO this code shares much with the subtype interfaces below in matchType
+          val typename = ol match {
+            case Type(name, _, _, _) => Some(name)
+            case Union(_, types, _) =>
+              types.collectFirstSome { variant => variant.specify(input) as variant.tpe.value.name }
+            case Interface(name, _, _, _) =>
+              // Only look for concrete types; that is; `Type`s
+              discoveryState.implementations
+                .get(name)
+                .toList
+                .flatMap(_.values.toList)
+                .collectFirstSome { case (Type(name, _, _, _), spec) => spec(input) as name }
+          }
+
+          G.pure(typename.toRightIor("typename could not be determined, this is an implementation error"))
         },
         Eval.now(gql.ast.stringScalar)
       )
@@ -388,7 +391,7 @@ object PreparedQuery {
         case Type(n, _, _, _) =>
           raise(s"tried to match with type $name on type object type $n", Some(caret))
         // What types implement this interface?
-        case i @ Interface(n, instances, fields, _, _) =>
+        case i @ Interface(n, fields, _, _) =>
           // TODO follow sub-interfaces that occur in `instances`
 
           raiseOpt(
@@ -398,7 +401,7 @@ object PreparedQuery {
           ).flatMap { m =>
             raiseOpt(
               m.get(name),
-              s"$name does not implement interface $n, possible implementations are ${i.instanceMap.keySet.mkString(", ")}",
+              s"$name does not implement interface $n, possible implementations are ${m.keySet.mkString(", ")}",
               caret.some
             )
           }
@@ -406,7 +409,7 @@ object PreparedQuery {
           raiseOpt(
             u.instanceMap
               .get(name)
-              .map(i => (i.ol.value, i.specify)),
+              .map(i => (i.tpe.value.asInstanceOf[Type[G, Any]], i.specify)),
             s"$name is not a member of the union $n, possible members are ${u.instanceMap.keySet.mkString(", ")}",
             caret.some
           )

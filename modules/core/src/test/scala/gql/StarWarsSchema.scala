@@ -110,22 +110,20 @@ object StarWarsSchema {
         "appearsIn" -> pure(_.appearsIn),
         "secretBackstory" -> fallible(_ => IO("secretBackstory is secret.".leftIor[String]))
       )
-        .instance { case h: Human => h }
-        .instance { case d: Droid => d }
 
     implicit lazy val human: Type[IO, Human] =
       tpe[IO, Human](
         "Human",
         "homePlanet" -> pure(_.homePlanet),
         character.fields.toList: _*
-      )
+      ).subtypeOf[Character]
 
     implicit lazy val droid: Type[IO, Droid] =
       tpe[IO, Droid](
         "Droid",
         "primaryFunction" -> pure(_.primaryFunction),
         character.fields.toList: _*
-      )
+      ).subtypeOf[Character]
 
     SchemaShape[IO, Unit, Unit, Unit](
       tpe[IO, Unit](

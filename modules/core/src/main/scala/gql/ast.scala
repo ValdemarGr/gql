@@ -45,7 +45,7 @@ object ast extends AstImplicits.Implicits {
   final case class Type[F[_], A](
       name: String,
       fields: NonEmptyList[(String, Field[F, A, _, _])],
-      implements: List[Implementation[F, A, _]],
+      implementations: List[Implementation[F, A, _]],
       description: Option[String] = None
   ) extends ObjectLike[F, A] {
     def document(description: String): Type[F, A] = copy(description = Some(description))
@@ -53,14 +53,14 @@ object ast extends AstImplicits.Implicits {
     lazy val fieldsList: List[(String, Field[F, A, _, _])] = fields.toList
 
     override def contramap[B](f: B => A): Type[F, B] =
-      Type(name, fields.map { case (k, v) => k -> v.contramap(f) }, implements.map(_.contramap(f)), description)
+      Type(name, fields.map { case (k, v) => k -> v.contramap(f) }, implementations.map(_.contramap(f)), description)
 
     lazy val fieldMap = fields.toNem.toSortedMap.toMap
 
-    lazy val implementsMap = implements.map(i => i.implementation.value.name -> i).toMap
+    lazy val implementsMap = implementations.map(i => i.implementation.value.name -> i).toMap
 
     def mapK[G[_]: Functor](fk: F ~> G): Type[G, A] =
-      Type(name, fields.map { case (k, v) => k -> v.mapK(fk) }, implements.map(_.mapK(fk)), description)
+      Type(name, fields.map { case (k, v) => k -> v.mapK(fk) }, implementations.map(_.mapK(fk)), description)
   }
 
   final case class Input[A](
@@ -73,7 +73,7 @@ object ast extends AstImplicits.Implicits {
 
   final case class Union[F[_], A](
       name: String,
-      types: NonEmptyList[Instance[F, A, Any]],
+      types: NonEmptyList[Variant[F, A, _]],
       description: Option[String] = None
   ) extends Selectable[F, A] {
     def document(description: String): Union[F, A] = copy(description = Some(description))
@@ -81,7 +81,7 @@ object ast extends AstImplicits.Implicits {
     override def contramap[B](f: B => A): Union[F, B] =
       Union(name, types.map(_.contramap(f)), description)
 
-    lazy val instanceMap = types.map(i => i.ol.value.name -> i).toList.toMap
+    lazy val instanceMap = types.map(i => i.tpe.value.name -> i).toList.toMap
 
     lazy val fieldMap = Map.empty
 
@@ -95,27 +95,25 @@ object ast extends AstImplicits.Implicits {
       )
   }
 
-  final case class Implementation[F[_], A, B](implementation: Eval[Interface[F, B]])(implicit val specify: A => Option[B]) {
+  final case class Implementation[F[_], A, B](implementation: Eval[Interface[F, B]])(implicit val specify: B => Option[A]) {
     def mapK[G[_]: Functor](fk: F ~> G): Implementation[G, A, B] =
       Implementation(implementation.map(_.mapK(fk)))
 
-    def contramap[C](g: C => A): Implementation[F, C, B] =
-      Implementation[F, C, B](implementation)(c => specify(g(c)))
+    def contramap[C](g: C => A): Implementation[F, C, B] = ???
+    // Implementation[F, C, B](implementation)(c => specify(g(c)))
   }
 
   final case class Interface[F[_], A](
       name: String,
-      instances: List[Instance[F, A, Any]],
       fields: NonEmptyList[(String, Field[F, A, _, _])],
-      implements: List[Implementation[F, A, _]],
+      implementations: List[Implementation[F, A, _]],
       description: Option[String] = None
   ) extends ObjectLike[F, A] {
     def document(description: String): Interface[F, A] = copy(description = Some(description))
 
     override def mapK[G[_]: Functor](fk: F ~> G): Interface[G, A] =
       copy[G, A](
-        instances = instances.map(_.mapK(fk)),
-        implements = implements.map(_.mapK(fk)),
+        implementations = implementations.map(_.mapK(fk)),
         fields = fields.map { case (k, v) => k -> v.mapK(fk) }
       )
 
@@ -123,16 +121,13 @@ object ast extends AstImplicits.Implicits {
 
     lazy val fieldMap = fields.toNem.toSortedMap.toMap
 
-    lazy val implementsMap = implements.map(i => i.implementation.value.name -> i).toMap
-
-    lazy val instanceMap = instances.map(x => x.ol.value.name -> x).toMap
+    lazy val implementsMap = implementations.map(i => i.implementation.value.name -> i).toMap
 
     def contramap[B](g: B => A): Interface[F, B] =
       Interface(
         name,
-        instances.map(_.contramap(g)),
         fields.map { case (k, v) => k -> v.contramap(g) },
-        implements.map(_.contramap(g)),
+        implementations.map(_.contramap(g)),
         description
       )
   }
@@ -210,12 +205,12 @@ object ast extends AstImplicits.Implicits {
       )
   }
 
-  final case class Instance[F[_], A, B](ol: Eval[Selectable[F, B]])(implicit val specify: A => Option[B]) {
-    def mapK[G[_]: Functor](fk: F ~> G): Instance[G, A, B] =
-      Instance(ol.map(_.mapK(fk)))
+  final case class Variant[F[_], A, B](tpe: Eval[Type[F, B]])(implicit val specify: A => Option[B]) {
+    def mapK[G[_]: Functor](fk: F ~> G): Variant[G, A, B] =
+      Variant(tpe.map(_.mapK(fk)))
 
-    def contramap[C](g: C => A): Instance[F, C, B] =
-      Instance[F, C, B](ol)(c => specify(g(c)))
+    def contramap[C](g: C => A): Variant[F, C, B] =
+      Variant[F, C, B](tpe)(c => specify(g(c)))
   }
 
   final case class OutOpt[F[_], A](of: Out[F, A]) extends Out[F, Option[A]] {
