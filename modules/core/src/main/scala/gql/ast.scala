@@ -255,13 +255,6 @@ object ast extends AstImplicits.Implicits {
       }
   }
 
-  final case class ID[A](value: A) extends AnyVal
-  implicit def idTpe[F[_], A](implicit s: Scalar[F, A]): Scalar[F, ID[A]] =
-    Scalar[F, ID[A]]("ID", x => s.encoder(x.value), v => s.decoder(v).map(ID(_)))
-      .document(
-        "The `ID` scalar type represents a unique identifier, often used to refetch an object or as key for a cache. The ID type appears in a JSON response as a String; however, it is not intended to be human-readable. When expected as an input type, any string (such as `\"4\"`) or integer (such as `4`) input value will be accepted as an ID."
-      )
-
   object Scalar {
     def fromCirce[F[_], A](name: String)(implicit enc: Encoder[A], dec: Decoder[A]): Scalar[F, A] =
       Scalar(
@@ -278,6 +271,18 @@ object ast extends AstImplicits.Implicits {
       override def imap[A, B](fa: Scalar[F, A])(f: A => B)(g: B => A): Scalar[F, B] =
         Scalar(fa.name, fa.encoder.compose(g), fa.decoder.andThen(_.map(f)), fa.description)
     }
+  }
+
+  final case class ID[A](value: A) extends AnyVal
+  object ID {
+    implicit def idTpe[F[_], A](implicit s: Scalar[F, A]): Scalar[F, ID[A]] =
+      s.imap(ID(_))(_.value)
+        .rename("ID")
+        .document(
+          """|The `ID` scalar type represents a unique identifier, often used to refetch an object or as key for a cache.
+             |The ID type appears in a JSON response as a String; however, it is not intended to be human-readable.
+             |When expected as an input type, any string (such as `\"4\"`) or integer (such as `4`) input value will be accepted as an ID."""".stripMargin
+        )
   }
 }
 

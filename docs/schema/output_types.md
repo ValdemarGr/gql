@@ -1,7 +1,7 @@
 ---
 title: Output types
 ---
-An output type `Out[F[_], A]` is an ast node that can take some `A` as input and produce a graphql value in `F`.
+An output type `Out[F[_], A]` is an ast node that can take some `A` as input and produce a graphql value in the effect `F`.
 Output types act as continuations of their input types, such that a schema effectively is a tree of continuations.
 The output types of gql are defined in `gql.ast` and are named after their respective GraphQL types.
 
@@ -14,24 +14,31 @@ import gql._
 import cats._
 import cats.data._
 import cats.implicits._
-import fs2.Pure
+import cats.effect._
 ```
 
 ## Scalar
-`Scalar` types are composed of a name and a codec
-The `Scalar` type can encode `A => Json` and decode `Json => Either[Error, A]`.
-gql comes with a few predefined scalars, but you can also define your own.
+`Scalar` types are composed of a name, an encoder and a decoder.
+The `Scalar` type can encode `A => Value` and decode `Value => Either[Error, A]`.
+A `Value` is a graphql value, which is a superset of json.
 
+gql comes with a few predefined scalars, but you can also define your own.
 For instance, the `ID` type is defined for any `Scalar` as follows:
 ```scala mdoc
 final case class ID[A](value: A)
-implicit def idTpe[A](implicit s: Scalar[A]): Scalar[ID[A]] =
-  Scalar[ID[A]]("ID", x => s.encoder(x.value), v => s.decoder(v).map(ID(_)))
-    .document(
-      "The `ID` scalar type represents a unique identifier, often used to refetch an object or as key for a cache. The ID type appears in a JSON response as a String; however, it is not intended to be human-readable. When expected as an input type, any string (such as `\"4\"`) or integer (such as `4`) input value will be accepted as an ID."
-    )
+
+object ID {
+  implicit def idTpe[F[_], A](implicit s: Scalar[F, A]): Scalar[F, ID[A]] =
+    s.imap(ID(_))(_.value)
+      .rename("ID")
+      .document(
+        """|The `ID` scalar type represents a unique identifier, often used to refetch an object or as key for a cache.
+           |The ID type appears in a JSON response as a String; however, it is not intended to be human-readable.
+           |When expected as an input type, any string (such as `\"4\"`) or integer (such as `4`) input value will be accepted as an ID."""".stripMargin
+      )
+}
   
-idTpe[String]
+implicitly[Scalar[IO, ID[String]]]
 ```
 
 ## Enum
@@ -44,11 +51,11 @@ object Color {
   case object Blue extends Color
 }
 
-enum[Color](
+enumType[IO, Color](
   "Color",
-  enumInst("RED", Color.Red),
-  enumInst("GREEN", Color.Green),
-  enumInst("BLUE", Color.Blue)
+  "RED" -> enumVal(Color.Red),
+  "GREEN" -> enumVal(Color.Green),
+  "BLUE" -> enumVal(Color.Blue)
 )
 ```
 
@@ -56,9 +63,9 @@ enum[Color](
 ```scala mdoc:silent
 final case class UntypedEnum(s: String)
 
-enum[UntypedEnum](
+enumType[IO, UntypedEnum](
   "UntypedEnum",
-  enumInst("FIRST", UntypedEnum("FIRST"))
+  "FIRST" -> enumVal(UntypedEnum("FIRST"))
 )
 ```
 :::caution
@@ -84,31 +91,37 @@ final case class Domain(
   amount: Int
 )
 
-Type[Pure, Domain](
+Type[IO, Domain](
   "Domain",
   NonEmptyList.of(
-    "name" -> Field[Pure, Domain, String, Unit](
+    "name" -> Field[IO, Domain, String, Unit](
       Applicative[Arg].unit,
       PureResolver{ case (i, _) => i.name },
       Eval.now(stringScalar)
     ),
-    "amount" -> Field[Pure, Domain, Int, Unit](
+    "amount" -> Field[IO, Domain, Int, Unit](
       Applicative[Arg].unit, 
       PureResolver{ case (i, _) => i.amount },
       Eval.now(intScalar)
     )
-  )
+  ),
+  Nil
 )
 ```
 
 `Type`'s look very rough, but are significantly easier to define with the `dsl`:
 ```scala mdoc:silent
-tpe[Pure, Domain](
+tpe[IO, Domain](
   "Domain",
   "name" -> pure(_.name),
   "amount" -> pure(_.amount)
 )
 ```
+
+:::tip
+It is highly reccomended to define all `Type`s, `Union`s and `Interface`s as either `val` or `lazy val`.
+:::
+
 
 ## Union
 `Union` types allow unification of arbitary types.
@@ -118,21 +131,19 @@ sealed trait Animal
 final case class Dog(name: String) extends Animal
 final case class Cat(name: String) extends Animal
 
-implicit lazy val dog = tpe[Pure, Dog](
+implicit lazy val dog = tpe[IO, Dog](
   "Dog",
   "name" -> pure(_.name)
 )
 
-implicit lazy val cat = tpe[Pure, Cat](
+implicit lazy val cat = tpe[IO, Cat](
   "Cat",
   "name" -> pure(_.name)
 )
 
-union[Pure, Animal](
-  "Animal",
-  instance[Dog]{ case x: Dog => x },
-  instance[Cat]{ case x: Cat => x }
-)
+union[IO, Animal]("Animal")
+  .variant{ case x: Dog => x }
+  .subtype[Cat]
 ```
 :::note
 A curious reader might cosider the possibilty of using a total function form the unifying type to the subtypes.
@@ -158,42 +169,33 @@ object Unification {
   final case class E2(value: Entity2) extends Unification
 }
 
-import cats.effect._
+implicit lazy val entity1: Type[IO, Entity1] = ???
 
-implicit def entity1: Type[F, Entity1] = ???
+implicit lazy val entity2: Type[IO, Entity2] = ???
 
-implicit lazy val entity2: Type[Pure, Entity2] = ???
-
-def t[F[_]: Monad] = 
-union[F, Unification](
-  "Unification",
-  instance[Entity1][F, Unification]{ case Unification.E1(value) => value },
-  instance[Entity2]{ case Unification.E2(value) => value }
-)
+union[IO, Unification]("Unification")
+  .variant{ case Unification.E1(value) => value }
+  .variant{ case Unification.E2(value) => value }
 ```
 ### For the daring
 Since the specify function is a `PartialFunction`, it is indeed possible to have no unifying type:
 ```scala mdoc
-union[Pure, Any](
-  "AnyUnification",
-  instance[Entity1]{ case x: Entity1 => x },
-  instance[Entity2]{ case x: Entity2 => x }
-)
+union[IO, Any]("AnyUnification")
+  .variant{ case x: Entity1 => x }
+  .variant{ case x: Entity2 => x }
 ```
 And also complex routing logic:
 ```scala mdoc
-union[Pure, Unification](
-  "RoutedUnification",
-  instance[Entity1]{ case Unification.E1(x) if x.value == "Jane" => x },
-  instance[Entity2]{ 
+union[IO, Unification]("RoutedUnification")
+  .variant{ case Unification.E1(x) if x.value == "Jane" => x }
+  .variant{ 
     case Unification.E1(x) => Entity2(x.value)
     case Unification.E2(x) => x
-  },
-)
+  }
 ```
 
 ## Interface
-An interface is a combination of `Type` and `Union`.
+An interface is a `Type` that can be "implemented" in the graphql fashion.
 ```scala mdoc
 sealed trait Node {
  def id: String
@@ -208,35 +210,22 @@ final case class Company(
   name: String,
   id: String
 ) extends Node
+  
+implicit lazy val node = interface[IO, Node](
+  "Node",
+  "id" -> pure(x => ID(x.id))
+)
 
-implicit lazy val person = tpe[Pure, Person](
+implicit lazy val person = tpe[IO, Person](
   "Person",
   "name" -> pure(_.name),
   "id" -> pure(x => ID(x.id))
-)
+).implements[Node]{ case x: Person => x }
   
-implicit lazy val company = tpe[Pure, Company](
+implicit lazy val company = tpe[IO, Company](
   "Company",
   "name" -> pure(_.name),
-  "id" -> pure(x => ID(x.id))
 )
-  
-interface[Pure, Node](
-  "Node",
-  "id" -> pure(x => ID(x.id))
-)(
-  instance[Person]{ case x: Person => x },
-  instance[Company]{ case x: Company => x }
-)
+  .addFields(node.fieldsList: _*)
+  .subtypeOf[Node]
 ```
-:::note
-In most GraphQL implementations types define the interfaces they implement, 
-but in gql the interfaces define the types that extends it.
-Defining interface implementations the other way around is ambiguous,
-since the same type may appear two places in the schema, which raises the question of which type to use.
-An important goal of gql is to be predictable, so such a design choice is not possible whilst maintaining predictability.
-
-Furthermore, referencing implementations this way also ensures that all types in the schema can be discovered.
-Inverting the relationship cloud lead to types that are not discoverable.
-For the curious, draw a tree of a schema where types define the interfaces they implement and consider the implications.
-:::

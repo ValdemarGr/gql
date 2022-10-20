@@ -11,138 +11,204 @@ The most important goals of gql is to be simple, predictable and composable.
 For this showcase, Star Wars will be out domain of choice:
 ```scala mdoc
 sealed trait Episode
+
 object Episode {
-  case object NewHope extends Episode
-  case object Empire extends Episode
-  case object Jedi extends Episode
+  case object NEWHOPE extends Episode
+  case object EMPIRE extends Episode
+  case object JEDI extends Episode
 }
-  
+
 trait Character {
   def id: String
   def name: Option[String]
-  def friends: Option[List[Character]]
-  def appearsIn: Option[List[Episode]]
+  def friends: List[String]
+  def appearsIn: List[Episode]
 }
 
 final case class Human(
-  id: String,
-  name: Option[String],
-  friends: Option[List[Character]],
-  appearsIn: Option[List[Episode]],
-  homePlanet: Option[String]
+    id: String,
+    name: Option[String],
+    friends: List[String],
+    appearsIn: List[Episode],
+    homePlanet: Option[String]
 ) extends Character
 
 final case class Droid(
-  id: String,
-  name: Option[String],
-  friends: Option[List[Character]],
-  appearsIn: Option[List[Episode]],
-  primaryFunction: Option[String]
+    id: String,
+    name: Option[String],
+    friends: List[String],
+    appearsIn: List[Episode],
+    primaryFunction: String
 ) extends Character
 ```
 
-To construct the schema, we need to import the `ast` and `dsl`.
-The `ast` is an adt representation of the GraphQL schema language.
-The `dsl` is a thin collection of smart constructors for the `ast`:
+Lets define where our data comes from:
 ```scala mdoc
-import gql.dsl._
-import gql.ast._
+trait Repository[F[_]] {
+  def getHero(episode: Option[Episode]): F[Character]
+
+  def getCharacter(id: String): F[Option[Character]]
+
+  def getHuman(id: String): F[Option[Human]]
+
+  def getDroid(id: String): F[Option[Droid]]
+}
 ```
 
-With the `dsl` smart constructors in scope; we can now construct the schema:
+To construct the schema, we need some imports.
 ```scala mdoc
+import gql._
+import gql.dsl._
+import gql.ast._
 import cats.effect._
 import cats.implicits._
-import gql._
+```
 
-trait Repository[F[_]] {
-  def getHero(episode: Episode): F[Character]
+Now we can define our schema:
+```scala mdoc
+def schema[F[_]](implicit repo: Repository[F], F: Async[F]) = {
+  implicit lazy val episode = enumType[F, Episode](
+    "Episode",
+    "NEWHOPE" -> enumVal(Episode.NEWHOPE),
+    "EMPIRE" -> enumVal(Episode.EMPIRE),
+    "JEDI" -> enumVal(Episode.JEDI)
+  )
 
-  def getCharacter(id: String): F[Character]
+  implicit lazy val character: Interface[F, Character] = interface[F, Character](
+    "Character",
+    "id" -> pure(_.id),
+    "name" -> pure(_.name),
+    "friends" -> eff(_.friends.traverse(repo.getCharacter)),
+    "appearsIn" -> pure(_.appearsIn),
+    "secretBackstory" -> fallible(_ => F.pure("secretBackstory is secret.".leftIor[String]))
+  )
 
-  def getHuman(id: String): F[Human]
+  implicit lazy val human = tpe[F, Human](
+    "Human",
+    "homePlanet" -> pure(_.homePlanet)
+  ).subtypeOf[Character].addFields(character.fields.toList: _*)
 
-  def getDroid(id: String): F[Droid]
-}
-
-def schema[F[_]: Async](implicit repo: Repository[F]) = {
-  implicit lazy val episode: Enum[Episode] = {
-    import Episode._
-    enum(
-      "Episode",
-      enumInst("NEWHOPE", NewHope),
-      enumInst("EMPIRE", Empire),
-      enumInst("JEDI", Jedi)
-    )
-  }
-
-  implicit lazy val human: Type[F, Human] =
-    tpe(
-      "Human",
-      "homePlanet" -> pure(_.homePlanet),
-      character.fields.toList: _*
-    )
-
-  implicit lazy val droid: Type[F, Droid] =
-    tpe(
-      "Droid",
-      "primaryFunction" -> pure(_.primaryFunction),
-      character.fields.toList: _*
-    )
-
-  implicit lazy val character: Interface[F, Character] =
-    interface[F, Character](
-      "Character",
-      "id" -> pure(_.id),
-      "name" -> pure(_.name),
-      "friends" -> pure(_.friends),
-      "appearsIn" -> pure(_.appearsIn)
-    )(
-      instance[Human] { case x: Human => x },
-      instance[Droid] { case x: Droid => x }
-    )
+  implicit lazy val droid = tpe[F, Droid](
+    "Droid",
+    "primaryFunction" -> pure(_.primaryFunction)
+  ).subtypeOf[Character] .addFields(character.fields.toList: _*)
 
   Schema.query(
     tpe[F, Unit](
       "Query",
-      "hero" -> eff(arg[Episode]("episode")) { case (_, episode) => repo.getHero(episode) },
-      "character" -> eff(arg[ID[String]]("id")) { case (_, id) => repo.getCharacter(id.value) },
-      "human" -> eff(arg[ID[String]]("id")) { case (_, id) => repo.getHuman(id.value) },
-      "droid" -> eff(arg[ID[String]]("id")) { case (_, id) => repo.getDroid(id.value) }
+      "hero" -> eff(arg[Option[Episode]]("episode")) { case (_, ep) => repo.getHero(ep) },
+      "human" -> eff(arg[String]("id")) { case (_, id) => repo.getHuman(id) },
+      "droid" -> eff(arg[String]("id")) { case (_, id) => repo.getDroid(id) }
     )
   )
 }
 ```
 
-Lets construct a simple in-memory repository and query:
-```scala mdoc
-import cats.effect._
+Lets construct a simple in-memory repository:
+```scala mdoc:silent
+val luke = Human(
+  "1000",
+  "Luke Skywalker".some,
+  "1002" :: "1003" :: "2000" :: "2001" :: Nil,
+  Episode.NEWHOPE :: Episode.EMPIRE :: Episode.JEDI :: Nil,
+  "Tatooine".some
+)
+
+val vader = Human(
+  "1001",
+  "Darth Vader".some,
+  "1004" :: Nil,
+  Episode.NEWHOPE :: Episode.EMPIRE :: Episode.JEDI :: Nil,
+  "Tatooine".some
+)
+
+val han = Human(
+  "1002",
+  "Han Solo".some,
+  "1000" :: "1003" :: "2001" :: Nil,
+  Episode.NEWHOPE :: Episode.EMPIRE :: Episode.JEDI :: Nil,
+  None
+)
+
+val leia = Human(
+  "1003",
+  "Leia Organa".some,
+  "1000" :: "1002" :: "2000" :: "2001" :: Nil,
+  Episode.NEWHOPE :: Episode.EMPIRE :: Episode.JEDI :: Nil,
+  "Alderaan".some
+)
+
+val tarkin = Human(
+  "1004",
+  "Wilhuff Tarkin".some,
+  "1001" :: Nil,
+  Episode.NEWHOPE :: Nil,
+  None
+)
+
+val humanData =
+  List(luke, vader, han, leia, tarkin)
+    .map(x => x.id -> x)
+    .toMap
+
+val threepio = Droid(
+  "2000",
+  "C-3PO".some,
+  "1000" :: "1002" :: "1003" :: "2001" :: Nil,
+  Episode.NEWHOPE :: Episode.EMPIRE :: Episode.JEDI :: Nil,
+  "Protocol"
+)
+
+val artoo = Droid(
+  "2001",
+  "R2-D2".some,
+  "1000" :: "1002" :: "1003" :: Nil,
+  Episode.NEWHOPE :: Episode.EMPIRE :: Episode.JEDI :: Nil,
+  "Astromech"
+)
+
+val droidData =
+  List(threepio, artoo)
+    .map(x => x.id -> x)
+    .toMap
 
 implicit def repo = new Repository[IO] {
-  def getHero(episode: Episode): IO[Character] =
-    IO.pure {
-      episode match {
-        case Episode.NewHope => Droid("1000", Some("R2-D2"), None, Some(List(Episode.NewHope)), Some("Astromech"))
-        case Episode.Empire =>
-          Human("1002", Some("Luke Skywalker"), None, Some(List(Episode.NewHope, Episode.Empire, Episode.Jedi)), Some("Tatooine"))
-        case Episode.Jedi =>
-          Human("1003", Some("Leia Organa"), None, Some(List(Episode.NewHope, Episode.Empire, Episode.Jedi)), Some("Alderaan"))
-      }
-    }
-  def getCharacter(id: String): IO[Character] = ???
-  def getHuman(id: String): IO[Human] = ???
-  def getDroid(id: String): IO[Droid] = ???
+  def getHero(episode: Option[Episode]): IO[Character] =
+    if (episode.contains(Episode.EMPIRE)) IO(luke)
+    else IO(artoo)
+    
+  def getCharacter(id: String): IO[Option[Character]] =
+    IO(humanData.get(id) orElse droidData.get(id))
+    
+  def getHuman(id: String): IO[Option[Human]] =
+    IO(humanData.get(id))
+    
+  def getDroid(id: String): IO[Option[Droid]] =
+    IO(droidData.get(id))
 }
 
+```
+
+Lets construct a query:
+```scala mdoc
 def query = """
- query HeroNameQuery {
+ query ExampleQuery {
    hero(episode: NEWHOPE) {
      id
      name
+     __typename
      ... on Droid {
        primaryFunction
+       friends {
+         name
+         __typename
+         appearsIn
+       }
      }
      ... HumanDetails
+   }
+   c3po: droid(id: "2000") {
+    name
    }
  }
 

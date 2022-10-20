@@ -127,7 +127,7 @@ object dsl {
     def implements[B](pf: PartialFunction[B, A])(implicit interface: => Interface[F, B]): Type[F, A] =
       tpe.copy(implementations = Implementation(Eval.later(interface))(pf.lift) :: tpe.implementations)
 
-    def subtypeOf[B](implicit tag: ClassTag[A], interface: => Interface[F, B]): Type[F, A] =
+    def subtypeOf[B](implicit ev: A <:< B, tag: ClassTag[A], interface: => Interface[F, B]): Type[F, A] =
       implements[B] { case a: A => a }(interface)
 
     def addFields(xs: (String, Field[F, A, _, _])*) =
@@ -138,7 +138,7 @@ object dsl {
     def implements[B](pf: PartialFunction[B, A])(implicit interface: => Interface[F, B]): Interface[F, A] =
       tpe.copy(implementations = Implementation(Eval.later(interface))(pf.lift) :: tpe.implementations)
 
-    def subtypeOf[B](implicit tag: ClassTag[A], interface: => Interface[F, B]): Interface[F, A] =
+    def subtypeOf[B](implicit ev: A <:< B, tag: ClassTag[A], interface: => Interface[F, B]): Interface[F, A] =
       implements[B] { case a: A => a }(interface)
 
     def addFields(hd: (String, Field[F, A, _, _]), tl: (String, Field[F, A, _, _])*) =
@@ -149,7 +149,7 @@ object dsl {
     def variant[B](pf: PartialFunction[A, B])(implicit innerTpe: => Type[F, B]): Union[F, A] =
       tpe.copy(types = Variant[F, A, B](Eval.later(innerTpe))(pf.lift) :: tpe.types)
 
-    def subtype[B: ClassTag](implicit innerTpe: => Type[F, B]): Union[F, A] =
+    def subtype[B: ClassTag](implicit ev: B <:< A, innerTpe: => Type[F, B]): Union[F, A] =
       variant[B] { case a: B => a }(innerTpe)
   }
 
@@ -157,7 +157,7 @@ object dsl {
     def variant[B](pf: PartialFunction[A, B])(implicit innerTpe: => Type[F, B]): Union[F, A] =
       Union[F, A](name, NonEmptyList.of(hd, Variant[F, A, B](Eval.later(innerTpe))(pf.lift)), None)
 
-    def subtype[B: ClassTag](implicit innerTpe: => Type[F, B]): Union[F, A] =
+    def subtype[B: ClassTag](implicit ev: B <:< A, innerTpe: => Type[F, B]): Union[F, A] =
       variant[B] { case a: B => a }(innerTpe)
   }
 
@@ -165,7 +165,7 @@ object dsl {
     def variant[B](pf: PartialFunction[A, B])(implicit innerTpe: => Type[F, B]): PartiallyAppliedUnion1[F, A] =
       PartiallyAppliedUnion1[F, A](name, Variant[F, A, B](Eval.later(innerTpe))(pf.lift))
 
-    def subtype[B: ClassTag](implicit innerTpe: => Type[F, B]): PartiallyAppliedUnion1[F, A] =
+    def subtype[B: ClassTag](implicit ev: B <:< A, innerTpe: => Type[F, B]): PartiallyAppliedUnion1[F, A] =
       variant[B] { case a: B => a }(innerTpe)
   }
 }

@@ -16,7 +16,7 @@ More information can be found in the [output types](./output_types#enum) section
 The arg type has a couple of uses.
 The first and simplest way of using args is for, well, arguments.
 The dsl has a smart constructor for arguments that summons the `In[A]` type from the implicit scope, for the argument.
-```scala
+```scala mdoc:silent
 import gql.dsl._
 import gql.ast._
 
@@ -24,7 +24,7 @@ import gql.ast._
 arg[Int]("superCoolArg")
 ```
 Args can also have default values that can be constructed with the smart constructors from the value dsl `gql.dsl.value`.
-```scala
+```scala mdoc:silent
 import gql.dsl.value._
 
 arg[Int]("superCoolArg", scalar(42))
@@ -38,7 +38,7 @@ Consult the [Default values for input objects](./input_types#default-values-for-
 :::
 
 Args also have an `Applicative` instance defined for them:
-```scala
+```scala mdoc:silent
 import cats.implicits._
 
 (arg[Int]("arg1"), arg[Int]("arg2", scalar(43))).mapN(_ + _)
@@ -47,7 +47,7 @@ arg[Int]("arg1") *> arg[Int]("arg2", scalar(44))
 ```
 
 Args can naturally be used in field definitions:
-```scala
+```scala mdoc:silent
 import cats._
 import cats.effect._
 
@@ -63,7 +63,7 @@ tpe[IO, Data](
 Input is the record type for `In`.
 Input consists of a `name` along with some fields.
 It turns out that arguments and fields have the same properties and as such, `Arg` is used for fields.
-```scala
+```scala mdoc
 final case class InputData(
   name: String,
   age: Int
@@ -76,36 +76,11 @@ input[InputData](
     arg[Int]("age", scalar(42))
   ).mapN(InputData.apply)
 )
-// res5: Input[InputData] = Input(
-//   name = "InputData",
-//   fields = NonEmptyArg(
-//     nec = Append(
-//       leftNE = Singleton(
-//         a = ArgValue(
-//           name = "name",
-//           input = cats.Later@4761e088,
-//           defaultValue = None,
-//           description = None
-//         )
-//       ),
-//       rightNE = Singleton(
-//         a = ArgValue(
-//           name = "age",
-//           input = cats.Later@38e02bf0,
-//           defaultValue = Some(value = IntValue(v = 42)),
-//           description = None
-//         )
-//       )
-//     ),
-//     decode = scala.Function1$$Lambda$9566/0x000000010291f840@2b57e10f
-//   ),
-//   description = None
-// )
 ```
 ### Default values for input objects
 For input objects however, a default value cannot be properly type checked at compile time, since the default value might be partial.
 For instance, cosider the following input type:
-```scala
+```scala mdoc
 final case class SomeInput(
   a: Int,
   b: String,
@@ -124,7 +99,7 @@ implicit lazy val someInput = input[SomeInput](
 )
 ```
 Two valid uses of this type could for instance be:
-```scala
+```scala mdoc:silent
 arg[SomeInput](
   "someInput1",
   obj(

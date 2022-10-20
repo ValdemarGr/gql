@@ -1,12 +1,12 @@
 ---
 title: Output types
 ---
-An output type `Out[F[_], A]` is an ast node that can take some `A` as input and produce a graphql value in `F`.
+An output type `Out[F[_], A]` is an ast node that can take some `A` as input and produce a graphql value in the effect `F`.
 Output types act as continuations of their input types, such that a schema effectively is a tree of continuations.
 The output types of gql are defined in `gql.ast` and are named after their respective GraphQL types.
 
 Lets import the things we need: 
-```scala mdoc
+```scala
 import gql.ast._
 import gql.resolver._
 import gql.dsl._
@@ -14,29 +14,46 @@ import gql._
 import cats._
 import cats.data._
 import cats.implicits._
-import fs2.Pure
+import cats.effect._
 ```
 
 ## Scalar
-`Scalar` types are composed of a name and a codec
-The `Scalar` type can encode `A => Json` and decode `Json => Either[Error, A]`.
-gql comes with a few predefined scalars, but you can also define your own.
+`Scalar` types are composed of a name, an encoder and a decoder.
+The `Scalar` type can encode `A => Value` and decode `Value => Either[Error, A]`.
+A `Value` is a graphql value, which is a superset of json.
 
+gql comes with a few predefined scalars, but you can also define your own.
 For instance, the `ID` type is defined for any `Scalar` as follows:
-```scala mdoc
+```scala
 final case class ID[A](value: A)
-implicit def idTpe[A](implicit s: Scalar[A]): Scalar[ID[A]] =
-  Scalar[ID[A]]("ID", x => s.encoder(x.value), v => s.decoder(v).map(ID(_)))
-    .document(
-      "The `ID` scalar type represents a unique identifier, often used to refetch an object or as key for a cache. The ID type appears in a JSON response as a String; however, it is not intended to be human-readable. When expected as an input type, any string (such as `\"4\"`) or integer (such as `4`) input value will be accepted as an ID."
-    )
+
+object ID {
+  implicit def idTpe[F[_], A](implicit s: Scalar[F, A]): Scalar[F, ID[A]] =
+    s.imap(ID(_))(_.value)
+      .rename("ID")
+      .document(
+        """|The `ID` scalar type represents a unique identifier, often used to refetch an object or as key for a cache.
+           |The ID type appears in a JSON response as a String; however, it is not intended to be human-readable.
+           |When expected as an input type, any string (such as `\"4\"`) or integer (such as `4`) input value will be accepted as an ID."""".stripMargin
+      )
+}
   
-idTpe[String]
+implicitly[Scalar[IO, ID[String]]]
+// res0: Scalar[IO, ID[String]] = Scalar(
+//   name = "ID",
+//   encoder = scala.Function1$$Lambda$15118/0x0000000103c23040@1fb22a0d,
+//   decoder = scala.Function1$$Lambda$5463/0x00000001017c1040@32385a76,
+//   description = Some(
+//     value = """The `ID` scalar type represents a unique identifier, often used to refetch an object or as key for a cache.
+// The ID type appears in a JSON response as a String; however, it is not intended to be human-readable.
+// When expected as an input type, any string (such as `\"4\"`) or integer (such as `4`) input value will be accepted as an ID.""""
+//   )
+// )
 ```
 
 ## Enum
 `Enum` types, like `Scalar` types, are terminal types that consist of a name and non-empty bi-directional mapping from a scala type to a `String`:
-```scala mdoc:silent
+```scala
 sealed trait Color
 object Color {
   case object Red extends Color
@@ -44,21 +61,21 @@ object Color {
   case object Blue extends Color
 }
 
-enum[Color](
+enumType[IO, Color](
   "Color",
-  enumInst("RED", Color.Red),
-  enumInst("GREEN", Color.Green),
-  enumInst("BLUE", Color.Blue)
+  "RED" -> enumVal(Color.Red),
+  "GREEN" -> enumVal(Color.Green),
+  "BLUE" -> enumVal(Color.Blue)
 )
 ```
 
 `Enum` types have no constraints on the values they can encode or decode, so they can in fact, be dynamically typed:
-```scala mdoc:silent
+```scala
 final case class UntypedEnum(s: String)
 
-enum[UntypedEnum](
+enumType[IO, UntypedEnum](
   "UntypedEnum",
-  enumInst("FIRST", UntypedEnum("FIRST"))
+  "FIRST" -> enumVal(UntypedEnum("FIRST"))
 )
 ```
 :::caution
@@ -78,61 +95,65 @@ Check out the [resolver section](./resolvers.md) for more info on how resolvers 
 ## Type (object)
 `Type` is the gql equivalent of `type` in GraphQL parlance.
 A `Type` consists of a name and a non-empty list of fields.
-```scala mdoc:silent
+```scala
 final case class Domain(
   name: String,
   amount: Int
 )
 
-Type[Pure, Domain](
+Type[IO, Domain](
   "Domain",
   NonEmptyList.of(
-    "name" -> Field[Pure, Domain, String, Unit](
+    "name" -> Field[IO, Domain, String, Unit](
       Applicative[Arg].unit,
       PureResolver{ case (i, _) => i.name },
       Eval.now(stringScalar)
     ),
-    "amount" -> Field[Pure, Domain, Int, Unit](
+    "amount" -> Field[IO, Domain, Int, Unit](
       Applicative[Arg].unit, 
       PureResolver{ case (i, _) => i.amount },
       Eval.now(intScalar)
     )
-  )
+  ),
+  Nil
 )
 ```
 
 `Type`'s look very rough, but are significantly easier to define with the `dsl`:
-```scala mdoc:silent
-tpe[Pure, Domain](
+```scala
+tpe[IO, Domain](
   "Domain",
   "name" -> pure(_.name),
   "amount" -> pure(_.amount)
 )
 ```
 
+:::tip
+It is highly reccomended to define all `Type`s, `Union`s and `Interface`s as either `val` or `lazy val`.
+:::
+
+
 ## Union
 `Union` types allow unification of arbitary types.
 The `Union` type defines a set of `PartialFunction`s that can specify the the type.
-```scala mdoc:silent
+```scala
 sealed trait Animal
 final case class Dog(name: String) extends Animal
 final case class Cat(name: String) extends Animal
 
-implicit lazy val dog = tpe[Pure, Dog](
+implicit lazy val dog = tpe[IO, Dog](
   "Dog",
   "name" -> pure(_.name)
 )
 
-implicit lazy val cat = tpe[Pure, Cat](
+implicit lazy val cat = tpe[IO, Cat](
   "Cat",
   "name" -> pure(_.name)
 )
 
-union[Pure, Animal](
-  "Animal",
-  instance[Dog]{ case x: Dog => x },
-  instance[Cat]{ case x: Cat => x }
-)
+union[IO, Animal]("Animal")
+  .variant{ case x: Dog => x }
+  .subtype[Cat]
 ```
 :::note
 A curious reader might cosider the possibilty of using a total function form the unifying type to the subtypes.
@@ -148,7 +169,7 @@ If the interpreter cannot find an instance of the value when querying for `__typ
 
 ### Ad-hoc unions
 In the true spirit of unification, `Union` types can be constructed in a more ad-hoc fashion:
-```scala mdoc:silent
+```scala
 final case class Entity1(value: String)
 final case class Entity2(value: String)
 
@@ -158,41 +179,50 @@ object Unification {
   final case class E2(value: Entity2) extends Unification
 }
 
-implicit def entity1[F[_]: Monad]: Type[Pure, Entity1] = ???
+implicit lazy val entity1: Type[IO, Entity1] = ???
 
-implicit lazy val entity2: Type[Pure, Entity2] = ???
+implicit lazy val entity2: Type[IO, Entity2] = ???
 
-def t[F[_]: Monad] = 
-union[F, Unification](
-  "Unification",
-  instance[Entity1]{ case Unification.E1(value) => value },
-  instance[Entity2]{ case Unification.E2(value) => value }
-)
+union[IO, Unification]("Unification")
+  .variant{ case Unification.E1(value) => value }
+  .variant{ case Unification.E2(value) => value }
 ```
 ### For the daring
 Since the specify function is a `PartialFunction`, it is indeed possible to have no unifying type:
-```scala mdoc
-union[Pure, Any](
-  "AnyUnification",
-  instance[Entity1]{ case x: Entity1 => x },
-  instance[Entity2]{ case x: Entity2 => x }
-)
+```scala
+union[IO, Any]("AnyUnification")
+  .variant{ case x: Entity1 => x }
+  .variant{ case x: Entity2 => x }
+// res7: Union[IO, Any] = Union(
+//   name = "AnyUnification",
+//   types = NonEmptyList(
+//     head = Variant(tpe = cats.Later@279e628),
+//     tail = List(Variant(tpe = cats.Later@229c3089))
+//   ),
+//   description = None
+// )
 ```
 And also complex routing logic:
-```scala mdoc
-union[Pure, Unification](
-  "RoutedUnification",
-  instance[Entity1]{ case Unification.E1(x) if x.value == "Jane" => x },
-  instance[Entity2]{ 
+```scala
+union[IO, Unification]("RoutedUnification")
+  .variant{ case Unification.E1(x) if x.value == "Jane" => x }
+  .variant{ 
     case Unification.E1(x) => Entity2(x.value)
     case Unification.E2(x) => x
-  },
-)
+  }
+// res8: Union[IO, Unification] = Union(
+//   name = "RoutedUnification",
+//   types = NonEmptyList(
+//     head = Variant(tpe = cats.Later@2cf08495),
+//     tail = List(Variant(tpe = cats.Later@5c6b8097))
+//   ),
+//   description = None
+// )
 ```
 
 ## Interface
-An interface is a combination of `Type` and `Union`.
-```scala mdoc
+An interface is a `Type` that can be "implemented" in the graphql fashion.
+```scala
 sealed trait Node {
  def id: String
 }
@@ -206,35 +236,22 @@ final case class Company(
   name: String,
   id: String
 ) extends Node
+  
+implicit lazy val node = interface[IO, Node](
+  "Node",
+  "id" -> pure(x => ID(x.id))
+)
 
-implicit lazy val person = tpe[Pure, Person](
+implicit lazy val person = tpe[IO, Person](
   "Person",
   "name" -> pure(_.name),
   "id" -> pure(x => ID(x.id))
-)
+).implements[Node]{ case x: Person => x }
   
-implicit lazy val company = tpe[Pure, Company](
+implicit lazy val company = tpe[IO, Company](
   "Company",
   "name" -> pure(_.name),
-  "id" -> pure(x => ID(x.id))
 )
-  
-interface[Pure, Node](
-  "Node",
-  "id" -> pure(x => ID(x.id))
-)(
-  instance[Person]{ case x: Person => x },
-  instance[Company]{ case x: Company => x }
-)
+  .addFields(node.fieldsList: _*)
+  .subtypeOf[Node]
 ```
-:::note
-In most GraphQL implementations types define the interfaces they implement, 
-but in gql the interfaces define the types that extends it.
-Defining interface implementations the other way around is ambiguous,
-since the same type may appear two places in the schema, which raises the question of which type to use.
-An important goal of gql is to be predictable, so such a design choice is not possible whilst maintaining predictability.
-
-Furthermore, referencing implementations this way also ensures that all types in the schema can be discovered.
-Inverting the relationship cloud lead to types that are not discoverable.
-For the curious, draw a tree of a schema where types define the interfaces they implement and consider the implications.
-:::
