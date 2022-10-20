@@ -123,6 +123,10 @@ object dsl {
       resolver.andThen(PureResolver[F, A, O2](f))
   }
 
+  implicit class BatchResolverSyntax[F[_], K, V](val batchResolver: BatchResolver[F, Set[K], Map[K, V]]) extends AnyVal {
+    def one: BatchResolver[F, K, Option[V]] = batchResolver.contramap[K](Set(_)).mapBoth { case (k, m) => m.get(k) }
+  }
+
   implicit class TypeSyntax[F[_], A](val tpe: Type[F, A]) extends AnyVal {
     def implements[B](pf: PartialFunction[B, A])(implicit interface: => Interface[F, B]): Type[F, A] =
       tpe.copy(implementations = Implementation(Eval.later(interface))(pf.lift) :: tpe.implementations)

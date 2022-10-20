@@ -15,7 +15,7 @@ abstract case class BatchResolver[F[_], I, O](
   override def contramap[B](g: B => I): BatchResolver[F, B, O] =
     new BatchResolver[F, B, O](id, b => run(g(b))) {}
 
-  def mapBoth[O2](f: (I, O) => O2)(implicit F: Functor[F]): BatchResolver[F, I, O2] =
+  def mapBoth[O2](f: (I, O) => O2): BatchResolver[F, I, O2] =
     new BatchResolver[F, I, O2](
       id,
       { i =>
