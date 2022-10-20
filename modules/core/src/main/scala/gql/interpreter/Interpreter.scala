@@ -395,22 +395,12 @@ class InterpreterImpl[F[_]](
               val allKeys = xs.map { case ((keys, _), cg) => (cg, keys) }
 
               lift(batchAccumulator.submit(edge.id, allKeys)).map {
-                case None            => Chain.empty[EvalNode[Any]]
-                case Some(resultMap) => xs.map { case ((_, reassoc), cg) => EvalNode(cg, reassoc(resultMap)) }
+                case None => Chain.empty[EvalNode[Any]]
+                case Some(resultMap) =>
+                  xs.map { case ((keys, reassoc), cg) =>
+                    EvalNode(cg, reassoc(resultMap.view.filterKeys(keys.contains).toMap))
+                  }
               }
-
-            // lift(batchAccumulator.submit(edge.id, allKeys))
-            //   .flatMap {
-            //     case None => W.pure(Chain.empty[EvalNode[Any]])
-            //     case Some(resultMap) =>
-            //       xs.parFlatTraverse { case ((keys, reassoc), cg) =>
-            //         val missingKeys =
-            //           keys.toList.collect { case k if !resultMap.contains(k) => k }.toSet
-            //         if (missingKeys.nonEmpty) {
-            //           failM[E](EvalFailure.BatchMissingKey(cg, resultMap, keys, missingKeys))
-            //         } else W.pure(Chain(EvalNode(cg, reassoc(resultMap))))
-            //       }
-            //   }
           }
 
         edgeRes.flatMap(runEdge(_, xs, cont))
