@@ -412,7 +412,7 @@ class InterpreterImpl[F[_]](
           selection.fields,
           in.flatMap(x => Chain.fromOption(specify(x.value)).map(y => x.succeed(y, _.fragment(id, typename))))
         )
-      case df @ PreparedDataField(id, _, _, _) => runDataField(df, in)
+      case df @ PreparedDataField(_, _, _, _) => runDataField(df, in)
     }
 
   def startNext(s: Prepared[F, Any], in: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] = W.defer {
