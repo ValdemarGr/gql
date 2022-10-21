@@ -14,9 +14,9 @@ trait Arg[A] {
 }
 
 object Arg {
-  def make[A](name: String, default: Option[Value])(implicit input: => In[A]): NonEmptyArg[A] =
+  def make[A](name: String, default: Option[Value], description: Option[String])(implicit input: => In[A]): NonEmptyArg[A] =
     NonEmptyArg[A](
-      NonEmptyChain.one(ArgValue(name, Eval.later(input), default)),
+      NonEmptyChain.one(ArgValue(name, Eval.later(input), default, description)),
       _(name).asInstanceOf[A].validNec
     )
 
@@ -36,20 +36,16 @@ object Arg {
   }
 }
 
-// sealed trait DefaultValue[+A]
-// object DefaultValue {
-//   final case class Primitive[A](value: A, in: InLeaf[A]) extends DefaultValue[A]
-//   final case class Arr[A](values: Seq[DefaultValue[A]]) extends DefaultValue[Seq[A]]
-//   final case class Obj(fields: NonEmptyChain[(String, DefaultValue[_])]) extends DefaultValue[Nothing]
-//   case object Null extends DefaultValue[Nothing]
-// }
-
 final case class ArgValue[A](
     name: String,
     input: Eval[In[A]],
     defaultValue: Option[Value],
-    description: Option[String] = None
-)
+    description: Option[String]
+) {
+  def document(description: String) = copy(description = Some(description))
+
+  def default(value: Value) = copy(defaultValue = Some(value))
+}
 
 final case class NonEmptyArg[A](
     nec: NonEmptyChain[ArgValue[_]],
@@ -62,6 +58,9 @@ final case class NonEmptyArg[A](
     NonEmptyArg(nec, decode.andThen(_.andThen(f)))
 }
 object NonEmptyArg {
+  def one[A](av: ArgValue[A]): NonEmptyArg[A] =
+    NonEmptyArg[A](NonEmptyChain.one(av), _(av.name).asInstanceOf[A].validNec)
+
   implicit lazy val applicativeInstanceForNonEmptyArg: Apply[NonEmptyArg] = new Apply[NonEmptyArg] {
     override def map[A, B](fa: NonEmptyArg[A])(f: A => B): NonEmptyArg[B] =
       NonEmptyArg(fa.nec, fa.decode.andThen(_.map(f)))

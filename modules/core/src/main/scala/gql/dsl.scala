@@ -19,15 +19,17 @@ object dsl {
       fields: NonEmptyArg[A]
   ): Input[A] = Input(name, fields)
 
-  def arg[A](name: String)(implicit tpe: => In[A]): NonEmptyArg[A] = {
-    implicit lazy val t0 = tpe
-    Arg.make[A](name, None)
-  }
+  def arg[A](name: String)(implicit tpe: => In[A]): NonEmptyArg[A] =
+    NonEmptyArg.one[A](ArgValue(name, Eval.later(tpe), None, None))
 
-  def arg[A](name: String, default: Value)(implicit tpe: => In[A]): NonEmptyArg[A] = {
-    implicit lazy val t0 = tpe
-    Arg.make[A](name, Some(default))
-  }
+  def arg[A](name: String, description: String)(implicit tpe: => In[A]): NonEmptyArg[A] =
+    NonEmptyArg.one[A](ArgValue(name, Eval.later(tpe), None, Some(description)))
+
+  def arg[A](name: String, default: Value)(implicit tpe: => In[A]): NonEmptyArg[A] =
+    NonEmptyArg.one[A](ArgValue(name, Eval.later(tpe), Some(default), None))
+
+  def arg[A](name: String, default: Value, description: String)(implicit tpe: => In[A]): NonEmptyArg[A] =
+    NonEmptyArg.one[A](ArgValue(name, Eval.later(tpe), Some(default), Some(description)))
 
   object value {
     def scalar[F[_], A](value: A)(implicit tpe: => Scalar[F, A]) =

@@ -3,6 +3,7 @@ package gql.resolver
 import cats.effect._
 import cats._
 import cats.data._
+import fs2.Stream
 
 trait Resolver[F[_], -I, A] {
   def mapK[G[_]: Functor](fk: F ~> G): Resolver[G, I, A]
@@ -32,4 +33,25 @@ final case class PureResolver[F[_], I, A](resolve: I => A) extends Resolver[F, I
 
   def contramap[B](g: B => I): PureResolver[F, B, A] =
     PureResolver(g andThen resolve)
+}
+
+final case class StreamResolver[F[_], I, R, A](
+    stream: I => Stream[F, IorNec[String, R]]
+) extends Resolver[F, I, A] {
+  override def mapK[G[_]: Functor](fk: F ~> G): Resolver[G, I, A] =
+    StreamResolver(stream.andThen(_.translate(fk)))
+
+  override def contramap[B](g: B => I): Resolver[F, B, A] =
+    StreamResolver[F, B, R, A](i => stream(g(i)))
+}
+
+final case class CompositionResolver[F[_], I, A, O](
+    left: Resolver[F, I, A],
+    right: Resolver[F, A, O]
+) extends Resolver[F, I, O] {
+  override def mapK[G[_]: Functor](fk: F ~> G): Resolver[G, I, O] =
+    CompositionResolver(left.mapK(fk), right.mapK(fk))
+
+  override def contramap[B](g: B => I): Resolver[F, B, O] =
+    CompositionResolver(left.contramap(g), right)
 }
