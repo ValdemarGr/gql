@@ -27,7 +27,7 @@ final case class SchemaShape[F[_], Q, M, S](
 
   lazy val render = SchemaShape.render[F](this)
 
-  lazy val introspection = SchemaShape.introspect(this)
+  lazy val introspection = SchemaShape.introspect[F](this)
 }
 
 object SchemaShape {
@@ -404,8 +404,8 @@ object SchemaShape {
     }
   }
   def render[F[_]](shape: SchemaShape[F, _, _, _]) = {
-
     lazy val triple = Doc.text("\"\"\"")
+
     def doc(d: Option[String]) =
       d match {
         case None => Doc.empty
@@ -457,9 +457,9 @@ object SchemaShape {
         Doc.text(name) + args + Doc.text(": ") + renderOutputDoc(field.output.value)
     }
 
-    val discovery: DiscoveryState[F] = shape.discover
+    lazy val discovery: DiscoveryState[F] = shape.discover
 
-    val all = discovery.inputs ++ discovery.outputs
+    lazy val all = discovery.inputs ++ discovery.outputs
 
     lazy val exclusion = Set("String", "Int", "Float", "ID", "Boolean")
 
@@ -540,11 +540,28 @@ object SchemaShape {
     case object NON_NULL extends __TypeKind
   }
 
-  def introspect[F[_]](ss: SchemaShape[F, _, _, _]): NonEmptyList[(String, Field[Id, Unit, _, _])] = {
+  def introspect[F[_]](ss: SchemaShape[F, _, _, _]): NonEmptyList[(String, Field[F, Unit, _, _])] = {
     import gql.dsl._
-    val d = ss.discover
+    // We do a little lazy evaluation trick to include the introspection schema in itself
+    lazy val d = {
+      val ds = ss.discover
+      val introspectionDiscovery = discover[F](
+        SchemaShape[F, Unit, Unit, Unit](
+          tpe[F, Unit](
+            "Query",
+            rootFields.head,
+            rootFields.tail: _*
+          )
+        )
+      )
+      DiscoveryState[F](
+        ds.inputs ++ introspectionDiscovery.inputs,
+        ds.outputs ++ introspectionDiscovery.outputs,
+        ds.implementations ++ introspectionDiscovery.implementations
+      )
+    }
 
-    implicit lazy val __typeKind = enumType[Id, __TypeKind](
+    implicit lazy val __typeKind = enumType[F, __TypeKind](
       "__TypeKind",
       "SCALAR" -> enumVal(__TypeKind.SCALAR),
       "OBJECT" -> enumVal(__TypeKind.OBJECT),
@@ -556,7 +573,7 @@ object SchemaShape {
       "NON_NULL" -> enumVal(__TypeKind.NON_NULL)
     )
 
-    implicit lazy val __inputValue: Type[Id, ArgValue[_]] = tpe[Id, ArgValue[_]](
+    implicit lazy val __inputValue: Type[F, ArgValue[_]] = tpe[F, ArgValue[_]](
       "__InputValue",
       "name" -> pure(_.name),
       "description" -> pure(_.description),
@@ -569,7 +586,7 @@ object SchemaShape {
         field: Field[F, _, _, _]
     )
 
-    implicit lazy val namedField = tpe[Id, NamedField](
+    implicit lazy val namedField = tpe[F, NamedField](
       "__Field",
       "name" -> pure(_.name),
       "description" -> pure(_.field.description),
@@ -646,11 +663,9 @@ object SchemaShape {
     }
     def inclDeprecated = arg[Boolean]("includeDeprecated", value.scalar(false))
 
-    implicitly[Out[Id, Option[String]]]
-
-    implicit lazy val __type: Type[Id, TypeInfo] = tpe[Id, TypeInfo](
+    implicit lazy val __type: Type[F, TypeInfo] = tpe[F, TypeInfo](
       "__Type",
-      "kind" -> pure[Id, TypeInfo, __TypeKind] {
+      "kind" -> pure[F, TypeInfo, __TypeKind] {
         case TypeInfo.ModifierStack(x) =>
           x.head match {
             case TypeInfo.Modifier.List    => __TypeKind.LIST
@@ -728,7 +743,7 @@ object SchemaShape {
         name: String,
         value: EnumValue[_]
     )
-    implicit lazy val enumValue: Type[Id, NamedEnumValue] = tpe[Id, NamedEnumValue](
+    implicit lazy val enumValue: Type[F, NamedEnumValue] = tpe[F, NamedEnumValue](
       "__EnumValue",
       "name" -> pure(_.name),
       "description" -> pure(_.value.description),
@@ -737,7 +752,7 @@ object SchemaShape {
     )
 
     case object PhantomSchema
-    implicit lazy val schema: Type[Id, PhantomSchema.type] = tpe[Id, PhantomSchema.type](
+    implicit lazy val schema: Type[F, PhantomSchema.type] = tpe[F, PhantomSchema.type](
       "__Schema",
       "description" -> pure(_ => Option.empty[String]),
       "types" -> pure(_ => d.outputs.values.toList.map[TypeInfo](TypeInfo.OutInfo(_))),
@@ -747,7 +762,7 @@ object SchemaShape {
       "directives" -> pure(_ => List.empty[String])
     )
 
-    lazy val rootFields: NonEmptyList[(String, Field[Id, Unit, _, _])] =
+    lazy val rootFields: NonEmptyList[(String, Field[F, Unit, _, _])] =
       NonEmptyList.of(
         "__schema" -> pure(_ => PhantomSchema),
         "__type" -> pure(arg[String]("name")) { case (_, name) =>

@@ -681,12 +681,9 @@ object PreparedQuery {
       ot match {
         // We sneak the introspection query in here
         case P.OperationType.Query =>
-          val i: NonEmptyList[(String, Field[Id, Unit, _, _])] = schema.shape.introspection
-          val lifted: NonEmptyList[(String, Field[G, Unit, _, _])] = i.map { case (k, v) =>
-            k -> v.mapK(new (Id ~> G) { def apply[A](a: Id[A]): G[A] = Applicative[G].pure(a) })
-          }
+          val i: NonEmptyList[(String, Field[G, Unit, _, _])] = schema.shape.introspection
           val q = schema.shape.query.asInstanceOf[Type[G, Any]]
-          F.pure(q.copy(fields = q.fields concatNel lifted.map { case (k, v) => k -> v.contramap[Any](_ => ()) }))
+          F.pure(q.copy(fields = q.fields concatNel i.map { case (k, v) => k -> v.contramap[Any](_ => ()) }))
         case P.OperationType.Mutation =>
           raiseOpt(schema.shape.mutation.map(_.asInstanceOf[Type[G, Any]]), "no mutation defined in schema", None)
         case P.OperationType.Subscription =>
