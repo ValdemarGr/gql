@@ -16,8 +16,6 @@ lazy val sharedSettings = Seq(
     "io.circe" %% "circe-parser" % "0.14.1",
     "io.circe" %% "circe-generic-extras" % "0.14.1",
     "org.typelevel" %% "kittens" % "2.3.0",
-    "org.tpolecat" %% "natchez-core" % "0.1.4",
-    "org.tpolecat" %% "natchez-noop" % "0.1.4",
     "org.tpolecat" %% "typename" % "1.0.0",
     "org.tpolecat" %% "sourcepos" % "1.0.1",
     /* "ch.qos.logback" % "logback-classic" % "1.2.11", */
@@ -40,6 +38,17 @@ lazy val sharedSettings = Seq(
 lazy val core = project
   .in(file("modules/core"))
   .settings(sharedSettings)
+
+lazy val natchez = project
+  .in(file("modules/natchez"))
+  .settings(sharedSettings)
+  .settings(
+    libraryDependencies ++= Seq(
+      "org.tpolecat" %% "natchez-core" % "0.1.4",
+      "org.tpolecat" %% "natchez-noop" % "0.1.4",
+    )
+  )
+  .dependsOn(core)
 
 lazy val graphqlWs = project
   .in(file("modules/graphql-ws"))
