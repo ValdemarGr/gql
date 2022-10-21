@@ -36,8 +36,6 @@ object ast extends AstImplicits.Implicits {
     def fieldMap: Map[String, Field[F, A, _, _]]
 
     override def mapK[G[_]: Functor](fk: F ~> G): Selectable[G, A]
-
-    def contramap[B](f: B => A): Out[F, B]
   }
 
   sealed trait ObjectLike[F[_], A] extends Selectable[F, A] {
@@ -53,9 +51,6 @@ object ast extends AstImplicits.Implicits {
     def document(description: String): Type[F, A] = copy(description = Some(description))
 
     lazy val fieldsList: List[(String, Field[F, A, _, _])] = fields.toList
-
-    override def contramap[B](f: B => A): Type[F, B] =
-      Type(name, fields.map { case (k, v) => k -> v.contramap(f) }, implementations.map(_.contramap(f)), description)
 
     lazy val fieldMap = fields.toNem.toSortedMap.toMap
 
@@ -80,7 +75,7 @@ object ast extends AstImplicits.Implicits {
   ) extends Selectable[F, A] {
     def document(description: String): Union[F, A] = copy(description = Some(description))
 
-    override def contramap[B](f: B => A): Union[F, B] =
+    def contramap[B](f: B => A): Union[F, B] =
       Union(name, types.map(_.contramap(f)), description)
 
     lazy val instanceMap = types.map(i => i.tpe.value.name -> i).toList.toMap
@@ -100,8 +95,6 @@ object ast extends AstImplicits.Implicits {
   final case class Implementation[F[_], A, B](implementation: Eval[Interface[F, B]])(implicit val specify: B => Option[A]) {
     def mapK[G[_]: Functor](fk: F ~> G): Implementation[G, A, B] =
       Implementation(implementation.map(_.mapK(fk)))
-
-    def contramap[C](g: C => A): Implementation[F, C, B] = ???
   }
 
   final case class Interface[F[_], A](
@@ -123,14 +116,6 @@ object ast extends AstImplicits.Implicits {
     lazy val fieldMap = fields.toNem.toSortedMap.toMap
 
     lazy val implementsMap = implementations.map(i => i.implementation.value.name -> i).toMap
-
-    def contramap[B](g: B => A): Interface[F, B] =
-      Interface(
-        name,
-        fields.map { case (k, v) => k -> v.contramap(g) },
-        implementations.map(_.contramap(g)),
-        description
-      )
   }
 
   final case class Scalar[F[_], A](
