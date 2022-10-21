@@ -102,7 +102,6 @@ object ast extends AstImplicits.Implicits {
       Implementation(implementation.map(_.mapK(fk)))
 
     def contramap[C](g: C => A): Implementation[F, C, B] = ???
-    // Implementation[F, C, B](implementation)(c => specify(g(c)))
   }
 
   final case class Interface[F[_], A](
@@ -345,8 +344,6 @@ object AstImplicits {
   }
 
   trait LowPriorityImplicits {
-    // implicit def liftIdToAnyFWithApplicative[F[_], A](implicit o: Out[Id, A], F: Applicative[F]): Out[F, A] =
-    //   o.mapK(new (Id ~> F) { def apply[A](fa: Id[A]): F[A] = F.pure(fa) })
     implicit def gqlOutSeq[F[_], A, G[_] <: Seq[_]](implicit tpe: Out[F, A]): Out[F, G[A]] = OutArr(tpe)
     implicit def gqlInSeq[A](implicit tpe: In[A]): In[Seq[A]] = InArr(tpe)
   }

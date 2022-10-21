@@ -349,51 +349,11 @@ object PreparedQuery {
   )(implicit F: MonadError[F, PositionalError], S: Stateful[F, Prep]): F[(Selectable[G, Any], Any => Option[Any])] =
     if (sel.name == name) F.pure((sel, Some(_)))
     else {
-      /*
-       TODO(also check supertypes, maybe the name is an interface that this selection implements)
-       example:
-         # schema
-         interface A {
-           x: Int!
-         }
-
-         type C implements A {
-           x: Int!
-           z: Boolean!
-         }
-
-         type B implements A {
-           x: Int!
-           y: String!
-         }
-
-         fragment AFrag on A {
-           a
-           ... on C {
-             z
-           }
-           ... on B {
-             y
-           }
-         }
-
-         # query
-         query {
-           b: {
-             ...AFrag
-           }
-         }
-
-       We must be able to re-lift the gql type B to gql type A such that the fragment resolver for
-       AFrag resolves matches on B and picks that implementation.
-       */
       sel match {
         case Type(n, _, _, _) =>
           raise(s"tried to match with type $name on type object type $n", Some(caret))
         // What types implement this interface?
         case i @ Interface(n, fields, _, _) =>
-          // TODO follow sub-interfaces that occur in `instances`
-
           raiseOpt(
             discoveryState.implementations.get(i.name),
             s"the interface ${i.name} is not implemented by any type",
