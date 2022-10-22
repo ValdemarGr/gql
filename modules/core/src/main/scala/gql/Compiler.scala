@@ -5,6 +5,7 @@ import io.circe._
 import cats.effect._
 import gql.parser.{QueryParser => P}
 import gql.interpreter.Interpreter
+import cats.data.NonEmptyList
 
 sealed trait CompilationError {
   def asGraphQL: JsonObject
@@ -39,8 +40,6 @@ object Compiler { outer =>
   type Outcome[F[_]] = Either[CompilationError, Application[F]]
 
   final class PartiallyAppliedCompiler[F[_]](val F: Async[F]) extends AnyVal {
-    def discard[A]: A => F[Unit] = _ => F.unit
-
     implicit def F0 = F
 
     def make[Q, M, S](
@@ -72,34 +71,43 @@ object Compiler { outer =>
         case Left(pe) => Left(CompilationError.Parse(pe))
         case Right(q) =>
           PreparedQuery.prepare(q, schema, cp.variables.getOrElse(Map.empty), cp.operationName) match {
-            case Left(pe) => Left(CompilationError.Preparation(pe))
-            case Right((ot, exec)) =>
-              implicit val s = schema.statistics
-              implicit val p = schema.planner
-
-              ot match {
-                case P.OperationType.Query =>
-                  Right(Application.Query {
-                    queryInput.flatMap { qi =>
-                      Interpreter.runSync(qi, exec, schema.state).map { case (e, d) => QueryResult(e, d) }
-                    }
-                  })
-                case P.OperationType.Mutation =>
-                  Right(Application.Mutation {
-                    mutationInput.flatMap { mi =>
-                      Interpreter.runSync(mi, exec, schema.state).map { case (e, d) => QueryResult(e, d) }
-                    }
-                  })
-                case P.OperationType.Subscription =>
-                  Right(Application.Subscription {
-                    fs2.Stream.eval(subscriptionInput).flatMap { si =>
-                      Interpreter.runStreamed(si, exec, schema.state).map { case (e, d) => QueryResult(e, d) }
-                    }
-                  })
-              }
+            case Left(pe)          => Left(CompilationError.Preparation(pe))
+            case Right((ot, exec)) => compilePrepared(schema, ot, exec, queryInput, mutationInput, subscriptionInput)
           }
       }
 
+    def compilePrepared[Q, M, S](
+        schema: Schema[F, Q, M, S],
+        operationType: P.OperationType,
+        ps: NonEmptyList[PreparedQuery.PreparedField[F, Any]],
+        queryInput: F[Q] = F.unit,
+        mutationInput: F[M] = F.unit,
+        subscriptionInput: F[S] = F.unit
+    ) = {
+      implicit val s = schema.statistics
+      implicit val p = schema.planner
+
+      operationType match {
+        case P.OperationType.Query =>
+          Right(Application.Query {
+            queryInput.flatMap { qi =>
+              Interpreter.runSync(qi, ps, schema.state).map { case (e, d) => QueryResult(e, d) }
+            }
+          })
+        case P.OperationType.Mutation =>
+          Right(Application.Mutation {
+            mutationInput.flatMap { mi =>
+              Interpreter.runSync(mi, ps, schema.state).map { case (e, d) => QueryResult(e, d) }
+            }
+          })
+        case P.OperationType.Subscription =>
+          Right(Application.Subscription {
+            fs2.Stream.eval(subscriptionInput).flatMap { si =>
+              Interpreter.runStreamed(si, ps, schema.state).map { case (e, d) => QueryResult(e, d) }
+            }
+          })
+      }
+    }
   }
 
   def apply[F[_]](implicit F: Async[F]): PartiallyAppliedCompiler[F] = new PartiallyAppliedCompiler[F](F)
