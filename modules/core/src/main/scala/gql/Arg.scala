@@ -54,7 +54,7 @@ final case class NonEmptyArg[A](
 
   def entries = nec.toChain
 
-  override def emap[B](f: A => ValidatedNec[String, B]): Arg[B] =
+  override def emap[B](f: A => ValidatedNec[String, B]): NonEmptyArg[B] =
     NonEmptyArg(nec, decode.andThen(_.andThen(f)))
 }
 object NonEmptyArg {

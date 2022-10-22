@@ -5,6 +5,11 @@ An output type `Out[F[_], A]` is an ast node that can take some `A` as input and
 Output types act as continuations of their input types, such that a schema effectively is a tree of continuations.
 The output types of gql are defined in `gql.ast` and are named after their respective GraphQL types.
 
+:::note
+Most examples use the `dsl` to construct output types.
+The types can naturally be constructed manually as well, but this can be verbose.
+:::
+
 Lets import the things we need: 
 ```scala mdoc
 import gql.ast._
@@ -120,10 +125,6 @@ tpe[IO, Domain](
 
 :::tip
 It is highly reccomended to define all `Type`s, `Union`s and `Interface`s as either `val` or `lazy val`.
-
-This avoids having to deal with structural equallity when validating.
-
-It also ensures that the schema takes up minimal space.
 :::
 
 
@@ -199,8 +200,11 @@ union[IO, Unification]("RoutedUnification")
 ```
 
 ## Interface
-An interface is a `Type` that can be "implemented" in the graphql fashion.
-```scala mdoc
+An interface is a `Type` that can be "implemented".
+
+`Interface`s have fields like `Type`s and can also be implemented by other `Type`s and `Interface`s.
+`Interface`s don't declare their implementations, but rather the implementations declare their interfaces.
+```scala mdoc:silent
 sealed trait Node {
  def id: String
 }
@@ -220,7 +224,7 @@ implicit lazy val node = interface[IO, Node](
   "id" -> pure(x => ID(x.id))
 )
 
-implicit lazy val person = tpe[IO, Person](
+tpe[IO, Person](
   "Person",
   "name" -> pure(_.name),
   "id" -> pure(x => ID(x.id))
@@ -232,4 +236,18 @@ implicit lazy val company = tpe[IO, Company](
 )
   .addFields(node.fieldsList: _*)
   .subtypeOf[Node]
+```
+
+## Unreachable types
+gql discovers types by traversing the schema types.
+This also means that even if you have a type declared it must occur in the ast to be respected.
+
+You might want to declare types that are not yet queryable.
+Or maybe you only expose an interface, but not the implementing types, thus the implementations won't be discovered.
+
+The schema lets you declare types that should occur in introspection, rendering and evaluation (if possible):
+```scala mdoc
+def getNode: Node = Company("gql", "1")
+
+SchemaShape[IO](tpe[IO, Unit]("Query", "node" -> pure(_ => getNode)))
 ```

@@ -255,7 +255,7 @@ query withNestedFragments {
         "person" -> field(fixed.contramap[Nest](_.name))
       )
 
-      SchemaShape[IO, Unit, Unit, Unit](
+      SchemaShape[IO](
         tpe[IO, Unit](
           "Query",
           "person1" -> field(fixed.contramap[Unit](_ => "John")).document("John"),

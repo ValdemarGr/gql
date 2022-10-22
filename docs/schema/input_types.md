@@ -29,6 +29,12 @@ import gql.dsl.value._
 
 arg[Int]("superCoolArg", scalar(42))
 ```
+And they can be documented.
+```scala mdoc:silent
+arg[Int]("superCoolArg", scalar(42), "This is a super cool argument")
+
+arg[Int]("superCoolArg", "This is a super cool argument")
+```
 :::info
 Default values are not type-safe, so you can pass any value you want.
 The default value will however be checked during schema validation, and again during query evaluation, so you will get an error if you pass a value of the wrong type.
@@ -119,4 +125,27 @@ arg[SomeInput](
 ```
 
 ## Input validation
-TODO
+Naturally input can also be validated.
+A function `emap` exists on arg, that maps the input to `ValidatedNec[String, B]` for some `B`.
+```scala mdoc:silent
+import cats.data._
+
+final case class ValidatedInput(
+  a: Int,
+  b: NonEmptyList[Int]
+)
+
+input[ValidatedInput](
+  "ValidatedInput",
+  (
+    arg[Int]("a", scalar(42), "May not be negative")
+      .emap(i => if (i < 0) s"Negative value: $i".invalidNec else i.validNec),
+      
+    arg[Seq[Int]]("b", arr(scalar(1), scalar(2), scalar(3)), "NonEmpty")
+      .emap(xs => xs.toList.toNel.toValidNec("Input is empty.")),
+      
+  ).mapN(ValidatedInput.apply)
+   .emap(v => if (v.a > v.b.combineAll) "a must be larger than the sum of bs".invalidNec else v.validNec)
+).document("The field `a` must be larger than the sum of `b`.")
+```
+

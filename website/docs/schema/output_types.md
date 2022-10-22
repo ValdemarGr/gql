@@ -5,6 +5,11 @@ An output type `Out[F[_], A]` is an ast node that can take some `A` as input and
 Output types act as continuations of their input types, such that a schema effectively is a tree of continuations.
 The output types of gql are defined in `gql.ast` and are named after their respective GraphQL types.
 
+:::note
+Most examples use the `dsl` to construct output types.
+The types can naturally be constructed manually as well, but this can be verbose.
+:::
+
 Lets import the things we need: 
 ```scala
 import gql.ast._
@@ -41,8 +46,8 @@ object ID {
 implicitly[Scalar[IO, ID[String]]]
 // res0: Scalar[IO, ID[String]] = Scalar(
 //   name = "ID",
-//   encoder = scala.Function1$$Lambda$15118/0x0000000103c23040@1fb22a0d,
-//   decoder = scala.Function1$$Lambda$5463/0x00000001017c1040@32385a76,
+//   encoder = scala.Function1$$Lambda$7745/0x0000000101118840@76e824ff,
+//   decoder = scala.Function1$$Lambda$6821/0x0000000101ee7040@3eca64a3,
 //   description = Some(
 //     value = """The `ID` scalar type represents a unique identifier, often used to refetch an object or as key for a cache.
 // The ID type appears in a JSON response as a String; however, it is not intended to be human-readable.
@@ -196,8 +201,8 @@ union[IO, Any]("AnyUnification")
 // res7: Union[IO, Any] = Union(
 //   name = "AnyUnification",
 //   types = NonEmptyList(
-//     head = Variant(tpe = cats.Later@279e628),
-//     tail = List(Variant(tpe = cats.Later@229c3089))
+//     head = Variant(tpe = cats.Later@6cc2135a),
+//     tail = List(Variant(tpe = cats.Later@47818cc6))
 //   ),
 //   description = None
 // )
@@ -213,15 +218,18 @@ union[IO, Unification]("RoutedUnification")
 // res8: Union[IO, Unification] = Union(
 //   name = "RoutedUnification",
 //   types = NonEmptyList(
-//     head = Variant(tpe = cats.Later@2cf08495),
-//     tail = List(Variant(tpe = cats.Later@5c6b8097))
+//     head = Variant(tpe = cats.Later@70f98715),
+//     tail = List(Variant(tpe = cats.Later@1dfb1ad5))
 //   ),
 //   description = None
 // )
 ```
 
 ## Interface
-An interface is a `Type` that can be "implemented" in the graphql fashion.
+An interface is a `Type` that can be "implemented".
+
+`Interface`s have fields like `Type`s and can also be implemented by other `Type`s and `Interface`s.
+`Interface`s don't declare their implementations, but rather the implementations declare their interfaces.
 ```scala
 sealed trait Node {
  def id: String
@@ -242,16 +250,74 @@ implicit lazy val node = interface[IO, Node](
   "id" -> pure(x => ID(x.id))
 )
 
-implicit lazy val person = tpe[IO, Person](
+lazy val person = tpe[IO, Person](
   "Person",
   "name" -> pure(_.name),
   "id" -> pure(x => ID(x.id))
 ).implements[Node]{ case x: Person => x }
   
-implicit lazy val company = tpe[IO, Company](
+lazy val company = tpe[IO, Company](
   "Company",
   "name" -> pure(_.name),
 )
   .addFields(node.fieldsList: _*)
   .subtypeOf[Node]
+```
+
+## Unreachable types
+gql discovers types by traversing the schema types.
+This also means that even if you have a type declared it must occur in the ast to be respected.
+
+You might want to declare types that are not yet queryable.
+Or maybe you only expose an interface, but not the implementing types, thus the implementations won't be discovered.
+
+The schema lets you declare "extra" types that should occur in introspection, rendering and evaluation (if possible):
+```scala
+def getNode: Node = Company("gql", "1")
+
+def shape = SchemaShape[IO](tpe[IO, Unit]("Query", "node" -> pure(_ => getNode)))
+
+println(shape.render)
+// type Query {
+//   node: Node!
+// }
+// 
+// interface Node {
+//   id: ID!
+// }
+
+def withCompany = shape.addOutputTypes(company)
+
+println(withCompany.render)
+// type Company implements Node {
+//   name: String!
+//   id: ID!
+// }
+// 
+// interface Node {
+//   id: ID!
+// }
+// 
+// type Query {
+//   node: Node!
+// }
+
+println(withCompany.addOutputTypes(person).render)
+// type Company implements Node {
+//   name: String!
+//   id: ID!
+// }
+// 
+// interface Node {
+//   id: ID!
+// }
+// 
+// type Query {
+//   node: Node!
+// }
+// 
+// type Person implements Node {
+//   name: String!
+//   id: ID!
+// }
 ```

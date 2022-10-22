@@ -21,6 +21,12 @@ final case class SchemaShape[F[_], Q, M, S](
   def mapK[G[_]: Functor](fk: F ~> G): SchemaShape[G, Q, M, S] =
     SchemaShape(query.mapK(fk), mutation.map(_.mapK(fk)), subscription.map(_.mapK(fk)), outputTypes.map(_.mapK(fk)), inputTypes)
 
+  def addOutputTypes(t: OutToplevel[F, _]*): SchemaShape[F, Q, M, S] =
+    copy(outputTypes = t.toList ++ outputTypes)
+
+  def addInputTypes(t: InToplevel[_]*): SchemaShape[F, Q, M, S] =
+    copy(inputTypes = t.toList ++ inputTypes)
+
   lazy val discover = SchemaShape.discover[F](this)
 
   lazy val validate = SchemaShape.validate[F](this)
@@ -31,6 +37,19 @@ final case class SchemaShape[F[_], Q, M, S](
 }
 
 object SchemaShape {
+  final class PartiallyAppliedSchemaShape[F[_]](val dummy: Boolean = false) extends AnyVal {
+    def apply[Q, M, S](
+        query: Type[F, Q],
+        mutation: Option[Type[F, M]] = Option.empty[Type[F, Unit]],
+        subscription: Option[Type[F, S]] = Option.empty[Type[F, Unit]],
+        outputTypes: List[OutToplevel[F, _]] = Nil,
+        inputTypes: List[InToplevel[_]] = Nil
+    ): SchemaShape[F, Q, M, S] =
+      SchemaShape(query, mutation, subscription, outputTypes, inputTypes)
+  }
+
+  def apply[F[_]] = new PartiallyAppliedSchemaShape[F]
+
   final case class DiscoveryState[F[_]](
       inputs: Map[String, InToplevel[_]],
       outputs: Map[String, OutToplevel[F, _]],
