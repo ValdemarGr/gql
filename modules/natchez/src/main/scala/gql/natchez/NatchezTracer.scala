@@ -95,4 +95,7 @@ object NatchezTracer {
           }
         }
     }
+
+  def traceSchema[F[_]: Trace, Q, M, S](schema: Schema[F, Q, M, S])(implicit M: Monad[F]): Schema[F, Q, M, S] =
+    schema.copy(planner = tracePlanner(schema.planner))
 }
