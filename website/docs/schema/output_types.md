@@ -46,8 +46,8 @@ object ID {
 implicitly[Scalar[IO, ID[String]]]
 // res0: Scalar[IO, ID[String]] = Scalar(
 //   name = "ID",
-//   encoder = scala.Function1$$Lambda$7705/0x0000000101230040@18851dbb,
-//   decoder = scala.Function1$$Lambda$6850/0x0000000101eff040@41ede503,
+//   encoder = scala.Function1$$Lambda$7705/0x0000000101230040@1e9afc83,
+//   decoder = scala.Function1$$Lambda$6850/0x0000000101eff040@419a90c9,
 //   description = Some(
 //     value = """The `ID` scalar type represents a unique identifier, often used to refetch an object or as key for a cache.
 // The ID type appears in a JSON response as a String; however, it is not intended to be human-readable.
@@ -201,8 +201,8 @@ union[IO, Any]("AnyUnification")
 // res7: Union[IO, Any] = Union(
 //   name = "AnyUnification",
 //   types = NonEmptyList(
-//     head = Variant(tpe = cats.Later@113cbc6b),
-//     tail = List(Variant(tpe = cats.Later@6e9e78c8))
+//     head = Variant(tpe = cats.Later@2a6898dd),
+//     tail = List(Variant(tpe = cats.Later@791b6b4))
 //   ),
 //   description = None
 // )
@@ -218,8 +218,8 @@ union[IO, Unification]("RoutedUnification")
 // res8: Union[IO, Unification] = Union(
 //   name = "RoutedUnification",
 //   types = NonEmptyList(
-//     head = Variant(tpe = cats.Later@5e46d865),
-//     tail = List(Variant(tpe = cats.Later@702dfb53))
+//     head = Variant(tpe = cats.Later@4ea62c21),
+//     tail = List(Variant(tpe = cats.Later@5b2fe1e4))
 //   ),
 //   description = None
 // )

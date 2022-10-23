@@ -9,7 +9,6 @@ lazy val sharedSettings = Seq(
     "org.typelevel" %% "cats-mtl" % "1.3.0",
     "co.fs2" %% "fs2-core" % "3.2.14",
     "co.fs2" %% "fs2-io" % "3.2.14",
-    "org.typelevel" %% "munit-cats-effect" % "2.0.0-M2",
     "org.typelevel" %% "cats-parse" % "0.3.8",
     "io.circe" %% "circe-core" % "0.14.1",
     "io.circe" %% "circe-generic" % "0.14.1",
@@ -93,7 +92,7 @@ lazy val docs = project
     moduleName := "gql-docs",
     mdocOut := file("website/docs")
   )
-  .dependsOn(core)
+  .dependsOn(core % "compile->compile;compile->test")
   .dependsOn(http4s)
   .dependsOn(graphqlWs)
   .dependsOn(mdocExt)

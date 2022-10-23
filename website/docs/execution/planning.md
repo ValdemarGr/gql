@@ -98,4 +98,64 @@ Nodes that do participate in a batch, will semantically block until all inputs h
 :::
 
 ## Debugging
+We can print the query plan and show the improvement in comparison to the naive plan.
+Let's pull out the Star Wars schema:
+```scala
+import cats.effect.unsafe.implicits.global
+import cats.effect._
+import cats.implicits._
+import gql._
+
+def schemaF = gql.StarWarsSchema.schema
+```
+If we explicitly invoke the planner on our schema, we can ask to see a rendered version of the query plan:
+```scala
+def loggedSchema = schemaF.map{ schema =>
+  schema.copy(planner = new Planner[IO] {
+    def plan(naive: Planner.NodeTree): IO[Planner.NodeTree] =
+      schema.planner.plan(naive).map { output =>
+        println(output.show(showImprovement = true))
+        println(naive.totalCost)
+        println(output.totalCost)
+        output
+      }
+  })
+}
+
+def query = """
+  query NestedQuery {
+    hero {
+      name
+      friends {
+        name
+        appearsIn
+        friends {
+          name
+        }
+      }
+    }
+  }
+"""
+
+loggedSchema.flatMap{ schema =>
+  Compiler[IO].compile(schema, query)
+    .traverse_{ case Application.Query(fa) => fa }
+}.unsafeRunSync()
+// 
+// [41mold field schedule[0m
+// [42mnew field offset (deferral of execution)[0m
+// name: Query_hero_effect, cost: 1000.0, end: 1000.0[0m
+//           [41mname: Character_name_pure, cost: 1000.0, end: 2000.0[0m
+//           [44m>>>>>>>>>>>>>>>>>>>>[42mname: Character_name_pure, cost: 1000.0, end: 4000.0[0m
+//           name: Character_friends_effect, cost: 1000.0, end: 2000.0[0m
+//                     [41mname: Character_name_pure, cost: 1000.0, end: 3000.0[0m
+//                     [44m>>>>>>>>>>[42mname: Character_name_pure, cost: 1000.0, end: 4000.0[0m
+//                     [41mname: Character_appearsIn_pure, cost: 1000.0, end: 3000.0[0m
+//                     [44m>>>>>>>>>>[42mname: Character_appearsIn_pure, cost: 1000.0, end: 4000.0[0m
+//                     name: Character_friends_effect, cost: 1000.0, end: 3000.0[0m
+//                               name: Character_name_pure, cost: 1000.0, end: 4000.0[0m
+// 
+// 7000.0
+// 7000.0
+```
 TODO show query plan printing

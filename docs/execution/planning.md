@@ -98,4 +98,48 @@ Nodes that do participate in a batch, will semantically block until all inputs h
 :::
 
 ## Debugging
+We can print the query plan and show the improvement in comparison to the naive plan.
+Let's pull out the Star Wars schema:
+```scala mdoc
+import cats.effect.unsafe.implicits.global
+import cats.effect._
+import cats.implicits._
+import gql._
+
+def schemaF = gql.StarWarsSchema.schema
+```
+If we explicitly invoke the planner on our schema, we can ask to see a rendered version of the query plan:
+```scala mdoc
+def loggedSchema = schemaF.map{ schema =>
+  schema.copy(planner = new Planner[IO] {
+    def plan(naive: Planner.NodeTree): IO[Planner.NodeTree] =
+      schema.planner.plan(naive).map { output =>
+        println(output.show(showImprovement = true))
+        println(naive.totalCost)
+        println(output.totalCost)
+        output
+      }
+  })
+}
+
+def query = """
+  query NestedQuery {
+    hero {
+      name
+      friends {
+        name
+        appearsIn
+        friends {
+          name
+        }
+      }
+    }
+  }
+"""
+
+loggedSchema.flatMap{ schema =>
+  Compiler[IO].compile(schema, query)
+    .traverse_{ case Application.Query(fa) => fa }
+}.unsafeRunSync()
+```
 TODO show query plan printing

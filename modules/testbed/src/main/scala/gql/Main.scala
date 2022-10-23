@@ -344,35 +344,4 @@ query withNestedFragments {
         .lastOrError
     } yield ec
   }
-
-  // Auto apply + covariance
-
-  trait Base[+F[_], A]
-
-  trait InvariantBase[F[_], A] extends Base[F, A]
-
-  // trait Inv[B[f[_], y] <: Base[f, y]] {
-  //   type B0[F[_], A] = B[F, A]
-  // }
-  // implicit def autoApplyInv[B[f[_], y] <: Base[f, y]]: Inv[B] =
-
-  final case class Impl[+F[_], A]() extends Base[F, A]
-
-  sealed trait Other[F[_], A]
-
-  def fromBase[F[_], A](implicit base: Base[F, A]): Other[F, A] = ???
-
-  // def pure[F[_], A](f: Unit => A)(implicit base: Base[F, A]): Other[F, A] = ???
-
-  implicit def impl1[F[_]]: Impl[F, Int] = Impl[F, Int]()
-
-  implicit lazy val impl2: Impl[Nothing, String] = Impl[Nothing, String]()
-
-  implicit def impl3[F[_]: Monad]: Impl[F, Boolean] = Impl[F, Boolean]()
-
-  // "field1" -> pure[IO, Boolean](_ => true)
-
-  fromBase[IO, Int]
-  fromBase[IO, String]
-  // fromBase[IO, Boolean]
 }
