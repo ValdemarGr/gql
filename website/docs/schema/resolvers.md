@@ -4,10 +4,6 @@ title: Resolvers
 Resolvers are the edges that connect fields and types.
 Resolvers can be composed to build simple or complex edge strucures.
 
-:::note
-The error types have been omitted from the resolver types for brevity.
-:::
-
 ## PureResolver
 The simplest resolver is the `PureResolver[F, I, A]`, which simply contains a function `I => A`.
 Execution statistics for a `PureResolver` are not tracked.
@@ -23,26 +19,27 @@ The `EffectResolver` can be implemented via the `FallibleResolver`, but requires
 
 Having no typeclass constraints of `F` allows us to construct fields with only one implicit parameter; the type of the field.
 This in turn allows passing the type of the field explicitly instead of caputuring it as an implicit parameter.
+```scala
+import gql.dsl._
+import gql.ast._
+import cats.effect._
+
+eff[IO, Unit, String](_ => IO("hey"))(stringScalar)
+```
 :::
 
 ## BatchResolver
 The batch resolver `BatchResolver[F, I, A]` allows the interpreter to more effeciently fetch data.
 The resolver captures a the following steps:
- - It takes `I` to `F[Set[K]]` for some `K`
+ - It takes `I` to `Set[K]` for some `K`
  - Then merges the keys `Set[K]` from many different resolvers into a single `Set[K]`
  - Then it fetches the values using a user-defined function `Set[K] => F[Map[K, T]]` for some `T`
- - Finally it maps the values `Map[K, T]` to `F[A]`
+ - Finally it maps the values `Map[K, T]` to `A`
 
-The types `K` and `T` are existentially quantified; they are not visible to the user.
-The base-case implementation for `BatchResolver` has `K = Set[I]` and `T = Map[I, A]`.
-
-:::info
-The resolver will automatically construct a GraphQL error if any of the keys are missing.
-To avoid this, you must pad all missing keys.
-For instance, you could map all values to `Some` and pad all missing values with `None`.
-:::
+The types `K` and `T` are existentially quantified inside of the `BatchResolver`.
+When constructing a `BatchResolver[F, I, A]` for `K` and `V` then the `I = Set[K]` and `A = Map[K, V]`.
  
-The `BatchResolver` must also have an implementation of `Set[K] => F[Map[K, T]]`, which is constructed globally.
+The `BatchResolver` must be constructed globally, that is, must not be constructed ad-hoc.
 :::note
 The `BatchResolver` cannot directly embed `Set[K] => F[Map[K, T]]`, since this would allow ambiguity.
 What if two `BatchResolver`'s were to have their keys merged, what resolver's `Set[K] => F[Map[K, T]]` should be used?
@@ -54,13 +51,13 @@ import gql.resolver._
 import cats.effect._
 
 val brState = BatchResolver[IO, Int, Int](keys => IO.pure(keys.map(k => k -> (k * 2)).toMap))
-// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@28c3fb82
+// brState: cats.data.package.State[gql.SchemaState[IO], BatchResolver[IO, Set[Int], Map[Int, Int]]] = cats.data.IndexedStateT@693ed52a
 ```
 A `State` monad is used to keep track of the batchers that have been created and unique id generation.
 During schema construction, `State` can be composed using `Monad`ic operations.
 The `Schema` companion object contains smart constructors that run the `State` monad.
 
-`map` and `contramap` can be used to align the input and output types:
+`mapBoth` and several `map` variants that exists for all `Resolver`s, can be used to align the input and output types:
 ```scala
 import gql._
 import gql.dsl._
@@ -73,7 +70,7 @@ def batchSchema = brState.map { (br: BatchResolver[IO, Set[Int], Map[Int, Int]])
     .contramap[Int](Set(_))
     .map(_.values.headOption)
 
-  SchemaShape[IO, Unit, Unit, Unit](
+  SchemaShape[IO](
     tpe[IO, Unit](
       "Query",
       "field" -> field(adjusted.contramap(_ => 42))
@@ -104,7 +101,7 @@ Schema.stateful(batchSchema)
   .map(Compiler[IO].compile(_, query))
   .flatMap{ case Right(Application.Query(run)) => run.map(_.asGraphQL) }
   .unsafeRunSync()
-// res0: io.circe.JsonObject = object[data -> {
+// res1: io.circe.JsonObject = object[data -> {
 //   "field" : 84
 // }]
 ```
@@ -185,7 +182,7 @@ def databaseRoot[F[_]](implicit F: Monad[F], db: DatabaseConnection[F]) =
       "nestedValue" -> field(single.contramap[Nested](_.key))
     )
     
-    SchemaShape[F, Unit, Unit, Unit](
+    SchemaShape[F](
       tpe[F, Unit](
         "Query",
         "getFirstField" -> field(arg[Int]("x"))(single.contramap{ case (_, x) => x}),
@@ -215,7 +212,7 @@ Schema.stateful(databaseRoot[IO])
   .flatMap{ case Right(Application.Query(run)) => run.map(_.asGraphQL) }
   .unsafeRunSync()
 // executing query for ids Set(1, 2, 42)
-// res1: io.circe.JsonObject = object[data -> {
+// res2: io.circe.JsonObject = object[data -> {
 //   "nested" : {
 //     "nestedValue" : "row 42"
 //   },
@@ -248,8 +245,8 @@ final case class DomainBatchers[F[_]](
   BatchResolver[IO, CompanyId, Company](_ => ???),
   BatchResolver[IO, Int, Int](is => IO.pure(is.map(i => i -> (i * 2)).toMap))
     .map(_.contramap[Int](Set(_)).map[Int](_.values.toList.combineAll))
-).mapN(DomainBatchers.apply[IO])
-// res2: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], DomainBatchers[IO]] = cats.data.IndexedStateT@7737dcbd
+).mapN(DomainBatchers.apply)
+// res3: data.IndexedStateT[Eval, SchemaState[IO], SchemaState[IO], DomainBatchers[[A]IO[A]]] = cats.data.IndexedStateT@7264a599
 ```
 
 ## StreamResolver
@@ -285,7 +282,7 @@ That is, the interpreter will be blocked until the first element arrives.
 :::caution
 Streams may not be empty.
 If stream terminates before at-least one element is emitted the subscription is terminated with an error.
-If you for whatever reason whish to do this and permantently block a graphql subscription, you can always use `fs2.Stream.never`.
+If you for whatever reason wish to do this and permantently block a graphql subscription, you can always use `fs2.Stream.never`.
 :::
 :::danger
 It is **highly** reccomended that every stream has at least one **guarenteed** element.
@@ -310,7 +307,7 @@ Does an inner stream cancel when the outer emits? Does this mean that a fast out
 
 :::note
 The interpreter only respects elements arriving in streams that are considered "active".
-That is, if a node emits but is also about to be removed because a parent has emitted, the interpreter will ignore the emission.
+That is, if a node emits but is also about to be removed because a parent has emitted, the interpreter will ignore the child's emission.
 :::
 
 ### Interesting use cases
@@ -452,8 +449,8 @@ runVPNSubscription(subscriptionQuery, 3).unsafeRunSync()
 // emitting for user john_doe
 // emitting for user john_doe
 // emitting for user john_doe
-// Disconnecting from VPN after 666ms for john_doe ...
-// res3: List[io.circe.JsonObject] = List(
+// Disconnecting from VPN after 667ms for john_doe ...
+// res4: List[io.circe.JsonObject] = List(
 //   object[data -> {
 //   "vpn" : {
 //     "data" : {
@@ -501,7 +498,7 @@ runVPNSubscription(subscriptionQuery, 3).unsafeRunSync()
 // }]
 // )
 ```
-We can alsa check the performance difference of a queries that open a VPN connection, and ones that don't:
+We can also check the performance difference of a queries that open a VPN connection versus and ones that don't:
 ```scala
 def bench(fa: IO[_]) = 
   for {
@@ -523,8 +520,8 @@ bench(runVPNSubscription(subscriptionQuery, 10)).unsafeRunSync()
 // emitting for user john_doe
 // emitting for user john_doe
 // emitting for user john_doe
-// Disconnecting from VPN after 1006ms for john_doe ...
-// res4: String = "duration was 1013ms"
+// Disconnecting from VPN after 1004ms for john_doe ...
+// res5: String = "duration was 1014ms"
 
 bench(runVPNSubscription(subscriptionQuery, 3)).unsafeRunSync()
 // Connecting to VPN for john_doe ...
@@ -532,15 +529,15 @@ bench(runVPNSubscription(subscriptionQuery, 3)).unsafeRunSync()
 // emitting for user john_doe
 // emitting for user john_doe
 // emitting for user john_doe
-// Disconnecting from VPN after 659ms for john_doe ...
-// res5: String = "duration was 669ms"
+// Disconnecting from VPN after 656ms for john_doe ...
+// res6: String = "duration was 660ms"
 
 bench(runVPNSubscription(subscriptionQuery, 1)).unsafeRunSync()
 // Connecting to VPN for john_doe ...
 // Connected to VPN for john_doe!
 // emitting for user john_doe
-// Disconnecting from VPN after 553ms for john_doe ...
-// res6: String = "duration was 561ms"
+// Disconnecting from VPN after 556ms for john_doe ...
+// res7: String = "duration was 563ms"
 
 def fastQuery = """
   subscription {
@@ -549,13 +546,13 @@ def fastQuery = """
 """
 
 bench(runVPNSubscription(fastQuery, 1)).unsafeRunSync()
-// res7: String = "duration was 2ms"
+// res8: String = "duration was 3ms"
 ```
 
-Say that the VPN connection was based on a OAuth token that needed to be refreshed every 600 milliseconds.
+Say that the VPN connection was based on credentials that needed to be refreshed every 600 milliseconds.
 This is also possible:
 ```scala
-def oauthAccessToken[F[_]: Async](username: Username): fs2.Stream[F, Username] =
+def accessToken[F[_]: Async](username: Username): fs2.Stream[F, Username] =
   fs2.Stream(username)
     .lift[F]
     .repeat
@@ -568,7 +565,7 @@ def root2[F[_]: Async] =
   tpe[F, Username](
     "Subscription",
     "vpn" -> field(arg[String]("serverId"))(stream{ case (userId, serverId) => 
-      oauthAccessToken[F](userId).flatMap{ token =>
+      accessToken[F](userId).flatMap{ token =>
         fs2.Stream.resource(VpnConnection[F](token, serverId))
       }
     })
@@ -595,13 +592,13 @@ runVPNSubscription(subscriptionQuery, 13, root2[IO]).unsafeRunSync().takeRight(3
 // emitting for user token-john_doe-0
 // emitting for user token-john_doe-0
 // emitting for user token-john_doe-1
-// Disconnecting from VPN after 1157ms for token-john_doe-0 ...
+// Disconnecting from VPN after 1158ms for token-john_doe-0 ...
 // a new token was issued: token-john_doe-2
 // Connecting to VPN for token-john_doe-2 ...
 // emitting for user token-john_doe-1
 // Connection for token-john_doe-2 cancelled while connecting!
-// Disconnecting from VPN after 607ms for token-john_doe-1 ...
-// res8: List[io.circe.JsonObject] = List(
+// Disconnecting from VPN after 608ms for token-john_doe-1 ...
+// res9: List[io.circe.JsonObject] = List(
 //   object[data -> {
 //   "vpn" : {
 //     "data" : {
@@ -651,7 +648,7 @@ runVPNSubscription(subscriptionQuery, 13, root2[IO]).unsafeRunSync().takeRight(3
 ```
 
 ## Resolver composition
-Resolvers can also be composed via the `andThen` method that exists on all resolvers.
+Resolvers can also be composed via the `CompositionResolver`.
 This means that the output of one resolver can be used as the input of another resolver.
 This also means that `Stream`, `Batch` and `Effect` resolvers can be combined in any order.
 

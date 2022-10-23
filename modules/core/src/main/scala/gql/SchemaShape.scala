@@ -157,11 +157,11 @@ object SchemaShape {
     }
     final case class InvalidTypeName(name: String) extends ValidationError {
       def message: String =
-        s"invalid type name $name, must match /[_A-Za-z][_0-9A-Za-z]*/"
+        s"invalid type name '$name', must match /[_A-Za-z][_0-9A-Za-z]*/"
     }
     final case class InvalidFieldName(name: String) extends ValidationError {
       def message: String =
-        s"invalid field name $name, must match /[_A-Za-z][_0-9A-Za-z]*/"
+        s"invalid field name '$name', must match /[_A-Za-z][_0-9A-Za-z]*/"
     }
     final case class DuplicateArg(conflict: String) extends ValidationError {
       def message: String = s"duplicate arg $conflict"

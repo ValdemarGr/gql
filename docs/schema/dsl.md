@@ -41,11 +41,12 @@ tpe[IO, Person](
   "name" -> pure(_.name),
   "nameEffect" -> eff(x => IO.delay(x.name)),
   "nameFallible" -> fallible { x => 
-    IO.delay(Ior.both("some constructive error", x.name))
+    IO(Ior.both("some constructive error", x.name))
   }
 )
 ```
-Thereafter we must decide if any of the fields requires arguments:
+
+We can also include arguments in fields:
 ```scala mdoc:silent
 def familyName = arg[String]("familyName")
 
@@ -54,7 +55,7 @@ tpe[IO, Person](
   "name" -> pure(familyName)(_ + _),
   "nameEffect" -> eff(familyName) { case (p, fn) => IO.delay(p.name + fn) },
   "nameFallible" -> fallible(familyName) { case (p, fn) => 
-    IO.delay(Ior.both("some constructive error for $fn", p.name)) 
+    IO(Ior.both("some constructive error for $fn", p.name)) 
   }
 )
 ```
@@ -64,6 +65,23 @@ tpe[IO, Person](
 Both smart constructors are overloaded with a variant that take an explicit "next" resolver and a variant that does not.
 
 The `BatchResolver` can be lifted into a `Field` via the `field` smart constructor.
+
+## Resolver composition
+`Resolver`s can be composed by using the `andThen` method.
+There are also several `map` variants that combine `andThen` with different types of resolvers:
+```scala mdoc:silent
+val r: Resolver[IO, Int, Int] = PureResolver[IO, Int, Int](x => x)
+
+r.andThen(PureResolver(_ + 1))
+
+r.map(_ + 1)
+
+r.evalMap(x => IO(x + 1))
+
+r.fallibleMap(x => IO(Ior.both("some constructive error", x + 1)))
+
+r.streamMap(x => fs2.Stream.iterate(x)(_ + 1).map(_.rightIor))
+```
 
 ## Unification instances
 `Union`s and `Interface`s require implementations of their type.
@@ -121,6 +139,8 @@ trait OtherVehicle extends Vehicle {
 interface[IO, OtherVehicle](
   "OtherVehicle",
   "weight" -> pure(_.weight),
+  // Since OtherVehicle is a subtype of Vehicle
+  // we can directly embed the Vehicle fields
   vehicle.fieldsList: _*
 ).subtypeOf[Vehicle]
 ```
