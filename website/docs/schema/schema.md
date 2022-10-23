@@ -87,8 +87,6 @@ Validation does not attempt structural equallity since this can have unforseen p
 For instance, if the whole graph was defined with `def`s, one could very easily accedentally construct a case of exponential running time.
 :::
 
-`gql` will use the specified implementation of a type when declaring relation to another type.
-
 ## Schema
 A `Schema` is a collection of some components that are required to execute a query.
 The `Schema` contains a `SchemaShape`, a `Statistics` instance, a query `Planner` implementation and state regarding `BatchResolver` implementations.

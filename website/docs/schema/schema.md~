@@ -75,6 +75,13 @@ recursiveSchema.validate.filter{
   case _ => true
 }
 ```
+:::info
+Validation does not attempt structural equallity since this can have unforseen performance consequences.
+
+For instance, if the whole graph was defined with `def`s, one could very easily accedentally construct a case of exponential running time.
+:::
+
+`gql` will use the specified implementation of a type when declaring relation to another type.
 
 ## Schema
 A `Schema` is a collection of some components that are required to execute a query.
