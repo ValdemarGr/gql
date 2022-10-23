@@ -68,6 +68,8 @@ def recursiveSchema = SchemaShape[IO](
 
 recursiveSchema.validate.toList.mkString("\n")
 ```
+After `10000` iterations the type is no longer unifyable.
+
 One can also choose to simply ignore some of the validation errors:
 ```scala mdoc
 recursiveSchema.validate.filter{
@@ -80,8 +82,6 @@ Validation does not attempt structural equallity since this can have unforseen p
 
 For instance, if the whole graph was defined with `def`s, one could very easily accedentally construct a case of exponential running time.
 :::
-
-`gql` will use the specified implementation of a type when declaring relation to another type.
 
 ## Schema
 A `Schema` is a collection of some components that are required to execute a query.

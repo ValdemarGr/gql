@@ -68,6 +68,8 @@ def recursiveSchema = SchemaShape[IO](
 
 recursiveSchema.validate.toList.mkString("\n")
 ```
+After `10000` iterations the type is no longer unifyable.
+
 One can also choose to simply ignore some of the validation errors:
 ```scala mdoc
 recursiveSchema.validate.filter{

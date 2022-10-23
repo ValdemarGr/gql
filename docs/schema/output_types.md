@@ -238,6 +238,23 @@ lazy val company = tpe[IO, Company](
   .subtypeOf[Node]
 ```
 
+### A note on interface relationships
+:::info
+This sub-section is a bit of a philosophical digression and can be skipped.
+:::
+
+The nature of the `Interface` type unfortunately causes some complications.
+Since a relation goes from implementation to interface, cases of ambiguity can arise of what interface to consider the "truth".
+Schema validation will catch such cases, but it can still feel like a somewhat arbitrary limitation.
+
+One could argue that the relation could simple be inverted, like unions, but alas such an endeavour has another consequence.
+Conceptually an interface is defined most generally (in a core library or a most general purpose module), where implementations occur in more specific places.
+Inverting the relationships of the interface would mean that the interface would have to be defined in the most specific place instead of the most general.
+That is, inverting the arrows (relationships) of an interface, produces a union instead (with some extra features such as fields).
+
+Now we must define the scala type for the interface in the most general place, but the `Interface` in the most specific?
+Connecting such a graph requires significant effort (exploitation of some laziness) and as such is not the chosen approach.
+
 ## Unreachable types
 gql discovers types by traversing the schema types.
 This also means that even if you have a type declared it must occur in the ast to be respected.

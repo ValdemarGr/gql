@@ -73,6 +73,8 @@ def recursiveSchema = SchemaShape[IO](
 recursiveSchema.validate.toList.mkString("\n")
 // res2: String = "cyclic type A is not reference equal use lazy val or `cats.Eval` to declare this type at (Query).a(A).a(A)"
 ```
+After `10000` iterations the type is no longer unifyable.
+
 One can also choose to simply ignore some of the validation errors:
 ```scala
 recursiveSchema.validate.filter{

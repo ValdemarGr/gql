@@ -224,19 +224,36 @@ implicit lazy val node = interface[IO, Node](
   "id" -> pure(x => ID(x.id))
 )
 
-tpe[IO, Person](
+lazy val person = tpe[IO, Person](
   "Person",
   "name" -> pure(_.name),
   "id" -> pure(x => ID(x.id))
 ).implements[Node]{ case x: Person => x }
   
-implicit lazy val company = tpe[IO, Company](
+lazy val company = tpe[IO, Company](
   "Company",
   "name" -> pure(_.name),
 )
   .addFields(node.fieldsList: _*)
   .subtypeOf[Node]
 ```
+
+### A note on interface relationships
+:::info
+This sub-section is a bit of a philosophical digression and can be skipped.
+:::
+
+The nature of the `Interface` type unfortunately causes some complications.
+Since a relation goes from implementation to interface, cases of ambiguity can arise of what interface to consider the "truth".
+Schema validation will catch such cases, but it can still feel like a somewhat arbitrary limitation.
+
+One could argue that the relation could simple be inverted, like unions, but alas such an endeavour has another consequence.
+Conceptually an interface is defined most generally (in a core library or a most general purpose module), where implementations occur in more specific places.
+Inverting the relationships of the interface would mean that the interface would have to be defined in the most specific place instead of the most general.
+That is, inverting the arrows (relationships) of an interface, produces a union instead (with some extra features such as fields).
+
+Now we must define the scala type for the interface in the most general place, but the `Interface` in the most specific?
+Connecting such a graph requires significant effort (exploitation of some laziness) and as such is not the chosen approach.
 
 ## Unreachable types
 gql discovers types by traversing the schema types.
@@ -245,9 +262,17 @@ This also means that even if you have a type declared it must occur in the ast t
 You might want to declare types that are not yet queryable.
 Or maybe you only expose an interface, but not the implementing types, thus the implementations won't be discovered.
 
-The schema lets you declare types that should occur in introspection, rendering and evaluation (if possible):
+The schema lets you declare "extra" types that should occur in introspection, rendering and evaluation (if possible):
 ```scala mdoc
 def getNode: Node = Company("gql", "1")
 
-SchemaShape[IO](tpe[IO, Unit]("Query", "node" -> pure(_ => getNode)))
+def shape = SchemaShape[IO](tpe[IO, Unit]("Query", "node" -> pure(_ => getNode)))
+
+println(shape.render)
+
+def withCompany = shape.addOutputTypes(company)
+
+println(withCompany.render)
+
+println(withCompany.addOutputTypes(person).render)
 ```

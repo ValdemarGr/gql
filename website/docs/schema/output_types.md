@@ -46,8 +46,8 @@ object ID {
 implicitly[Scalar[IO, ID[String]]]
 // res0: Scalar[IO, ID[String]] = Scalar(
 //   name = "ID",
-//   encoder = scala.Function1$$Lambda$7705/0x0000000101230040@20434491,
-//   decoder = scala.Function1$$Lambda$6850/0x0000000101eff040@8976bfb,
+//   encoder = scala.Function1$$Lambda$7705/0x0000000101230040@297956a3,
+//   decoder = scala.Function1$$Lambda$6850/0x0000000101eff040@319a7c0a,
 //   description = Some(
 //     value = """The `ID` scalar type represents a unique identifier, often used to refetch an object or as key for a cache.
 // The ID type appears in a JSON response as a String; however, it is not intended to be human-readable.
@@ -201,8 +201,8 @@ union[IO, Any]("AnyUnification")
 // res7: Union[IO, Any] = Union(
 //   name = "AnyUnification",
 //   types = NonEmptyList(
-//     head = Variant(tpe = cats.Later@44860419),
-//     tail = List(Variant(tpe = cats.Later@1f9b1575))
+//     head = Variant(tpe = cats.Later@2062e33c),
+//     tail = List(Variant(tpe = cats.Later@334e8405))
 //   ),
 //   description = None
 // )
@@ -218,8 +218,8 @@ union[IO, Unification]("RoutedUnification")
 // res8: Union[IO, Unification] = Union(
 //   name = "RoutedUnification",
 //   types = NonEmptyList(
-//     head = Variant(tpe = cats.Later@2546addb),
-//     tail = List(Variant(tpe = cats.Later@163dd23b))
+//     head = Variant(tpe = cats.Later@50610081),
+//     tail = List(Variant(tpe = cats.Later@32794cab))
 //   ),
 //   description = None
 // )
@@ -263,6 +263,23 @@ lazy val company = tpe[IO, Company](
   .addFields(node.fieldsList: _*)
   .subtypeOf[Node]
 ```
+
+### A note on interface relationships
+:::info
+This sub-section is a bit of a philosophical digression and can be skipped.
+:::
+
+The nature of the `Interface` type unfortunately causes some complications.
+Since a relation goes from implementation to interface, cases of ambiguity can arise of what interface to consider the "truth".
+Schema validation will catch such cases, but it can still feel like a somewhat arbitrary limitation.
+
+One could argue that the relation could simple be inverted, like unions, but alas such an endeavour has another consequence.
+Conceptually an interface is defined most generally (in a core library or a most general purpose module), where implementations occur in more specific places.
+Inverting the relationships of the interface would mean that the interface would have to be defined in the most specific place instead of the most general.
+That is, inverting the arrows (relationships) of an interface, produces a union instead (with some extra features such as fields).
+
+Now we must define the scala type for the interface in the most general place, but the `Interface` in the most specific?
+Connecting such a graph requires significant effort (exploitation of some laziness) and as such is not the chosen approach.
 
 ## Unreachable types
 gql discovers types by traversing the schema types.
