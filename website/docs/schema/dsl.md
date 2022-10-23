@@ -26,15 +26,15 @@ field(intArg)(FallibleResolver[IO, (String, Int), String]{ case (s, i) =>
 //     nec = Singleton(
 //       a = ArgValue(
 //         name = "intArg",
-//         input = cats.Later@3f724641,
+//         input = cats.Later@22fe24fc,
 //         defaultValue = None,
 //         description = None
 //       )
 //     ),
-//     decode = gql.NonEmptyArg$$$Lambda$18554/0x0000000104c8f840@5d175aaf
+//     decode = gql.NonEmptyArg$$$Lambda$18554/0x0000000104c8f840@7ace7ab0
 //   ),
 //   resolve = FallibleResolver(resolve = <function1>),
-//   output = cats.Later@796199e4,
+//   output = cats.Later@4133f7a3,
 //   description = None
 // )
 ```
@@ -139,30 +139,6 @@ interface[IO, OtherVehicle](
   "weight" -> pure(_.weight),
   vehicle.fieldsList: _*
 ).subtypeOf[Vehicle]
-```
-```
-
-The implementations are called `Instance`s and consist of a `PartialFunction` that goes from the unifying type to an implementing type and a gql type for the implementing type.
-
-The `instance` smart constructor partially applies the implementing type parameter required for an `Instance`, such that the scala compiler can be leveraged to infer the remaining type parameters:
-```scala mdoc
-trait Animal {
-  def sound: String
-}
-
-implicit lazy val animal = interface[IO, Animal](
-  "Animal",
-  "sound" -> pure(_.sound)
-)
-
-case object Dog extends Animal {
-  def sound = "woof"
-}
-
-tpe[IO, Dog.type](
-  "Dog",
-  "sound" -> pure(_.sound)
-).subtypeOf[Animal]
 ```
 
 ## Input types

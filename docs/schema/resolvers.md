@@ -1,15 +1,39 @@
 ---
 title: Resolvers
 ---
-Resolvers are where the most interest should be placed, since they act as the layer between input type and next continuation;
-Resolvers are effectively the edges in the graph.
+Resolvers are the edges that connect fields and types.
+Resolvers can be composed to build simple or complex edge strucures.
 
 :::note
 The error types have been omitted from the resolver types for brevity.
 :::
 
+## PureResolver
+The simplest resolver is the `PureResolver[F, I, A]`, which simply contains a function `I => A`.
+Execution statistics for a `PureResolver` are not tracked.
+
 ## EffectResolver
-The simplest resolver is the effect resolver `EffectResolver[F, I, A]` which takes `I` to `F[A]`.
+The `EffectResolver[F, I, A]` is a resolver that contains a function `I => F[A]` where `F` is some effect type.
+
+## FallibleResolver
+Extending the `EffectResolver` with a possibility of failure leads us to the `FallibleResolver[F, I, A]` with the structure `I => F[Ior[String, A]]`.
+
+:::note
+The `EffectResolver` can be implemented via the `FallibleResolver`, but requires a `Functor` instance for `F`.
+
+Having no typeclass constraints of `F` allows us to construct fields with only one implicit parameter; the type of the field.
+This in turn allows passing the type of the field explicitly instead of caputuring it as an implicit parameter.
+```scala mdoc:silent
+import gql.dsl._
+import gql.ast._
+import cats.effect._
+
+tpe[IO, Unit](
+  "Query",
+  "value" -> pure(_ => "hey")(stringScalar[IO])
+)
+```
+:::
 
 ## BatchResolver
 The batch resolver `BatchResolver[F, I, A]` allows the interpreter to more effeciently fetch data.
@@ -54,9 +78,9 @@ import cats._
 import cats.implicits._
 
 def batchSchema = brState.map { (br: BatchResolver[IO, Set[Int], Map[Int, Int]]) =>
-  val adjusted: BatchResolver[IO, Int, Option[Int]] = br
+  val adjusted: Resolver[IO, Int, Option[Int]] = br
     .contramap[Int](Set(_))
-    .map { case (_, m) => m.values.headOption }
+    .map(_.values.headOption)
 
   SchemaShape[IO, Unit, Unit, Unit](
     tpe[IO, Unit](
@@ -100,7 +124,7 @@ The `BatchResolver` does not maintain ordering internally, but this doesn't mean
 def br: BatchResolver[IO, Set[Int], Map[Int, String]] = ???
 
 def orderedBr: BatchResolver[IO, List[Int], List[String]] =
-  br.contramap[List[Int]](_.toSet).map{ case (i, m) => i.map(m.apply) }
+  br.contramap[List[Int]](_.toSet).mapBoth{ case (i, m) => i.map(m.apply) }
 ```
 :::
 :::tip
@@ -120,7 +144,7 @@ sealed trait DocumentValue
 // Do some groupBy id to collect all requested fields for a DocId
 def documentResolver: BatchResolver[IO, Set[DocumentQuery], Map[DocumentQuery, DocumentValue]] = ???
 
-lazy val adjusted = documentResolver.contramap[DocumentQuery](Set(_)).map{ case (q, m) => m(q) }
+lazy val adjusted = documentResolver.contramap[DocumentQuery](Set(_)).mapBoth{ case (q, m) => m(q) }
 
 implicit lazy val documentValue: Out[IO, DocumentValue] = ???
 
@@ -156,9 +180,11 @@ Now we can define our schema:
 ```scala mdoc
 final case class Nested(key: Int)
 
-def databaseRoot[F[_]: Monad](implicit db: DatabaseConnection[F]) =
+def databaseRoot[F[_]](implicit F: Monad[F], db: DatabaseConnection[F]) =
   BatchResolver[F, Int, String](keys => db.get(keys)).map { br =>
-    val single = br.contramap[Int](Set(_)).map { case (_, m) => m.values.head }
+    val single = 
+      br.contramap[Int](Set(_))
+        .fallibleMap(x => F.pure(x.values.headOption.toRightIor("not found")))
 
     implicit lazy val nestedType = tpe[F, Nested](
       "Nested",
@@ -210,20 +236,17 @@ trait Company
 trait CompanyId
 
 final case class DomainBatchers[F[_]](
-  userBatcher: BatchResolver[F, Set[UserId], Map[UserId, User]],
-  companyBatcher: BatchResolver[F, Set[CompanyId], Map[CompanyId, Company]],
-  doubleSumBatcher: BatchResolver[F, Int, Int]
+  userBatcher: Resolver[F, Set[UserId], Map[UserId, User]],
+  companyBatcher: Resolver[F, Set[CompanyId], Map[CompanyId, Company]],
+  doubleSumBatcher: Resolver[F, Int, Int]
 )
 
 (
   BatchResolver[IO, UserId, User](_ => ???),
   BatchResolver[IO, CompanyId, Company](_ => ???),
-  BatchResolver[IO, Int, Int](is => IO.pure(is.map(i => i -> (i * 2)).toMap)).map(
-    _
-    .contramap[Int](Set(_))
-    .map[Int]{ case (_, m) => m.values.toList.combineAll }
-  )
-).mapN(DomainBatchers.apply)
+  BatchResolver[IO, Int, Int](is => IO.pure(is.map(i => i -> (i * 2)).toMap))
+    .map(_.contramap[Int](Set(_)).map[Int](_.values.toList.combineAll))
+).mapN(DomainBatchers.apply[IO])
 ```
 
 ## StreamResolver

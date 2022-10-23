@@ -124,30 +124,6 @@ interface[IO, OtherVehicle](
   vehicle.fieldsList: _*
 ).subtypeOf[Vehicle]
 ```
-```
-
-The implementations are called `Instance`s and consist of a `PartialFunction` that goes from the unifying type to an implementing type and a gql type for the implementing type.
-
-The `instance` smart constructor partially applies the implementing type parameter required for an `Instance`, such that the scala compiler can be leveraged to infer the remaining type parameters:
-```scala mdoc
-trait Animal {
-  def sound: String
-}
-
-implicit lazy val animal = interface[IO, Animal](
-  "Animal",
-  "sound" -> pure(_.sound)
-)
-
-case object Dog extends Animal {
-  def sound = "woof"
-}
-
-tpe[IO, Dog.type](
-  "Dog",
-  "sound" -> pure(_.sound)
-).subtypeOf[Animal]
-```
 
 ## Input types
 Review the [Input types](./input_types) section for more information.
