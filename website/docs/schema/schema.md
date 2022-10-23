@@ -31,7 +31,7 @@ println(ss.render)
 Validation of the shape is also derived information:
 ```scala
 println(ss.validate)
-// Chain(invalid field name 4hello, must match /[_A-Za-z][_0-9A-Za-z]*/ at (Query).4hello)
+// Chain(invalid field name '4hello', must match /[_A-Za-z][_0-9A-Za-z]*/ at (Query).4hello)
 ```
 Running validation is completely optional, but is highly recommended.
 Running queries against a unvalidated schema can have unforseen consequences.

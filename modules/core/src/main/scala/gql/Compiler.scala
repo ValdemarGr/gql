@@ -6,6 +6,7 @@ import cats.effect._
 import gql.parser.{QueryParser => P}
 import gql.interpreter.Interpreter
 import cats.data.NonEmptyList
+import gql.parser.QueryParser
 
 sealed trait CompilationError {
   def asGraphQL: JsonObject
@@ -67,12 +68,19 @@ object Compiler { outer =>
         mutationInput: F[M] = F.unit,
         subscriptionInput: F[S] = F.unit
     ): Outcome[F] =
+      parsePrep(schema, cp)
+        .map { case (ot, pfs) => compilePrepared(schema, ot, pfs, queryInput, mutationInput, subscriptionInput) }
+
+    def parsePrep(
+        schema: Schema[F, _, _, _],
+        cp: CompilerParameters
+    ): Either[CompilationError, (QueryParser.OperationType, NonEmptyList[PreparedQuery.PreparedField[F, Any]])] =
       gql.parser.parse(cp.query) match {
         case Left(pe) => Left(CompilationError.Parse(pe))
         case Right(q) =>
           PreparedQuery.prepare(q, schema, cp.variables.getOrElse(Map.empty), cp.operationName) match {
-            case Left(pe)          => Left(CompilationError.Preparation(pe))
-            case Right((ot, exec)) => compilePrepared(schema, ot, exec, queryInput, mutationInput, subscriptionInput)
+            case Left(pe) => Left(CompilationError.Preparation(pe))
+            case Right(x) => Right(x)
           }
       }
 
@@ -89,23 +97,23 @@ object Compiler { outer =>
 
       operationType match {
         case P.OperationType.Query =>
-          Right(Application.Query {
+          Application.Query {
             queryInput.flatMap { qi =>
               Interpreter.runSync(qi, ps, schema.state).map { case (e, d) => QueryResult(e, d) }
             }
-          })
+          }
         case P.OperationType.Mutation =>
-          Right(Application.Mutation {
+          Application.Mutation {
             mutationInput.flatMap { mi =>
               Interpreter.runSync(mi, ps, schema.state).map { case (e, d) => QueryResult(e, d) }
             }
-          })
+          }
         case P.OperationType.Subscription =>
-          Right(Application.Subscription {
+          Application.Subscription {
             fs2.Stream.eval(subscriptionInput).flatMap { si =>
               Interpreter.runStreamed(si, ps, schema.state).map { case (e, d) => QueryResult(e, d) }
             }
-          })
+          }
       }
     }
   }
