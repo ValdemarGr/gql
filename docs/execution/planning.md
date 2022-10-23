@@ -97,6 +97,13 @@ Said in another way, nodes that do not participate in batching will be evaluated
 Nodes that do participate in a batch, will semantically block until all inputs have arrived.
 :::
 
+## Modifying query plans
+The `Schema` captures an instance of `Planner` which is a function of type `NodeTree => F[NodeTree]`.
+The `Planner` interface simple re-structures the tree of edges in a query plan.
+The `Planner` can be overwritten if you're unhappy with the default planner, or if you have special requirements for the plan.
+
+For instance, maybe you have more information about an edge that would improve the planner's ability to make a good plan.
+
 ## Debugging
 We can print the query plan and show the improvement in comparison to the naive plan.
 Let's pull out the Star Wars schema:
@@ -142,5 +149,9 @@ loggedSchema.flatMap{ schema =>
     .traverse_{ case Application.Query(fa) => fa }
 }.unsafeRunSync()
 ```
+:::note
+The Star Wars schema has no batchers, so the optimized variant will not be particularly interesting.
+:::
+
 The plan can also be shown nicely in a terminal with ANSI colors:
 ![Terminal output](./plan_image.png)

@@ -116,7 +116,7 @@ def largerQuery = """
 """
 
 go(largerQuery)
-// Parse(ParseError(Caret(8,4,80),cats.Later@744a68f9))
+// Parse(ParseError(Caret(8,4,80),cats.Later@48d55130))
 // res4: io.circe.JsonObject = object[errors -> [
 //   {
 //     "message" : "could not parse query",

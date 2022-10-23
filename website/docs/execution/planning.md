@@ -97,6 +97,13 @@ Said in another way, nodes that do not participate in batching will be evaluated
 Nodes that do participate in a batch, will semantically block until all inputs have arrived.
 :::
 
+## Modifying query plans
+The `Schema` captures an instance of `Planner` which is a function of type `NodeTree => F[NodeTree]`.
+The `Planner` interface simple re-structures the tree of edges in a query plan.
+The `Planner` can be overwritten if you're unhappy with the default planner, or if you have special requirements for the plan.
+
+For instance, maybe you have more information about an edge that would improve the planner's ability to make a good plan.
+
 ## Debugging
 We can print the query plan and show the improvement in comparison to the naive plan.
 Let's pull out the Star Wars schema:
@@ -141,19 +148,23 @@ loggedSchema.flatMap{ schema =>
   Compiler[IO].compile(schema, query)
     .traverse_{ case Application.Query(fa) => fa }
 }.unsafeRunSync()
-// name: Query_hero_effect, cost: 1000.0, end: 1000.0
-//           name: Character_name_pure, cost: 1000.0, end: 2000.0
-//           >>>>>>>>>>>>>>>>>>>>name: Character_name_pure, cost: 1000.0, end: 4000.0
-//           name: Character_friends_effect, cost: 1000.0, end: 2000.0
-//                     name: Character_name_pure, cost: 1000.0, end: 3000.0
-//                     >>>>>>>>>>name: Character_name_pure, cost: 1000.0, end: 4000.0
-//                     name: Character_appearsIn_pure, cost: 1000.0, end: 3000.0
-//                     >>>>>>>>>>name: Character_appearsIn_pure, cost: 1000.0, end: 4000.0
-//                     name: Character_friends_effect, cost: 1000.0, end: 3000.0
-//                               name: Character_name_pure, cost: 1000.0, end: 4000.0
+// name: Query_hero_effect, cost: 100.0, end: 100.0
+//           name: Character_name_pure, cost: 100.0, end: 200.0
+//           >>>>>>>>>>>>>>>>>>>>name: Character_name_pure, cost: 100.0, end: 400.0
+//           name: Character_friends_effect, cost: 100.0, end: 200.0
+//                     name: Character_name_pure, cost: 100.0, end: 300.0
+//                     >>>>>>>>>>name: Character_name_pure, cost: 100.0, end: 400.0
+//                     name: Character_appearsIn_pure, cost: 100.0, end: 300.0
+//                     >>>>>>>>>>name: Character_appearsIn_pure, cost: 100.0, end: 400.0
+//                     name: Character_friends_effect, cost: 100.0, end: 300.0
+//                               name: Character_name_pure, cost: 100.0, end: 400.0
 // 
-// naive: 7000.0
-// optimized: 7000.0
+// naive: 700.0
+// optimized: 700.0
 ```
+:::note
+The Star Wars schema has no batchers, so the optimized variant will not be particularly interesting.
+:::
+
 The plan can also be shown nicely in a terminal with ANSI colors:
 ![Terminal output](./plan_image.png)

@@ -26,15 +26,15 @@ field(intArg)(FallibleResolver[IO, (String, Int), String]{ case (s, i) =>
 //     nec = Singleton(
 //       a = ArgValue(
 //         name = "intArg",
-//         input = cats.Later@7c86f2ad,
+//         input = cats.Later@5f481f91,
 //         defaultValue = None,
 //         description = None
 //       )
 //     ),
-//     decode = gql.NonEmptyArg$$$Lambda$6537/0x0000000101b64840@5a8e436f
+//     decode = gql.NonEmptyArg$$$Lambda$10903/0x0000000102f07040@1a5b310b
 //   ),
 //   resolve = FallibleResolver(resolve = <function1>),
-//   output = cats.Later@33ddc015,
+//   output = cats.Later@e757c9e,
 //   description = None
 // )
 ```

@@ -63,7 +63,7 @@ object Planner {
     stats
       .getStatsOpt(x.statisticsName)
       .map {
-        case None    => Statistics.Stats(1000d, 5d)
+        case None    => Statistics.Stats(100d, 5d)
         case Some(x) => x
       }
       .flatMap { s =>
