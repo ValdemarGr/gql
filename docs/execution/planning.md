@@ -114,9 +114,9 @@ def loggedSchema = schemaF.map{ schema =>
   schema.copy(planner = new Planner[IO] {
     def plan(naive: Planner.NodeTree): IO[Planner.NodeTree] =
       schema.planner.plan(naive).map { output =>
-        println(output.show(showImprovement = true))
-        println(naive.totalCost)
-        println(output.totalCost)
+        println(output.show(showImprovement = true, ansiColors = false))
+        println(s"naive: ${naive.totalCost}")
+        println(s"optimized: ${output.totalCost}")
         output
       }
   })
@@ -142,4 +142,5 @@ loggedSchema.flatMap{ schema =>
     .traverse_{ case Application.Query(fa) => fa }
 }.unsafeRunSync()
 ```
-TODO show query plan printing
+The plan can also be shown nicely in a terminal with ANSI colors:
+![Terminal output](./plan_image.png)

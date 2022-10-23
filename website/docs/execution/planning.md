@@ -114,9 +114,9 @@ def loggedSchema = schemaF.map{ schema =>
   schema.copy(planner = new Planner[IO] {
     def plan(naive: Planner.NodeTree): IO[Planner.NodeTree] =
       schema.planner.plan(naive).map { output =>
-        println(output.show(showImprovement = true))
-        println(naive.totalCost)
-        println(output.totalCost)
+        println(output.show(showImprovement = true, ansiColors = false))
+        println(s"naive: ${naive.totalCost}")
+        println(s"optimized: ${output.totalCost}")
         output
       }
   })
@@ -141,21 +141,19 @@ loggedSchema.flatMap{ schema =>
   Compiler[IO].compile(schema, query)
     .traverse_{ case Application.Query(fa) => fa }
 }.unsafeRunSync()
+// name: Query_hero_effect, cost: 1000.0, end: 1000.0
+//           name: Character_name_pure, cost: 1000.0, end: 2000.0
+//           >>>>>>>>>>>>>>>>>>>>name: Character_name_pure, cost: 1000.0, end: 4000.0
+//           name: Character_friends_effect, cost: 1000.0, end: 2000.0
+//                     name: Character_name_pure, cost: 1000.0, end: 3000.0
+//                     >>>>>>>>>>name: Character_name_pure, cost: 1000.0, end: 4000.0
+//                     name: Character_appearsIn_pure, cost: 1000.0, end: 3000.0
+//                     >>>>>>>>>>name: Character_appearsIn_pure, cost: 1000.0, end: 4000.0
+//                     name: Character_friends_effect, cost: 1000.0, end: 3000.0
+//                               name: Character_name_pure, cost: 1000.0, end: 4000.0
 // 
-// [41mold field schedule[0m
-// [42mnew field offset (deferral of execution)[0m
-// name: Query_hero_effect, cost: 1000.0, end: 1000.0[0m
-//           [41mname: Character_name_pure, cost: 1000.0, end: 2000.0[0m
-//           [44m>>>>>>>>>>>>>>>>>>>>[42mname: Character_name_pure, cost: 1000.0, end: 4000.0[0m
-//           name: Character_friends_effect, cost: 1000.0, end: 2000.0[0m
-//                     [41mname: Character_name_pure, cost: 1000.0, end: 3000.0[0m
-//                     [44m>>>>>>>>>>[42mname: Character_name_pure, cost: 1000.0, end: 4000.0[0m
-//                     [41mname: Character_appearsIn_pure, cost: 1000.0, end: 3000.0[0m
-//                     [44m>>>>>>>>>>[42mname: Character_appearsIn_pure, cost: 1000.0, end: 4000.0[0m
-//                     name: Character_friends_effect, cost: 1000.0, end: 3000.0[0m
-//                               name: Character_name_pure, cost: 1000.0, end: 4000.0[0m
-// 
-// 7000.0
-// 7000.0
+// naive: 7000.0
+// optimized: 7000.0
 ```
-TODO show query plan printing
+The plan can also be shown nicely in a terminal with ANSI colors:
+![Terminal output](./plan_image.png)

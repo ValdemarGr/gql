@@ -228,7 +228,7 @@ object Planner {
       naiveCost - batchSubtraction
     }
 
-    def show(showImprovement: Boolean = false) = {
+    def show(showImprovement: Boolean = false, ansiColors: Boolean = false) = {
       val (default, displaced) =
         if (showImprovement)
           source match {
@@ -239,18 +239,19 @@ object Planner {
 
       val maxEnd = displaced.getOrElse(default).flattened.maxByOption(_.end).map(_.end).getOrElse(0d)
 
-      val red = AnsiColor.RED_B
-      val green = AnsiColor.GREEN_B
-      val blue = AnsiColor.BLUE_B
-      val reset = AnsiColor.RESET
+      val (red, green, blue, reset) =
+        if (ansiColors) (AnsiColor.RED_B, AnsiColor.GREEN_B, AnsiColor.BLUE_B, AnsiColor.RESET)
+        else ("", "", "", "")
 
       val prefix =
-        displaced.as {
-          s"""|
+        if (ansiColors)
+          displaced.as {
+            s"""|
           |${red}old field schedule$reset
           |${green}new field offset (deferral of execution)$reset
           |""".stripMargin
-        }.mkString
+          }.mkString
+        else ""
 
       val per = math.max((maxEnd / 40d), 1)
 

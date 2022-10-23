@@ -272,6 +272,47 @@ query withNestedFragments {
 
   override def run(args: List[String]): IO[ExitCode] = {
     for {
+      _ <- {
+        import cats.effect.unsafe.implicits.global
+        import cats.effect._
+        import cats.implicits._
+        import gql._
+
+        def schemaF = gql.StarWarsSchema.schema
+
+        def loggedSchema = schemaF.map { schema =>
+          schema.copy(planner = new Planner[IO] {
+            def plan(naive: Planner.NodeTree): IO[Planner.NodeTree] =
+              schema.planner.plan(naive).map { output =>
+                println(output.show(showImprovement = true, ansiColors = false))
+                println(s"naive: ${naive.totalCost}")
+                println(s"optimized: ${output.totalCost}")
+                output
+              }
+          })
+        }
+
+        def query = """
+  query NestedQuery {
+    hero {
+      name
+      friends {
+        name
+        appearsIn
+        friends {
+          name
+        }
+      }
+    }
+  }
+"""
+
+        loggedSchema.flatMap { schema =>
+          Compiler[IO]
+            .compile(schema, query)
+            .traverse_ { case Application.Query(fa) => fa }
+        }
+      }
       schema0 <- Schema.stateful(schemaShape)
       schema = schema0.copy(planner = new Planner[IO] {
         def plan(naive: Planner.NodeTree): IO[Planner.NodeTree] =
