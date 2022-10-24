@@ -72,22 +72,11 @@ lazy val http4s = project
       "org.http4s" %% "http4s-client" % "1.0.0-M36" % Test,
     ),
   )
-  /* .enablePlugins(NativeImagePlugin) */
-  /* .settings( */
-  /*   Compile / mainClass := Some("gql.http4s.Http4sMain"), */
-  /*   nativeImageVersion := "22.2.0" */
-  /* ) */
-
-lazy val testbed = project
-  .in(file("modules/testbed"))
-  .dependsOn(core)
-  .dependsOn(graphqlWs)
-  .dependsOn(http4s)
-  .settings(sharedSettings)
 
 lazy val mdocExt = project
   .in(file("modules/mdoc-ext"))
   .settings(sharedSettings)
+  .enablePlugins(NoPublishPlugin)
 
 lazy val docs = project
   .in(file("modules/docs"))
@@ -99,4 +88,4 @@ lazy val docs = project
   .dependsOn(http4s)
   .dependsOn(graphqlWs)
   .dependsOn(mdocExt)
-  .enablePlugins(MdocPlugin, DocusaurusPlugin)
+  .enablePlugins(MdocPlugin, DocusaurusPlugin, NoPublishPlugin)
