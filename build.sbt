@@ -25,9 +25,8 @@ lazy val sharedSettings = Seq(
     "org.typelevel" %% "paiges-core" % "0.4.2",
     "org.typelevel" %% "log4cats-slf4j" % "2.4.0",
     "org.sangria-graphql" %% "sangria" % "3.2.0",
-
     "org.scalameta" %% "munit" % "1.0.0-M6" % Test,
-    "org.typelevel" %% "munit-cats-effect" % "2.0.0-M3" % Test,
+    "org.typelevel" %% "munit-cats-effect" % "2.0.0-M3" % Test
   ),
   addCompilerPlugin("org.typelevel" % "kind-projector" % "0.13.2" cross CrossVersion.full),
   addCompilerPlugin("com.olegpy" %% "better-monadic-for" % "0.3.1"),
@@ -47,7 +46,7 @@ lazy val natchez = project
   .settings(
     libraryDependencies ++= Seq(
       "org.tpolecat" %% "natchez-core" % "0.1.4",
-      "org.tpolecat" %% "natchez-noop" % "0.1.4",
+      "org.tpolecat" %% "natchez-noop" % "0.1.4"
     )
   )
   .dependsOn(core)
@@ -68,9 +67,8 @@ lazy val http4s = project
       "org.http4s" %% "http4s-blaze-server" % "1.0.0-M36",
       "org.http4s" %% "http4s-circe" % "1.0.0-M36",
       "org.http4s" %% "http4s-dsl" % "1.0.0-M36",
-
-      "org.http4s" %% "http4s-client" % "1.0.0-M36" % Test,
-    ),
+      "org.http4s" %% "http4s-client" % "1.0.0-M36" % Test
+    )
   )
 
 lazy val mdocExt = project
