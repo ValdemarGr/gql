@@ -130,14 +130,6 @@ object PreparedQuery {
       }
   }
 
-  object EnumMatcher {
-    def unapply[G[_], A](p: Out[G, A]): Option[Enum[G, A]] =
-      p match {
-        case x: Enum[G, A] => Some(x)
-        case _             => None
-      }
-  }
-
   def flattenResolvers[F[_]: Monad, G[_]](parentName: String, resolver: Resolver[G, Any, Any])(implicit
       S: Stateful[F, Prep]
   ): F[(NonEmptyChain[PreparedEdge[G]], String)] =
