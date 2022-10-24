@@ -6,11 +6,16 @@ ThisBuild / tlCiHeaderCheck := false
 ThisBuild / tlCiDocCheck := false
 ThisBuild / tlCiScalafmtCheck := false
 
-/* ThisBuild / githubWorkflowAddedJobs += */
-/*   WorkflowJob( */
-/*     id = "docs", */
-/*     name = "Run mdoc docs", */
-/*   ) */
+ThisBuild / githubWorkflowAddedJobs +=
+  WorkflowJob(
+    id = "docs",
+    name = "Run mdoc docs",
+    scalas = List("2.13.9"),
+    steps = WorkflowStep.Checkout ::
+      WorkflowStep.SetupJava(githubWorkflowJavaVersions.value.toList) ++
+      githubWorkflowGeneratedCacheSteps.value ++
+      List(WorkflowStep.Sbt(List("docs/mdoc")))
+  )
 
 lazy val sharedSettings = Seq(
   autoCompilerPlugins := true,
@@ -88,7 +93,8 @@ lazy val docs = project
   .in(file("modules/docs"))
   .settings(
     moduleName := "gql-docs",
-    mdocOut := file("website/docs")
+    mdocOut := file("website/docs"),
+    tlFatalWarnings := false
   )
   .dependsOn(core % "compile->compile;compile->test")
   .dependsOn(http4s)
