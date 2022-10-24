@@ -161,7 +161,7 @@ class StreamingTest extends CatsEffectSuite {
         val innerReemit = (xl2 == yl2) && (xl1 < yl1)
         // or outer re-emitted and inner was restarted
         val outerReemit = (xl2 < yl2) && (xl1 == 0)
-        assert(innerReemit || outerReemit)
+        assert(clue(innerReemit) || clue(outerReemit))
       }
       .compile
       .drain
