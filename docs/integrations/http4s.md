@@ -65,4 +65,19 @@ def authedHttp4sCompiler: Http4sCompiler[IO] = Http4sCompiler[IO]{ hcp =>
 }
 ```
 
+## Websocket support
+To implement streaming, we use websockets.
+The websocket route is not implemented via `Http4sCompiler`, but rather a function `Map[String, Json] => F[Either[String, Compiler[F]]]`.
+The `Map` carries the `ConnectionInit` payload.
+The structure of this `Map` is not constrained; this is up to the application to consider.
 
+However, the norm is to embed what is usually http headers in the `Map` such as:
+```json
+{
+  "authorization": "Bearer aHR0cHM6Ly93d3cueW91dHViZS5jb20vd2F0Y2g/dj1kUXc0dzlXZ1hjUQ=="
+}
+```
+
+The left side of the `Either[String, Compiler[F]]` function lets the application return an error message to the client, which also immideately closes the websocket.
+One can embed errors such as `unauthorized` here.
+The GraphQL over websocket protocol defines no way to communicate arbitary information without closing the connection.
