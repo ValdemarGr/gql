@@ -1,6 +1,7 @@
 package gql.http4s
 
 import cats.effect._
+import cats._
 import org.http4s._
 import gql._
 import cats.implicits._
@@ -16,28 +17,26 @@ trait Http4sCompiler[F[_]] {
 
 object Http4sCompiler {
   def apply[F[_]](compiler: Http4sCompilerParametes => F[Either[Response[F], Compiler.Outcome[F]]])(implicit
-      F: Async[F]
-  ): Http4sCompiler[F] =
-    new Http4sCompiler[F] {
-      def compile(params: Http4sCompilerParametes): F[Either[Response[F], Application[F]]] = {
-        val dsl = new org.http4s.dsl.Http4sDsl[F] {}
-        import dsl._
-        import org.http4s.circe._
-        import io.circe.syntax._
+      F: Monad[F]
+  ): Http4sCompiler[F] = compiler(_).flatMap(_.flatTraverse(serializeOutcomeErrors[F]))
 
-        compiler(params).flatMap(_.flatTraverse {
-          case Left(compErr) =>
-            Ok {
-              IOLocal
-              compErr match {
-                case CompilationError.Parse(pe)       => pe.asGraphQL.asJson
-                case CompilationError.Preparation(pe) => pe.asGraphQL.asJson
-              }
-            }.map(_.asLeft)
-          case Right(application) => F.pure(Right(application))
-        })
-      }
+  def serializeOutcomeErrors[F[_]](outcome: Compiler.Outcome[F])(implicit F: Applicative[F]): F[Either[Response[F], Application[F]]] = {
+    val dsl = new org.http4s.dsl.Http4sDsl[F] {}
+    import dsl._
+    import org.http4s.circe._
+    import io.circe.syntax._
+
+    outcome match {
+      case Left(compErr) =>
+        Ok {
+          compErr match {
+            case CompilationError.Parse(pe)       => pe.asGraphQL.asJson
+            case CompilationError.Preparation(pe) => pe.asGraphQL.asJson
+          }
+        }.map(_.asLeft)
+      case Right(application) => F.pure(Right(application))
     }
+  }
 
   def makeFromCompiler[F[_]](compiler: Http4sCompilerParametes => F[Either[Response[F], Compiler[F]]])(implicit
       F: Async[F]

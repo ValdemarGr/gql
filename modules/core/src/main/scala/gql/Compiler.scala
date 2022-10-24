@@ -1,5 +1,6 @@
 package gql
 
+import cats._
 import cats.implicits._
 import io.circe._
 import cats.effect._
@@ -20,11 +21,19 @@ object CompilationError {
   }
 }
 
-sealed trait Application[F[_]]
+sealed trait Application[F[_]] {
+  def mapK[G[_]](f: F ~> G): Application[G]
+}
 object Application {
-  final case class Query[F[_]](run: F[QueryResult]) extends Application[F]
-  final case class Mutation[F[_]](run: F[QueryResult]) extends Application[F]
-  final case class Subscription[F[_]](run: fs2.Stream[F, QueryResult]) extends Application[F]
+  final case class Query[F[_]](run: F[QueryResult]) extends Application[F] {
+    def mapK[G[_]](f: F ~> G): Application[G] = Query(f(run))
+  }
+  final case class Mutation[F[_]](run: F[QueryResult]) extends Application[F] {
+    def mapK[G[_]](f: F ~> G): Application[G] = Mutation(f(run))
+  }
+  final case class Subscription[F[_]](run: fs2.Stream[F, QueryResult]) extends Application[F] {
+    def mapK[G[_]](f: F ~> G): Application[G] = Subscription(run.translate(f))
+  }
 }
 
 final case class CompilerParameters(

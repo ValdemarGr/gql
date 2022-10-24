@@ -31,9 +31,38 @@ However, it is very simple to implement the authorization your application needs
 Commonly, authorization is provided in the `Authorization` http header.
 Consider the following authorization implementation, that also threads authorization credentials through the whole graph.
 ```scala mdoc
+import org.http4s._
+import org.http4s.headers._
+import org.http4s.dsl.io._
+
 final case class Creds(userId: String)
 
 type AuthIO[A] = Kleisli[IO, Creds, A]
 
 def schema: Schema[AuthIO, Unit, Unit, Unit] = ???
+
+def authorize(token: String): IO[Option[Creds]] = ???
+
+def authedHttp4sCompiler: Http4sCompiler[IO] = Http4sCompiler[IO]{ hcp =>
+  def unauth(msg: String) = 
+    IO.pure(Left(Response[IO](Status.Unauthorized).withEntity(msg)))
+
+  hcp.headers.get[Authorization] match {
+    case None => unauth("missing authorization header")
+    case Some(Authorization(Credentials.Token(AuthScheme.Bearer, token))) =>
+      authorize(token).flatMap{
+        case None => unauth("invalid token")
+        case Some(creds) => IO.pure {
+          Right {
+            Compiler[AuthIO]
+              .compileWith(schema, hcp.compilerParameters)
+              .map(_.mapK(Kleisli.applyK[IO, Creds](creds)))
+          }
+        }
+      }
+    case _ => unauth("invalid authorization header, use a Bearer Token")
+  }
+}
 ```
+
+

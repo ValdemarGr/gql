@@ -89,7 +89,7 @@ input[InputData](
 //       leftNE = Singleton(
 //         a = ArgValue(
 //           name = "name",
-//           input = cats.Later@293f764,
+//           input = cats.Later@2bb293f3,
 //           defaultValue = None,
 //           description = None
 //         )
@@ -97,13 +97,13 @@ input[InputData](
 //       rightNE = Singleton(
 //         a = ArgValue(
 //           name = "age",
-//           input = cats.Later@6a990dd0,
+//           input = cats.Later@2114c5ba,
 //           defaultValue = Some(value = IntValue(v = 42)),
 //           description = None
 //         )
 //       )
 //     ),
-//     decode = scala.Function1$$Lambda$7778/0x00000001024c7840@7232bf0d
+//     decode = scala.Function1$$Lambda$7778/0x00000001024c7840@24eb800a
 //   ),
 //   description = None
 // )
