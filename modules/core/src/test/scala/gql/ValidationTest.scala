@@ -78,11 +78,11 @@ class ValidationTest extends CatsEffectSuite {
 
   lazy val errors = schema.validate.toList.map(x => (x.error, x.path))
 
-  test("no errors") {
-    assertEquals(errors, Nil)
-  }
+  // test("no errors") {
+  //   assertEquals(errors, Nil)
+  // }
 
-  test("should catch cyclic outputs that are not reference equal".only) {
+  test("should catch cyclic outputs that are not reference equal") {
     val err = errors.collect { case (SchemaShape.ValidationError.CyclicOutputType("MutuallyRecursive1"), path) =>
       path.toList
     }
