@@ -4,6 +4,13 @@ ThisBuild / organization := "io.valdemargr"
 ThisBuild / tlBaseVersion := "0.1"
 ThisBuild / tlCiHeaderCheck := false
 ThisBuild / tlCiDocCheck := false
+ThisBuild / tlCiScalafmtCheck := false
+
+/* ThisBuild / githubWorkflowAddedJobs += */
+/*   WorkflowJob( */
+/*     id = "docs", */
+/*     name = "Run mdoc docs", */
+/*   ) */
 
 lazy val sharedSettings = Seq(
   autoCompilerPlugins := true,
