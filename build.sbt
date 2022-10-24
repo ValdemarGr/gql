@@ -1,6 +1,8 @@
 ThisBuild / scalaVersion := "2.13.9"
 ThisBuild / organization := "io.valdemargr"
 
+ThisBuild / tlBaseVersion := "0.1"
+
 lazy val sharedSettings = Seq(
   autoCompilerPlugins := true,
   libraryDependencies ++= Seq(
