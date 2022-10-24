@@ -7,7 +7,6 @@ import gql._
 import gql.ast._
 import gql.dsl._
 import cats.effect._
-import cats.implicits._
 import fs2.Pull
 
 final case class Level1(value: Int)
@@ -82,7 +81,7 @@ class StreamingTest extends CatsEffectSuite {
   }
 
   def assertJsonStream(actual: Stream[IO, JsonObject])(expected: String*): IO[Unit] =
-    actual.take(expected.size).compile.toList.map { xs =>
+    actual.take(expected.size.toLong).compile.toList.map { xs =>
       val e = expected.toList
 
       assert {
@@ -91,7 +90,7 @@ class StreamingTest extends CatsEffectSuite {
         xs.size == e.size
       }
 
-      (xs zip e).map { case (x, e0) =>
+      (xs zip e).foreach { case (x, e0) =>
         val p = io.circe.parser.parse(e0)
         assert(clue(p).isRight)
         import io.circe.syntax._
@@ -232,7 +231,7 @@ class StreamingTest extends CatsEffectSuite {
     query(q).pull.uncons1
       .flatMap {
         case None => ???
-        case Some((hd, _)) =>
+        case Some((_, _)) =>
           Pull.eval {
             IO {
               // There should be one lease on both resources

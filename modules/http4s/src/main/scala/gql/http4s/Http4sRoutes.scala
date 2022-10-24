@@ -1,17 +1,10 @@
 package gql.http4s
 
 import cats.effect._
-import gql.parser.{QueryParser => P}
-import cats.data._
 import cats.implicits._
-import cats._
 import io.circe._
 import org.http4s._
-import org.http4s.implicits._
 import org.http4s.dsl.Http4sDsl
-import fs2.{Stream, Pure}
-import org.http4s.headers.Authorization
-import gql.interpreter.Interpreter
 import gql._
 import org.http4s.server.websocket.WebSocketBuilder
 import gql.graphqlws.GraphqlWS
@@ -55,9 +48,8 @@ object Http4sRoutes {
     val d = new Http4sDsl[F] {}
     import d._
     import io.circe.syntax._
-    import org.http4s.circe._
 
-    HttpRoutes.of[F] { case r @ GET -> Root / `path` =>
+    HttpRoutes.of[F] { case GET -> Root / `path` =>
       GraphqlWS[F](getCompiler).allocated.flatMap { case ((toClient, fromClient), close) =>
         wsb
           .withOnClose(close)

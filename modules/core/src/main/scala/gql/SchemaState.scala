@@ -1,7 +1,6 @@
 package gql
 
 import cats._
-import cats.effect._
 import alleycats.Empty
 import gql.resolver.BatchResolver
 
@@ -9,7 +8,7 @@ final case class SchemaState[F[_]](
     nextId: Int,
     batchers: Map[BatchResolver.ResolverKey, Set[Any] => F[Map[Any, Any]]]
 ) {
-  def mapK[G[_]: Functor](fk: F ~> G): SchemaState[G] =
+  def mapK[G[_]](fk: F ~> G): SchemaState[G] =
     SchemaState(nextId, batchers.map { case (k, v) => k -> (v andThen fk.apply) })
 }
 

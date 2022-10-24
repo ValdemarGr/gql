@@ -4,9 +4,7 @@ import cats._
 import cats.effect._
 import cats.implicits._
 import scala.concurrent.duration.FiniteDuration
-import scala.collection.immutable.Queue
 import cats.data.NonEmptyList
-import scala.annotation.tailrec
 
 trait Statistics[F[_]] { self =>
   def getSnapshot: F[String => F[Option[Statistics.Stats]]]
@@ -105,7 +103,7 @@ object Statistics {
 
           override def updateStats(name: String, elapsed: FiniteDuration, batchElems: Int): F[Unit] = {
             val elapsedNorm = math.max(1L, elapsed.toMicros)
-            val asPoint = Point(batchElems - 1, elapsedNorm)
+            val asPoint = Point((batchElems - 1).toDouble, elapsedNorm.toDouble)
 
             F.ref[Either[NonEmptyList[Point], CovVarRegression]](Left(NonEmptyList.of(asPoint)))
               .flatMap { fallbackState =>

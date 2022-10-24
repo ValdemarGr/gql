@@ -1,10 +1,7 @@
 package gql
 
 import gql.resolver._
-import cats.effect._
 import cats.implicits._
-import scala.collection.immutable.SortedSet
-import scala.collection.immutable.SortedMap
 import cats.data._
 import gql.PreparedQuery.PreparedDataField
 import gql.PreparedQuery.PreparedFragField
@@ -12,7 +9,6 @@ import gql.PreparedQuery.PreparedLeaf
 import gql.PreparedQuery.PreparedList
 import gql.PreparedQuery.PreparedOption
 import gql.PreparedQuery.Selection
-import cats.mtl.Stateful
 import scala.collection.immutable.TreeSet
 import cats._
 import scala.io.AnsiColor
@@ -20,7 +16,7 @@ import scala.io.AnsiColor
 trait Planner[F[_]] { self =>
   def plan(naive: Planner.NodeTree): F[Planner.NodeTree]
 
-  def mapK[G[_]](fk: F ~> G)(implicit F: Functor[F]): Planner[G] =
+  def mapK[G[_]](fk: F ~> G): Planner[G] =
     new Planner[G] {
       def plan(naive: Planner.NodeTree): G[Planner.NodeTree] = fk(self.plan(naive))
     }
@@ -98,8 +94,8 @@ object Planner {
       stats: Statistics[F]
   ): F[NonEmptyList[Node]] = {
     prepared.flatTraverse {
-      case df @ PreparedDataField(id, name, selection, cont) => costForEdges[F](cont.edges, cont.cont, currentCost)
-      case PreparedFragField(_, typename, _, selection)      => costForFields[F](currentCost, selection.fields)
+      case PreparedDataField(_, _, _, cont)      => costForEdges[F](cont.edges, cont.cont, currentCost)
+      case PreparedFragField(_, _, _, selection) => costForFields[F](currentCost, selection.fields)
     }
   }
 

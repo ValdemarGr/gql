@@ -1,6 +1,5 @@
 package gql.resolver
 
-import cats.effect._
 import cats._
 import cats.data._
 import fs2.Stream

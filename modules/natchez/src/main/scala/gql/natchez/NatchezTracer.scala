@@ -1,8 +1,6 @@
 package gql.natchez
 
 import cats.effect.{Trace => _, _}
-import cats.implicits._
-import cats._
 import gql._
 import _root_.natchez._
 import cats._

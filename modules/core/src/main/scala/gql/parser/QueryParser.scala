@@ -4,11 +4,7 @@ import cats.implicits._
 import cats.parse.{Parser => P}
 import cats.parse.Rfc5234
 import cats.parse.Numbers
-import cats.parse.Parser0
 import cats.data.NonEmptyList
-import io.circe.JsonNumber
-import io.circe.Json
-import cats.parse.Caret
 
 // https://spec.graphql.org/June2018/#sec-Source-Text
 object QueryParser {
@@ -75,7 +71,7 @@ object QueryParser {
 
     val tl = begin | Numbers.digit
 
-    (begin ~ tl.rep0).map { case (c, s) => c + s.mkString }
+    (begin ~ tl.rep0).map { case (c, s) => s"$c${s.mkString}" }
   }
 
   final case class Document(nel: NonEmptyList[Definition])

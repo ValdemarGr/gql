@@ -41,7 +41,6 @@ object ParserUtil {
 
   def errorMessage(data: String, e: Parser.Error): String = {
     import scala.io.AnsiColor
-    val lines = data.linesIterator.toArray
     val (left, r0) = data.splitAt(e.failedAtOffset)
     val right = r0.tail
     val column = left.reverseIterator.takeWhile(_ != '\n').size
@@ -53,7 +52,6 @@ object ParserUtil {
     val virtualN = 3
     // may be negative
     val virtualLineStartChar = column - virtualN
-    val virtualLineStart = math.max(0, virtualLineStartChar)
     val virtualLineIndicators = math.min(virtualLineStartChar + virtualN, virtualN)
 
     val virtualErrorLine =

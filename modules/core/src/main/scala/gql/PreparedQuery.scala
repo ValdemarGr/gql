@@ -1,11 +1,8 @@
 package gql
 
-import cats.effect.implicits._
 import cats.implicits._
 import cats.data._
-import cats.effect._
 import cats.mtl._
-import cats.mtl.implicits._
 import cats._
 import io.circe._
 import gql.parser.{QueryParser => P, Pos}
@@ -13,7 +10,6 @@ import P.Value._
 import gql.ast._
 import gql.resolver._
 import cats.parse.Caret
-import gql.parser.QueryParser
 
 object PreparedQuery {
   sealed trait Prepared[F[_], A]
@@ -102,31 +98,71 @@ object PreparedQuery {
     val empty: Prep = Prep(Set.empty, 1, PrepCursor.empty)
   }
 
+  object InArr {
+    def unapply[A](p: In[A]): Option[In[A]] =
+      p.asInstanceOf[In[Seq[A]]] match {
+        case x: InArr[_, Seq] => Some(x.of.asInstanceOf[In[A]])
+        case _                => None
+      }
+  }
+
+  object InOpt {
+    def unapply[A](p: In[A]): Option[In[A]] =
+      p.asInstanceOf[In[Option[A]]] match {
+        case x: InOpt[A] => Some(x.of.asInstanceOf[In[A]])
+        case _           => None
+      }
+  }
+
+  object OutArr {
+    def unapply[G[_], A](p: Out[G, A]): Option[Out[G, A]] =
+      p.asInstanceOf[Out[G, Seq[A]]] match {
+        case x: OutArr[G, _, Seq] => Some(x.of.asInstanceOf[Out[G, A]])
+        case _                    => None
+      }
+  }
+
+  object OutOpt {
+    def unapply[G[_], A](p: Out[G, A]): Option[Out[G, A]] =
+      p.asInstanceOf[Out[G, Option[A]]] match {
+        case x: OutOpt[G, A] => Some(x.of.asInstanceOf[Out[G, A]])
+        case _               => None
+      }
+  }
+
+  object EnumMatcher {
+    def unapply[G[_], A](p: Out[G, A]): Option[Enum[G, A]] =
+      p match {
+        case x: Enum[G, A] => Some(x)
+        case _             => None
+      }
+  }
+
   def flattenResolvers[F[_]: Monad, G[_]](parentName: String, resolver: Resolver[G, Any, Any])(implicit
       S: Stateful[F, Prep]
   ): F[(NonEmptyChain[PreparedEdge[G]], String)] =
     resolver match {
-      case r @ BatchResolver(id, run) =>
+      case BatchResolver(id, _) =>
         nextId[F].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, s"batch_${id.id}")), parentName))
-      case r @ EffectResolver(_) =>
+      case EffectResolver(_) =>
         val thisName = s"${parentName}_effect"
         nextId[F].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, thisName)), thisName))
-      case r @ PureResolver(_) =>
+      case PureResolver(_) =>
         val thisName = s"${parentName}_pure"
         nextId[F].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, thisName)), thisName))
-      case r @ FallibleResolver(_) =>
+      case FallibleResolver(_) =>
         val thisName = s"${parentName}_fallible"
         nextId[F].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, thisName)), thisName))
-      case r @ StreamResolver(_) =>
+      case StreamResolver(_) =>
         val thisName = s"${parentName}_stream"
         nextId[F].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, thisName)), thisName))
-      case r @ CompositionResolver(left, right) =>
+      case CompositionResolver(left, right) =>
         flattenResolvers[F, G](parentName, left).flatMap { case (ys, newParentName) =>
           flattenResolvers[F, G](newParentName, right).map { case (zs, outName) => (ys ++ zs, outName) }
         }
     }
 
-  def underlyingOutputTypename[G[_]](ot: Out[G, _]): String = ot match {
+  def underlyingOutputTypename[G[_]](ot: Out[G, _]): String = (ot: @unchecked) match {
     case Enum(name, _, _)         => name
     case Union(name, _, _)        => name
     case Interface(name, _, _, _) => name
@@ -136,7 +172,7 @@ object PreparedQuery {
     case OutArr(of)               => underlyingOutputTypename(of)
   }
 
-  def friendlyName[G[_], A](ot: Out[G, A]): String = ot match {
+  def friendlyName[G[_], A](ot: Out[G, A]): String = (ot: @unchecked) match {
     case Scalar(name, _, _, _)    => name
     case Enum(name, _, _)         => name
     case Type(name, _, _, _)      => name
@@ -215,7 +251,10 @@ object PreparedQuery {
                 .get(name)
                 .toList
                 .flatMap(_.values.toList)
-                .collectFirstSome { case (Type(name, _, _, _), spec) => spec(input) as name }
+                .collectFirstSome {
+                  case (Type(name, _, _, _), spec) => spec(input) as name
+                  case _                           => None
+                }
           }
 
           G.pure(typename.toRightIor("typename could not be determined, this is an implementation error"))
@@ -266,13 +305,11 @@ object PreparedQuery {
       variableMap: VariableMap[Any]
   )(implicit
       S: Stateful[F, Prep],
-      F: MonadError[F, PositionalError],
-      D: Defer[F]
+      F: MonadError[F, PositionalError]
   ): F[Resolver[G, Any, Any]] = {
     val provided = gqlField.arguments.toList.flatMap(_.nel.toList)
-    val providedMap = provided.map(x => x.name -> x.value).toMap
 
-    val Field(args, resolve, graphqlType, _) = field
+    val Field(args, resolve, _, _) = field
 
     // Treat input arguments as an object
     // Decode the args as-if an input
@@ -341,7 +378,7 @@ object PreparedQuery {
   // name is the type in the pattern match case
   // sel is the type we match on
   // sel match { case x if x.name == name  => ... }
-  def matchType[F[_], G[_]: Applicative](
+  def matchType[F[_], G[_]](
       name: String,
       sel: Selectable[G, Any],
       caret: Caret,
@@ -353,7 +390,7 @@ object PreparedQuery {
         case Type(n, _, _, _) =>
           raise(s"tried to match with type $name on type object type $n", Some(caret))
         // What types implement this interface?
-        case i @ Interface(n, fields, _, _) =>
+        case i @ Interface(n, _, _, _) =>
           raiseOpt(
             discoveryState.implementations.get(i.name),
             s"the interface ${i.name} is not implemented by any type",
@@ -365,7 +402,7 @@ object PreparedQuery {
               caret.some
             )
           }
-        case u @ Union(n, types, _) =>
+        case u @ Union(n, _, _) =>
           raiseOpt(
             u.instanceMap
               .get(name)
@@ -419,7 +456,7 @@ object PreparedQuery {
       case VariableValue(_)     => "variable"
     }
 
-  def inName(in: In[_]): String = in match {
+  def inName(in: In[_]): String = (in: @unchecked) match {
     case InArr(of)             => s"list of ${inName(of)}"
     case Enum(name, _, _)      => name
     case Scalar(name, _, _, _) => name
@@ -482,7 +519,7 @@ object PreparedQuery {
                 cmpTpe(tpe, varType).as(a)
             }
         }
-      case (e @ Enum(name, mappings, _), v) =>
+      case (e @ Enum(name, _, _), v) =>
         ambientInputType(name) {
           val fa: F[String] = v match {
             case P.Value.EnumValue(s)                    => F.pure(s)
@@ -511,10 +548,10 @@ object PreparedQuery {
           parseInputObj[F, A](o, fields, variableMap, ambigiousEnum)
         }
       case (InArr(of), P.Value.ListValue(xs)) =>
-        xs.traverse(parseInput[F, A](_, of, variableMap, ambigiousEnum)).map(_.toSeq.asInstanceOf[A])
-      case (InOpt(of), P.Value.NullValue) => F.pure(None.asInstanceOf[A])
-      case (InOpt(of), x)                 => parseInput[F, A](x, of, variableMap, ambigiousEnum).map(Some(_).asInstanceOf[A])
-      case (i, _)                         => raise(s"expected ${inName(i)} type, but got ${pValueName(v)}", None)
+        xs.traverse(parseInput[F, A](_, of.asInstanceOf[In[A]], variableMap, ambigiousEnum)).map(_.toSeq.asInstanceOf[A])
+      case (InOpt(_), P.Value.NullValue) => F.pure(None.asInstanceOf[A])
+      case (InOpt(of), x)                => parseInput[F, A](x, of, variableMap, ambigiousEnum).map(Some(_).asInstanceOf[A])
+      case (i, _)                        => raise(s"expected ${inName(i)} type, but got ${pValueName(v)}", None)
     }
 
   def parseArgValue[F[_], A](a: ArgValue[A], input: Map[String, P.Value], variableMap: Option[VariableMap[A]], ambigiousEnum: Boolean)(
@@ -610,7 +647,7 @@ object PreparedQuery {
             case _                                       => false
           } =>
         F.raiseError((s"exactly one operation must be suplied for shorthand queries", xs.map(_.caret)))
-      case (xs, None) if xs.size > 1 =>
+      case (xs, None) =>
         F.raiseError((s"operation name must be supplied for multiple operations"), xs.map(_.caret))
       case (xs, Some(name)) =>
         val o = xs.collectFirst { case Pos(_, d: P.OperationDefinition.Detailed) if d.name.contains(name) => d }
@@ -666,14 +703,14 @@ object PreparedQuery {
             .traverse { case Pos(caret, vd) =>
               def getTpe(p: P.Type, optional: Boolean = true): F[In[Any]] = {
                 def opt(tpe: In[Any]): In[Any] =
-                  if (optional) InOpt(tpe).asInstanceOf[In[Any]] else tpe
+                  if (optional) ast.InOpt(tpe).asInstanceOf[In[Any]] else tpe
 
                 p match {
                   case P.Type.Named(name) =>
                     raiseOpt(schema.shape.discover.inputs.get(name).asInstanceOf[Option[In[Any]]], s"type $name does not exist", None)
                       .map(opt)
                   case P.Type.List(of) =>
-                    getTpe(of).map(InArr[Any, Seq](_).asInstanceOf[In[Any]]).map(opt)
+                    getTpe(of).map(ast.InArr[Any, Seq](_).asInstanceOf[In[Any]]).map(opt)
                   case P.Type.NonNull(of) => getTpe(of, false)
                 }
               }

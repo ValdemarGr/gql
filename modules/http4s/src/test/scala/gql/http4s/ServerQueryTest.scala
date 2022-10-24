@@ -2,14 +2,9 @@ package gql.http4s
 
 import org.http4s.implicits._
 import io.circe._
-import fs2.Stream
 import munit.CatsEffectSuite
 import gql._
-import gql.ast._
-import gql.dsl._
 import cats.effect._
-import cats.implicits._
-import fs2.Pull
 import org.http4s.client.Client
 import org.http4s.dsl.io._
 import org.http4s.client.dsl.io._

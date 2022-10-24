@@ -1,6 +1,5 @@
 package gql.interpreter
 
-import cats.mtl._
 import gql.resolver._
 import cats.data._
 import gql.PreparedQuery._
@@ -10,12 +9,8 @@ import cats.effect.implicits._
 import io.circe._
 import io.circe.syntax._
 import cats.effect.std.Supervisor
-import scala.collection.immutable.SortedMap
 import scala.concurrent.duration.FiniteDuration
 import cats._
-import fs2.concurrent.Signal
-import cats.effect.std.Queue
-import fs2.Chunk
 import gql._
 
 sealed trait Interpreter[F[_]] {
@@ -142,7 +137,7 @@ object Interpreter {
                       val rootNodes = activeChanges.filter { case (k, _, _, _) => meta.hcsa.contains(k) }
 
                       val preparedRoots =
-                        rootNodes.map { case (st, rt, in, sm) =>
+                        rootNodes.map { case (_, _, in, sm) =>
                           in match {
                             case Left(ex) =>
                               (Chain(EvalFailure.StreamTailResolution(sm.cursor, Left(ex))), None, sm.cursor)
@@ -225,7 +220,6 @@ object Interpreter {
     constructStream[F](rootInput, rootSel, schemaState, false).take(1).compile.lastOrError
 
   def findToRemove[A](nodes: List[(Cursor, A)], s: Set[A]): Set[A] = {
-    import Chain._
     val (children, nodeHere) = nodes
       .partitionEither {
         case (xs, y) if xs.path.isEmpty => Right(y)
@@ -266,7 +260,7 @@ object Interpreter {
       case Some(t) if m.size == 1 && t.forall { case (_, o) => o.isNull } => Json.Null
       case _ =>
         p match {
-          case PreparedLeaf(name, _) =>
+          case PreparedLeaf(_, _) =>
             cursors.collectFirst { case (_, x) if !x.isNull => x }.get
           case PreparedList(of) =>
             m.toVector
@@ -297,7 +291,7 @@ object Interpreter {
                 _reconstructSelection(selection.fields, m2)
               }
               .getOrElse(JsonObject.empty)
-          case df @ PreparedDataField(id, name, alias, cont) =>
+          case PreparedDataField(id, name, alias, cont) =>
             val n = alias.getOrElse(name)
             JsonObject(
               n -> reconstructField(cont.cont, m.get(Some(GraphArc.Field(id, n))).toList.flatten)
@@ -414,8 +408,8 @@ class InterpreterImpl[F[_]](
 
   def startNext(s: Prepared[F, Any], in: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] = W.defer {
     s match {
-      case PreparedLeaf(name, enc) => W.pure(in.map(en => en.setValue(enc(en.value))))
-      case Selection(fields)       => runFields(fields, in)
+      case PreparedLeaf(_, enc) => W.pure(in.map(en => en.setValue(enc(en.value))))
+      case Selection(fields)    => runFields(fields, in)
       case PreparedList(of) =>
         val (emties, continuations) =
           in.partitionEither { nv =>

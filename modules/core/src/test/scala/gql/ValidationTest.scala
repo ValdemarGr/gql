@@ -1,6 +1,5 @@
 package gql
 
-import io.circe._
 import munit.CatsEffectSuite
 import gql._
 import gql.ast._

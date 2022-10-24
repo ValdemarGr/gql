@@ -1,14 +1,10 @@
 package gql.interpreter
 
-import cats.implicits._
-import cats.effect.implicits._
-import gql.resolver._
 import cats.data._
-import gql._
 import cats.effect._
 import cats.implicits._
 import cats.effect.std._
-import fs2.{Chunk, Stream, Pull}
+import fs2.{Chunk, Stream}
 
 trait StreamSupervisor[F[_], A] {
   def acquireAwait(stream: Stream[F, A]): F[(StreamToken, Either[Throwable, A])]
@@ -89,7 +85,6 @@ object StreamSupervisor {
 
                     _ <- state.update(_ + (token -> State(close, Vector.empty)))
                     _ <- start.complete(())
-                    hd <- head.get
                   } yield head.get tupleLeft token
                 }.flatten
 

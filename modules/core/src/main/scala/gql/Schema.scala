@@ -1,12 +1,9 @@
 package gql
 
-import gql.parser.{QueryParser => P, ParseError, parse}
-import io.circe._
 import cats.effect._
 import cats.implicits._
 import cats.data._
 import alleycats.Empty
-import cats.mtl._
 import cats._
 import gql.ast._
 

@@ -3,11 +3,8 @@ package gql
 import cats.implicits._
 import io.circe._
 import cats._
-import cats.effect._
 import cats.data._
 import gql.resolver._
-import gql.Value._
-import fs2.Pure
 import java.util.UUID
 
 object ast extends AstImplicits.Implicits {
@@ -202,42 +199,14 @@ object ast extends AstImplicits.Implicits {
   final case class OutOpt[F[_], A](of: Out[F, A]) extends Out[F, Option[A]] {
     def mapK[G[_]: Functor](fk: F ~> G): OutOpt[G, A] = OutOpt(of.mapK(fk))
   }
-  object OutOpt {
-    def unapply[G[_], A](p: Out[G, A]): Option[Out[G, A]] =
-      p.asInstanceOf[Out[G, Option[A]]] match {
-        case x: OutOpt[G, A] => Some(x.of.asInstanceOf[Out[G, A]])
-        case _               => None
-      }
-  }
 
   final case class OutArr[F[_], A, C[_] <: Seq[_]](of: Out[F, A]) extends Out[F, C[A]] {
     def mapK[G[_]: Functor](fk: F ~> G): OutArr[G, A, C] = OutArr(of.mapK(fk))
   }
-  object OutArr {
-    def unapply[G[_], A](p: Out[G, A]): Option[Out[G, A]] =
-      p.asInstanceOf[Out[G, Seq[A]]] match {
-        case x: OutArr[G, _, Seq] => Some(x.of.asInstanceOf[Out[G, A]])
-        case _                    => None
-      }
-  }
 
   final case class InOpt[A](of: In[A]) extends In[Option[A]]
-  object InOpt {
-    def unapply[A](p: In[A]): Option[In[A]] =
-      p.asInstanceOf[In[Option[A]]] match {
-        case x: InOpt[A] => Some(x.of.asInstanceOf[In[A]])
-        case _           => None
-      }
-  }
 
   final case class InArr[A, G[_] <: Seq[_]](of: In[A]) extends In[G[A]]
-  object InArr {
-    def unapply[A](p: In[A]): Option[In[A]] =
-      p.asInstanceOf[In[Seq[A]]] match {
-        case x: InArr[A, Seq] => Some(x.of.asInstanceOf[In[A]])
-        case _                => None
-      }
-  }
 
   object Scalar {
     def fromCirce[F[_], A](name: String)(implicit enc: Encoder[A], dec: Decoder[A]): Scalar[F, A] =

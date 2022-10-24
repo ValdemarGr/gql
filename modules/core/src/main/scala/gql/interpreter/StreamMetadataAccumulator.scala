@@ -1,8 +1,6 @@
 package gql.interpreter
 
 import cats.effect._
-import gql.resolver._
-import gql.PreparedQuery._
 import cats.implicits._
 import fs2.Stream
 

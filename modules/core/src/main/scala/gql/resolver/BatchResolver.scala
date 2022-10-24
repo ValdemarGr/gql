@@ -2,7 +2,6 @@ package gql.resolver
 
 import cats.implicits._
 import cats._
-import cats.effect._
 import cats.data._
 
 abstract case class BatchResolver[F[_], I, O](
@@ -34,7 +33,7 @@ object BatchResolver {
 
   def apply[F[_], K, T](
       f: Set[K] => F[Map[K, T]]
-  )(implicit F: Monad[F]): State[gql.SchemaState[F], BatchResolver[F, Set[K], Map[K, T]]] =
+  ): State[gql.SchemaState[F], BatchResolver[F, Set[K], Map[K, T]]] =
     State { s =>
       val id = s.nextId
       val rk = ResolverKey(id)

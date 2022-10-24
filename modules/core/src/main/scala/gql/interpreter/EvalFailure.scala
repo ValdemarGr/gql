@@ -28,13 +28,13 @@ sealed trait EvalFailure {
           Chain(GQLError(formatEither(error), path))
         case BatchMissingKey(path, _, _, _) =>
           Chain(GQLError("internal error", path))
-        case SignalTailResolution(path, error, input) =>
+        case SignalTailResolution(path, error, _) =>
           Chain(GQLError(formatEither(error), path))
-        case BatchPartitioning(path, error, input) =>
+        case BatchPartitioning(path, error, _) =>
           Chain(GQLError(formatEither(error), path))
-        case BatchPostProcessing(path, error, resultMap) =>
+        case BatchPostProcessing(path, error, _) =>
           Chain(GQLError(formatEither(error), path))
-        case BatchResolution(paths, exception, keys) =>
+        case BatchResolution(paths, _, _) =>
           paths.map(path => GQLError("internal error", path))
         case StreamHeadResolution(path, err, _) =>
           Chain(GQLError(formatEither(err), path))

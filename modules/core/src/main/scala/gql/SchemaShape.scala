@@ -1,6 +1,5 @@
 package gql
 
-import cats.effect._
 import cats._
 import cats.implicits._
 import cats.mtl._
@@ -8,8 +7,6 @@ import cats.data._
 import gql.ast._
 import gql.parser.QueryParser
 import org.typelevel.paiges.Doc
-import gql.resolver.EffectResolver
-import gql.resolver.Resolver
 
 final case class SchemaShape[F[_], Q, M, S](
     query: Type[F, Q],
@@ -84,8 +81,8 @@ object SchemaShape {
 
     def goOutput[G[_]](out: Out[F, _])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]]): G[Unit] =
       out match {
-        case OutArr(of) => goOutput[G](of)
-        case OutOpt(of) => goOutput[G](of)
+        case OutArr(of) => goOutput[G](of.asInstanceOf[Out[F, Any]])
+        case OutOpt(of) => goOutput[G](of.asInstanceOf[Out[F, Any]])
         case t: OutToplevel[F, _] =>
           outputNotSeen(t) {
             def handleFields(o: ObjectLike[F, _]): G[Unit] =
@@ -248,7 +245,7 @@ object SchemaShape {
         S.get.flatMap { s =>
           s.seenOutputs.get(ot.name) match {
             case Some(o) if (o eq ot) => G.unit
-            case Some(o)              => raise(CyclicOutputType(ot.name))
+            case Some(_)              => raise(CyclicOutputType(ot.name))
             case None =>
               S.set(s.copy(seenOutputs = s.seenOutputs + (ot.name -> ot))) *>
                 fa <*
@@ -264,7 +261,7 @@ object SchemaShape {
         S.get.flatMap { s =>
           s.seenInputs.get(it.name) match {
             case Some(i) if (i eq it) => G.unit
-            case Some(i)              => raise(CyclicInputType(it.name))
+            case Some(_)              => raise(CyclicInputType(it.name))
             case None =>
               S.set(s.copy(seenInputs = s.seenInputs + (it.name -> it))) *>
                 fa <*
@@ -372,8 +369,8 @@ object SchemaShape {
             //   allUnique[G](DuplicateInterfaceInstance, ols.map(_.value.name)) >>
             //     ols.traverse_(x => validateOutput[G](x.value)) >>
             //     validateFields[G](fields)
-            case Enum(name, _, _)      => G.unit
-            case Scalar(name, _, _, _) => G.unit
+            case Enum(_, _, _)      => G.unit
+            case Scalar(_, _, _, _) => G.unit
           }
         }
       }
@@ -382,8 +379,8 @@ object SchemaShape {
     def validateOutput[G[_]: Monad](tl: Out[F, _])(implicit S: Stateful[G, ValidationState]): G[Unit] =
       tl match {
         case x: OutToplevel[F, _] => validateToplevel[G](x)
-        case OutArr(of)           => validateOutput[G](of)
-        case OutOpt(of)           => validateOutput[G](of)
+        case OutArr(of)           => validateOutput[G](of.asInstanceOf[Out[F, Any]])
+        case OutOpt(of)           => validateOutput[G](of.asInstanceOf[Out[F, Any]])
       }
 
     val outs = (schema.query :: (schema.mutation ++ schema.subscription).toList ++ schema.outputTypes)
@@ -447,8 +444,6 @@ object SchemaShape {
         case InOpt(of) => getInputNameDoc(of, optional = true)
       }
 
-    import io.circe._
-
     def renderArgValueDoc(av: ArgValue[_]): Doc = {
       val o = av.defaultValue.map(dv => Doc.text(" = ") + renderValueDoc(dv)).getOrElse(Doc.empty)
       doc(av.description) +
@@ -487,7 +482,7 @@ object SchemaShape {
         .filterNot(x => exclusion.contains(x.name))
         .map { tl =>
           tl match {
-            case e @ Enum(name, mappings, desc) =>
+            case e @ Enum(name, _, desc) =>
               doc(desc) +
                 Doc.text(s"enum $name {") + Doc.hardLine +
                 Doc.intercalate(
@@ -502,7 +497,7 @@ object SchemaShape {
                   .indent(2) + Doc.hardLine + Doc.text("}"))
             // Dont render built-in scalars
             case Scalar(name, _, _, desc) => doc(desc) + Doc.text(s"scalar $name")
-            case ol @ Interface(name, fields, impls, desc) =>
+            case ol @ Interface(name, fields, _, desc) =>
               val fieldsDoc = Doc
                 .intercalate(
                   Doc.hardLine,
@@ -518,7 +513,7 @@ object SchemaShape {
                 (Doc.text(s"interface $name") + interfaces + Doc.text(" {") + Doc.hardLine +
                   fieldsDoc +
                   Doc.hardLine + Doc.text("}"))
-            case ol @ Type(name, fields, impls, desc) =>
+            case ol @ Type(name, fields, _, desc) =>
               val fieldsDoc = Doc
                 .intercalate(
                   Doc.hardLine,
@@ -634,10 +629,10 @@ object SchemaShape {
             t match {
               case t: OutToplevel[F, _] => (t, suffix)
               case OutArr(x) =>
-                val (t, stack) = go(x, inOption = false)
+                val (t, stack) = go(x.asInstanceOf[Out[F, Any]], inOption = false)
                 (t, stack append Modifier.List concat suffix)
               case OutOpt(x) =>
-                val (t, stack) = go(x, inOption = true)
+                val (t, stack) = go(x.asInstanceOf[Out[F, Any]], inOption = true)
                 (t, stack append Modifier.NonNull)
             }
           }

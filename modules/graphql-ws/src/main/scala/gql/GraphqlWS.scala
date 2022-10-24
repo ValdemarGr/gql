@@ -1,15 +1,12 @@
 package gql.graphqlws
 
-import cats.effect.implicits._
 import cats.effect._
 import cats.implicits._
 import io.circe._
 import io.circe.syntax._
 import gql._
 import cats.data._
-import gql.interpreter.EvalFailure
 import cats.effect.std._
-import fs2.Pull
 
 object GraphqlWS {
   final case class SubscriptionState[F[_]](
@@ -57,7 +54,7 @@ object GraphqlWS {
             def handleMessage(fc: FromClient): F[Unit] =
               fc match {
                 case Bidirectional.Ping(payload) => send(Bidirectional.Pong(payload))
-                case Bidirectional.Pong(_)       => F.pure(None)
+                case Bidirectional.Pong(_)       => F.unit
                 case Bidirectional.Complete(id)  =>
                   // If we remove the subscription, we need to close it
                   // Cancellation can occur between map removal and falttening
@@ -77,10 +74,10 @@ object GraphqlWS {
                     .modify[F[Unit]] {
                       case State.Connecting()   => err(Map.empty, 4401, "Unauthorized")
                       case State.Terminating(m) => (State.Terminating(m), F.unit)
-                      case c @ State.Connected(ip, compiler, m) =>
+                      case State.Connected(ip, compiler, m) =>
                         m.get(id) match {
-                          case Some(sub) => err(m, 4409, s"Subscriber for $id already exists")
-                          case None      =>
+                          case Some(_) => err(m, 4409, s"Subscriber for $id already exists")
+                          case None    =>
                             // Start out with F.unit
                             val newState = State.Connected(ip, compiler, m + (id -> F.unit))
 
@@ -134,7 +131,7 @@ object GraphqlWS {
                                           (State.Connected(ip, compiler, m + (id -> fib.cancel)), F.unit)
                                         case x => (x, fib.cancel)
                                       }.flatten
-                                    } as None
+                                    }
                                 }
 
                             (newState, subscribeF)
@@ -146,8 +143,8 @@ object GraphqlWS {
                     getCompiler(payload).flatMap { ce =>
                       state
                         .modify[F[Unit]] {
-                          case State.Terminating(m)            => (State.Terminating(m), F.unit)
-                          case State.Connected(_, compiler, m) => err(m, 4429, "Too many initialization requests")
+                          case State.Terminating(m)     => (State.Terminating(m), F.unit)
+                          case State.Connected(_, _, m) => err(m, 4429, "Too many initialization requests")
                           case State.Connecting() =>
                             ce match {
                               case Left(x) => err(Map.empty, 4441, x)
@@ -210,7 +207,7 @@ object GraphqlWS {
             c.downField("id").as[String],
             c.downField("payload").as[CompilerParameters]
           ).mapN(Subscribe(_, _))
-        case other => c.as[Bidirectional]
+        case _ => c.as[Bidirectional]
       }
     }
   }

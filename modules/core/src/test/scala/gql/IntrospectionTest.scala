@@ -3,7 +3,6 @@ package gql
 import munit.CatsEffectSuite
 import cats.effect._
 import io.circe._
-import munit.Clues
 
 class IntrospectionTest extends CatsEffectSuite {
   val schema = StarWarsSchema.schema.unsafeRunSync()
