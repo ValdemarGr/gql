@@ -28,6 +28,7 @@ object Http4sCompiler {
         compiler(params).flatMap(_.flatTraverse {
           case Left(compErr) =>
             Ok {
+              IOLocal
               compErr match {
                 case CompilationError.Parse(pe)       => pe.asGraphQL.asJson
                 case CompilationError.Preparation(pe) => pe.asGraphQL.asJson

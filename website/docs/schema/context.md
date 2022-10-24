@@ -58,11 +58,30 @@ Statistics[IO].flatMap{ stats =>
 If you are working in a specific effect, you most likely have more tools to work with.
 For instance, if you are using `IO`, you can use `IOLocal` to wire context through your application.
 :::note
-For the case of `IOLocal`, I don't think it is possible to provide a context implementation without a bit of unsafe code or other compromises.
+For the case of `IOLocal`, I don't think it is possible to provide a context implementation without a bit of unsafe code or other compromises, since `IOLocal` must have a default value.
 ```scala
-def makeSchema(implicit loc: IOLocal[Context]): Schema[IO, Unit] = ???
+sealed trait ContextLocal {
+  def get: IO[Context]
+  
+  def set(ctx: Context): IO[Unit]
+}
 
-IOLocal(null: Context).flatMap{ implicit loc =>
+object ContextLocal {
+  def make: IO[ContextLocal] = IOLocal[Option[Context]](None).map { local =>
+    new ContextLocal {
+      def get: IO[Context] = local.get.flatMap {
+        case Some(ctx) => IO.pure(ctx)
+        case None => IO.raiseError(new RuntimeException("Context not set"))
+      }
+      
+      def set(ctx: Context): IO[Unit] = local.set(Some(ctx))
+    }
+  }
+}
+
+def makeSchema(implicit loc: ContextLocal): Schema[IO, Unit, Unit, Unit] = ???
+
+ContextLocal.make.flatMap{ implicit loc =>
   def s = makeSchema
   
   def runQueryWithSchema: IO[Unit] = ???
