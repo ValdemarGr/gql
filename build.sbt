@@ -52,11 +52,13 @@ lazy val sharedSettings = Seq(
 lazy val core = project
   .in(file("modules/core"))
   .settings(sharedSettings)
+  .settings(name := "gql-core")
 
 lazy val natchez = project
   .in(file("modules/natchez"))
   .settings(sharedSettings)
   .settings(
+    name := "gql-natchez",
     libraryDependencies ++= Seq(
       "org.tpolecat" %% "natchez-core" % "0.1.4",
       "org.tpolecat" %% "natchez-noop" % "0.1.4"
@@ -67,6 +69,7 @@ lazy val natchez = project
 lazy val graphqlWs = project
   .in(file("modules/graphql-ws"))
   .settings(sharedSettings)
+  .settings(name := "gql-graphqlws")
   .dependsOn(core)
 
 lazy val http4s = project
@@ -75,6 +78,7 @@ lazy val http4s = project
   .dependsOn(graphqlWs)
   .settings(sharedSettings)
   .settings(
+    name := "gql-http4s",
     libraryDependencies ++= Seq(
       "org.http4s" %% "http4s-server" % "1.0.0-M36",
       "org.http4s" %% "http4s-blaze-server" % "1.0.0-M36",
