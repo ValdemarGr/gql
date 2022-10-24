@@ -3,6 +3,7 @@ ThisBuild / organization := "io.valdemargr"
 
 ThisBuild / tlBaseVersion := "0.1"
 ThisBuild / tlCiHeaderCheck := false
+ThisBuild / tlCiDocCheck := false
 
 lazy val sharedSettings = Seq(
   autoCompilerPlugins := true,
