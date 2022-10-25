@@ -18,10 +18,16 @@ ThisBuild / githubWorkflowAddedJobs +=
         WorkflowStep.Sbt(List("docs/mdoc")),
         WorkflowStep.Use(
           UseRef.Public("actions", "setup-node", "v3"),
-          params = Map("node-version" -> "18"),
+          params = Map("node-version" -> "18")
         ),
         WorkflowStep.Run(List("cd website && yarn install")),
-        WorkflowStep.Run(List("cd website && yarn deploy"))
+        WorkflowStep.Run(
+          List("cd website && yarn deploy"),
+          env = Map(
+            "GIT_USER" -> "valdemargr",
+            "GIT_PASS" -> "${{ secrets.GITHUB_TOKEN }}"
+          )
+        )
       ),
     cond = Some("""github.event_name != 'pull_request' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')""")
   )

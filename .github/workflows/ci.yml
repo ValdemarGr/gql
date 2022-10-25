@@ -207,4 +207,7 @@ jobs:
 
       - run: cd website && yarn install
 
-      - run: cd website && yarn deploy
+      - env:
+          GIT_USER: valdemargr
+          GIT_PASS: ${{ secrets.GITHUB_TOKEN }}
+        run: cd website && yarn deploy
