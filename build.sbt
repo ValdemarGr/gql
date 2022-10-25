@@ -28,7 +28,11 @@ ThisBuild / githubWorkflowAddedJobs +=
         ),
         WorkflowStep.Run(List("cd website && yarn install")),
         WorkflowStep.Run(
-          List("cd website && yarn deploy"),
+          List(
+            "git config --global user.name ValdemarGr",
+            "git config --global user.email randomvald0069@gmail.com",
+            "cd website && yarn deploy"
+          ),
           env = Map(
             "GIT_USER" -> "valdemargr",
             "GIT_PASS" -> "${{ secrets.GITHUB_TOKEN }}"

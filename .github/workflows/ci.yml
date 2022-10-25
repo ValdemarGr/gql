@@ -210,4 +210,7 @@ jobs:
       - env:
           GIT_USER: valdemargr
           GIT_PASS: ${{ secrets.GITHUB_TOKEN }}
-        run: cd website && yarn deploy
+        run: |
+          git config --global user.name ValdemarGr
+          git config --global user.email randomvald0069@gmail.com
+          cd website && yarn deploy
