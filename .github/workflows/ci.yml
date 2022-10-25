@@ -206,10 +206,6 @@ jobs:
           node-version: 18
           cache: yarn
 
-      - run: |
-          cd website
-          yarn install
+      - run: cd website && yarn install
 
-      - run: |
-          cd website
-          yarn deploy
+      - run: cd website && yarn deploy

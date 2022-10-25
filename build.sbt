@@ -23,8 +23,8 @@ ThisBuild / githubWorkflowAddedJobs +=
             "cache" -> "yarn"
           ),
         ),
-        WorkflowStep.Run(List("cd website", "yarn install")),
-        WorkflowStep.Run(List("cd website", "yarn deploy"))
+        WorkflowStep.Run(List("cd website && yarn install")),
+        WorkflowStep.Run(List("cd website && yarn deploy"))
       ),
     cond = Some("""github.event_name != 'pull_request' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')""")
   )
