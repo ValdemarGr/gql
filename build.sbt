@@ -1,5 +1,5 @@
 ThisBuild / scalaVersion := "2.13.9"
-ThisBuild / organization := "io.valdemargr"
+ThisBuild / organization := "io.github.valdemargr"
 
 ThisBuild / tlBaseVersion := "0.1"
 ThisBuild / tlCiHeaderCheck := false
