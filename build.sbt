@@ -5,6 +5,7 @@ ThisBuild / tlBaseVersion := "0.1"
 ThisBuild / tlCiHeaderCheck := false
 ThisBuild / tlCiDocCheck := false
 ThisBuild / tlCiScalafmtCheck := false
+ThisBuild / tlUntaggedAreSnapshots := false
 
 ThisBuild / githubWorkflowAddedJobs +=
   WorkflowJob(
