@@ -18,10 +18,7 @@ ThisBuild / githubWorkflowAddedJobs +=
         WorkflowStep.Sbt(List("docs/mdoc")),
         WorkflowStep.Use(
           UseRef.Public("actions", "setup-node", "v3"),
-          params = Map(
-            "node-version" -> "18",
-            "cache" -> "yarn"
-          ),
+          params = Map("node-version" -> "18"),
         ),
         WorkflowStep.Run(List("cd website && yarn install")),
         WorkflowStep.Run(List("cd website && yarn deploy"))
