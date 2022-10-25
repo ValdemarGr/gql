@@ -7,6 +7,11 @@ ThisBuild / tlCiDocCheck := false
 ThisBuild / tlCiScalafmtCheck := false
 ThisBuild / tlUntaggedAreSnapshots := false
 
+ThisBuild / licenses := List("Apache-2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0"))
+ThisBuild / developers := List(
+  Developer("valdemargr", "Valdemar Grange", "randomvald0069@gmail.com", url("https://github.com/valdemargr"))
+)
+
 ThisBuild / githubWorkflowAddedJobs +=
   WorkflowJob(
     id = "docs",
@@ -114,6 +119,9 @@ lazy val docs = project
   .settings(
     moduleName := "gql-docs",
     mdocOut := file("website/docs"),
+    mdocVariables ++= Map(
+      "VERSION" -> version.value
+    ),
     tlFatalWarnings := false
   )
   .dependsOn(core % "compile->compile;compile->test")

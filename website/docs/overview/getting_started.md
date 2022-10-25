@@ -2,6 +2,11 @@
 title: Getting started
 ---
 
+Get it here
+```scala
+libraryDependencies += "io.github.valdemargr" %% "gql" % "0.1-0492fd3-20221025T005316Z-SNAPSHOT"
+```
+
 heyy
 
 ```scala
