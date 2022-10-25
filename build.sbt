@@ -14,7 +14,19 @@ ThisBuild / githubWorkflowAddedJobs +=
     steps = WorkflowStep.Checkout ::
       WorkflowStep.SetupJava(githubWorkflowJavaVersions.value.toList) ++
       githubWorkflowGeneratedCacheSteps.value ++
-      List(WorkflowStep.Sbt(List("docs/mdoc")))
+      List(
+        WorkflowStep.Sbt(List("docs/mdoc")),
+        WorkflowStep.Use(
+          UseRef.Public("actions", "setup-node", "v3"),
+          params = Map(
+            "node-version" -> "18",
+            "cache" -> "yarn"
+          ),
+        ),
+        WorkflowStep.Run(List("cd website", "yarn install")),
+        WorkflowStep.Run(List("cd website", "yarn deploy"))
+      ),
+    cond = Some("""github.event_name != 'pull_request' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')""")
   )
 
 lazy val sharedSettings = Seq(

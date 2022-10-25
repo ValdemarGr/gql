@@ -160,6 +160,7 @@ jobs:
 
   docs:
     name: Run mdoc docs
+    if: github.event_name != 'pull_request' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
     strategy:
       matrix:
         os: [ubuntu-latest]
@@ -199,3 +200,16 @@ jobs:
           key: ${{ runner.os }}-sbt-cache-v2-${{ hashFiles('**/*.sbt') }}-${{ hashFiles('project/build.properties') }}
 
       - run: sbt '++${{ matrix.scala }}' docs/mdoc
+
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 18
+          cache: yarn
+
+      - run: |
+          cd website
+          yarn install
+
+      - run: |
+          cd website
+          yarn deploy
