@@ -57,23 +57,9 @@ lazy val sharedSettings = Seq(
     "io.circe" %% "circe-core" % "0.14.3",
     "io.circe" %% "circe-generic" % "0.14.3",
     "io.circe" %% "circe-parser" % "0.14.3",
-    /* "io.circe" %% "circe-generic-extras" % "0.14.3", */
-    /* "org.typelevel" %% "kittens" % "2.3.0", */
-    /* "org.tpolecat" %% "typename" % "1.0.0", */
-    /* "org.tpolecat" %% "sourcepos" % "1.0.1", */
-    /* "ch.qos.logback" % "logback-classic" % "1.2.11", */
-    /* "org.typelevel" %% "log4cats-core" % "2.4.0", */
     "org.typelevel" %% "paiges-core" % "0.4.2",
-    /* "org.typelevel" %% "log4cats-slf4j" % "2.4.0", */
     "org.scalameta" %% "munit" % "1.0.0-M6" % Test,
     "org.typelevel" %% "munit-cats-effect" % "2.0.0-M3" % Test
-  ),
-  /* addCompilerPlugin("org.typelevel" % "kind-projector" % "0.13.2" cross CrossVersion.full), */
-  /* addCompilerPlugin("com.olegpy" %% "better-monadic-for" % "0.3.1"), */
-  scalacOptions ++= Seq(
-    "-Vimplicits",
-    "-Vimplicits-verbose-tree",
-    "-Xsource:3"
   )
 )
 
