@@ -192,6 +192,10 @@ object SchemaShape {
       def message: String =
         s"$typename does not implement all interfaces ${interfaces.map(i => s"`$i`").mkString(",")} of the transitive interfaces."
     }
+    final case class WrongInterfaceFieldType(sourceInterface: String, fieldName: String, expected: String, actual: String)
+        extends ValidationError {
+      def message: String = s"Field $fieldName is of type `$actual` but expected `$expected` from interface $sourceInterface."
+    }
   }
 
   sealed trait ValidationEdge {
@@ -251,7 +255,13 @@ object SchemaShape {
             case Some(o) if (o eq ot) => G.unit
             case Some(_)              => raise(CyclicDivergingTypeReference(ot.name))
             case None =>
-              S.set(s.copy(seenOutputs = s.seenOutputs + (ot.name -> ot))) *>
+              schema.discover.outputs
+                .get(ot.name)
+                .traverse_ {
+                  case o if (o eq ot) => G.unit
+                  case _              => raise(DivergingTypeReference(ot.name))
+                } >>
+                S.set(s.copy(seenOutputs = s.seenOutputs + (ot.name -> ot))) *>
                 fa <*
                 S.modify(_.copy(seenOutputs = s.seenOutputs))
           }
@@ -267,7 +277,13 @@ object SchemaShape {
             case Some(i) if (i eq it) => G.unit
             case Some(_)              => raise(CyclicDivergingTypeReference(it.name))
             case None =>
-              S.set(s.copy(seenInputs = s.seenInputs + (it.name -> it))) *>
+              schema.discover.inputs
+                .get(it.name)
+                .traverse_ {
+                  case i if (i eq it) => G.unit
+                  case _              => raise(DivergingTypeReference(it.name))
+                } >>
+                S.set(s.copy(seenInputs = s.seenInputs + (it.name -> it))) *>
                 fa <*
                 S.modify(_.copy(seenInputs = s.seenInputs))
           }
