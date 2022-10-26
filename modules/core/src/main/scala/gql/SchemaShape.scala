@@ -146,34 +146,34 @@ object SchemaShape {
   object ValidationError {
     final case class DivergingTypeReference(typename: String) extends ValidationError {
       def message: String =
-        s"$typename is not reference equal. Use lazy val or `cats.Eval` to declare this type."
+        s"`$typename` is not reference equal. Use lazy val or `cats.Eval` to declare this type."
     }
     final case class CyclicDivergingTypeReference(typename: String) extends ValidationError {
       def message: String =
-        s"cyclic type $typename is not reference equal use lazy val or `cats.Eval` to declare this type"
+        s"Cyclic type `$typename` is not reference equal. Use lazy val or `cats.Eval` to declare this type."
     }
     final case class InvalidTypeName(name: String) extends ValidationError {
       def message: String =
-        s"invalid type name '$name', must match /[_A-Za-z][_0-9A-Za-z]*/"
+        s"Invalid type name '$name', the argument name must match /[_A-Za-z][_0-9A-Za-z]*/"
     }
     final case class InvalidFieldName(name: String) extends ValidationError {
       def message: String =
-        s"invalid field name '$name', must match /[_A-Za-z][_0-9A-Za-z]*/"
+        s"Invalid field name '$name', the field name must match /[_A-Za-z][_0-9A-Za-z]*/"
     }
     final case class DuplicateArg(conflict: String) extends ValidationError {
-      def message: String = s"duplicate arg $conflict"
+      def message: String = s"Duplicate arg `$conflict`."
     }
     final case class DuplicateField(conflict: String) extends ValidationError {
-      def message: String = s"duplicate field $conflict"
+      def message: String = s"Duplicate field `$conflict`."
     }
     final case class DuplicateUnionInstance(conflict: String) extends ValidationError {
-      def message: String = s"duplicate union instance $conflict"
+      def message: String = s"Duplicate union instance `$conflict`."
     }
     final case class DuplicateInterfaceInstance(conflict: String) extends ValidationError {
-      def message: String = s"duplicate interface instance $conflict"
+      def message: String = s"Duplicate interface instance `$conflict`."
     }
     final case class InvalidInput(pe: PreparedQuery.PositionalError) extends ValidationError {
-      def message: String = s"invalid argument input: ${pe.message}"
+      def message: String = s"Invalid argument input: ${pe.message}."
     }
     final case class MissingInterfaceFields(
         typename: String,
@@ -182,11 +182,15 @@ object SchemaShape {
     ) extends ValidationError {
       def message: String = {
         val missingFields = missing.map { case (name, tpe) => s"$name: $tpe" }.mkString(", ")
-        s"type $typename does not implement all of the fields defined in interface $interfaceName, missing fields: $missingFields"
+        s"Type `$typename` does not implement all of the fields defined in interface `$interfaceName`, missing fields: $missingFields."
       }
     }
     final case class CyclicInterfaceImplementation(typename: String) extends ValidationError {
-      def message: String = s"$typename is an interface implementation of itself"
+      def message: String = s"`$typename` is an interface implementation of itself."
+    }
+    final case class TransitiveInterfacesNotImplemented(typename: String, interfaces: Set[String]) extends ValidationError {
+      def message: String =
+        s"$typename does not implement all interfaces ${interfaces.map(i => s"`$i`").mkString(",")} of the transitive interfaces."
     }
   }
 
