@@ -139,13 +139,13 @@ input[ValidatedInput](
   "ValidatedInput",
   (
     arg[Int]("a", scalar(42), "May not be negative")
-      .emap(i => if (i < 0) s"Negative value: $i".invalidNec else i.validNec),
+      .emap(i => if (i < 0) s"Negative value: $i".asLeft else i.asRight),
       
     arg[Seq[Int]]("b", arr(scalar(1), scalar(2), scalar(3)), "NonEmpty")
-      .emap(xs => xs.toList.toNel.toValidNec("Input is empty.")),
+      .emap(xs => xs.toList.toNel.toRight("Input is empty.")),
       
   ).mapN(ValidatedInput.apply)
-   .emap(v => if (v.a > v.b.combineAll) "a must be larger than the sum of bs".invalidNec else v.validNec)
+   .emap(v => if (v.a > v.b.combineAll) "a must be larger than the sum of bs".asLeft else v.asRight)
 ).document("The field `a` must be larger than the sum of `b`.")
 ```
 

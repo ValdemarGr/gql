@@ -89,7 +89,7 @@ input[InputData](
 //       leftNE = Singleton(
 //         a = ArgValue(
 //           name = "name",
-//           input = cats.Later@6a9c520e,
+//           input = cats.Later@1dbf7d61,
 //           defaultValue = None,
 //           description = None
 //         )
@@ -97,13 +97,13 @@ input[InputData](
 //       rightNE = Singleton(
 //         a = ArgValue(
 //           name = "age",
-//           input = cats.Later@314e3d7,
+//           input = cats.Later@2a902196,
 //           defaultValue = Some(value = IntValue(v = 42)),
 //           description = None
 //         )
 //       )
 //     ),
-//     decode = scala.Function1$$Lambda$8776/0x000000010234d840@73bb0b5c
+//     decode = scala.Function1$$Lambda$24110/0x000000010338a840@60bcdcbb
 //   ),
 //   description = None
 // )
@@ -164,13 +164,13 @@ input[ValidatedInput](
   "ValidatedInput",
   (
     arg[Int]("a", scalar(42), "May not be negative")
-      .emap(i => if (i < 0) s"Negative value: $i".invalidNec else i.validNec),
+      .emap(i => if (i < 0) s"Negative value: $i".asLeft else i.asRight),
       
     arg[Seq[Int]]("b", arr(scalar(1), scalar(2), scalar(3)), "NonEmpty")
-      .emap(xs => xs.toList.toNel.toValidNec("Input is empty.")),
+      .emap(xs => xs.toList.toNel.toRight("Input is empty.")),
       
   ).mapN(ValidatedInput.apply)
-   .emap(v => if (v.a > v.b.combineAll) "a must be larger than the sum of bs".invalidNec else v.validNec)
+   .emap(v => if (v.a > v.b.combineAll) "a must be larger than the sum of bs".asLeft else v.asRight)
 ).document("The field `a` must be larger than the sum of `b`.")
 ```
 

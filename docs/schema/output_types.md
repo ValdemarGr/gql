@@ -266,7 +266,7 @@ The schema lets you declare "extra" types that should occur in introspection, re
 ```scala mdoc
 def getNode: Node = Company("gql", "1")
 
-def shape = SchemaShape[IO](tpe[IO, Unit]("Query", "node" -> pure(_ => getNode)))
+def shape = SchemaShape.make[IO](tpe[IO, Unit]("Query", "node" -> pure(_ => getNode)))
 
 println(shape.render)
 
