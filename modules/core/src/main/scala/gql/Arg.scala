@@ -15,10 +15,7 @@ trait Arg[A] {
 
 object Arg {
   def make[A](name: String, default: Option[Value], description: Option[String])(implicit input: => In[A]): NonEmptyArg[A] =
-    NonEmptyArg[A](
-      NonEmptyChain.one(ArgValue(name, Eval.later(input), default, description)),
-      _(name).asInstanceOf[A].validNec
-    )
+    NonEmptyArg.one[A](ArgValue(name, Eval.later(input), default, description))
 
   implicit lazy val applicativeInstanceForArg: Applicative[Arg] = new Applicative[Arg] {
     override def pure[A](x: A): Arg[A] = PureArg(x.validNec)

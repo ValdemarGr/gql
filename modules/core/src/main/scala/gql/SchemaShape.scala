@@ -144,13 +144,13 @@ object SchemaShape {
     def message: String
   }
   object ValidationError {
-    final case class CyclicOutputType(typename: String) extends ValidationError {
+    final case class DivergingTypeReference(typename: String) extends ValidationError {
+      def message: String =
+        s"$typename is not reference equal. Use lazy val or `cats.Eval` to declare this type."
+    }
+    final case class CyclicDivergingTypeReference(typename: String) extends ValidationError {
       def message: String =
         s"cyclic type $typename is not reference equal use lazy val or `cats.Eval` to declare this type"
-    }
-    final case class CyclicInputType(typename: String) extends ValidationError {
-      def message: String =
-        s"cyclic input type $typename is not reference equal use lazy val or `cats.Eval` to declare this type"
     }
     final case class InvalidTypeName(name: String) extends ValidationError {
       def message: String =
@@ -245,7 +245,7 @@ object SchemaShape {
         S.get.flatMap { s =>
           s.seenOutputs.get(ot.name) match {
             case Some(o) if (o eq ot) => G.unit
-            case Some(_)              => raise(CyclicOutputType(ot.name))
+            case Some(_)              => raise(CyclicDivergingTypeReference(ot.name))
             case None =>
               S.set(s.copy(seenOutputs = s.seenOutputs + (ot.name -> ot))) *>
                 fa <*
@@ -261,7 +261,7 @@ object SchemaShape {
         S.get.flatMap { s =>
           s.seenInputs.get(it.name) match {
             case Some(i) if (i eq it) => G.unit
-            case Some(_)              => raise(CyclicInputType(it.name))
+            case Some(_)              => raise(CyclicDivergingTypeReference(it.name))
             case None =>
               S.set(s.copy(seenInputs = s.seenInputs + (it.name -> it))) *>
                 fa <*
