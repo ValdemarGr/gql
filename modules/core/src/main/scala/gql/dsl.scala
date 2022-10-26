@@ -112,9 +112,9 @@ object dsl {
 
   def optType[A](implicit tpe: => In[A]): In[Option[A]] = InOpt(tpe)
 
-  def arrType[F[_], A, G[x] <: Seq[x]](implicit tpe: => Out[F, A]): Out[F, G[A]] = OutArr(tpe)
+  def arrType[F[_], A, G[x] <: Seq[x]](implicit tpe: => Out[F, A]): Out[F, G[A]] = OutArr(tpe, identity)
 
-  def arrType[A](implicit tpe: => In[A]): In[Seq[A]] = InArr(tpe)
+  def arrType[A](implicit tpe: => In[A]): In[Seq[A]] = InArr[A, Seq[A]](tpe, _.asRight)
 
   implicit class ResolverSyntax[F[_], I, A](val resolver: Resolver[F, I, A]) extends AnyVal {
     def andThen[O2](next: Resolver[F, A, O2]): Resolver[F, I, O2] =

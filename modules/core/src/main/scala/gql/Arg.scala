@@ -8,9 +8,9 @@ import gql.ast._
 trait Arg[A] {
   def entries: Chain[ArgValue[_]]
 
-  def decode: Map[String, _] => ValidatedNec[String, A]
+  def decode: Map[String, _] => Either[String, A]
 
-  def emap[B](f: A => ValidatedNec[String, B]): Arg[B]
+  def emap[B](f: A => Either[String, B]): Arg[B]
 }
 
 object Arg {
@@ -18,7 +18,7 @@ object Arg {
     NonEmptyArg.one[A](ArgValue(name, Eval.later(input), default, description))
 
   implicit lazy val applicativeInstanceForArg: Applicative[Arg] = new Applicative[Arg] {
-    override def pure[A](x: A): Arg[A] = PureArg(x.validNec)
+    override def pure[A](x: A): Arg[A] = PureArg(x.asRight)
 
     override def ap[A, B](ff: Arg[A => B])(fa: Arg[A]): Arg[B] =
       (ff, fa) match {
@@ -46,17 +46,17 @@ final case class ArgValue[A](
 
 final case class NonEmptyArg[A](
     nec: NonEmptyChain[ArgValue[_]],
-    decode: Map[String, _] => ValidatedNec[String, A]
+    decode: Map[String, _] => Either[String, A]
 ) extends Arg[A] {
 
   def entries = nec.toChain
 
-  override def emap[B](f: A => ValidatedNec[String, B]): NonEmptyArg[B] =
-    NonEmptyArg(nec, decode.andThen(_.andThen(f)))
+  override def emap[B](f: A => Either[String, B]): NonEmptyArg[B] =
+    NonEmptyArg(nec, decode.andThen(_.flatMap(f)))
 }
 object NonEmptyArg {
   def one[A](av: ArgValue[A]): NonEmptyArg[A] =
-    NonEmptyArg[A](NonEmptyChain.one(av), _(av.name).asInstanceOf[A].validNec)
+    NonEmptyArg[A](NonEmptyChain.one(av), _(av.name).asInstanceOf[A].asRight)
 
   implicit lazy val applicativeInstanceForNonEmptyArg: Apply[NonEmptyArg] = new Apply[NonEmptyArg] {
     override def map[A, B](fa: NonEmptyArg[A])(f: A => B): NonEmptyArg[B] =
@@ -67,8 +67,8 @@ object NonEmptyArg {
   }
 }
 
-final case class PureArg[A](value: ValidatedNec[String, A]) extends Arg[A] {
+final case class PureArg[A](value: Either[String, A]) extends Arg[A] {
   def entries = Chain.empty
   def decode = _ => value
-  override def emap[B](f: A => ValidatedNec[String, B]): Arg[B] = PureArg(value.andThen(f))
+  override def emap[B](f: A => Either[String, B]): Arg[B] = PureArg(value.flatMap(f))
 }

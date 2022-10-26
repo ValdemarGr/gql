@@ -81,8 +81,8 @@ object SchemaShape {
 
     def goOutput[G[_]](out: Out[F, _])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]]): G[Unit] =
       out match {
-        case OutArr(of) => goOutput[G](of.asInstanceOf[Out[F, Any]])
-        case OutOpt(of) => goOutput[G](of.asInstanceOf[Out[F, Any]])
+        case OutArr(of, _) => goOutput[G](of.asInstanceOf[Out[F, Any]])
+        case OutOpt(of)    => goOutput[G](of.asInstanceOf[Out[F, Any]])
         case t: OutToplevel[F, _] =>
           outputNotSeen(t) {
             def handleFields(o: ObjectLike[F, _]): G[Unit] =
@@ -118,8 +118,8 @@ object SchemaShape {
 
     def goInput[G[_]](inp: In[_])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]]): G[Unit] =
       inp match {
-        case InArr(of) => goInput[G](of)
-        case InOpt(of) => goInput[G](of)
+        case InArr(of, _) => goInput[G](of)
+        case InOpt(of)    => goInput[G](of)
         case t: InToplevel[_] =>
           inputNotSeen(t) {
             t match {
@@ -314,8 +314,8 @@ object SchemaShape {
 
     def validateInput[G[_]: Monad](input: In[_])(implicit S: Stateful[G, ValidationState]): G[Unit] = {
       input match {
-        case InArr(of) => validateInput[G](of)
-        case InOpt(of) => validateInput[G](of)
+        case InArr(of, _) => validateInput[G](of)
+        case InOpt(of)    => validateInput[G](of)
         case t @ Input(name, fields, _) =>
           useInputEdge(t) {
             validateTypeName[G](name) *> validateArg[G](fields)
@@ -399,7 +399,7 @@ object SchemaShape {
     def validateOutput[G[_]: Monad](tl: Out[F, _])(implicit S: Stateful[G, ValidationState]): G[Unit] =
       tl match {
         case x: OutToplevel[F, _] => validateToplevel[G](x)
-        case OutArr(of)           => validateOutput[G](of.asInstanceOf[Out[F, Any]])
+        case OutArr(of, _)        => validateOutput[G](of.asInstanceOf[Out[F, Any]])
         case OutOpt(of)           => validateOutput[G](of.asInstanceOf[Out[F, Any]])
       }
 
@@ -458,7 +458,7 @@ object SchemaShape {
     def getInputNameDoc(in: In[_], optional: Boolean = false): Doc =
       in match {
         case t: Toplevel[_] => Doc.text(if (optional) t.name else t.name + "!")
-        case InArr(of) =>
+        case InArr(of, _) =>
           lazy val d = getInputNameDoc(of, optional = false)
           d.tightBracketBy(Doc.char('['), Doc.char(']')) + (if (optional) Doc.empty else Doc.char('!'))
         case InOpt(of) => getInputNameDoc(of, optional = true)
@@ -473,7 +473,7 @@ object SchemaShape {
     def renderOutputDoc[G[_]](o: Out[G, _], optional: Boolean = false): Doc =
       o match {
         case ot: OutToplevel[G, _] => Doc.text(if (optional) ot.name else ot.name + "!")
-        case OutArr(of) =>
+        case OutArr(of, _) =>
           lazy val d = renderOutputDoc(of, optional = false)
           d.tightBracketBy(Doc.char('['), Doc.char(']')) + (if (optional) Doc.empty else Doc.char('!'))
         case OutOpt(of) => renderOutputDoc(of, optional = true)
@@ -648,7 +648,7 @@ object SchemaShape {
             val suffix = if (inOption) Chain.empty else Chain(Modifier.NonNull)
             t match {
               case t: OutToplevel[F, _] => (t, suffix)
-              case OutArr(x) =>
+              case OutArr(x, _) =>
                 val (t, stack) = go(x.asInstanceOf[Out[F, Any]], inOption = false)
                 (t, stack append Modifier.List concat suffix)
               case OutOpt(x) =>
@@ -673,7 +673,7 @@ object SchemaShape {
             val suffix = if (inOption) Chain.empty else Chain(Modifier.NonNull)
             t match {
               case t: InToplevel[_] => (t, suffix)
-              case InArr(x) =>
+              case InArr(x, _) =>
                 val (t, stack) = go(x, inOption = false)
                 (t, stack append Modifier.List concat suffix)
               case InOpt(x) =>

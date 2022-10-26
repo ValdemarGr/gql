@@ -200,13 +200,24 @@ object ast extends AstImplicits.Implicits {
     def mapK[G[_]: Functor](fk: F ~> G): OutOpt[G, A] = OutOpt(of.mapK(fk))
   }
 
-  final case class OutArr[F[_], A, C[_] <: Seq[_]](of: Out[F, A]) extends Out[F, C[A]] {
-    def mapK[G[_]: Functor](fk: F ~> G): OutArr[G, A, C] = OutArr(of.mapK(fk))
+  final case class OutArr[F[_], A, C](of: Out[F, A], toSeq: C => Seq[A]) extends Out[F, C] {
+    def mapK[G[_]: Functor](fk: F ~> G): OutArr[G, A, C] = OutArr(of.mapK(fk), toSeq)
+
+    def contramap[B](f: B => C): OutArr[F, A, B] = OutArr(of, f.andThen(toSeq))
   }
 
   final case class InOpt[A](of: In[A]) extends In[Option[A]]
 
-  final case class InArr[A, G[_] <: Seq[_]](of: In[A]) extends In[G[A]]
+  // This can be a bit hard to read
+  // For every element in an input array [I1, I2, ...] decode with of such that we have [A1, A2, ...],
+  // then map [A1, A2, ...] into C (which could be another datatype for example)
+  final case class InArr[A, C](of: In[A], fromSeq: Seq[A] => Either[String, C]) extends In[C] {
+    def emap[B](f: C => Either[String, B]): InArr[A, B] =
+      InArr(of, fromSeq.andThen(_.flatMap(f)))
+
+    def map[B](f: C => B): InArr[A, B] =
+      InArr(of, fromSeq.andThen(_.map(f)))
+  }
 
   object Scalar {
     def fromCirce[F[_], A](name: String)(implicit enc: Encoder[A], dec: Decoder[A]): Scalar[F, A] =
@@ -293,12 +304,25 @@ object AstImplicits {
         "The `UUID` scalar type represents a UUID v4 as specified by [RFC 4122](https://tools.ietf.org/html/rfc4122)."
       )
 
-    implicit def gqlInOption[A](implicit tpe: In[A]): In[Option[A]] = InOpt(tpe)
-    implicit def gqlOutOption[F[_], A](implicit tpe: Out[F, A]): Out[F, Option[A]] = OutOpt(tpe)
+    implicit def gqlInForOption[A](implicit tpe: In[A]): In[Option[A]] = InOpt(tpe)
+    implicit def gqlOutForOption[F[_], A](implicit tpe: Out[F, A]): Out[F, Option[A]] = OutOpt(tpe)
   }
 
   trait LowPriorityImplicits {
-    implicit def gqlOutSeq[F[_], A, G[_] <: Seq[_]](implicit tpe: Out[F, A]): Out[F, G[A]] = OutArr(tpe)
-    implicit def gqlInSeq[A](implicit tpe: In[A]): In[Seq[A]] = InArr(tpe)
+    implicit def gqlOutArrForSeqLike[F[_], A, G[x] <: Seq[x]](implicit tpe: Out[F, A]): Out[F, G[A]] =
+      OutArr(tpe, identity)
+
+    implicit def gqlInForSeq[A](implicit tpe: In[A]): In[Seq[A]] = InArr[A, Seq[A]](tpe, _.asRight)
+    implicit def gqlInForList[A](implicit tpe: In[A]): In[List[A]] = InArr[A, List[A]](tpe, _.toList.asRight)
+    implicit def gqlInForVector[A](implicit tpe: In[A]): In[Vector[A]] = InArr[A, Vector[A]](tpe, _.toVector.asRight)
+    implicit def gqlInForSet[A](implicit tpe: In[A]): In[Set[A]] = InArr[A, Set[A]](tpe, _.toSet.asRight)
+    implicit def gqlInForNonEmptyList[A](implicit tpe: In[A]): In[NonEmptyList[A]] =
+      InArr[A, NonEmptyList[A]](tpe, _.toList.toNel.toRight("empty array"))
+    implicit def gqlInForNonEmptyVector[A](implicit tpe: In[A]): In[NonEmptyVector[A]] =
+      InArr[A, NonEmptyVector[A]](tpe, _.toVector.toNev.toRight("empty array"))
+    implicit def gqlInForChain[A](implicit tpe: In[A]): In[Chain[A]] =
+      InArr[A, Chain[A]](tpe, xs => Chain.fromSeq(xs).asRight)
+    implicit def gqlInForNonEmptyChain[A](implicit tpe: In[A]): In[NonEmptyChain[A]] =
+      InArr[A, NonEmptyChain[A]](tpe, xs => NonEmptyChain.fromSeq(xs).toRight("empty array"))
   }
 }

@@ -52,7 +52,7 @@ object PreparedQuery {
 
   final case class Selection[F[_], A](fields: NonEmptyList[PreparedField[F, A]]) extends Prepared[F, A]
 
-  final case class PreparedList[F[_], A](of: Prepared[F, A]) extends Prepared[F, A]
+  final case class PreparedList[F[_], A](of: Prepared[F, A], toSeq: Any => Seq[A]) extends Prepared[F, A]
 
   final case class PreparedOption[F[_], A](of: Prepared[F, A]) extends Prepared[F, A]
 
@@ -99,10 +99,10 @@ object PreparedQuery {
   }
 
   object InArr {
-    def unapply[A](p: In[A]): Option[In[A]] =
-      p.asInstanceOf[In[Seq[A]]] match {
-        case x: InArr[_, Seq] => Some(x.of.asInstanceOf[In[A]])
-        case _                => None
+    def unapply[A](p: In[A]): Option[(In[A], Seq[_] => A)] =
+      p.asInstanceOf[In[A]] match {
+        case x: InArr[_, A] => Some((x.of.asInstanceOf[In[A]], x.fromSeq.asInstanceOf[Seq[_] => A]))
+        case _              => None
       }
   }
 
@@ -115,10 +115,10 @@ object PreparedQuery {
   }
 
   object OutArr {
-    def unapply[G[_], A](p: Out[G, A]): Option[Out[G, A]] =
-      p.asInstanceOf[Out[G, Seq[A]]] match {
-        case x: OutArr[G, _, Seq] => Some(x.of.asInstanceOf[Out[G, A]])
-        case _                    => None
+    def unapply[G[_], A](p: Out[G, A]): Option[(Out[G, A], Any => Seq[A])] =
+      p.asInstanceOf[Out[G, A]] match {
+        case x: OutArr[G, _, A] => Some((x.of.asInstanceOf[Out[G, A]], x.toSeq.asInstanceOf[Any => Seq[A]]))
+        case _                  => None
       }
   }
 
@@ -161,7 +161,7 @@ object PreparedQuery {
     case Type(name, _, _, _)      => name
     case Scalar(name, _, _, _)    => name
     case OutOpt(of)               => underlyingOutputTypename(of)
-    case OutArr(of)               => underlyingOutputTypename(of)
+    case OutArr(of, _)            => underlyingOutputTypename(of)
   }
 
   def friendlyName[G[_], A](ot: Out[G, A]): String = (ot: @unchecked) match {
@@ -171,7 +171,7 @@ object PreparedQuery {
     case Union(name, _, _)        => name
     case Interface(name, _, _, _) => name
     case OutOpt(of)               => s"(${friendlyName(of)} | null)"
-    case OutArr(of)               => s"[${friendlyName(of)}]"
+    case OutArr(of, _)            => s"[${friendlyName(of)}]"
   }
 
   def nextId[F[_]: Monad](implicit S: Stateful[F, Prep]) =
@@ -309,7 +309,7 @@ object PreparedQuery {
       P.Value.ObjectValue(provided.map(a => a.name -> a.value))
 
     val decObj = args match {
-      case PureArg(value) if provided.isEmpty => value.fold(nec => raise(nec.head, None), F.pure(_))
+      case PureArg(value) if provided.isEmpty => value.fold(raise(_, None), F.pure(_))
       case PureArg(_) =>
         raise(s"field ${gqlField.name} does not accept arguments", Some(caret))
       case nea @ NonEmptyArg(_, _) =>
@@ -341,8 +341,8 @@ object PreparedQuery {
 
       def typePrep(t: Out[G, Any]): F[Prepared[G, Any]] =
         (t, ss) match {
-          case (OutArr(inner), _) => typePrep(inner).map(PreparedList(_))
-          case (OutOpt(inner), _) => typePrep(inner).map(PreparedOption(_))
+          case (OutArr(inner, toSeq), _) => typePrep(inner).map(PreparedList(_, toSeq))
+          case (OutOpt(inner), _)        => typePrep(inner).map(PreparedOption(_))
           case (ol: Selectable[G, Any], Some(ss)) =>
             prepareSelections[F, G](ol, ss, variableMap, fragments, tn, discoveryState)
               .map(Selection(_))
@@ -449,7 +449,7 @@ object PreparedQuery {
     }
 
   def inName(in: In[_]): String = (in: @unchecked) match {
-    case InArr(of)             => s"list of ${inName(of)}"
+    case InArr(of, _)          => s"list of ${inName(of)}"
     case Enum(name, _, _)      => name
     case Scalar(name, _, _, _) => name
     case InOpt(of)             => s"optional of ${inName(of)}"
@@ -493,7 +493,7 @@ object PreparedQuery {
               case Some((varType, a)) =>
                 def cmpTpe[A](lhs: In[_], rhs: In[_]): F[Unit] =
                   (lhs, rhs) match {
-                    case (InArr(expected), InArr(other)) => cmpTpe(expected, other)
+                    case (InArr(expected, _), InArr(other, _)) => cmpTpe(expected, other)
                     case (Enum(name, _, _), Enum(otherName, _, _)) =>
                       if (name == otherName) F.unit
                       else raise(s"expected enum $name for variable $v, but got enum $otherName", None)
@@ -539,8 +539,8 @@ object PreparedQuery {
         ambientInputType(name) {
           parseInputObj[F, A](o, fields, variableMap, ambigiousEnum)
         }
-      case (InArr(of), P.Value.ListValue(xs)) =>
-        xs.traverse(parseInput[F, A](_, of.asInstanceOf[In[A]], variableMap, ambigiousEnum)).map(_.toSeq.asInstanceOf[A])
+      case (InArr(of, dec), P.Value.ListValue(xs)) =>
+        xs.traverse(parseInput[F, A](_, of.asInstanceOf[In[A]], variableMap, ambigiousEnum)).map(dec)
       case (InOpt(_), P.Value.NullValue) => F.pure(None.asInstanceOf[A])
       case (InOpt(of), x)                => parseInput[F, A](x, of, variableMap, ambigiousEnum).map(Some(_).asInstanceOf[A])
       case (i, _)                        => raise(s"expected ${inName(i)} type, but got ${pValueName(v)}", None)
@@ -591,8 +591,7 @@ object PreparedQuery {
 
     fieldsF
       .map(_.toList.toMap)
-      // TODO use whole of validated
-      .flatMap(arg.decode(_).fold(nec => raise(nec.head, None), F.pure(_)))
+      .flatMap(arg.decode(_).fold(raise(_, None), F.pure(_)))
   }
 
   def parserValueToValue[F[_]](v: P.Value)(implicit
@@ -702,7 +701,7 @@ object PreparedQuery {
                     raiseOpt(schema.shape.discover.inputs.get(name).asInstanceOf[Option[In[Any]]], s"type $name does not exist", None)
                       .map(opt)
                   case P.Type.List(of) =>
-                    getTpe(of).map(ast.InArr[Any, Seq](_).asInstanceOf[In[Any]]).map(opt)
+                    getTpe(of).map(ast.InArr[Any, Any](_, _.asRight).asInstanceOf[In[Any]]).map(opt)
                   case P.Type.NonNull(of) => getTpe(of, false)
                 }
               }

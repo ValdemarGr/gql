@@ -262,7 +262,7 @@ object Interpreter {
         p match {
           case PreparedLeaf(_, _) =>
             cursors.collectFirst { case (_, x) if !x.isNull => x }.get
-          case PreparedList(of) =>
+          case PreparedList(of, _) =>
             m.toVector
               .collect { case (Some(GraphArc.Index(i)), tl) => i -> tl }
               .map { case (i, tl) => i -> reconstructField[F](of, tl) }
@@ -410,12 +410,10 @@ class InterpreterImpl[F[_]](
     s match {
       case PreparedLeaf(_, enc) => W.pure(in.map(en => en.setValue(enc(en.value))))
       case Selection(fields)    => runFields(fields, in)
-      case PreparedList(of) =>
+      case PreparedList(of, toSeq) =>
         val (emties, continuations) =
           in.partitionEither { nv =>
-            val inner = Chain.fromSeq(nv.value.asInstanceOf[Seq[Any]])
-
-            NonEmptyChain.fromChain(inner) match {
+            NonEmptyChain.fromChain(Chain.fromSeq(toSeq(nv.value))) match {
               case None      => Left(nv.setValue(Json.arr()))
               case Some(nec) => Right(nec.mapWithIndex { case (v, i) => nv.succeed(v, _.index(i)) })
             }
