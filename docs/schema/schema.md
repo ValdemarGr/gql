@@ -73,7 +73,7 @@ After `10000` iterations the type is no longer unifyable.
 One can also choose to simply ignore some of the validation errors:
 ```scala mdoc
 recursiveSchema.validate.filter{
-  case SchemaShape.Problem(SchemaShape.ValidationError.CyclicOutputType("A"), _) => false
+  case SchemaShape.Problem(SchemaShape.ValidationError.CyclicDivergingTypeReference("A"), _) => false
   case _ => true
 }
 ```

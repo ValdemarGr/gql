@@ -8,7 +8,7 @@ gql comes with many of the standard features of a GraphQL implementation such as
 But also some unique features such as, herustic query planning and signals.
 The most important goals of gql is to be simple, predictable and composable.
 
-For this showcase, Star Wars will be out domain of choice:
+For this showcase, Star Wars will be our domain of choice:
 ```scala
 sealed trait Episode
 

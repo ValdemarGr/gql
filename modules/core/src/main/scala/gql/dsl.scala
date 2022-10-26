@@ -108,13 +108,13 @@ object dsl {
 
   def union[F[_], A](name: String) = PartiallyAppliedUnion0[F, A](name)
 
-  def opt[F[_], A](implicit tpe: => Out[F, A]): Out[F, Option[A]] = OutOpt(tpe)
+  def optType[F[_], A](implicit tpe: => Out[F, A]): Out[F, Option[A]] = OutOpt(tpe)
 
-  def opt[A](implicit tpe: => In[A]): In[Option[A]] = InOpt(tpe)
+  def optType[A](implicit tpe: => In[A]): In[Option[A]] = InOpt(tpe)
 
-  def arr[F[_], A, G[x] <: Seq[x]](implicit tpe: => Out[F, A]): Out[F, G[A]] = OutArr(tpe)
+  def arrType[F[_], A, G[x] <: Seq[x]](implicit tpe: => Out[F, A]): Out[F, G[A]] = OutArr(tpe)
 
-  def arr[A](implicit tpe: => In[A]): In[Seq[A]] = InArr(tpe)
+  def arrType[A](implicit tpe: => In[A]): In[Seq[A]] = InArr(tpe)
 
   implicit class ResolverSyntax[F[_], I, A](val resolver: Resolver[F, I, A]) extends AnyVal {
     def andThen[O2](next: Resolver[F, A, O2]): Resolver[F, I, O2] =
