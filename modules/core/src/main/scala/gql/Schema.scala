@@ -3,7 +3,6 @@ package gql
 import cats.effect._
 import cats.implicits._
 import cats.data._
-import alleycats.Empty
 import cats._
 import gql.ast._
 
@@ -13,7 +12,7 @@ final case class Schema[F[_], Q, M, S](
     statistics: Statistics[F],
     planner: Planner[F]
 ) {
-  protected implicit lazy val s = statistics
+  protected implicit lazy val s: Statistics[F] = statistics
 
   def mapK[G[_]: Functor](fk: F ~> G)(implicit F: Functor[F]): Schema[G, Q, M, S] =
     Schema(shape.mapK(fk), state.mapK(fk), statistics.mapK(fk), planner.mapK(fk))
@@ -41,8 +40,8 @@ object Schema {
     stateful(State.pure(SchemaShape(query, None, None)))
 
   def simple[F[_]: Async, Q, M, S](shape: SchemaShape[F, Q, M, S]): F[Schema[F, Q, M, S]] =
-    Statistics[F].map(Schema(shape, Empty[SchemaState[F]].empty, _, Planner[F]))
+    Statistics[F].map(Schema(shape, SchemaState.empty[F], _, Planner[F]))
 
   def simple[F[_]: Applicative, Q, M, S](statistics: Statistics[F])(shape: SchemaShape[F, Q, M, S]): Schema[F, Q, M, S] =
-    Schema(shape, Empty[SchemaState[F]].empty, statistics, Planner[F])
+    Schema(shape, SchemaState.empty[F], statistics, Planner[F])
 }

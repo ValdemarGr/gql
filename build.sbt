@@ -1,5 +1,5 @@
-ThisBuild / scalaVersion := "2.13.9"
-/* ThisBuild / scalaVersion := "3.2.0" */
+/* ThisBuild / scalaVersion := "2.13.9" */
+ThisBuild / scalaVersion := "3.2.0"
 ThisBuild / organization := "io.github.valdemargr"
 
 ThisBuild / tlBaseVersion := "0.1"
@@ -55,8 +55,8 @@ lazy val sharedSettings = Seq(
     "io.circe" %% "circe-core" % "0.14.3",
     "io.circe" %% "circe-generic" % "0.14.3",
     "io.circe" %% "circe-parser" % "0.14.3",
-    "io.circe" %% "circe-generic-extras" % "0.14.3",
-    "org.typelevel" %% "kittens" % "2.3.0",
+    /* "io.circe" %% "circe-generic-extras" % "0.14.3", */
+    /* "org.typelevel" %% "kittens" % "2.3.0", */
     /* "org.tpolecat" %% "typename" % "1.0.0", */
     /* "org.tpolecat" %% "sourcepos" % "1.0.1", */
     /* "ch.qos.logback" % "logback-classic" % "1.2.11", */
@@ -66,12 +66,13 @@ lazy val sharedSettings = Seq(
     "org.scalameta" %% "munit" % "1.0.0-M6" % Test,
     "org.typelevel" %% "munit-cats-effect" % "2.0.0-M3" % Test
   ),
-  addCompilerPlugin("org.typelevel" % "kind-projector" % "0.13.2" cross CrossVersion.full),
-  addCompilerPlugin("com.olegpy" %% "better-monadic-for" % "0.3.1"),
+  /* addCompilerPlugin("org.typelevel" % "kind-projector" % "0.13.2" cross CrossVersion.full), */
+  /* addCompilerPlugin("com.olegpy" %% "better-monadic-for" % "0.3.1"), */
   scalacOptions ++= Seq(
     "-Vimplicits",
     "-Vimplicits-verbose-tree",
-    "-Xsource:3"
+    "-Xsource:3",
+    "-explain-types"
   )
 )
 

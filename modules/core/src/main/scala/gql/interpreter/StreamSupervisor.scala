@@ -69,10 +69,10 @@ object StreamSupervisor {
                                           (m + (token -> newEntry))
                                       }
                                     } >> {
-                                      if (i == 0) head.complete(a)
+                                      if (i == 0) head.complete(a).void
                                       else if (openTail) q.offer(Chunk((token, resourceToken, a)))
                                       else F.unit
-                                    }.as(killSignal.get)
+                                    } as killSignal.get
                                   }
                                 }
                               }

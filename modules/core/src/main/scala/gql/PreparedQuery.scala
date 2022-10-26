@@ -149,9 +149,11 @@ object PreparedQuery {
         val thisName = s"${parentName}_stream"
         nextId[F].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, thisName)), thisName))
       case CompositionResolver(left, right) =>
-        flattenResolvers[F, G](parentName, left).flatMap { case (ys, newParentName) =>
-          flattenResolvers[F, G](newParentName, right).map { case (zs, outName) => (ys ++ zs, outName) }
-        }
+        flattenResolvers[F, G](parentName, left.asInstanceOf[Resolver[G, Any, Any]])
+          .flatMap { case (ys, newParentName) =>
+            flattenResolvers[F, G](newParentName, right.asInstanceOf[Resolver[G, Any, Any]])
+              .map { case (zs, outName) => (ys ++ zs, outName) }
+          }
     }
 
   def underlyingOutputTypename[G[_]](ot: Out[G, ?]): String = (ot: @unchecked) match {
@@ -257,9 +259,9 @@ object PreparedQuery {
     val schemaMap = ol.fieldMap + ("__typename" -> syntheticTypename)
     s.selections.traverse[F, PreparedField[G, Any]] {
       case Pos(caret, P.Selection.FieldSelection(field)) =>
-        schemaMap.get(field.name) match {
+        (schemaMap.get(field.name): @unchecked) match {
           case None => raise(s"unknown field name ${field.name}", Some(caret))
-          case Some(f: Field[G, Any, Any, Any]) =>
+          case Some(f: Field[G, Any, Any, Any] @unchecked) =>
             ambientField(field.name) {
               prepareField[F, G](field, caret, f, variableMap, fragments, currentTypename, discoveryState)
             }

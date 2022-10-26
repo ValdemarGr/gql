@@ -28,26 +28,26 @@ object ast extends AstImplicits.Implicits {
   sealed trait InToplevel[A] extends In[A] with Toplevel[A]
 
   sealed trait Selectable[F[_], A] extends OutToplevel[F, A] {
-    def fieldsList: List[(String, Field[F, A, _, _])]
+    def fieldsList: List[(String, Field[F, A, ?, ?])]
 
-    def fieldMap: Map[String, Field[F, A, _, _]]
+    def fieldMap: Map[String, Field[F, A, ?, ?]]
 
     override def mapK[G[_]: Functor](fk: F ~> G): Selectable[G, A]
   }
 
   sealed trait ObjectLike[F[_], A] extends Selectable[F, A] {
-    def implementsMap: Map[String, Implementation[F, A, _]]
+    def implementsMap: Map[String, Implementation[F, A, ?]]
   }
 
   final case class Type[F[_], A](
       name: String,
-      fields: NonEmptyList[(String, Field[F, A, _, _])],
-      implementations: List[Implementation[F, A, _]],
+      fields: NonEmptyList[(String, Field[F, A, ?, ?])],
+      implementations: List[Implementation[F, A, ?]],
       description: Option[String] = None
   ) extends ObjectLike[F, A] {
     def document(description: String): Type[F, A] = copy(description = Some(description))
 
-    lazy val fieldsList: List[(String, Field[F, A, _, _])] = fields.toList
+    lazy val fieldsList: List[(String, Field[F, A, ?, ?])] = fields.toList
 
     lazy val fieldMap = fields.toNem.toSortedMap.toMap
 
@@ -96,8 +96,8 @@ object ast extends AstImplicits.Implicits {
 
   final case class Interface[F[_], A](
       name: String,
-      fields: NonEmptyList[(String, Field[F, A, _, _])],
-      implementations: List[Implementation[F, A, _]],
+      fields: NonEmptyList[(String, Field[F, A, ?, ?])],
+      implementations: List[Implementation[F, A, ?]],
       description: Option[String] = None
   ) extends ObjectLike[F, A] {
     def document(description: String): Interface[F, A] = copy(description = Some(description))
@@ -231,7 +231,7 @@ object ast extends AstImplicits.Implicits {
           }
       )
 
-    implicit def invariantForScalar[F[_]] = new Invariant[Scalar[F, *]] {
+    implicit def invariantForScalar[F[_]]: Invariant[Scalar[F, *]] = new Invariant[Scalar[F, *]] {
       override def imap[A, B](fa: Scalar[F, A])(f: A => B)(g: B => A): Scalar[F, B] =
         Scalar(fa.name, fa.encoder.compose(g), fa.decoder.andThen(_.map(f)), fa.description)
     }

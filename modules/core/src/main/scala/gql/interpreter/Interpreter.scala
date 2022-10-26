@@ -26,7 +26,7 @@ sealed trait Interpreter[F[_]] {
 
   def startNext(s: Prepared[F, Any], in: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]]
 
-  def runDataField(df: PreparedDataField[F, Any, Any], input: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]]
+  def runDataField(df: PreparedDataField[F, ?, ?], input: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]]
 }
 
 object Interpreter {
@@ -434,6 +434,6 @@ class InterpreterImpl[F[_]](
     }
   }
 
-  def runDataField(df: PreparedDataField[F, Any, Any], input: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] =
+  def runDataField(df: PreparedDataField[F, ?, ?], input: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] =
     runEdge(input.map(_.modify(_.field(df.id, df.alias.getOrElse(df.name)))), df.cont.edges.toList, df.cont.cont)
 }

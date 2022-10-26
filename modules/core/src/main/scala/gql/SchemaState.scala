@@ -1,7 +1,6 @@
 package gql
 
 import cats._
-import alleycats.Empty
 import gql.resolver.BatchResolver
 
 final case class SchemaState[F[_]](
@@ -13,7 +12,5 @@ final case class SchemaState[F[_]](
 }
 
 object SchemaState {
-  implicit def emptyInstance[F[_]] = Empty[SchemaState[F]](
-    SchemaState[F](nextId = 0, batchers = Map.empty)
-  )
+  def empty[F[_]] = SchemaState[F](nextId = 0, batchers = Map.empty)
 }

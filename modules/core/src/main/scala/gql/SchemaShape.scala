@@ -12,16 +12,16 @@ final case class SchemaShape[F[_], Q, M, S](
     query: Type[F, Q],
     mutation: Option[Type[F, M]] = Option.empty[Type[F, Unit]],
     subscription: Option[Type[F, S]] = Option.empty[Type[F, Unit]],
-    outputTypes: List[OutToplevel[F, _]] = Nil,
-    inputTypes: List[InToplevel[_]] = Nil
+    outputTypes: List[OutToplevel[F, ?]] = Nil,
+    inputTypes: List[InToplevel[?]] = Nil
 ) {
   def mapK[G[_]: Functor](fk: F ~> G): SchemaShape[G, Q, M, S] =
     SchemaShape(query.mapK(fk), mutation.map(_.mapK(fk)), subscription.map(_.mapK(fk)), outputTypes.map(_.mapK(fk)), inputTypes)
 
-  def addOutputTypes(t: OutToplevel[F, _]*): SchemaShape[F, Q, M, S] =
+  def addOutputTypes(t: OutToplevel[F, ?]*): SchemaShape[F, Q, M, S] =
     copy(outputTypes = t.toList ++ outputTypes)
 
-  def addInputTypes(t: InToplevel[_]*): SchemaShape[F, Q, M, S] =
+  def addInputTypes(t: InToplevel[?]*): SchemaShape[F, Q, M, S] =
     copy(inputTypes = t.toList ++ inputTypes)
 
   lazy val discover = SchemaShape.discover[F](this)
@@ -39,17 +39,17 @@ object SchemaShape {
         query: Type[F, Q],
         mutation: Option[Type[F, M]] = Option.empty[Type[F, Unit]],
         subscription: Option[Type[F, S]] = Option.empty[Type[F, Unit]],
-        outputTypes: List[OutToplevel[F, _]] = Nil,
-        inputTypes: List[InToplevel[_]] = Nil
+        outputTypes: List[OutToplevel[F, ?]] = Nil,
+        inputTypes: List[InToplevel[?]] = Nil
     ): SchemaShape[F, Q, M, S] =
       SchemaShape(query, mutation, subscription, outputTypes, inputTypes)
   }
 
-  def apply[F[_]] = new PartiallyAppliedSchemaShape[F]
+  def make[F[_]] = new PartiallyAppliedSchemaShape[F]
 
   final case class DiscoveryState[F[_]](
-      inputs: Map[String, InToplevel[_]],
-      outputs: Map[String, OutToplevel[F, _]],
+      inputs: Map[String, InToplevel[?]],
+      outputs: Map[String, OutToplevel[F, ?]],
       // Key is the interface
       // Values:
       //   Key is the typename of the object
@@ -62,9 +62,9 @@ object SchemaShape {
       implementations: Map[String, Map[String, (ObjectLike[F, Any], Any => Option[Any])]]
   )
 
-  def discover[F[_]](shape: SchemaShape[F, _, _, _]): DiscoveryState[F] = {
+  def discover[F[_]](shape: SchemaShape[F, ?, ?, ?]): DiscoveryState[F] = {
     def inputNotSeen[G[_], A](
-        tl: InToplevel[_]
+        tl: InToplevel[?]
     )(ga: G[A])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]], M: Monoid[A]): G[A] =
       S.get.flatMap { s =>
         if (s.inputs.contains(tl.name)) G.pure(M.empty)
@@ -72,27 +72,27 @@ object SchemaShape {
       }
 
     def outputNotSeen[G[_], A](
-        tl: OutToplevel[F, _]
+        tl: OutToplevel[F, ?]
     )(ga: G[A])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]], M: Monoid[A]): G[A] =
       S.get.flatMap { s =>
         if (s.outputs.contains(tl.name)) G.pure(M.empty)
         else S.modify(_.copy(outputs = s.outputs + (tl.name -> tl))) *> ga
       }
 
-    def goOutput[G[_]](out: Out[F, _])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]]): G[Unit] =
+    def goOutput[G[_]](out: Out[F, ?])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]]): G[Unit] =
       out match {
         case OutArr(of, _) => goOutput[G](of.asInstanceOf[Out[F, Any]])
         case OutOpt(of)    => goOutput[G](of.asInstanceOf[Out[F, Any]])
-        case t: OutToplevel[F, _] =>
+        case t: OutToplevel[F, ?] =>
           outputNotSeen(t) {
-            def handleFields(o: ObjectLike[F, _]): G[Unit] =
+            def handleFields(o: ObjectLike[F, ?]): G[Unit] =
               o.fieldsList.traverse_ { case (_, x) =>
                 goOutput[G](x.output.value) >>
                   x.args.entries.traverse_(x => goInput[G](x.input.value.asInstanceOf[In[Any]]))
               }
 
             t match {
-              case ol: ObjectLike[_, _] =>
+              case ol: ObjectLike[F, ?] =>
                 val xs = ol.implementsMap.values.toList
                 S.modify { s =>
                   val newImpls = xs.foldLeft(s.implementations) { case (accum, next) =>
@@ -116,11 +116,11 @@ object SchemaShape {
           }
       }
 
-    def goInput[G[_]](inp: In[_])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]]): G[Unit] =
+    def goInput[G[_]](inp: In[?])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]]): G[Unit] =
       inp match {
         case InArr(of, _) => goInput[G](of)
         case InOpt(of)    => goInput[G](of)
-        case t: InToplevel[_] =>
+        case t: InToplevel[?] =>
           inputNotSeen(t) {
             t match {
               case Input(_, fields, _) =>
@@ -225,12 +225,12 @@ object SchemaShape {
   // TODO has really bad running time on some inputs
   // since it doesn't remember what it has seen
   // Update: when #55 is fixed, this should be implicitly be fixed
-  def validate[F[_]](schema: SchemaShape[F, _, _, _]): Chain[Problem] = {
+  def validate[F[_]](schema: SchemaShape[F, ?, ?, ?]): Chain[Problem] = {
     final case class ValidationState(
         problems: Chain[Problem],
         currentPath: Chain[ValidationEdge],
-        seenOutputs: Map[String, OutToplevel[F, _]],
-        seenInputs: Map[String, InToplevel[_]]
+        seenOutputs: Map[String, OutToplevel[F, ?]],
+        seenInputs: Map[String, InToplevel[?]]
     )
     import ValidationError._
 
@@ -246,7 +246,7 @@ object SchemaShape {
           S.modify(_.copy(currentPath = s.currentPath))
       }
 
-    def useOutputEdge[G[_]](ot: OutToplevel[F, _])(
+    def useOutputEdge[G[_]](ot: OutToplevel[F, ?])(
         fa: G[Unit]
     )(implicit G: Monad[G], S: Stateful[G, ValidationState]): G[Unit] =
       useEdge(ValidationEdge.OutputType(ot.name)) {
@@ -268,7 +268,7 @@ object SchemaShape {
         }
       }
 
-    def useInputEdge[G[_]](it: InToplevel[_])(
+    def useInputEdge[G[_]](it: InToplevel[?])(
         fa: G[Unit]
     )(implicit G: Monad[G], S: Stateful[G, ValidationState]): G[Unit] =
       useEdge(ValidationEdge.InputType(it.name)) {
@@ -312,7 +312,7 @@ object SchemaShape {
         case Right(_) => G.unit
       }
 
-    def validateInput[G[_]: Monad](input: In[_])(implicit S: Stateful[G, ValidationState]): G[Unit] = {
+    def validateInput[G[_]: Monad](input: In[?])(implicit S: Stateful[G, ValidationState]): G[Unit] = {
       input match {
         case InArr(of, _) => validateInput[G](of)
         case InOpt(of)    => validateInput[G](of)
@@ -325,7 +325,7 @@ object SchemaShape {
       }
     }
 
-    def validateArg[G[_]](arg: Arg[_])(implicit G: Monad[G], S: Stateful[G, ValidationState]): G[Unit] =
+    def validateArg[G[_]](arg: Arg[?])(implicit G: Monad[G], S: Stateful[G, ValidationState]): G[Unit] =
       allUnique[G](DuplicateArg, arg.entries.toList.map(_.name)) >> {
         // A trick;
         // We check the arg like we would in a user-supplied query
@@ -358,7 +358,7 @@ object SchemaShape {
           }
       }
 
-    def validateFields[G[_]: Monad](fields: NonEmptyList[(String, Field[F, _, _, _])])(implicit
+    def validateFields[G[_]: Monad](fields: NonEmptyList[(String, Field[F, ?, ?, ?])])(implicit
         S: Stateful[G, ValidationState]
     ): G[Unit] =
       allUnique[G](DuplicateField, fields.toList.map { case (name, _) => name }) >>
@@ -370,7 +370,7 @@ object SchemaShape {
           }
         }
 
-    def validateToplevel[G[_]](tl: OutToplevel[F, _])(implicit G: Monad[G], S: Stateful[G, ValidationState]): G[Unit] = {
+    def validateToplevel[G[_]](tl: OutToplevel[F, ?])(implicit G: Monad[G], S: Stateful[G, ValidationState]): G[Unit] = {
       useOutputEdge[G](tl) {
         validateTypeName[G](tl.name) >> {
           tl match {
@@ -396,9 +396,9 @@ object SchemaShape {
       }
     }
 
-    def validateOutput[G[_]: Monad](tl: Out[F, _])(implicit S: Stateful[G, ValidationState]): G[Unit] =
+    def validateOutput[G[_]: Monad](tl: Out[F, ?])(implicit S: Stateful[G, ValidationState]): G[Unit] =
       tl match {
-        case x: OutToplevel[F, _] => validateToplevel[G](x)
+        case x: OutToplevel[F, ?] => validateToplevel[G](x)
         case OutArr(of, _)        => validateOutput[G](of.asInstanceOf[Out[F, Any]])
         case OutOpt(of)           => validateOutput[G](of.asInstanceOf[Out[F, Any]])
       }
@@ -439,7 +439,7 @@ object SchemaShape {
       case EnumValue(v) => Doc.text(v)
     }
   }
-  def render[F[_]](shape: SchemaShape[F, _, _, _]) = {
+  def render[F[_]](shape: SchemaShape[F, ?, ?, ?]) = {
     lazy val triple = Doc.text("\"\"\"")
 
     def doc(d: Option[String]) =
@@ -455,31 +455,31 @@ object SchemaShape {
           o + Doc.hardLine
       }
 
-    def getInputNameDoc(in: In[_], optional: Boolean = false): Doc =
+    def getInputNameDoc(in: In[?], optional: Boolean = false): Doc =
       in match {
-        case t: Toplevel[_] => Doc.text(if (optional) t.name else t.name + "!")
+        case t: Toplevel[?] => Doc.text(if (optional) t.name else t.name + "!")
         case InArr(of, _) =>
           lazy val d = getInputNameDoc(of, optional = false)
           d.tightBracketBy(Doc.char('['), Doc.char(']')) + (if (optional) Doc.empty else Doc.char('!'))
         case InOpt(of) => getInputNameDoc(of, optional = true)
       }
 
-    def renderArgValueDoc(av: ArgValue[_]): Doc = {
+    def renderArgValueDoc(av: ArgValue[?]): Doc = {
       val o = av.defaultValue.map(dv => Doc.text(" = ") + renderValueDoc(dv)).getOrElse(Doc.empty)
       doc(av.description) +
         Doc.text(av.name) + Doc.text(": ") + getInputNameDoc(av.input.value) + o
     }
 
-    def renderOutputDoc[G[_]](o: Out[G, _], optional: Boolean = false): Doc =
+    def renderOutputDoc[G[_]](o: Out[G, ?], optional: Boolean = false): Doc =
       o match {
-        case ot: OutToplevel[G, _] => Doc.text(if (optional) ot.name else ot.name + "!")
+        case ot: OutToplevel[G, ?] => Doc.text(if (optional) ot.name else ot.name + "!")
         case OutArr(of, _) =>
           lazy val d = renderOutputDoc(of, optional = false)
           d.tightBracketBy(Doc.char('['), Doc.char(']')) + (if (optional) Doc.empty else Doc.char('!'))
         case OutOpt(of) => renderOutputDoc(of, optional = true)
       }
 
-    def renderFieldDoc[G[_]](name: String, field: Field[G, _, _, _]): Doc = {
+    def renderFieldDoc[G[_]](name: String, field: Field[G, ?, ?, ?]): Doc = {
       val args = NonEmptyChain
         .fromChain(field.args.entries)
         .map(nec =>
@@ -574,13 +574,13 @@ object SchemaShape {
     case object NON_NULL extends __TypeKind
   }
 
-  def introspect[F[_]](ss: SchemaShape[F, _, _, _]): NonEmptyList[(String, Field[F, Unit, _, _])] = {
+  def introspect[F[_]](ss: SchemaShape[F, ?, ?, ?]): NonEmptyList[(String, Field[F, Unit, ?, ?])] = {
     import gql.dsl._
     // We do a little lazy evaluation trick to include the introspection schema in itself
     lazy val d = {
       val ds = ss.discover
       val introspectionDiscovery = discover[F](
-        SchemaShape[F, Unit, Unit, Unit](
+        SchemaShape.make[F](
           tpe[F, Unit](
             "Query",
             rootFields.head,
@@ -595,7 +595,7 @@ object SchemaShape {
       )
     }
 
-    implicit lazy val __typeKind = enumType[F, __TypeKind](
+    implicit lazy val __typeKind: Enum[F, __TypeKind] = enumType[F, __TypeKind](
       "__TypeKind",
       "SCALAR" -> enumVal(__TypeKind.SCALAR),
       "OBJECT" -> enumVal(__TypeKind.OBJECT),
@@ -607,7 +607,7 @@ object SchemaShape {
       "NON_NULL" -> enumVal(__TypeKind.NON_NULL)
     )
 
-    implicit lazy val __inputValue: Type[F, ArgValue[_]] = tpe[F, ArgValue[_]](
+    implicit lazy val __inputValue: Type[F, ArgValue[?]] = tpe[F, ArgValue[?]](
       "__InputValue",
       "name" -> pure(_.name),
       "description" -> pure(_.description),
@@ -617,10 +617,10 @@ object SchemaShape {
 
     final case class NamedField(
         name: String,
-        field: Field[F, _, _, _]
+        field: Field[F, ?, ?, ?]
     )
 
-    implicit lazy val namedField = tpe[F, NamedField](
+    implicit lazy val namedField: Type[F, NamedField] = tpe[F, NamedField](
       "__Field",
       "name" -> pure(_.name),
       "description" -> pure(_.field.description),
@@ -631,23 +631,23 @@ object SchemaShape {
     )
 
     sealed trait TypeInfo {
-      def asToplevel: Option[Toplevel[_]]
+      def asToplevel: Option[Toplevel[?]]
     }
     object TypeInfo {
       // TODO unify this and the schema shape modifier stack code
-      final case class OutInfo(t: Out[F, _]) extends TypeInfo {
-        lazy val inner: OutToplevel[F, _] = {
+      final case class OutInfo(t: Out[F, ?]) extends TypeInfo {
+        lazy val inner: OutToplevel[F, ?] = {
           val (ot, _) = partition
           ot
         }
 
-        override lazy val asToplevel: Option[Toplevel[_]] = Some(inner)
+        override lazy val asToplevel: Option[Toplevel[?]] = Some(inner)
 
-        lazy val partition: (OutToplevel[F, _], Option[ModifierStack]) = {
-          def go(t: Out[F, _], inOption: Boolean = false): (OutToplevel[F, _], Chain[Modifier]) = {
+        lazy val partition: (OutToplevel[F, ?], Option[ModifierStack]) = {
+          def go(t: Out[F, ?], inOption: Boolean = false): (OutToplevel[F, ?], Chain[Modifier]) = {
             val suffix = if (inOption) Chain.empty else Chain(Modifier.NonNull)
             t match {
-              case t: OutToplevel[F, _] => (t, suffix)
+              case t: OutToplevel[F, ?] => (t, suffix)
               case OutArr(x, _) =>
                 val (t, stack) = go(x.asInstanceOf[Out[F, Any]], inOption = false)
                 (t, stack append Modifier.List concat suffix)
@@ -660,19 +660,19 @@ object SchemaShape {
           (ot, stack.toList.toNel.map(ModifierStack(_)))
         }
       }
-      final case class InInfo(t: In[_]) extends TypeInfo {
-        lazy val inner: InToplevel[_] = {
+      final case class InInfo(t: In[?]) extends TypeInfo {
+        lazy val inner: InToplevel[?] = {
           val (ot, _) = partition
           ot
         }
 
-        override lazy val asToplevel: Option[Toplevel[_]] = Some(inner)
+        override lazy val asToplevel: Option[Toplevel[?]] = Some(inner)
 
-        lazy val partition: (InToplevel[_], Option[ModifierStack]) = {
-          def go(t: In[_], inOption: Boolean = false): (InToplevel[_], Chain[Modifier]) = {
+        lazy val partition: (InToplevel[?], Option[ModifierStack]) = {
+          def go(t: In[?], inOption: Boolean = false): (InToplevel[?], Chain[Modifier]) = {
             val suffix = if (inOption) Chain.empty else Chain(Modifier.NonNull)
             t match {
-              case t: InToplevel[_] => (t, suffix)
+              case t: InToplevel[?] => (t, suffix)
               case InArr(x, _) =>
                 val (t, stack) = go(x, inOption = false)
                 (t, stack append Modifier.List concat suffix)
@@ -707,17 +707,17 @@ object SchemaShape {
           }
         case oi: TypeInfo.OutInfo =>
           oi.inner match {
-            case _: Scalar[F, _]    => __TypeKind.SCALAR
-            case _: Enum[F, _]      => __TypeKind.ENUM
-            case _: Type[F, _]      => __TypeKind.OBJECT
-            case _: Interface[F, _] => __TypeKind.INTERFACE
-            case _: Union[F, _]     => __TypeKind.UNION
+            case _: Scalar[F, ?]    => __TypeKind.SCALAR
+            case _: Enum[F, ?]      => __TypeKind.ENUM
+            case _: Type[F, ?]      => __TypeKind.OBJECT
+            case _: Interface[F, ?] => __TypeKind.INTERFACE
+            case _: Union[F, ?]     => __TypeKind.UNION
           }
         case ii: TypeInfo.InInfo =>
           ii.inner match {
             case Scalar(_, _, _, _) => __TypeKind.SCALAR
             case Enum(_, _, _)      => __TypeKind.ENUM
-            case _: Input[_]        => __TypeKind.INPUT_OBJECT
+            case _: Input[?]        => __TypeKind.INPUT_OBJECT
           }
       },
       "name" -> pure(_.asToplevel.map(_.name)),
@@ -775,7 +775,7 @@ object SchemaShape {
 
     final case class NamedEnumValue(
         name: String,
-        value: EnumValue[_]
+        value: EnumValue[?]
     )
     implicit lazy val enumValue: Type[F, NamedEnumValue] = tpe[F, NamedEnumValue](
       "__EnumValue",
@@ -796,7 +796,7 @@ object SchemaShape {
       "directives" -> pure(_ => List.empty[String])
     )
 
-    lazy val rootFields: NonEmptyList[(String, Field[F, Unit, _, _])] =
+    lazy val rootFields: NonEmptyList[(String, Field[F, Unit, ?, ?])] =
       NonEmptyList.of(
         "__schema" -> pure(_ => PhantomSchema),
         "__type" -> pure(arg[String]("name")) { case (_, name) =>

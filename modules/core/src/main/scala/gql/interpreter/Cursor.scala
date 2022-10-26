@@ -35,7 +35,7 @@ final case class Cursor(path: Chain[GraphArc]) {
 object Cursor {
   def empty = Cursor(Chain.empty)
 
-  implicit lazy val semigroupForCursor = new Semigroup[Cursor] {
+  implicit lazy val semigroupForCursor: Semigroup[Cursor] = new Semigroup[Cursor] {
     override def combine(x: Cursor, y: Cursor): Cursor =
       Cursor(x.path ++ y.path)
   }

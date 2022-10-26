@@ -50,7 +50,7 @@ object Compiler { outer =>
   type Outcome[F[_]] = Either[CompilationError, Application[F]]
 
   final class PartiallyAppliedCompiler[F[_]](val F: Async[F]) extends AnyVal {
-    implicit def F0 = F
+    implicit def F0: Async[F] = F
 
     def make[Q, M, S](
         schema: Schema[F, Q, M, S],
@@ -81,7 +81,7 @@ object Compiler { outer =>
         .map { case (ot, pfs) => compilePrepared(schema, ot, pfs, queryInput, mutationInput, subscriptionInput) }
 
     def parsePrep(
-        schema: Schema[F, _, _, _],
+        schema: Schema[F, ?, ?, ?],
         cp: CompilerParameters
     ): Either[CompilationError, (QueryParser.OperationType, NonEmptyList[PreparedQuery.PreparedField[F, Any]])] =
       gql.parser.parse(cp.query) match {

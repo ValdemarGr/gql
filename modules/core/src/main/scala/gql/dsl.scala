@@ -10,8 +10,8 @@ import scala.reflect.ClassTag
 object dsl {
   def tpe[F[_], A](
       name: String,
-      hd: (String, Field[F, A, _, _]),
-      tl: (String, Field[F, A, _, _])*
+      hd: (String, Field[F, A, ?, ?]),
+      tl: (String, Field[F, A, ?, ?])*
   ) = Type[F, A](name, NonEmptyList(hd, tl.toList), Nil)
 
   def input[A](
@@ -144,7 +144,7 @@ object dsl {
     def subtypeOf[B](implicit ev: A <:< B, tag: ClassTag[A], interface: => Interface[F, B]): Type[F, A] =
       implements[B] { case a: A => a }(interface)
 
-    def addFields(xs: (String, Field[F, A, _, _])*) =
+    def addFields(xs: (String, Field[F, A, ?, ?])*) =
       tpe.copy(fields = tpe.fields concat xs.toList)
   }
 
@@ -155,7 +155,7 @@ object dsl {
     def subtypeOf[B](implicit ev: A <:< B, tag: ClassTag[A], interface: => Interface[F, B]): Interface[F, A] =
       implements[B] { case a: A => a }(interface)
 
-    def addFields(hd: (String, Field[F, A, _, _]), tl: (String, Field[F, A, _, _])*) =
+    def addFields(hd: (String, Field[F, A, ?, ?]), tl: (String, Field[F, A, ?, ?])*) =
       tpe.copy(fields = tpe.fields concat (hd :: tl.toList))
   }
 
@@ -167,7 +167,7 @@ object dsl {
       variant[B] { case a: B => a }(innerTpe)
   }
 
-  final case class PartiallyAppliedUnion1[F[_], A](name: String, hd: Variant[F, A, _]) {
+  final case class PartiallyAppliedUnion1[F[_], A](name: String, hd: Variant[F, A, ?]) {
     def variant[B](pf: PartialFunction[A, B])(implicit innerTpe: => Type[F, B]): Union[F, A] =
       Union[F, A](name, NonEmptyList.of(hd, Variant[F, A, B](Eval.later(innerTpe))(pf.lift)), None)
 
