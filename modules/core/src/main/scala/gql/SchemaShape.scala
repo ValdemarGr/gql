@@ -326,7 +326,7 @@ object SchemaShape {
     }
 
     def validateArg[G[_]](arg: Arg[?])(implicit G: Monad[G], S: Stateful[G, ValidationState]): G[Unit] =
-      allUnique[G](DuplicateArg, arg.entries.toList.map(_.name)) >> {
+      allUnique[G](DuplicateArg.apply, arg.entries.toList.map(_.name)) >> {
         // A trick;
         // We check the arg like we would in a user-supplied query
         // Except, we use default as the "input" such that it is verified against the arg
@@ -361,7 +361,7 @@ object SchemaShape {
     def validateFields[G[_]: Monad](fields: NonEmptyList[(String, Field[F, ?, ?, ?])])(implicit
         S: Stateful[G, ValidationState]
     ): G[Unit] =
-      allUnique[G](DuplicateField, fields.toList.map { case (name, _) => name }) >>
+      allUnique[G](DuplicateField.apply, fields.toList.map { case (name, _) => name }) >>
         fields.traverse_ { case (name, field) =>
           useEdge(ValidationEdge.Field(name)) {
             validateFieldName[G](name) >>
@@ -377,7 +377,7 @@ object SchemaShape {
             case Union(_, types, _) =>
               val ols = types.toList.map(_.tpe)
 
-              allUnique[G](DuplicateUnionInstance, ols.map(_.value.name)) >>
+              allUnique[G](DuplicateUnionInstance.apply, ols.map(_.value.name)) >>
                 ols.traverse_(x => validateOutput[G](x.value))
             // TODO on both (interface extension)
             case Type(_, fields, _, _)      => validateFields[G](fields)

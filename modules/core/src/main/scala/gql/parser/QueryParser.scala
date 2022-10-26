@@ -172,7 +172,7 @@ object QueryParser {
 
   final case class Arguments(nel: NonEmptyList[Argument])
   lazy val arguments =
-    argument.repSep(seps).between(t('('), t(')')).map(Arguments)
+    argument.repSep(seps).between(t('('), t(')')).map(Arguments.apply)
 
   final case class Argument(name: String, value: Value)
   lazy val argument =

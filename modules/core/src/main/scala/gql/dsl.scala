@@ -63,36 +63,24 @@ object dsl {
 
   def fallible[F[_], I, T, A](
       arg: Arg[A]
-  )(resolver: (I, A) => F[Ior[String, T]])(implicit tpe: => Out[F, T]): Field[F, I, T, A] = {
-    implicit lazy val t0 = tpe
-    field(arg)(FallibleResolver[F, (I, A), T] { case (i, a) => resolver(i, a) })
-  }
+  )(resolver: (I, A) => F[Ior[String, T]])(implicit tpe: => Out[F, T]): Field[F, I, T, A] =
+    field(arg)(FallibleResolver[F, (I, A), T] { case (i, a) => resolver(i, a) })(tpe)
 
-  def fallible[F[_], I, T](resolver: I => F[Ior[String, T]])(implicit tpe: => Out[F, T]): Field[F, I, T, Unit] = {
-    implicit lazy val t0 = tpe
-    fallible[F, I, T, Unit](Applicative[Arg].unit)((i, _) => resolver(i))
-  }
+  def fallible[F[_], I, T](resolver: I => F[Ior[String, T]])(implicit tpe: => Out[F, T]): Field[F, I, T, Unit] =
+    fallible[F, I, T, Unit](Applicative[Arg].unit)((i, _) => resolver(i))(tpe)
 
-  def eff[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T, A] = {
-    implicit lazy val t0 = tpe
-    field(arg)(EffectResolver[F, (I, A), T] { case (i, a) => resolver(i, a) })
-  }
+  def eff[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T, A] =
+    field(arg)(EffectResolver[F, (I, A), T] { case (i, a) => resolver(i, a) })(tpe)
 
-  def eff[F[_], I, T](resolver: I => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T, Unit] = {
-    implicit lazy val t0 = tpe
-    eff[F, I, T, Unit](Applicative[Arg].unit)((i, _) => resolver(i))
-  }
+  def eff[F[_], I, T](resolver: I => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T, Unit] =
+    eff[F, I, T, Unit](Applicative[Arg].unit)((i, _) => resolver(i))(tpe)
 
   // Not sure if this is a compiler bug or something since all type parameters except I are invariant?
-  def pure[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T, A] = {
-    implicit lazy val t0 = tpe
-    field(arg)(PureResolver[F, (I, A), T] { case (i, a) => resolver(i, a) })
-  }
+  def pure[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T, A] =
+    field(arg)(PureResolver[F, (I, A), T] { case (i, a) => resolver(i, a) })(tpe)
 
-  def pure[F[_], I, T](resolver: I => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T, Unit] = {
-    implicit lazy val t0 = tpe
-    field(PureResolver[F, I, T](resolver))
-  }
+  def pure[F[_], I, T](resolver: I => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T, Unit] =
+    field(PureResolver[F, I, T](resolver))(tpe)
 
   def enumVal[A](value: A): EnumValue[A] =
     EnumValue(value)
