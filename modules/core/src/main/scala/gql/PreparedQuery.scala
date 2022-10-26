@@ -99,9 +99,9 @@ object PreparedQuery {
   }
 
   object InArr {
-    def unapply[A](p: In[A]): Option[(In[A], Seq[_] => A)] =
+    def unapply[A](p: In[A]): Option[(In[A], Seq[?] => A)] =
       p.asInstanceOf[In[A]] match {
-        case x: InArr[_, A] => Some((x.of.asInstanceOf[In[A]], x.fromSeq.asInstanceOf[Seq[_] => A]))
+        case x: InArr[?, A] => Some((x.of.asInstanceOf[In[A]], x.fromSeq.asInstanceOf[Seq[?] => A]))
         case _              => None
       }
   }
@@ -117,7 +117,7 @@ object PreparedQuery {
   object OutArr {
     def unapply[G[_], A](p: Out[G, A]): Option[(Out[G, A], Any => Seq[A])] =
       p.asInstanceOf[Out[G, A]] match {
-        case x: OutArr[G, _, A] => Some((x.of.asInstanceOf[Out[G, A]], x.toSeq.asInstanceOf[Any => Seq[A]]))
+        case x: OutArr[G, ?, A] => Some((x.of.asInstanceOf[Out[G, A]], x.toSeq.asInstanceOf[Any => Seq[A]]))
         case _                  => None
       }
   }
@@ -154,7 +154,7 @@ object PreparedQuery {
         }
     }
 
-  def underlyingOutputTypename[G[_]](ot: Out[G, _]): String = (ot: @unchecked) match {
+  def underlyingOutputTypename[G[_]](ot: Out[G, ?]): String = (ot: @unchecked) match {
     case Enum(name, _, _)         => name
     case Union(name, _, _)        => name
     case Interface(name, _, _, _) => name
@@ -448,7 +448,7 @@ object PreparedQuery {
       case VariableValue(_)     => "variable"
     }
 
-  def inName(in: In[_]): String = (in: @unchecked) match {
+  def inName[A](in: In[A]): String = (in: @unchecked) match {
     case InArr(of, _)          => s"list of ${inName(of)}"
     case Enum(name, _, _)      => name
     case Scalar(name, _, _, _) => name
@@ -491,7 +491,7 @@ object PreparedQuery {
             vm.get(v) match {
               case None => raise(s"variable $v is not defined", None)
               case Some((varType, a)) =>
-                def cmpTpe[A](lhs: In[_], rhs: In[_]): F[Unit] =
+                def cmpTpe[A](lhs: In[A], rhs: In[A]): F[Unit] =
                   (lhs, rhs) match {
                     case (InArr(expected, _), InArr(other, _)) => cmpTpe(expected, other)
                     case (Enum(name, _, _), Enum(otherName, _, _)) =>
@@ -656,7 +656,7 @@ object PreparedQuery {
   def prepareParts[F[_], G[_]: Applicative](
       op: P.OperationDefinition,
       frags: List[Pos[P.FragmentDefinition]],
-      schema: Schema[G, _, _, _],
+      schema: Schema[G, ?, ?, ?],
       variableMap: Map[String, Json]
   )(implicit
       S: Stateful[F, Prep],
@@ -669,7 +669,7 @@ object PreparedQuery {
       ot match {
         // We sneak the introspection query in here
         case P.OperationType.Query =>
-          val i: NonEmptyList[(String, Field[G, Unit, _, _])] = schema.shape.introspection
+          val i: NonEmptyList[(String, Field[G, Unit, ?, ?])] = schema.shape.introspection
           val q = schema.shape.query.asInstanceOf[Type[G, Any]]
           F.pure(q.copy(fields = q.fields concatNel i.map { case (k, v) => k -> v.contramap[Any](_ => ()) }))
         case P.OperationType.Mutation =>
@@ -749,7 +749,7 @@ object PreparedQuery {
 
   def prepare[F[_]: Applicative](
       executabels: NonEmptyList[P.ExecutableDefinition],
-      schema: Schema[F, _, _, _],
+      schema: Schema[F, ?, ?, ?],
       variableMap: Map[String, Json],
       operationName: Option[String]
   ): Either[PositionalError, (P.OperationType, NonEmptyList[PreparedField[F, Any]])] = {

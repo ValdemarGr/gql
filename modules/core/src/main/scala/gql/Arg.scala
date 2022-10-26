@@ -6,9 +6,9 @@ import cats.implicits._
 import gql.ast._
 
 trait Arg[A] {
-  def entries: Chain[ArgValue[_]]
+  def entries: Chain[ArgValue[?]]
 
-  def decode: Map[String, _] => Either[String, A]
+  def decode: Map[String, ?] => Either[String, A]
 
   def emap[B](f: A => Either[String, B]): Arg[B]
 }
@@ -45,8 +45,8 @@ final case class ArgValue[A](
 }
 
 final case class NonEmptyArg[A](
-    nec: NonEmptyChain[ArgValue[_]],
-    decode: Map[String, _] => Either[String, A]
+    nec: NonEmptyChain[ArgValue[?]],
+    decode: Map[String, ?] => Either[String, A]
 ) extends Arg[A] {
 
   def entries = nec.toChain

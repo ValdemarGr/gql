@@ -67,7 +67,7 @@ object ast extends AstImplicits.Implicits {
 
   final case class Union[F[_], A](
       name: String,
-      types: NonEmptyList[Variant[F, A, _]],
+      types: NonEmptyList[Variant[F, A, ?]],
       description: Option[String] = None
   ) extends Selectable[F, A] {
     def document(description: String): Union[F, A] = copy(description = Some(description))
@@ -79,7 +79,7 @@ object ast extends AstImplicits.Implicits {
 
     lazy val fieldMap = Map.empty
 
-    lazy val fieldsList: List[(String, Field[F, A, _, _])] = Nil
+    lazy val fieldsList: List[(String, Field[F, A, ?, ?])] = Nil
 
     def mapK[G[_]: Functor](fk: F ~> G): Union[G, A] =
       Union(

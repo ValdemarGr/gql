@@ -1,4 +1,5 @@
 ThisBuild / scalaVersion := "2.13.9"
+/* ThisBuild / scalaVersion := "3.2.0" */
 ThisBuild / organization := "io.github.valdemargr"
 
 ThisBuild / tlBaseVersion := "0.1"
@@ -51,18 +52,17 @@ lazy val sharedSettings = Seq(
     "co.fs2" %% "fs2-core" % "3.2.14",
     "co.fs2" %% "fs2-io" % "3.2.14",
     "org.typelevel" %% "cats-parse" % "0.3.8",
-    "io.circe" %% "circe-core" % "0.14.1",
-    "io.circe" %% "circe-generic" % "0.14.1",
-    "io.circe" %% "circe-parser" % "0.14.1",
-    "io.circe" %% "circe-generic-extras" % "0.14.1",
+    "io.circe" %% "circe-core" % "0.14.3",
+    "io.circe" %% "circe-generic" % "0.14.3",
+    "io.circe" %% "circe-parser" % "0.14.3",
+    "io.circe" %% "circe-generic-extras" % "0.14.3",
     "org.typelevel" %% "kittens" % "2.3.0",
-    "org.tpolecat" %% "typename" % "1.0.0",
-    "org.tpolecat" %% "sourcepos" % "1.0.1",
+    /* "org.tpolecat" %% "typename" % "1.0.0", */
+    /* "org.tpolecat" %% "sourcepos" % "1.0.1", */
     /* "ch.qos.logback" % "logback-classic" % "1.2.11", */
-    "org.typelevel" %% "log4cats-core" % "2.4.0",
+    /* "org.typelevel" %% "log4cats-core" % "2.4.0", */
     "org.typelevel" %% "paiges-core" % "0.4.2",
-    "org.typelevel" %% "log4cats-slf4j" % "2.4.0",
-    "org.sangria-graphql" %% "sangria" % "3.2.0",
+    /* "org.typelevel" %% "log4cats-slf4j" % "2.4.0", */
     "org.scalameta" %% "munit" % "1.0.0-M6" % Test,
     "org.typelevel" %% "munit-cats-effect" % "2.0.0-M3" % Test
   ),
@@ -70,7 +70,8 @@ lazy val sharedSettings = Seq(
   addCompilerPlugin("com.olegpy" %% "better-monadic-for" % "0.3.1"),
   scalacOptions ++= Seq(
     "-Vimplicits",
-    "-Vimplicits-verbose-tree"
+    "-Vimplicits-verbose-tree",
+    "-Xsource:3"
   )
 )
 

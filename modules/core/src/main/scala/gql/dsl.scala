@@ -102,8 +102,8 @@ object dsl {
 
   def interface[F[_], A](
       name: String,
-      hd: (String, Field[F, A, _, _]),
-      tl: (String, Field[F, A, _, _])*
+      hd: (String, Field[F, A, ?, ?]),
+      tl: (String, Field[F, A, ?, ?])*
   ) = Interface[F, A](name, NonEmptyList(hd, tl.toList), Nil)
 
   def union[F[_], A](name: String) = PartiallyAppliedUnion0[F, A](name)
