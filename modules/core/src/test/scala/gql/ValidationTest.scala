@@ -83,7 +83,7 @@ class ValidationTest extends CatsEffectSuite {
   // }
 
   test("should catch cyclic outputs that are not reference equal") {
-    val err = errors.collect { case (SchemaShape.ValidationError.CyclicOutputType("MutuallyRecursive1"), path) =>
+    val err = errors.collect { case (SchemaShape.ValidationError.CyclicDivergingTypeReference("MutuallyRecursive1"), path) =>
       path.toList
     }
 
