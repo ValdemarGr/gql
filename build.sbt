@@ -1,5 +1,7 @@
-/* ThisBuild / scalaVersion := "2.13.9" */
-ThisBuild / scalaVersion := "3.2.0"
+val scala213Version = "2.13.10"
+
+ThisBuild / scalaVersion := scala213Version
+ThisBuild / crossScalaVersions := Seq(scala213Version, "3.2.0")
 ThisBuild / organization := "io.github.valdemargr"
 
 ThisBuild / tlBaseVersion := "0.1"
@@ -17,7 +19,7 @@ ThisBuild / githubWorkflowAddedJobs +=
   WorkflowJob(
     id = "docs",
     name = "Run mdoc docs",
-    scalas = List("2.13.9"),
+    scalas = List(scala213Version),
     steps = WorkflowStep.Checkout ::
       WorkflowStep.SetupJava(githubWorkflowJavaVersions.value.toList) ++
       githubWorkflowGeneratedCacheSteps.value ++
@@ -71,8 +73,7 @@ lazy val sharedSettings = Seq(
   scalacOptions ++= Seq(
     "-Vimplicits",
     "-Vimplicits-verbose-tree",
-    "-Xsource:3",
-    "-explain-types"
+    "-Xsource:3"
   )
 )
 
