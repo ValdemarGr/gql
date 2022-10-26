@@ -11,8 +11,10 @@ import gql.graphqlws.GraphqlWS
 import org.http4s.websocket.WebSocketFrame
 
 object Http4sRoutes {
-  protected implicit lazy val cd = io.circe.generic.semiauto.deriveDecoder[CompilerParameters]
-  protected implicit def ed[F[_]: Concurrent] = org.http4s.circe.jsonOf[F, CompilerParameters]
+  protected implicit lazy val cd: Decoder[CompilerParameters] =
+    io.circe.generic.semiauto.deriveDecoder[CompilerParameters]
+  protected implicit def ed[F[_]: Concurrent]: EntityDecoder[F, CompilerParameters] =
+    org.http4s.circe.jsonOf[F, CompilerParameters]
 
   def sync[F[_]](
       compiler: Http4sCompiler[F],

@@ -19,7 +19,7 @@ class ValidationTest extends CatsEffectSuite {
       ).mapN(CyclicInput.apply)
     )
 
-  implicit lazy val duplicateInterface = interface[IO, MutRecInterface](
+  implicit lazy val duplicateInterface: Interface[IO, MutRecInterface] = interface[IO, MutRecInterface](
     "MutRecInterface",
     "value" -> pure(_.value),
     "missing" -> pure(_ => 42)
@@ -60,12 +60,12 @@ class ValidationTest extends CatsEffectSuite {
       ) { case _ => 24 }
     )
 
-  implicit lazy val duplicateUnion = union[IO, MutRecUnion]("MutRecUnion")
+  implicit lazy val duplicateUnion: Union[IO, MutRecUnion] = union[IO, MutRecUnion]("MutRecUnion")
     .variant { case x: MutuallyRecursive2 => x }
     .variant { case x: MutuallyRecursive1 => x }
     .variant { case x: MutuallyRecursive2 => x }
 
-  lazy val schemaShape = SchemaShape[IO, Unit, Unit, Unit](
+  lazy val schemaShape: SchemaShape[IO, Unit, Unit, Unit] = SchemaShape.make[IO](
     tpe[IO, Unit](
       "Query",
       "badStructure" -> pure(_ => BadStructure()),

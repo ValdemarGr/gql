@@ -197,7 +197,13 @@ object GraphqlWS {
     final case class ConnectionInit(payload: Map[String, Json]) extends FromClient
     final case class Subscribe(id: String, payload: CompilerParameters) extends FromClient
 
-    implicit lazy val compilerParamsDec = io.circe.generic.semiauto.deriveDecoder[CompilerParameters]
+    implicit lazy val compilerParamsDec: Decoder[CompilerParameters] = Decoder.instance[CompilerParameters] { c =>
+      (
+        c.downField("query").as[String],
+        c.downField("variables").as[Option[Map[String, Json]]],
+        c.downField("operationName").as[Option[String]]
+      ).mapN(CompilerParameters.apply)
+    }
 
     implicit lazy val dec: Decoder[FromClient] = Decoder.instance[FromClient] { c =>
       c.downField("type").as[String].flatMap {
