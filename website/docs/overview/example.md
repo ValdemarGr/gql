@@ -67,7 +67,7 @@ import cats.implicits._
 Now we can define our schema:
 ```scala
 def schema[F[_]](implicit repo: Repository[F], F: Async[F]) = {
-  implicit lazy val episode = enumType[F, Episode](
+  implicit lazy val episode: Enum[F, Episode] = enumType[F, Episode](
     "Episode",
     "NEWHOPE" -> enumVal(Episode.NEWHOPE),
     "EMPIRE" -> enumVal(Episode.EMPIRE),
@@ -83,12 +83,12 @@ def schema[F[_]](implicit repo: Repository[F], F: Async[F]) = {
     "secretBackstory" -> fallible(_ => F.pure("secretBackstory is secret.".leftIor[String]))
   )
 
-  implicit lazy val human = tpe[F, Human](
+  implicit lazy val human: Type[F, Human] = tpe[F, Human](
     "Human",
     "homePlanet" -> pure(_.homePlanet)
   ).subtypeOf[Character].addFields(character.fields.toList: _*)
 
-  implicit lazy val droid = tpe[F, Droid](
+  implicit lazy val droid: Type[F, Droid] = tpe[F, Droid](
     "Droid",
     "primaryFunction" -> pure(_.primaryFunction)
   ).subtypeOf[Character] .addFields(character.fields.toList: _*)
@@ -172,7 +172,7 @@ val droidData =
     .map(x => x.id -> x)
     .toMap
 
-implicit def repo = new Repository[IO] {
+implicit def repo: Repository[IO] = new Repository[IO] {
   def getHero(episode: Option[Episode]): IO[Character] =
     if (episode.contains(Episode.EMPIRE)) IO(luke)
     else IO(artoo)
@@ -186,7 +186,6 @@ implicit def repo = new Repository[IO] {
   def getDroid(id: String): IO[Option[Droid]] =
     IO(droidData.get(id))
 }
-
 ```
 
 Lets construct a query:

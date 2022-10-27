@@ -14,7 +14,7 @@ import gql._
 import gql.ast._
 import gql.dsl._
 
-def ss = SchemaShape[IO](
+def ss = SchemaShape.make[IO](
   tpe[IO, Unit](
     "Query",
     "4hello" -> pure(_ => "world")
@@ -59,7 +59,7 @@ def cyclicType(i: Int): Type[IO, A] = {
 
 implicit lazy val cyclic: Type[IO, A] = cyclicType(0)
 
-def recursiveSchema = SchemaShape[IO](
+def recursiveSchema = SchemaShape.make[IO](
   tpe[IO, Unit](
     "Query",
     "a" -> pure(_ => A())

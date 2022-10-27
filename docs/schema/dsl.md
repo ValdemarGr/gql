@@ -121,7 +121,7 @@ union[IO, Vehicle]("Vehicle")
 
 For an `Interface` the same dsl exists, but is placed on the types that can implement the interface (a `Type` or another `Interface`).
 ```scala mdoc:silent
-implicit lazy val vehicle = interface[IO, Vehicle](
+implicit lazy val vehicle: Interface[IO, Vehicle] = interface[IO, Vehicle](
   "Vehicle",
   "name" -> pure(_.name)
 )

@@ -69,7 +69,7 @@ def batchSchema = brState.map { (br: BatchResolver[IO, Set[Int], Map[Int, Int]])
     .contramap[Int](Set(_))
     .map(_.values.headOption)
 
-  SchemaShape[IO](
+  SchemaShape.make[IO](
     tpe[IO, Unit](
       "Query",
       "field" -> field(adjusted.contramap(_ => 42))
@@ -178,7 +178,7 @@ def databaseRoot[F[_]](implicit F: Monad[F], db: DatabaseConnection[F]) =
       "nestedValue" -> field(single.contramap[Nested](_.key))
     )
     
-    SchemaShape[F](
+    SchemaShape.make[F](
       tpe[F, Unit](
         "Query",
         "getFirstField" -> field(arg[Int]("x"))(single.contramap{ case (_, x) => x}),

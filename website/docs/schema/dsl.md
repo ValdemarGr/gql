@@ -26,15 +26,15 @@ field(intArg)(FallibleResolver[IO, (String, Int), String]{ case (s, i) =>
 //     nec = Singleton(
 //       a = ArgValue(
 //         name = "intArg",
-//         input = cats.Later@7c7de191,
+//         input = cats.Later@4de34598,
 //         defaultValue = None,
 //         description = None
 //       )
 //     ),
-//     decode = gql.NonEmptyArg$$$Lambda$34098/0x0000000106c9d840@2e196957
+//     decode = gql.NonEmptyArg$$$Lambda$46400/0x0000000109ffd840@59c7a6f0
 //   ),
 //   resolve = FallibleResolver(resolve = <function1>),
-//   output = cats.Later@6ebae09f,
+//   output = cats.Later@34cb394,
 //   description = None
 // )
 ```
@@ -137,7 +137,7 @@ union[IO, Vehicle]("Vehicle")
 
 For an `Interface` the same dsl exists, but is placed on the types that can implement the interface (a `Type` or another `Interface`).
 ```scala
-implicit lazy val vehicle = interface[IO, Vehicle](
+implicit lazy val vehicle: Interface[IO, Vehicle] = interface[IO, Vehicle](
   "Vehicle",
   "name" -> pure(_.name)
 )
