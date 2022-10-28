@@ -9,14 +9,14 @@ import scala.reflect.ClassTag
 
 object dsl {
   def tpe[F[_], A](
-      name: String,
-      hd: (String, Field[F, A, ?, ?]),
-      tl: (String, Field[F, A, ?, ?])*
+    name: String,
+    hd: (String, Field[F, A, ?, ?]),
+    tl: (String, Field[F, A, ?, ?])*
   ) = Type[F, A](name, NonEmptyList(hd, tl.toList), Nil)
 
   def input[A](
-      name: String,
-      fields: NonEmptyArg[A]
+    name: String,
+    fields: NonEmptyArg[A]
   ): Input[A] = Input(name, fields)
 
   def arg[A](name: String)(implicit tpe: => In[A]): NonEmptyArg[A] =
@@ -49,7 +49,7 @@ object dsl {
 
   final class PartiallyAppliedField[I](val dummy: Boolean = false) extends AnyVal {
     def apply[F[_], T, A](arg: Arg[A])(resolver: Resolver[F, (I, A), T])(implicit
-        tpe: => Out[F, T]
+      tpe: => Out[F, T]
     ): Field[F, I, T, A] =
       full.field[F, I, T, A](arg)(resolver)(tpe)
 
@@ -67,7 +67,7 @@ object dsl {
 
   final class PartiallyAppliedFallible[I](val dummy: Boolean = false) extends AnyVal {
     def apply[F[_], T, A](
-        arg: Arg[A]
+      arg: Arg[A]
     )(resolver: (I, A) => F[Ior[String, T]])(implicit tpe: => Out[F, T]): Field[F, I, T, A] =
       full.fallible[F, I, T, A](arg)(resolver)(tpe)
 
@@ -99,7 +99,7 @@ object dsl {
 
   object full {
     def field[F[_], I, T, A](arg: Arg[A])(resolver: Resolver[F, (I, A), T])(implicit
-        tpe: => Out[F, T]
+      tpe: => Out[F, T]
     ): Field[F, I, T, A] =
       Field[F, I, T, A](arg, resolver, Eval.later(tpe))
 
@@ -120,7 +120,7 @@ object dsl {
       field(PureResolver[F, I, T](resolver))(tpe)
 
     def fallible[F[_], I, T, A](
-        arg: Arg[A]
+      arg: Arg[A]
     )(resolver: (I, A) => F[Ior[String, T]])(implicit tpe: => Out[F, T]): Field[F, I, T, A] =
       field(arg)(FallibleResolver[F, (I, A), T] { case (i, a) => resolver(i, a) })(tpe)
 
@@ -135,9 +135,9 @@ object dsl {
     Enum[F, A](name, NonEmptyList(hd, tl.toList))
 
   def interface[F[_], A](
-      name: String,
-      hd: (String, Field[F, A, ?, ?]),
-      tl: (String, Field[F, A, ?, ?])*
+    name: String,
+    hd: (String, Field[F, A, ?, ?]),
+    tl: (String, Field[F, A, ?, ?])*
   ) = Interface[F, A](name, NonEmptyList(hd, tl.toList), Nil)
 
   def union[F[_], A](name: String) = PartiallyAppliedUnion0[F, A](name)
@@ -150,24 +150,25 @@ object dsl {
 
   def arrType[A](implicit tpe: => In[A]): In[Seq[A]] = InArr[A, Seq[A]](tpe, _.asRight)
 
-  implicit class ResolverSyntax[F[_], I, A](val resolver: Resolver[F, I, A]) extends AnyVal {
-    def andThen[O2](next: Resolver[F, A, O2]): Resolver[F, I, O2] =
+  implicit class ResolverSyntax[F[_], I, O](val resolver: Resolver[F, I, O]) extends AnyVal {
+    def andThen[O2](next: Resolver[F, O, O2]): Resolver[F, I, O2] =
       CompositionResolver(resolver, next)
 
-    def streamMap[O2](f: A => fs2.Stream[F, IorNec[String, O2]]): Resolver[F, I, O2] =
+    def streamMap[O2](f: O => fs2.Stream[F, IorNec[String, O2]]): Resolver[F, I, O2] =
       resolver.andThen(StreamResolver(f))
 
-    def fallibleMap[O2](f: A => F[Ior[String, O2]]): Resolver[F, I, O2] =
-      resolver.andThen(FallibleResolver[F, A, O2](f))
+    def fallibleMap[O2](f: O => F[Ior[String, O2]]): Resolver[F, I, O2] =
+      resolver.andThen(FallibleResolver[F, O, O2](f))
 
-    def evalMap[O2](f: A => F[O2]): Resolver[F, I, O2] =
-      resolver.andThen(EffectResolver[F, A, O2](f))
+    def evalMap[O2](f: O => F[O2]): Resolver[F, I, O2] =
+      resolver.andThen(EffectResolver[F, O, O2](f))
 
-    def map[O2](f: A => O2): Resolver[F, I, O2] =
-      resolver.andThen(PureResolver[F, A, O2](f))
+    def map[O2](f: O => O2): Resolver[F, I, O2] =
+      resolver.andThen(PureResolver[F, O, O2](f))
   }
 
-  implicit class BatchResolverSyntax[F[_], K, V](val batchResolver: BatchResolver[F, Set[K], Map[K, V]]) extends AnyVal {
+  implicit class BatchResolverSyntax[F[_], K, V](val batchResolver: BatchResolver[F, Set[K], Map[K, V]])
+      extends AnyVal {
     def one: BatchResolver[F, K, Option[V]] = batchResolver.contramap[K](Set(_)).mapBoth { case (k, m) => m.get(k) }
   }
 

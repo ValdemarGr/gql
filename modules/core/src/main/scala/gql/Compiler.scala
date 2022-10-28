@@ -37,13 +37,18 @@ object Application {
 }
 
 final case class CompilerParameters(
-    query: String,
-    variables: Option[Map[String, Json]],
-    operationName: Option[String]
+  query: String,
+  variables: Option[Map[String, Json]],
+  operationName: Option[String]
 )
 
-trait Compiler[F[_]] {
+trait Compiler[F[_]] { self =>
   def compile(params: CompilerParameters): F[Either[CompilationError, Application[F]]]
+
+  def mapK[G[_]: Functor](f: F ~> G): Compiler[G] = new Compiler[G] {
+    override def compile(params: CompilerParameters): G[Either[CompilationError, Application[G]]] =
+      f(self.compile(params)).map(_.map(_.mapK(f)))
+  }
 }
 
 object Compiler { outer =>
@@ -53,36 +58,41 @@ object Compiler { outer =>
     implicit def F0: Async[F] = F
 
     def make[Q, M, S](
-        schema: Schema[F, Q, M, S],
-        queryInput: F[Q] = F.unit,
-        mutationInput: F[M] = F.unit,
-        subscriptionInput: F[S] = F.unit
+      schema: Schema[F, Q, M, S],
+      queryInput: F[Q] = F.unit,
+      mutationInput: F[M] = F.unit,
+      subscriptionInput: F[S] = F.unit
     ): Compiler[F] =
       cp => F.pure(compileWith(schema, cp, queryInput, mutationInput, subscriptionInput))
 
     def compile[Q, M, S](
-        schema: Schema[F, Q, M, S],
-        query: String,
-        variables: Map[String, Json] = Map.empty,
-        operationName: Option[String] = None,
-        queryInput: F[Q] = F.unit,
-        mutationInput: F[M] = F.unit,
-        subscriptionInput: F[S] = F.unit
-    ) = compileWith(schema, CompilerParameters(query, Some(variables), operationName), queryInput, mutationInput, subscriptionInput)
+      schema: Schema[F, Q, M, S],
+      query: String,
+      variables: Map[String, Json] = Map.empty,
+      operationName: Option[String] = None,
+      queryInput: F[Q] = F.unit,
+      mutationInput: F[M] = F.unit,
+      subscriptionInput: F[S] = F.unit
+    ) = compileWith(schema,
+                    CompilerParameters(query, Some(variables), operationName),
+                    queryInput,
+                    mutationInput,
+                    subscriptionInput
+    )
 
     def compileWith[Q, M, S](
-        schema: Schema[F, Q, M, S],
-        cp: CompilerParameters,
-        queryInput: F[Q] = F.unit,
-        mutationInput: F[M] = F.unit,
-        subscriptionInput: F[S] = F.unit
+      schema: Schema[F, Q, M, S],
+      cp: CompilerParameters,
+      queryInput: F[Q] = F.unit,
+      mutationInput: F[M] = F.unit,
+      subscriptionInput: F[S] = F.unit
     ): Outcome[F] =
       parsePrep(schema, cp)
         .map { case (ot, pfs) => compilePrepared(schema, ot, pfs, queryInput, mutationInput, subscriptionInput) }
 
     def parsePrep(
-        schema: Schema[F, ?, ?, ?],
-        cp: CompilerParameters
+      schema: Schema[F, ?, ?, ?],
+      cp: CompilerParameters
     ): Either[CompilationError, (QueryParser.OperationType, NonEmptyList[PreparedQuery.PreparedField[F, Any]])] =
       gql.parser.parse(cp.query) match {
         case Left(pe) => Left(CompilationError.Parse(pe))
@@ -94,12 +104,12 @@ object Compiler { outer =>
       }
 
     def compilePrepared[Q, M, S](
-        schema: Schema[F, Q, M, S],
-        operationType: P.OperationType,
-        ps: NonEmptyList[PreparedQuery.PreparedField[F, Any]],
-        queryInput: F[Q] = F.unit,
-        mutationInput: F[M] = F.unit,
-        subscriptionInput: F[S] = F.unit
+      schema: Schema[F, Q, M, S],
+      operationType: P.OperationType,
+      ps: NonEmptyList[PreparedQuery.PreparedField[F, Any]],
+      queryInput: F[Q] = F.unit,
+      mutationInput: F[M] = F.unit,
+      subscriptionInput: F[S] = F.unit
     ) = {
       implicit val s = schema.statistics
       implicit val p = schema.planner

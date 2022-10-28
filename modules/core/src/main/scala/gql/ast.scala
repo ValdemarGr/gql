@@ -40,10 +40,10 @@ object ast extends AstImplicits.Implicits {
   }
 
   final case class Type[F[_], A](
-      name: String,
-      fields: NonEmptyList[(String, Field[F, A, ?, ?])],
-      implementations: List[Implementation[F, A, ?]],
-      description: Option[String] = None
+    name: String,
+    fields: NonEmptyList[(String, Field[F, A, ?, ?])],
+    implementations: List[Implementation[F, A, ?]],
+    description: Option[String] = None
   ) extends ObjectLike[F, A] {
     def document(description: String): Type[F, A] = copy(description = Some(description))
 
@@ -58,17 +58,17 @@ object ast extends AstImplicits.Implicits {
   }
 
   final case class Input[A](
-      name: String,
-      fields: NonEmptyArg[A],
-      description: Option[String] = None
+    name: String,
+    fields: NonEmptyArg[A],
+    description: Option[String] = None
   ) extends InToplevel[A] {
     def document(description: String): Input[A] = copy(description = Some(description))
   }
 
   final case class Union[F[_], A](
-      name: String,
-      types: NonEmptyList[Variant[F, A, ?]],
-      description: Option[String] = None
+    name: String,
+    types: NonEmptyList[Variant[F, A, ?]],
+    description: Option[String] = None
   ) extends Selectable[F, A] {
     def document(description: String): Union[F, A] = copy(description = Some(description))
 
@@ -89,16 +89,18 @@ object ast extends AstImplicits.Implicits {
       )
   }
 
-  final case class Implementation[F[_], A, B](implementation: Eval[Interface[F, B]])(implicit val specify: B => Option[A]) {
+  final case class Implementation[F[_], A, B](implementation: Eval[Interface[F, B]])(implicit
+    val specify: B => Option[A]
+  ) {
     def mapK[G[_]: Functor](fk: F ~> G): Implementation[G, A, B] =
       Implementation(implementation.map(_.mapK(fk)))
   }
 
   final case class Interface[F[_], A](
-      name: String,
-      fields: NonEmptyList[(String, Field[F, A, ?, ?])],
-      implementations: List[Implementation[F, A, ?]],
-      description: Option[String] = None
+    name: String,
+    fields: NonEmptyList[(String, Field[F, A, ?, ?])],
+    implementations: List[Implementation[F, A, ?]],
+    description: Option[String] = None
   ) extends ObjectLike[F, A] {
     def document(description: String): Interface[F, A] = copy(description = Some(description))
 
@@ -116,10 +118,10 @@ object ast extends AstImplicits.Implicits {
   }
 
   final case class Scalar[F[_], A](
-      name: String,
-      encoder: A => Value,
-      decoder: Value => Either[String, A],
-      description: Option[String] = None
+    name: String,
+    encoder: A => Value,
+    decoder: Value => Either[String, A],
+    description: Option[String] = None
   ) extends OutToplevel[F, A]
       with InLeaf[A]
       with InToplevel[A] {
@@ -135,16 +137,16 @@ object ast extends AstImplicits.Implicits {
   }
 
   final case class EnumValue[A](
-      value: A,
-      description: Option[String] = None
+    value: A,
+    description: Option[String] = None
   ) {
     def document(description: String): EnumValue[A] = copy(description = Some(description))
   }
 
   final case class Enum[F[_], A](
-      name: String,
-      mappings: NonEmptyList[(String, EnumValue[A])],
-      description: Option[String] = None
+    name: String,
+    mappings: NonEmptyList[(String, EnumValue[A])],
+    description: Option[String] = None
   ) extends OutToplevel[F, A]
       with InLeaf[A]
       with InToplevel[A] {
@@ -162,10 +164,10 @@ object ast extends AstImplicits.Implicits {
   }
 
   final case class Field[F[_], -I, T, A](
-      args: Arg[A],
-      resolve: Resolver[F, (I, A), T],
-      output: Eval[Out[F, T]],
-      description: Option[String] = None
+    args: Arg[A],
+    resolve: Resolver[F, (I, A), T],
+    output: Eval[Out[F, T]],
+    description: Option[String] = None
   ) {
     def document(description: String): Field[F, I, T, A] = copy(description = Some(description))
 
@@ -309,9 +311,6 @@ object AstImplicits {
   }
 
   trait LowPriorityImplicits {
-    implicit def gqlOutArrForSeqLike[F[_], A, G[x] <: Seq[x]](implicit tpe: Out[F, A]): Out[F, G[A]] =
-      OutArr(tpe, identity)
-
     implicit def gqlInForSeq[A](implicit tpe: In[A]): In[Seq[A]] = InArr[A, Seq[A]](tpe, _.asRight)
     implicit def gqlInForList[A](implicit tpe: In[A]): In[List[A]] = InArr[A, List[A]](tpe, _.toList.asRight)
     implicit def gqlInForVector[A](implicit tpe: In[A]): In[Vector[A]] = InArr[A, Vector[A]](tpe, _.toVector.asRight)
@@ -324,5 +323,16 @@ object AstImplicits {
       InArr[A, Chain[A]](tpe, xs => Chain.fromSeq(xs).asRight)
     implicit def gqlInForNonEmptyChain[A](implicit tpe: In[A]): In[NonEmptyChain[A]] =
       InArr[A, NonEmptyChain[A]](tpe, xs => NonEmptyChain.fromSeq(xs).toRight("empty array"))
+
+    implicit def gqlOutArrForSeqLike[F[_], A, G[x] <: Seq[x]](implicit tpe: Out[F, A]): Out[F, G[A]] =
+      OutArr(tpe, identity)
+    implicit def gqlOutArrForNel[F[_], A](implicit tpe: Out[F, A]): Out[F, NonEmptyList[A]] =
+      OutArr(tpe, _.toList)
+    implicit def gqlOutArrForNev[F[_], A](implicit tpe: Out[F, A]): Out[F, NonEmptyVector[A]] =
+      OutArr(tpe, _.toVector)
+    implicit def gqlOutArrForNec[F[_], A](implicit tpe: Out[F, A]): Out[F, NonEmptyChain[A]] =
+      OutArr(tpe, _.toList)
+    implicit def gqlOutArrForChain[F[_], A](implicit tpe: Out[F, A]): Out[F, Chain[A]] =
+      OutArr(tpe, _.toList)
   }
 }

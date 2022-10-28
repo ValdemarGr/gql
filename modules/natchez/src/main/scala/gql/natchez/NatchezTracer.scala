@@ -11,22 +11,24 @@ import cats.effect.std.Queue
 
 object NatchezTracer {
   def traceParser[F[_]: Trace](
-      parser: String => F[Either[ParseError, NonEmptyList[P.ExecutableDefinition]]]
+    parser: String => F[Either[ParseError, NonEmptyList[P.ExecutableDefinition]]]
   )(implicit F: Monad[F]): String => F[Either[ParseError, NonEmptyList[P.ExecutableDefinition]]] = query =>
     Trace[F].span("graphql.parse") {
       Trace[F].put("graphql.query" -> query) >>
         parser(query).flatMap {
           case Left(pe) =>
             Trace[F].span("graphql.parse.error") {
-              Trace[F].put("graphql.parse.error.message" -> TraceValue.stringToTraceValue(pe.prettyError.value)) as Left(pe)
+              Trace[F].put(
+                "graphql.parse.error.message" -> TraceValue.stringToTraceValue(pe.prettyError.value)
+              ) as Left(pe)
             }
           case Right(eds) => F.pure(Right(eds))
         }
     }
 
   def tracePreparation[F[_]: Trace, A](
-      prepare: F[Either[PreparedQuery.PositionalError, NonEmptyList[PreparedQuery.PreparedField[F, A]]]]
-  )(implicit F: Monad[F]): F[Either[PreparedQuery.PositionalError, NonEmptyList[PreparedQuery.PreparedField[F, A]]]] =
+    prepare: F[Either[PreparedQuery.PositionalError, A]]
+  )(implicit F: Monad[F]): F[Either[PreparedQuery.PositionalError, A]] =
     Trace[F].span("graphql.preparation") {
       prepare.flatMap {
         case Left(pe) =>
