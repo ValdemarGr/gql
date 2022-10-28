@@ -47,13 +47,17 @@ object dsl {
     def nullValue = Value.NullValue
   }
 
-  def field[F[_], I, T, A](arg: Arg[A])(resolver: Resolver[F, (I, A), T])(implicit
-      tpe: => Out[F, T]
-  ): Field[F, I, T, A] =
-    Field[F, I, T, A](arg, resolver, Eval.later(tpe))
+  final class PartiallyAppliedField[I](val dummy: Boolean = false) extends AnyVal {
+    def apply[F[_], T, A](arg: Arg[A])(resolver: Resolver[F, (I, A), T])(implicit
+        tpe: => Out[F, T]
+    ): Field[F, I, T, A] =
+      full.field[F, I, T, A](arg)(resolver)(tpe)
 
-  def field[F[_], I, T](resolver: Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T, Unit] =
-    Field[F, I, T, Unit](Applicative[Arg].unit, resolver.contramap[(I, Unit)] { case (i, _) => i }, Eval.later(tpe))
+    def apply[F[_], T](resolver: Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T, Unit] =
+      full.field[F, I, T](resolver)(tpe)
+  }
+
+  def field[I] = new PartiallyAppliedField[I]
 
   def stream[F[_], I, T](f: I => fs2.Stream[F, T]): StreamResolver[F, I, T, T] =
     streamFallible[F, I, T](i => f(i).map(_.rightIor))
@@ -61,26 +65,68 @@ object dsl {
   def streamFallible[F[_], I, T](f: I => fs2.Stream[F, IorNec[String, T]]): StreamResolver[F, I, T, T] =
     StreamResolver(f)
 
-  def fallible[F[_], I, T, A](
-      arg: Arg[A]
-  )(resolver: (I, A) => F[Ior[String, T]])(implicit tpe: => Out[F, T]): Field[F, I, T, A] =
-    field(arg)(FallibleResolver[F, (I, A), T] { case (i, a) => resolver(i, a) })(tpe)
+  final class PartiallyAppliedFallible[I](val dummy: Boolean = false) extends AnyVal {
+    def apply[F[_], T, A](
+        arg: Arg[A]
+    )(resolver: (I, A) => F[Ior[String, T]])(implicit tpe: => Out[F, T]): Field[F, I, T, A] =
+      full.fallible[F, I, T, A](arg)(resolver)(tpe)
 
-  def fallible[F[_], I, T](resolver: I => F[Ior[String, T]])(implicit tpe: => Out[F, T]): Field[F, I, T, Unit] =
-    fallible[F, I, T, Unit](Applicative[Arg].unit)((i, _) => resolver(i))(tpe)
+    def apply[F[_], T](resolver: I => F[Ior[String, T]])(implicit tpe: => Out[F, T]): Field[F, I, T, Unit] =
+      full.fallible[F, I, T](resolver)(tpe)
+  }
 
-  def eff[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T, A] =
-    field(arg)(EffectResolver[F, (I, A), T] { case (i, a) => resolver(i, a) })(tpe)
+  def fallible[I] = new PartiallyAppliedFallible[I]
 
-  def eff[F[_], I, T](resolver: I => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T, Unit] =
-    eff[F, I, T, Unit](Applicative[Arg].unit)((i, _) => resolver(i))(tpe)
+  final class PartiallyAppliedEff[I](val dummy: Boolean = false) extends AnyVal {
+    def apply[F[_], T, A](arg: Arg[A])(resolver: (I, A) => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T, A] =
+      full.eff[F, I, T, A](arg)(resolver)(tpe)
 
-  // Not sure if this is a compiler bug or something since all type parameters except I are invariant?
-  def pure[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T, A] =
-    field(arg)(PureResolver[F, (I, A), T] { case (i, a) => resolver(i, a) })(tpe)
+    def apply[F[_], T](resolver: I => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T, Unit] =
+      full.eff[F, I, T](resolver)(tpe)
+  }
 
-  def pure[F[_], I, T](resolver: I => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T, Unit] =
-    field(PureResolver[F, I, T](resolver))(tpe)
+  def eff[I] = new PartiallyAppliedEff[I]
+
+  final class PartiallyAppliedPure[F[_], I](val dummy: Boolean = false) extends AnyVal {
+    def apply[T, A](arg: Arg[A])(resolver: (I, A) => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T, A] =
+      full.pure[F, I, T, A](arg)(resolver)(tpe)
+
+    def apply[T](resolver: I => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T, Unit] =
+      full.pure[F, I, T](resolver)(tpe)
+  }
+
+  def pure[F[_], I] = new PartiallyAppliedPure[F, I]
+
+  object full {
+    def field[F[_], I, T, A](arg: Arg[A])(resolver: Resolver[F, (I, A), T])(implicit
+        tpe: => Out[F, T]
+    ): Field[F, I, T, A] =
+      Field[F, I, T, A](arg, resolver, Eval.later(tpe))
+
+    def field[F[_], I, T](resolver: Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T, Unit] =
+      Field[F, I, T, Unit](Applicative[Arg].unit, resolver.contramap[(I, Unit)] { case (i, _) => i }, Eval.later(tpe))
+
+    def eff[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T, A] =
+      field(arg)(EffectResolver[F, (I, A), T] { case (i, a) => resolver(i, a) })(tpe)
+
+    def eff[F[_], I, T](resolver: I => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T, Unit] =
+      eff[F, I, T, Unit](Applicative[Arg].unit)((i, _) => resolver(i))(tpe)
+
+    // Not sure if this is a compiler bug or something since all type parameters except I are invariant?
+    def pure[F[_], I, T, A](arg: Arg[A])(resolver: (I, A) => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T, A] =
+      field(arg)(PureResolver[F, (I, A), T] { case (i, a) => resolver(i, a) })(tpe)
+
+    def pure[F[_], I, T](resolver: I => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T, Unit] =
+      field(PureResolver[F, I, T](resolver))(tpe)
+
+    def fallible[F[_], I, T, A](
+        arg: Arg[A]
+    )(resolver: (I, A) => F[Ior[String, T]])(implicit tpe: => Out[F, T]): Field[F, I, T, A] =
+      field(arg)(FallibleResolver[F, (I, A), T] { case (i, a) => resolver(i, a) })(tpe)
+
+    def fallible[F[_], I, T](resolver: I => F[Ior[String, T]])(implicit tpe: => Out[F, T]): Field[F, I, T, Unit] =
+      fallible[F, I, T, Unit](Applicative[Arg].unit)((i, _) => resolver(i))(tpe)
+  }
 
   def enumVal[A](value: A): EnumValue[A] =
     EnumValue(value)
@@ -163,7 +209,7 @@ object dsl {
       variant[B] { case a: B => a }(innerTpe)
   }
 
-  final case class PartiallyAppliedUnion0[F[_], A](name: String) {
+  final case class PartiallyAppliedUnion0[F[_], A](name: String) extends AnyVal {
     def variant[B](pf: PartialFunction[A, B])(implicit innerTpe: => Type[F, B]): PartiallyAppliedUnion1[F, A] =
       PartiallyAppliedUnion1[F, A](name, Variant[F, A, B](Eval.later(innerTpe))(pf.lift))
 

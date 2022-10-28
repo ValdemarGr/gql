@@ -562,7 +562,7 @@ object SchemaShape {
     Doc.intercalate(Doc.hardLine + Doc.hardLine, docs).render(80)
   }
 
-  sealed trait __TypeKind
+  sealed trait __TypeKind extends Product with Serializable
   object __TypeKind {
     case object SCALAR extends __TypeKind
     case object OBJECT extends __TypeKind
@@ -699,7 +699,7 @@ object SchemaShape {
 
     implicit lazy val __type: Type[F, TypeInfo] = tpe[F, TypeInfo](
       "__Type",
-      "kind" -> pure[F, TypeInfo, __TypeKind] {
+      "kind" -> pure {
         case TypeInfo.ModifierStack(x) =>
           x.head match {
             case TypeInfo.Modifier.List    => __TypeKind.LIST
