@@ -612,7 +612,9 @@ object SchemaShape {
       "name" -> pure(_.name),
       "description" -> pure(_.description),
       "type" -> pure(x => (TypeInfo.InInfo(x.input.value): TypeInfo)),
-      "defaultValue" -> pure(x => x.defaultValue.map(renderValueDoc(_).render(80)))
+      "defaultValue" -> pure(x => x.defaultValue.map(renderValueDoc(_).render(80))),
+      "isDeprecated" -> pure(_ => false),
+      "deprecationReason" -> pure(_ => Option.empty[String])
     )
 
     final case class NamedField(
@@ -620,11 +622,13 @@ object SchemaShape {
         field: Field[F, ?, ?, ?]
     )
 
+    def inclDeprecated = arg[Boolean]("includeDeprecated", value.scalar(false))
+
     implicit lazy val namedField: Type[F, NamedField] = tpe[F, NamedField](
       "__Field",
       "name" -> pure(_.name),
       "description" -> pure(_.field.description),
-      "args" -> pure(_.field.args.entries.toList),
+      "args" -> pure(inclDeprecated)((x, _) => x.field.args.entries.toList),
       "type" -> pure(x => (TypeInfo.OutInfo(x.field.output.value): TypeInfo)),
       "isDeprecated" -> pure(_ => false),
       "deprecationReason" -> pure(_ => Option.empty[String])
@@ -695,7 +699,6 @@ object SchemaShape {
         override val asToplevel = None
       }
     }
-    def inclDeprecated = arg[Boolean]("includeDeprecated", value.scalar(false))
 
     implicit lazy val __type: Type[F, TypeInfo] = tpe[F, TypeInfo](
       "__Type",
@@ -758,8 +761,8 @@ object SchemaShape {
       "enumValues" -> pure(inclDeprecated) { case (ti, _) =>
         ti.asToplevel.collect { case Enum(_, m, _) => m.toList.map { case (k, v) => NamedEnumValue(k, v) } }
       },
-      "inputFields" -> pure {
-        case ii: TypeInfo.InInfo =>
+      "inputFields" -> pure(inclDeprecated) {
+        case (ii: TypeInfo.InInfo, _) =>
           ii.inner match {
             case Input(_, fields, _) => Some(fields.entries.toList)
             case _                   => None
@@ -785,6 +788,62 @@ object SchemaShape {
       "deprecationReason" -> pure(_ => Option.empty[String])
     )
 
+    sealed trait DirectiveLocation
+    object DirectiveLocation {
+      case object QUERY extends DirectiveLocation
+      case object MUTATION extends DirectiveLocation
+      case object SUBSCRIPTION extends DirectiveLocation
+      case object FIELD extends DirectiveLocation
+      case object FRAGMENT_DEFINITION extends DirectiveLocation
+      case object FRAGMENT_SPREAD extends DirectiveLocation
+      case object INLINE_FRAGMENT extends DirectiveLocation
+      case object VARIABLE_DEFINITION extends DirectiveLocation
+      case object SCHEMA extends DirectiveLocation
+      case object SCALAR extends DirectiveLocation
+      case object OBJECT extends DirectiveLocation
+      case object FIELD_DEFINITION extends DirectiveLocation
+      case object ARGUMENT_DEFINITION extends DirectiveLocation
+      case object INTERFACE extends DirectiveLocation
+      case object UNION extends DirectiveLocation
+      case object ENUM extends DirectiveLocation
+      case object ENUM_VALUE extends DirectiveLocation
+      case object INPUT_OBJECT extends DirectiveLocation
+      case object INPUT_FIELD_DEFINITION extends DirectiveLocation
+    }
+
+    implicit lazy val directiveLocation: Enum[F, DirectiveLocation] = enumType[F, DirectiveLocation](
+      "__DirectiveLocation",
+      "QUERY" -> enumVal(DirectiveLocation.QUERY),
+      "MUTATION" -> enumVal(DirectiveLocation.MUTATION),
+      "SUBSCRIPTION" -> enumVal(DirectiveLocation.SUBSCRIPTION),
+      "FIELD" -> enumVal(DirectiveLocation.FIELD),
+      "FRAGMENT_DEFINITION" -> enumVal(DirectiveLocation.FRAGMENT_DEFINITION),
+      "FRAGMENT_SPREAD" -> enumVal(DirectiveLocation.FRAGMENT_SPREAD),
+      "INLINE_FRAGMENT" -> enumVal(DirectiveLocation.INLINE_FRAGMENT),
+      "VARIABLE_DEFINITION" -> enumVal(DirectiveLocation.VARIABLE_DEFINITION),
+      "SCHEMA" -> enumVal(DirectiveLocation.SCHEMA),
+      "SCALAR" -> enumVal(DirectiveLocation.SCALAR),
+      "OBJECT" -> enumVal(DirectiveLocation.OBJECT),
+      "FIELD_DEFINITION" -> enumVal(DirectiveLocation.FIELD_DEFINITION),
+      "ARGUMENT_DEFINITION" -> enumVal(DirectiveLocation.ARGUMENT_DEFINITION),
+      "INTERFACE" -> enumVal(DirectiveLocation.INTERFACE),
+      "UNION" -> enumVal(DirectiveLocation.UNION),
+      "ENUM" -> enumVal(DirectiveLocation.ENUM),
+      "ENUM_VALUE" -> enumVal(DirectiveLocation.ENUM_VALUE),
+      "INPUT_OBJECT" -> enumVal(DirectiveLocation.INPUT_OBJECT),
+      "INPUT_FIELD_DEFINITION" -> enumVal(DirectiveLocation.INPUT_FIELD_DEFINITION)
+    )
+
+    case object PhantomDirective
+    implicit lazy val directive: Type[F, PhantomDirective.type] = tpe[F, PhantomDirective.type](
+      "__Directive",
+      "name" -> pure(_ => ""),
+      "description" -> pure(_ => Option.empty[String]),
+      "locations" -> pure(_ => List.empty[DirectiveLocation]),
+      "args" -> pure(inclDeprecated)((_, _) => List.empty[ArgValue[?]]),
+      "isRepeatable" -> pure(_ => false)
+    )
+
     case object PhantomSchema
     implicit lazy val schema: Type[F, PhantomSchema.type] = tpe[F, PhantomSchema.type](
       "__Schema",
@@ -793,7 +852,7 @@ object SchemaShape {
       "queryType" -> pure(_ => TypeInfo.OutInfo(ss.query): TypeInfo),
       "mutationType" -> pure(_ => ss.mutation.map[TypeInfo](TypeInfo.OutInfo(_))),
       "subscriptionType" -> pure(_ => ss.subscription.map[TypeInfo](TypeInfo.OutInfo(_))),
-      "directives" -> pure(_ => List.empty[String])
+      "directives" -> pure(_ => List.empty[PhantomDirective.type])
     )
 
     lazy val rootFields: NonEmptyList[(String, Field[F, Unit, ?, ?])] =
