@@ -634,7 +634,7 @@ object SchemaShape {
       "deprecationReason" -> pure(_ => Option.empty[String])
     )
 
-    sealed trait TypeInfo {
+    sealed trait TypeInfo extends Product with Serializable {
       def asToplevel: Option[Toplevel[?]]
     }
     object TypeInfo {
@@ -646,6 +646,11 @@ object SchemaShape {
         }
 
         override lazy val asToplevel: Option[Toplevel[?]] = Some(inner)
+
+        lazy val modifierStack: Option[ModifierStack] = {
+          val (_, ms) = partition
+          ms
+        }
 
         lazy val partition: (OutToplevel[F, ?], Option[ModifierStack]) = {
           def go(t: Out[F, ?], inOption: Boolean = false): (OutToplevel[F, ?], Chain[Modifier]) = {
@@ -671,6 +676,11 @@ object SchemaShape {
         }
 
         override lazy val asToplevel: Option[Toplevel[?]] = Some(inner)
+
+        lazy val modifierStack: Option[ModifierStack] = {
+          val (_, ms) = partition
+          ms
+        }
 
         lazy val partition: (InToplevel[?], Option[ModifierStack]) = {
           def go(t: In[?], inOption: Boolean = false): (InToplevel[?], Chain[Modifier]) = {
@@ -772,7 +782,8 @@ object SchemaShape {
       "ofType" -> pure {
         case TypeInfo.ModifierStack(NonEmptyList(_, tl)) =>
           tl.toNel.map[TypeInfo](TypeInfo.ModifierStack(_))
-        case _ => None
+        case o: TypeInfo.OutInfo => o.modifierStack
+        case i: TypeInfo.InInfo  => i.modifierStack
       }
     )
 
@@ -848,7 +859,11 @@ object SchemaShape {
     implicit lazy val schema: Type[F, PhantomSchema.type] = tpe[F, PhantomSchema.type](
       "__Schema",
       "description" -> pure(_ => Option.empty[String]),
-      "types" -> pure(_ => d.outputs.values.toList.map[TypeInfo](TypeInfo.OutInfo(_))),
+      "types" -> pure { _ =>
+        val outs = d.outputs.values.toList.map(TypeInfo.OutInfo(_))
+        val ins = d.inputs.values.toList.map(TypeInfo.InInfo(_))
+        outs ++ ins
+      },
       "queryType" -> pure(_ => TypeInfo.OutInfo(ss.query): TypeInfo),
       "mutationType" -> pure(_ => ss.mutation.map[TypeInfo](TypeInfo.OutInfo(_))),
       "subscriptionType" -> pure(_ => ss.subscription.map[TypeInfo](TypeInfo.OutInfo(_))),
