@@ -239,7 +239,7 @@ object QueryParser {
     (!(booleanValue | nullValue)).with1 *> name
 
   lazy val listValue =
-    (value <* comma.?).rep.between(t('['), t(']')).map(_.toList) |
+    (value <* seps0).rep0.with1.between(t('['), t(']')) |
       (t('[') *> t(']')).as(Nil)
 
   lazy val objectValue =
