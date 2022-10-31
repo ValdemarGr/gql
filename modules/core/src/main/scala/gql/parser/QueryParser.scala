@@ -139,7 +139,7 @@ object QueryParser {
 
   final case class SelectionSet(selections: NonEmptyList[Pos[Selection]])
   lazy val selectionSet: P[SelectionSet] = P.defer {
-    Pos.pos(selection).rep.between(t('{'), t('}')).map(SelectionSet(_))
+    Pos.pos(w(selection)).repSep(seps0).between(t('{'), t('}')).map(SelectionSet(_))
   }
 
   sealed trait Selection
@@ -243,7 +243,7 @@ object QueryParser {
       (t('[') *> t(']')).as(Nil)
 
   lazy val objectValue =
-    (objectField <* comma.?).rep.between(t('{'), t('}')).map(_.toList) |
+    (objectField <* seps0).rep.between(t('{'), t('}')).map(_.toList) |
       (t('{') *> t('}')).as(Nil)
 
   lazy val objectField =

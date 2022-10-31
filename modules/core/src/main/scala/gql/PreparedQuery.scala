@@ -99,9 +99,9 @@ object PreparedQuery {
   }
 
   object InArr {
-    def unapply[A](p: In[A]): Option[(In[A], Seq[?] => A)] =
+    def unapply[A](p: In[A]): Option[(In[A], Seq[?] => Either[String, A])] =
       p.asInstanceOf[In[A]] match {
-        case x: InArr[?, A] => Some((x.of.asInstanceOf[In[A]], x.fromSeq.asInstanceOf[Seq[?] => A]))
+        case x: InArr[?, A] => Some((x.of.asInstanceOf[In[A]], x.fromSeq.asInstanceOf[Seq[?] => Either[String, A]]))
         case _              => None
       }
   }
@@ -542,7 +542,7 @@ object PreparedQuery {
           parseInputObj[F, A](o, fields, variableMap, ambigiousEnum)
         }
       case (InArr(of, dec), P.Value.ListValue(xs)) =>
-        xs.traverse(parseInput[F, A](_, of.asInstanceOf[In[A]], variableMap, ambigiousEnum)).map(dec)
+        xs.traverse(parseInput[F, A](_, of, variableMap, ambigiousEnum)).flatMap(dec(_).fold(raise(_, None), F.pure(_)))
       case (InOpt(_), P.Value.NullValue) => F.pure(None.asInstanceOf[A])
       case (InOpt(of), x)                => parseInput[F, A](x, of, variableMap, ambigiousEnum).map(Some(_).asInstanceOf[A])
       case (i, _)                        => raise(s"expected ${inName(i)} type, but got ${pValueName(v)}", None)
