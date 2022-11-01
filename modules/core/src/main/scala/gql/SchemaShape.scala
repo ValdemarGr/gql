@@ -654,17 +654,18 @@ object SchemaShape {
       def asToplevel: Option[Toplevel[?]]
       def next: Option[TypeInfo]
     }
+    sealed trait InnerTypeInfo extends TypeInfo {
+      def next: Option[TypeInfo] = None
+    }
     object TypeInfo {
-      final case class OutInfo(t: OutToplevel[F, ?]) extends TypeInfo {
-        def asToplevel = Some(t)
-        def next = None
+      final case class OutInfo(t: OutToplevel[F, ?]) extends InnerTypeInfo {
+        def asToplevel: Option[Toplevel[?]] = Some(t)
       }
-      final case class InInfo(t: InToplevel[?]) extends TypeInfo {
-        def asToplevel = Some(t)
-        def next = None
+      final case class InInfo(t: InToplevel[?]) extends InnerTypeInfo {
+        def asToplevel: Option[Toplevel[?]] = Some(t)
       }
 
-      final case class ModifierStack(modifiers: NonEmptyList[Modifier], inner: TypeInfo) extends TypeInfo {
+      final case class ModifierStack(modifiers: NonEmptyList[Modifier], inner: InnerTypeInfo) extends TypeInfo {
         def asToplevel = None
         def head = modifiers.head
         def next = Some {
@@ -837,9 +838,9 @@ object SchemaShape {
       "__Schema",
       "description" -> pure(_ => Option.empty[String]),
       "types" -> pure { _ =>
-        val outs = d.outputs.values.toList.map(TypeInfo.fromOutput(_))
-        val ins = d.inputs.values.toList.map(TypeInfo.fromInput(_))
-        outs ++ ins
+        val outs = d.outputs.values.toList.map(TypeInfo.OutInfo(_))
+        val ins = d.inputs.values.toList.map(TypeInfo.InInfo(_))
+        (outs ++ ins): List[TypeInfo]
       },
       "queryType" -> pure(_ => TypeInfo.OutInfo(ss.query): TypeInfo),
       "mutationType" -> pure(_ => ss.mutation.map[TypeInfo](TypeInfo.OutInfo(_))),
