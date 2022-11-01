@@ -47,7 +47,7 @@ object ParserUtil {
 
     val ln = left.count(_ == '\n')
 
-    val conflictingCharacter = r0.head
+    val conflictingCharacter = r0.headOption.getOrElse('?')
 
     val virtualN = 3
     // may be negative

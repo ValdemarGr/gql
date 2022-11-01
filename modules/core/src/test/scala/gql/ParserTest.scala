@@ -535,9 +535,13 @@ query ($foo: TestType = { a: 123 }) { id }
           }
         }
       }
+  """,
+    s"""
+    query {
+      field(arg: ["l"1"2"])
+    }
   """
   )
-
 
   // Old queries WITH directives
   // lazy val queries = List(
@@ -681,7 +685,7 @@ query ($foo: TestType = { a: 123 }) { id }
   //         ...frag @onFragmentSpread
   //       }
   //     }
-      
+
   //     field3
   //     field4
   //     requiredField5: field5
