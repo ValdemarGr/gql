@@ -419,6 +419,34 @@ object SchemaShape {
     }
   }
 
+  sealed trait Modifier
+  object Modifier {
+    case object List extends Modifier
+    case object NonNull extends Modifier
+  }
+  final case class ModifierStack[+T](modifiers: List[Modifier], inner: T)
+
+  def getOutputModifierStack[F[_]](t: Out[F, ?], optional: Boolean = false): ModifierStack[OutToplevel[F, ?]] = {
+    val optExtra = if (optional) Nil else List(Modifier.NonNull)
+    t match {
+      case t: OutToplevel[F, ?] => ModifierStack(optExtra, t)
+      case OutArr(of, _) =>
+        val inner = getOutputModifierStack[F](of, optional = false)
+        ModifierStack(optExtra ++ (Modifier.List :: inner.modifiers), inner.inner)
+      case o: OutOpt[F, ?] => getOutputModifierStack[F](o.of, optional = true)
+    }
+  }
+  def getInputModifierStack(t: In[?], optional: Boolean = false): ModifierStack[InToplevel[?]] = {
+    val optExtra = if (optional) Nil else List(Modifier.NonNull)
+    t match {
+      case t: InToplevel[?] => ModifierStack(optExtra, t)
+      case InArr(of, _) =>
+        val inner = getInputModifierStack(of, optional = false)
+        ModifierStack(optExtra ++ (Modifier.List :: inner.modifiers), inner.inner)
+      case o: InOpt[?] => getInputModifierStack(o.of, optional = true)
+    }
+  }
+
   def renderValueDoc(v: Value): Doc = {
     import Value._
     v match {
@@ -455,29 +483,17 @@ object SchemaShape {
           o + Doc.hardLine
       }
 
-    def getInputNameDoc(in: In[?], optional: Boolean = false): Doc =
-      in match {
-        case t: Toplevel[?] => Doc.text(if (optional) t.name else t.name + "!")
-        case InArr(of, _) =>
-          lazy val d = getInputNameDoc(of, optional = false)
-          d.tightBracketBy(Doc.char('['), Doc.char(']')) + (if (optional) Doc.empty else Doc.char('!'))
-        case InOpt(of) => getInputNameDoc(of, optional = true)
+    def renderModifierStack(ms: ModifierStack[Toplevel[?]]) =
+      ms.modifiers.foldLeft(Doc.text(ms.inner.name)) {
+        case (accum, Modifier.List)    => accum.tightBracketBy(Doc.char('['), Doc.char(']'))
+        case (accum, Modifier.NonNull) => accum + Doc.char('!')
       }
 
     def renderArgValueDoc(av: ArgValue[?]): Doc = {
       val o = av.defaultValue.map(dv => Doc.text(" = ") + renderValueDoc(dv)).getOrElse(Doc.empty)
       doc(av.description) +
-        Doc.text(av.name) + Doc.text(": ") + getInputNameDoc(av.input.value) + o
+        Doc.text(av.name) + Doc.text(": ") + renderModifierStack(getInputModifierStack(av.input.value)) + o
     }
-
-    def renderOutputDoc[G[_]](o: Out[G, ?], optional: Boolean = false): Doc =
-      o match {
-        case ot: OutToplevel[G, ?] => Doc.text(if (optional) ot.name else ot.name + "!")
-        case OutArr(of, _) =>
-          lazy val d = renderOutputDoc(of, optional = false)
-          d.tightBracketBy(Doc.char('['), Doc.char(']')) + (if (optional) Doc.empty else Doc.char('!'))
-        case OutOpt(of) => renderOutputDoc(of, optional = true)
-      }
 
     def renderFieldDoc[G[_]](name: String, field: Field[G, ?, ?, ?]): Doc = {
       val args = NonEmptyChain
@@ -488,7 +504,7 @@ object SchemaShape {
         .getOrElse(Doc.empty)
 
       doc(field.description) +
-        Doc.text(name) + args + Doc.text(": ") + renderOutputDoc(field.output.value)
+        Doc.text(name) + args + Doc.text(": ") + renderModifierStack(getOutputModifierStack(field.output.value))
     }
 
     lazy val discovery: DiscoveryState[F] = shape.discover
@@ -611,7 +627,7 @@ object SchemaShape {
       "__InputValue",
       "name" -> pure(_.name),
       "description" -> pure(_.description),
-      "type" -> pure(x => (TypeInfo.InInfo(x.input.value): TypeInfo)),
+      "type" -> pure(x => TypeInfo.fromInput(x.input.value)),
       "defaultValue" -> pure(x => x.defaultValue.map(renderValueDoc(_).render(80))),
       "isDeprecated" -> pure(_ => false),
       "deprecationReason" -> pure(_ => Option.empty[String])
@@ -629,97 +645,63 @@ object SchemaShape {
       "name" -> pure(_.name),
       "description" -> pure(_.field.description),
       "args" -> pure(inclDeprecated)((x, _) => x.field.args.entries.toList),
-      "type" -> pure(x => (TypeInfo.OutInfo(x.field.output.value): TypeInfo)),
+      "type" -> pure(x => TypeInfo.fromOutput(x.field.output.value)),
       "isDeprecated" -> pure(_ => false),
       "deprecationReason" -> pure(_ => Option.empty[String])
     )
 
     sealed trait TypeInfo extends Product with Serializable {
       def asToplevel: Option[Toplevel[?]]
+      def next: Option[TypeInfo]
     }
     object TypeInfo {
-      // TODO unify this and the schema shape modifier stack code
-      final case class OutInfo(t: Out[F, ?]) extends TypeInfo {
-        lazy val inner: OutToplevel[F, ?] = {
-          val (ot, _) = partition
-          ot
-        }
+      final case class OutInfo(t: OutToplevel[F, ?]) extends TypeInfo {
+        def asToplevel = Some(t)
+        def next = None
+      }
+      final case class InInfo(t: InToplevel[?]) extends TypeInfo {
+        def asToplevel = Some(t)
+        def next = None
+      }
 
-        override lazy val asToplevel: Option[Toplevel[?]] = Some(inner)
-
-        lazy val modifierStack: Option[ModifierStack] = {
-          val (_, ms) = partition
-          ms
-        }
-
-        lazy val partition: (OutToplevel[F, ?], Option[ModifierStack]) = {
-          def go(t: Out[F, ?], inOption: Boolean = false): (OutToplevel[F, ?], Chain[Modifier]) = {
-            val suffix = if (inOption) Chain.empty else Chain(Modifier.NonNull)
-            t match {
-              case t: OutToplevel[F, ?] => (t, suffix)
-              case OutArr(x, _) =>
-                val (t, stack) = go(x.asInstanceOf[Out[F, Any]], inOption = false)
-                (t, stack append Modifier.List concat suffix)
-              case OutOpt(x) =>
-                val (t, stack) = go(x.asInstanceOf[Out[F, Any]], inOption = true)
-                (t, stack append Modifier.NonNull)
-            }
+      final case class ModifierStack(modifiers: NonEmptyList[Modifier], inner: TypeInfo) extends TypeInfo {
+        def asToplevel = None
+        def head = modifiers.head
+        def next = Some {
+          modifiers.tail match {
+            case Nil    => inner
+            case h :: t => ModifierStack(NonEmptyList(h, t), inner)
           }
-          val (ot, stack) = go(t)
-          (ot, stack.toList.toNel.map(ModifierStack(_)))
-        }
-      }
-      final case class InInfo(t: In[?]) extends TypeInfo {
-        lazy val inner: InToplevel[?] = {
-          val (ot, _) = partition
-          ot
-        }
-
-        override lazy val asToplevel: Option[Toplevel[?]] = Some(inner)
-
-        lazy val modifierStack: Option[ModifierStack] = {
-          val (_, ms) = partition
-          ms
-        }
-
-        lazy val partition: (InToplevel[?], Option[ModifierStack]) = {
-          def go(t: In[?], inOption: Boolean = false): (InToplevel[?], Chain[Modifier]) = {
-            val suffix = if (inOption) Chain.empty else Chain(Modifier.NonNull)
-            t match {
-              case t: InToplevel[?] => (t, suffix)
-              case InArr(x, _) =>
-                val (t, stack) = go(x, inOption = false)
-                (t, stack append Modifier.List concat suffix)
-              case InOpt(x) =>
-                val (t, stack) = go(x, inOption = true)
-                (t, stack append Modifier.NonNull)
-            }
-          }
-          val (ot, stack) = go(t)
-          (ot, stack.toList.toNel.map(ModifierStack(_)))
         }
       }
 
-      sealed trait Modifier
-      object Modifier {
-        case object List extends Modifier
-        case object NonNull extends Modifier
+      def fromOutput(o: Out[F, ?]): TypeInfo = {
+        val ms = getOutputModifierStack[F](o)
+        ms.modifiers match {
+          case Nil    => OutInfo(ms.inner)
+          case h :: t => ModifierStack(NonEmptyList(h, t), OutInfo(ms.inner))
+        }
       }
-      final case class ModifierStack(t: NonEmptyList[Modifier]) extends TypeInfo {
-        override val asToplevel = None
+
+      def fromInput(i: In[?]): TypeInfo = {
+        val ms = getInputModifierStack(i)
+        ms.modifiers match {
+          case Nil    => InInfo(ms.inner)
+          case h :: t => ModifierStack(NonEmptyList(h, t), InInfo(ms.inner))
+        }
       }
     }
 
     implicit lazy val __type: Type[F, TypeInfo] = tpe[F, TypeInfo](
       "__Type",
       "kind" -> pure {
-        case TypeInfo.ModifierStack(x) =>
-          x.head match {
-            case TypeInfo.Modifier.List    => __TypeKind.LIST
-            case TypeInfo.Modifier.NonNull => __TypeKind.NON_NULL
+        case m: TypeInfo.ModifierStack =>
+          m.head match {
+            case Modifier.List    => __TypeKind.LIST
+            case Modifier.NonNull => __TypeKind.NON_NULL
           }
         case oi: TypeInfo.OutInfo =>
-          oi.inner match {
+          oi.t match {
             case _: Scalar[F, ?]    => __TypeKind.SCALAR
             case _: Enum[F, ?]      => __TypeKind.ENUM
             case _: Type[F, ?]      => __TypeKind.OBJECT
@@ -727,7 +709,7 @@ object SchemaShape {
             case _: Union[F, ?]     => __TypeKind.UNION
           }
         case ii: TypeInfo.InInfo =>
-          ii.inner match {
+          ii.t match {
             case Scalar(_, _, _, _) => __TypeKind.SCALAR
             case Enum(_, _, _)      => __TypeKind.ENUM
             case _: Input[?]        => __TypeKind.INPUT_OBJECT
@@ -737,7 +719,7 @@ object SchemaShape {
       "description" -> pure(_.asToplevel.flatMap(_.description)),
       "fields" -> pure(inclDeprecated) {
         case (oi: TypeInfo.OutInfo, _) =>
-          oi.inner match {
+          oi.t match {
             case Type(_, fields, _, _)      => Some(fields.toList.map { case (k, v) => NamedField(k, v) })
             case Interface(_, fields, _, _) => Some(fields.toList.map { case (k, v) => NamedField(k, v) })
             case _                          => None
@@ -746,7 +728,7 @@ object SchemaShape {
       },
       "interfaces" -> pure {
         case oi: TypeInfo.OutInfo =>
-          oi.inner match {
+          oi.t match {
             case Type(_, _, impls, _)      => impls.map[TypeInfo](impl => TypeInfo.OutInfo(impl.implementation.value)).some
             case Interface(_, _, impls, _) => impls.map[TypeInfo](impl => TypeInfo.OutInfo(impl.implementation.value)).some
             case _                         => None
@@ -755,7 +737,7 @@ object SchemaShape {
       },
       "possibleTypes" -> pure {
         case oi: TypeInfo.OutInfo =>
-          oi.inner match {
+          oi.t match {
             case Interface(name, _, _, _) =>
               d.implementations
                 .get(name)
@@ -773,18 +755,13 @@ object SchemaShape {
       },
       "inputFields" -> pure(inclDeprecated) {
         case (ii: TypeInfo.InInfo, _) =>
-          ii.inner match {
+          ii.t match {
             case Input(_, fields, _) => Some(fields.entries.toList)
             case _                   => None
           }
         case _ => None
       },
-      "ofType" -> pure {
-        case TypeInfo.ModifierStack(NonEmptyList(_, tl)) =>
-          tl.toNel.map[TypeInfo](TypeInfo.ModifierStack(_))
-        case o: TypeInfo.OutInfo => o.modifierStack
-        case i: TypeInfo.InInfo  => i.modifierStack
-      }
+      "ofType" -> pure(_.next)
     )
 
     final case class NamedEnumValue(
@@ -860,8 +837,8 @@ object SchemaShape {
       "__Schema",
       "description" -> pure(_ => Option.empty[String]),
       "types" -> pure { _ =>
-        val outs = d.outputs.values.toList.map(TypeInfo.OutInfo(_))
-        val ins = d.inputs.values.toList.map(TypeInfo.InInfo(_))
+        val outs = d.outputs.values.toList.map(TypeInfo.fromOutput(_))
+        val ins = d.inputs.values.toList.map(TypeInfo.fromInput(_))
         outs ++ ins
       },
       "queryType" -> pure(_ => TypeInfo.OutInfo(ss.query): TypeInfo),
