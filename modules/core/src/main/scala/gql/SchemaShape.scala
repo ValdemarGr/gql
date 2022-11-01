@@ -592,6 +592,7 @@ object SchemaShape {
 
   def introspect[F[_]](ss: SchemaShape[F, ?, ?, ?]): NonEmptyList[(String, Field[F, Unit, ?, ?])] = {
     import gql.dsl._
+
     // We do a little lazy evaluation trick to include the introspection schema in itself
     lazy val d = {
       val ds = ss.discover
@@ -605,12 +606,14 @@ object SchemaShape {
         )
       )
       // Omit Query
-      val withoutQuery = introspectionDiscovery.outputs - "Query"
-      DiscoveryState[F](
-        ds.inputs ++ introspectionDiscovery.inputs,
-        ds.outputs ++ withoutQuery,
-        ds.implementations ++ introspectionDiscovery.implementations
+      val withoutQuery = introspectionDiscovery.copy(outputs = introspectionDiscovery.outputs - "Query")
+      val out = DiscoveryState[F](
+        ds.inputs ++ withoutQuery.inputs,
+        ds.outputs ++ withoutQuery.outputs,
+        ds.implementations ++ withoutQuery.implementations
       )
+      // Omit dusplicate types
+      out.copy(inputs = out.inputs -- ds.outputs.keySet)
     }
 
     implicit lazy val __typeKind: Enum[F, __TypeKind] = enumType[F, __TypeKind](
