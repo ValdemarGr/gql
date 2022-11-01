@@ -649,8 +649,8 @@ object PreparedQuery {
 
   def operationType(od: P.OperationDefinition) =
     od match {
-      case P.OperationDefinition.Simple(_)                => P.OperationType.Query
-      case P.OperationDefinition.Detailed(ot, _, _, _, _) => ot
+      case P.OperationDefinition.Simple(_)             => P.OperationType.Query
+      case P.OperationDefinition.Detailed(ot, _, _, _) => ot
     }
 
   // TODO add another phase after finding the OperationDefinition and before this,
@@ -689,7 +689,7 @@ object PreparedQuery {
 
     val selF = op match {
       case P.OperationDefinition.Simple(sel) => F.pure((sel, Map.empty[String, (In[Any], Any)]))
-      case P.OperationDefinition.Detailed(_, _, vdsO, _, sel) =>
+      case P.OperationDefinition.Detailed(_, _, vdsO, sel) =>
         val varMapF =
           vdsO.toList
             .flatMap(_.nel.toList)
