@@ -604,9 +604,11 @@ object SchemaShape {
           )
         )
       )
+      // Omit Query
+      val withoutQuery = introspectionDiscovery.outputs - "Query"
       DiscoveryState[F](
         ds.inputs ++ introspectionDiscovery.inputs,
-        ds.outputs ++ introspectionDiscovery.outputs,
+        ds.outputs ++ withoutQuery,
         ds.implementations ++ introspectionDiscovery.implementations
       )
     }
