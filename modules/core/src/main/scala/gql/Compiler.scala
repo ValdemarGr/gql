@@ -42,28 +42,11 @@ final case class CompilerParameters(
     operationName: Option[String]
 )
 
-// trait Compiler[F[_]] { self =>
-//   def compile(params: CompilerParameters): Resource[F, Compiler.Outcome[F]]
-
-//   def mapK[G[_]: MonadCancelThrow](f: F ~> G)(implicit F: MonadCancelThrow[F]): Compiler[G] = new Compiler[G] {
-//     override def compile(params: CompilerParameters): Resource[G, Either[CompilationError, Application[G]]] =
-//       self.compile(params).mapK(f).map(_.map(_.mapK(f)))
-//   }
-// }
-
 object Compiler { outer =>
   type Outcome[F[_]] = Either[CompilationError, Application[F]]
 
   final class PartiallyAppliedCompiler[F[_]](val F: Async[F]) extends AnyVal {
     implicit def F0: Async[F] = F
-
-    // def make[Q, M, S](
-    //     schema: Schema[F, Q, M, S],
-    //     queryInput: F[Q] = F.unit,
-    //     mutationInput: F[M] = F.unit,
-    //     subscriptionInput: F[S] = F.unit
-    // ): Compiler[F] =
-    //   cp => Resource.pure(compileWith(schema, cp, queryInput, mutationInput, subscriptionInput))
 
     def compile[Q, M, S](
         schema: Schema[F, Q, M, S],
