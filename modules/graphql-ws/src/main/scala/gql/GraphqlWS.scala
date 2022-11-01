@@ -1,6 +1,7 @@
 package gql.graphqlws
 
 import cats.effect._
+import cats.effect.implicits._
 import cats.implicits._
 import io.circe._
 import io.circe.syntax._
@@ -9,6 +10,10 @@ import cats.data._
 import cats.effect.std._
 
 object GraphqlWS {
+  type Compiler[F[_]] = CompilerParameters => Resource[F, Compiler.Outcome[F]]
+
+  type GetCompiler[F[_]] = Map[String, Json] => F[Either[String, Compiler[F]]]
+
   final case class SubscriptionState[F[_]](
       close: F[Unit]
   )
@@ -33,9 +38,7 @@ object GraphqlWS {
 
   type Message = Either[TechnicalError, FromServer]
 
-  def apply[F[_]](
-      getCompiler: Map[String, Json] => F[Either[String, Compiler[F]]]
-  )(implicit
+  def apply[F[_]](getCompiler: GetCompiler[F])(implicit
       F: Async[F]
   ): Resource[F, (fs2.Stream[F, Either[TechnicalError, FromServer]], fs2.Stream[F, FromClient] => fs2.Stream[F, Unit])] = {
     Supervisor[F].evalMap { sup =>
@@ -81,58 +84,59 @@ object GraphqlWS {
                             // Start out with F.unit
                             val newState = State.Connected(ip, compiler, m + (id -> F.unit))
 
+                            val compiled = compiler(payload)
+
                             val subscribeF: F[Unit] =
-                              compiler
-                                .compile(payload)
-                                .flatMap {
-                                  // Failed during parsing or preparation
-                                  // Emit error and remove ourselves from the map
-                                  case Left(err) =>
-                                    val j = err match {
-                                      case CompilationError.Parse(p)       => p.asGraphQL
-                                      case CompilationError.Preparation(p) => p.asGraphQL
-                                    }
-
-                                    val cleanupF = state.modify {
-                                      case State.Connected(_, _, m2) =>
-                                        val releaseF = m2.get(id).sequence_
-                                        (State.Connected(ip, compiler, m2 - id), releaseF)
-                                      case x => (x, F.unit)
-                                    }.flatten
-
-                                    cleanupF >> send(FromServer.Error(id, Chain(j)))
-                                  case Right(app) =>
-                                    val s = app match {
-                                      case Application.Query(run)        => fs2.Stream.eval(run)
-                                      case Application.Mutation(run)     => fs2.Stream.eval(run)
-                                      case Application.Subscription(run) => run
-                                    }
-
-                                    val cleanupF = state.update {
-                                      case State.Connected(_, _, m2) => State.Connected(ip, compiler, m2 - id)
-                                      case x                         => x
-                                    }
-
-                                    val bgFiber =
-                                      sup.supervise {
-                                        (
-                                          s.map(x => Right(FromServer.Next(id, x))) ++
-                                            fs2.Stream(Right(Bidirectional.Complete(id))) ++
-                                            fs2.Stream.exec(cleanupF)
-                                        )
-                                          .enqueueUnterminated(toClient)
-                                          .compile
-                                          .drain
+                              F.uncancelable { _ =>
+                                compiled.allocated.flatMap { case (outcome, release) =>
+                                  outcome match {
+                                    case Left(err) =>
+                                      val j = err match {
+                                        case CompilationError.Parse(p)       => p.asGraphQL
+                                        case CompilationError.Preparation(p) => p.asGraphQL
                                       }
 
-                                    bgFiber.flatMap { fib =>
-                                      state.modify {
-                                        case State.Connected(ip, compiler, m) =>
-                                          (State.Connected(ip, compiler, m + (id -> fib.cancel)), F.unit)
-                                        case x => (x, fib.cancel)
-                                      }.flatten
-                                    }
+                                      val cleanupF = state.update {
+                                        case State.Connected(_, _, m2) => State.Connected(ip, compiler, m2 - id)
+                                        case x                         => x
+                                      }
+
+                                      release >> cleanupF >> send(FromServer.Error(id, Chain(j)))
+                                    case Right(app) =>
+                                      val s = app match {
+                                        case Application.Query(run)        => fs2.Stream.eval(run)
+                                        case Application.Mutation(run)     => fs2.Stream.eval(run)
+                                        case Application.Subscription(run) => run
+                                      }
+
+                                      val cleanupF = state.update {
+                                        case State.Connected(_, _, m2) => State.Connected(ip, compiler, m2 - id)
+                                        case x                         => x
+                                      }
+
+                                      val bgFiber =
+                                        sup.supervise {
+                                          (
+                                            s.map(x => Right(FromServer.Next(id, x))) ++
+                                              fs2.Stream(Right(Bidirectional.Complete(id))) ++
+                                              fs2.Stream.exec(cleanupF)
+                                          )
+                                            .enqueueUnterminated(toClient)
+                                            .compile
+                                            .drain
+                                            .guarantee(release)
+                                        }
+
+                                      bgFiber.flatMap { fib =>
+                                        state.modify {
+                                          case State.Connected(ip, compiler, m) =>
+                                            (State.Connected(ip, compiler, m + (id -> fib.cancel)), F.unit)
+                                          case x => (x, fib.cancel)
+                                        }.flatten
+                                      }
+                                  }
                                 }
+                              }
 
                             (newState, subscribeF)
                         }

@@ -10,14 +10,21 @@ import org.http4s.server.websocket.WebSocketBuilder
 import gql.graphqlws.GraphqlWS
 import org.http4s.websocket.WebSocketFrame
 
+final case class Http4sCompilerParametes(
+    compilerParameters: CompilerParameters,
+    headers: Headers
+)
+
 object Http4sRoutes {
   protected implicit lazy val cd: Decoder[CompilerParameters] =
     io.circe.generic.semiauto.deriveDecoder[CompilerParameters]
   protected implicit def ed[F[_]: Concurrent]: EntityDecoder[F, CompilerParameters] =
     org.http4s.circe.jsonOf[F, CompilerParameters]
 
+  type Compiler[F[_]] = Http4sCompilerParametes => F[Either[Response[F], Compiler.Outcome[F]]]
+
   def sync[F[_]](
-      compiler: Http4sCompiler[F],
+      compiler: Compiler[F],
       path: String = "graphql"
   )(implicit F: Concurrent[F]): HttpRoutes[F] = {
     val d = new Http4sDsl[F] {}
@@ -27,9 +34,11 @@ object Http4sRoutes {
 
     HttpRoutes.of[F] { case r @ POST -> Root / `path` =>
       r.as[CompilerParameters].flatMap { params =>
-        compiler.compile(Http4sCompilerParametes(params, r.headers)).flatMap {
-          case Left(res) => F.pure(res)
-          case Right(app) =>
+        compiler(Http4sCompilerParametes(params, r.headers)).flatMap {
+          case Left(response)                                => F.pure(response)
+          case Right(Left(CompilationError.Parse(pe)))       => Ok(pe.asGraphQL.asJson)
+          case Right(Left(CompilationError.Preparation(pe))) => Ok(pe.asGraphQL.asJson)
+          case Right(Right(app)) =>
             val fa = app match {
               case Application.Mutation(run)     => run
               case Application.Query(run)        => run
@@ -43,7 +52,7 @@ object Http4sRoutes {
   }
 
   def ws[F[_]](
-      getCompiler: Map[String, Json] => F[Either[String, Compiler[F]]],
+      getCompiler: GraphqlWS.GetCompiler[F],
       wsb: WebSocketBuilder[F],
       path: String = "ws"
   )(implicit F: Async[F]): HttpRoutes[F] = {
