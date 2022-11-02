@@ -89,7 +89,7 @@ object NatchezTracer {
             optimizedF.flatTap { optimized =>
               Trace[F].put(
                 "graphql.planner.optimized.totalcost" -> optimized.totalCost.toString(),
-                "graphql.planner.optimized.plandiff" -> optimized.show(showImprovement = true)
+                // "graphql.planner.optimized.plandiff" -> optimized.show(showImprovement = true)
               )
             }
           }
