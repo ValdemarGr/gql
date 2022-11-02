@@ -11,7 +11,7 @@ import cats.effect.std.Queue
 
 object NatchezTracer {
   def traceParser[F[_]: Trace](
-    parser: String => F[Either[ParseError, NonEmptyList[P.ExecutableDefinition]]]
+      parser: String => F[Either[ParseError, NonEmptyList[P.ExecutableDefinition]]]
   )(implicit F: Monad[F]): String => F[Either[ParseError, NonEmptyList[P.ExecutableDefinition]]] = query =>
     Trace[F].span("graphql.parse") {
       Trace[F].put("graphql.query" -> query) >>
@@ -27,7 +27,7 @@ object NatchezTracer {
     }
 
   def tracePreparation[F[_]: Trace, A](
-    prepare: F[Either[PreparedQuery.PositionalError, A]]
+      prepare: F[Either[PreparedQuery.PositionalError, A]]
   )(implicit F: Monad[F]): F[Either[PreparedQuery.PositionalError, A]] =
     Trace[F].span("graphql.preparation") {
       prepare.flatMap {
@@ -88,7 +88,7 @@ object NatchezTracer {
 
             optimizedF.flatTap { optimized =>
               Trace[F].put(
-                "graphql.planner.optimized.totalcost" -> optimized.totalCost.toString(),
+                "graphql.planner.optimized.totalcost" -> optimized.totalCost.toString()
                 // "graphql.planner.optimized.plandiff" -> optimized.show(showImprovement = true)
               )
             }

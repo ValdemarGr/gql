@@ -81,8 +81,8 @@ object SchemaShape {
 
     def goOutput[G[_]](out: Out[F, ?])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]]): G[Unit] =
       out match {
-        case OutArr(of, _) => goOutput[G](of.asInstanceOf[Out[F, Any]])
-        case OutOpt(of)    => goOutput[G](of.asInstanceOf[Out[F, Any]])
+        case OutArr(of, _, _) => goOutput[G](of.asInstanceOf[Out[F, Any]])
+        case OutOpt(of, _)    => goOutput[G](of.asInstanceOf[Out[F, Any]])
         case t: OutToplevel[F, ?] =>
           outputNotSeen(t) {
             def handleFields(o: ObjectLike[F, ?]): G[Unit] =
@@ -399,8 +399,8 @@ object SchemaShape {
     def validateOutput[G[_]: Monad](tl: Out[F, ?])(implicit S: Stateful[G, ValidationState]): G[Unit] =
       tl match {
         case x: OutToplevel[F, ?] => validateToplevel[G](x)
-        case OutArr(of, _)        => validateOutput[G](of.asInstanceOf[Out[F, Any]])
-        case OutOpt(of)           => validateOutput[G](of.asInstanceOf[Out[F, Any]])
+        case OutArr(of, _, _)     => validateOutput[G](of.asInstanceOf[Out[F, Any]])
+        case OutOpt(of, _)        => validateOutput[G](of.asInstanceOf[Out[F, Any]])
       }
 
     val outs = (schema.query :: (schema.mutation ++ schema.subscription).toList ++ schema.outputTypes)
@@ -430,10 +430,10 @@ object SchemaShape {
     val optExtra = if (optional) Nil else List(Modifier.NonNull)
     t match {
       case t: OutToplevel[F, ?] => ModifierStack(optExtra, t)
-      case OutArr(of, _) =>
+      case OutArr(of, _, _) =>
         val inner = getOutputModifierStack[F](of, optional = false)
         ModifierStack(optExtra ++ (Modifier.List :: inner.modifiers), inner.inner)
-      case o: OutOpt[F, ?] => getOutputModifierStack[F](o.of, optional = true)
+      case o: OutOpt[F, ?, ?] => getOutputModifierStack[F](o.of, optional = true)
     }
   }
   def getInputModifierStack(t: In[?], optional: Boolean = false): ModifierStack[InToplevel[?]] = {

@@ -260,14 +260,12 @@ object Interpreter {
           case PreparedList(of, _) =>
             m.toVector
               .collect { case (Some(GraphArc.Index(i)), tl) => i -> tl }
-              .map { case (i, tl) => i -> reconstructField[F](of, tl) }
+              .map { case (i, tl) => i -> reconstructField[F](of.cont, tl) }
               .sortBy { case (i, _) => i }
               .map { case (_, v) => v }
               .asJson
-          case PreparedOption(of) =>
-            reconstructField[F](of, cursors)
-          case Selection(fields) =>
-            _reconstructSelection(fields, m).asJson
+          case PreparedOption(of) => reconstructField[F](of.cont, cursors)
+          case Selection(fields)  => _reconstructSelection(fields, m).asJson
         }
     }
   }
@@ -425,7 +423,7 @@ class InterpreterImpl[F[_]](
       case PreparedLeaf(_, enc) => W.pure(in.map(en => en.setValue(enc(en.value))))
       case Selection(fields)    => runFields(fields, in)
       case PreparedList(of, toSeq) =>
-        val (emties, continuations) =
+        val (empties, continuations) =
           in.partitionEither { nv =>
             NonEmptyChain.fromChain(Chain.fromSeq(toSeq(nv.value))) match {
               case None      => Left(nv.setValue(Json.arr()))
@@ -433,7 +431,7 @@ class InterpreterImpl[F[_]](
             }
           }
 
-        startNext(of, continuations.flatMap(_.toChain)).map(_ ++ emties)
+        runEdge(continuations.flatMap(_.toChain), of.edges.toList, of.cont).map(_ ++ empties)
       case PreparedOption(of) =>
         val (nulls, continuations) =
           in.partitionEither { nv =>
@@ -444,7 +442,8 @@ class InterpreterImpl[F[_]](
               case Some(v) => Right(nv.setValue(v))
             }
           }
-        startNext(of, continuations).map(_ ++ nulls)
+
+        runEdge(continuations, of.edges.toList, of.cont).map(_ ++ nulls)
     }
   }
 

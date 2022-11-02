@@ -148,11 +148,13 @@ object dsl {
 
   def union[F[_], A](name: String) = PartiallyAppliedUnion0[F, A](name)
 
-  def optType[F[_], A](implicit tpe: => Out[F, A]): Out[F, Option[A]] = OutOpt(tpe)
+  def optType[F[_], A, B](resolver: Resolver[F, A, B])(implicit tpe: => Out[F, B]): Out[F, Option[A]] =
+    OutOpt(tpe, resolver)
 
   def optType[A](implicit tpe: => In[A]): In[Option[A]] = InOpt(tpe)
 
-  def arrType[F[_], A, G[x] <: Seq[x]](implicit tpe: => Out[F, A]): Out[F, G[A]] = OutArr(tpe, identity)
+  def arrType[F[_], A, B, G[x] <: Seq[x]](resolver: Resolver[F, A, B])(implicit tpe: => Out[F, B]): Out[F, G[A]] =
+    OutArr(tpe, identity, resolver)
 
   def arrType[A](implicit tpe: => In[A]): In[Seq[A]] = InArr[A, Seq[A]](tpe, _.asRight)
 

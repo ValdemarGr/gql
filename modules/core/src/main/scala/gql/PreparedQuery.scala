@@ -69,9 +69,9 @@ object PreparedQuery {
 
   final case class Selection[F[_], A](fields: NonEmptyList[PreparedField[F, A]]) extends Prepared[F, A]
 
-  final case class PreparedList[F[_], A](of: Prepared[F, A], toSeq: Any => Seq[A]) extends Prepared[F, A]
+  final case class PreparedList[F[_], A](of: PreparedCont[F], toSeq: Any => Seq[A]) extends Prepared[F, A]
 
-  final case class PreparedOption[F[_], A](of: Prepared[F, A]) extends Prepared[F, A]
+  final case class PreparedOption[F[_], A](of: PreparedCont[F]) extends Prepared[F, A]
 
   final case class PreparedLeaf[F[_], A](name: String, encode: A => Json) extends Prepared[F, A]
 
@@ -132,18 +132,19 @@ object PreparedQuery {
   }
 
   object OutArr {
-    def unapply[G[_], A](p: Out[G, A]): Option[(Out[G, A], Any => Seq[A])] =
+    def unapply[G[_], A](p: Out[G, A]): Option[(Out[G, A], Any => Seq[A], Resolver[G, Any, Any])] =
       p.asInstanceOf[Out[G, A]] match {
-        case x: OutArr[G, ?, A] => Some((x.of.asInstanceOf[Out[G, A]], x.toSeq.asInstanceOf[Any => Seq[A]]))
-        case _                  => None
+        case x: OutArr[G, ?, A, ?] =>
+          Some((x.of.asInstanceOf[Out[G, A]], x.toSeq.asInstanceOf[Any => Seq[A]], x.resolver.asInstanceOf[Resolver[G, Any, Any]]))
+        case _ => None
       }
   }
 
   object OutOpt {
-    def unapply[G[_], A](p: Out[G, A]): Option[Out[G, A]] =
+    def unapply[G[_], A](p: Out[G, A]): Option[(Out[G, A], Resolver[G, Any, Any])] =
       p.asInstanceOf[Out[G, Option[A]]] match {
-        case x: OutOpt[G, A] => Some(x.of.asInstanceOf[Out[G, A]])
-        case _               => None
+        case x: OutOpt[G, A, ?] => Some((x.of.asInstanceOf[Out[G, A]], x.resolver.asInstanceOf[Resolver[G, Any, Any]]))
+        case _                  => None
       }
   }
 
@@ -185,8 +186,8 @@ object PreparedQuery {
     case Interface(name, _, _, _) => name
     case Type(name, _, _, _)      => name
     case Scalar(name, _, _, _)    => name
-    case OutOpt(of)               => underlyingOutputTypename(of)
-    case OutArr(of, _)            => underlyingOutputTypename(of)
+    case OutOpt(of, _)            => underlyingOutputTypename(of)
+    case OutArr(of, _, _)         => underlyingOutputTypename(of)
   }
 
   def friendlyName[G[_], A](ot: Out[G, A]): String = (ot: @unchecked) match {
@@ -195,8 +196,8 @@ object PreparedQuery {
     case Type(name, _, _, _)      => name
     case Union(name, _, _)        => name
     case Interface(name, _, _, _) => name
-    case OutOpt(of)               => s"(${friendlyName(of)} | null)"
-    case OutArr(of, _)            => s"[${friendlyName(of)}]"
+    case OutOpt(of, _)            => s"(${friendlyName(of)} | null)"
+    case OutArr(of, _, _)         => s"[${friendlyName(of)}]"
   }
 
   def nextId[F[_]: Monad](implicit S: Stateful[F, Prep]) =
@@ -364,26 +365,32 @@ object PreparedQuery {
 
       val tn = underlyingOutputTypename(field.output.value)
 
-      def typePrep(t: Out[G, Any]): F[Prepared[G, Any]] =
-        (t, ss) match {
-          case (OutArr(inner, toSeq), _) => typePrep(inner).map(PreparedList(_, toSeq))
-          case (OutOpt(inner), _)        => typePrep(inner).map(PreparedOption(_))
-          case (ol: Selectable[G, Any], Some(ss)) =>
-            prepareSelections[F, G](ol, ss, variableMap, fragments, tn, discoveryState)
-              .map(Selection(_))
-          case (e: Enum[G, Any], None) =>
-            F.pure(PreparedLeaf(e.name, x => Json.fromString(e.revm(x))))
-          case (s: Scalar[G, Any], None) =>
-            F.pure(PreparedLeaf(s.name, x => s.encoder(x).asJson))
-          case (o, Some(_)) => raise(s"type ${friendlyName[G, Any](o)} cannot have selections", Some(selCaret))
-          case (o, None)    => raise(s"object like type ${friendlyName[G, Any](o)} must have a selection", Some(selCaret))
-        }
+      nextId[F].flatMap { id =>
+        flattenResolvers[F, G](s"${currentTypename}_${gqlField.name}", resolve).flatMap { case (edges, parentName, _) =>
+          def typePrep(t: Out[G, Any], parentName: String): F[Prepared[G, Any]] =
+            (t, ss) match {
+              case (OutArr(inner, toSeq, resolver), _) =>
+                flattenResolvers[F, G](parentName, resolver).flatMap { case (edges, parentName, _) =>
+                  typePrep(inner, parentName).map(cont => PreparedList(PreparedCont(edges, cont), toSeq))
+                }
+              case (OutOpt(inner, resolver), _) =>
+                flattenResolvers[F, G](parentName, resolver).flatMap { case (edges, parentName, _) =>
+                  typePrep(inner, parentName).map(cont => PreparedOption(PreparedCont(edges, cont)))
+                }
+              case (ol: Selectable[G, Any], Some(ss)) =>
+                prepareSelections[F, G](ol, ss, variableMap, fragments, tn, discoveryState)
+                  .map(Selection(_))
+              case (e: Enum[G, Any], None) =>
+                F.pure(PreparedLeaf(e.name, x => Json.fromString(e.revm(x))))
+              case (s: Scalar[G, Any], None) =>
+                F.pure(PreparedLeaf(s.name, x => s.encoder(x).asJson))
+              case (o, Some(_)) => raise(s"type ${friendlyName[G, Any](o)} cannot have selections", Some(selCaret))
+              case (o, None)    => raise(s"object like type ${friendlyName[G, Any](o)} must have a selection", Some(selCaret))
+            }
 
-      val prepF: F[Prepared[G, Any]] = typePrep(tpe)
+          val prepF: F[Prepared[G, Any]] = typePrep(tpe, parentName)
 
-      prepF.flatMap { p =>
-        nextId[F].flatMap { id =>
-          flattenResolvers[F, G](s"${currentTypename}_${gqlField.name}", resolve).map { case (edges, _, _) =>
+          prepF.map { p =>
             val pc = PreparedCont(edges, p)
             PreparedDataField(id, gqlField.name, gqlField.alias, pc)
           }

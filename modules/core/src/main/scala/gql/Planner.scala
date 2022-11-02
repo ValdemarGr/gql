@@ -37,10 +37,10 @@ object Planner {
 
   def costForPrepared[F[_]: Statistics](p: PreparedQuery.Prepared[F, Any], currentCost: Double)(implicit F: Monad[F]): F[List[Node]] =
     p match {
-      case PreparedLeaf(_, _)  => F.pure(Nil)
-      case Selection(fields)   => costForFields[F](currentCost, fields).map(_.toList)
-      case PreparedList(of, _) => costForPrepared(of, currentCost)
-      case PreparedOption(of)  => costForPrepared(of, currentCost)
+      case PreparedLeaf(_, _)    => F.pure(Nil)
+      case Selection(fields)     => costForFields[F](currentCost, fields).map(_.toList)
+      case PreparedList(cont, _) => costForCont[F](cont.edges.toList, cont.cont, currentCost)
+      case PreparedOption(cont)  => costForCont[F](cont.edges.toList, cont.cont, currentCost)
     }
 
   def costForEdges[F[_]](pes: List[PreparedQuery.PreparedEdge.Edge[F]], cont: PreparedQuery.Prepared[F, Any], currentCost: Double)(implicit
