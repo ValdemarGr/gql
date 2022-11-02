@@ -34,14 +34,14 @@ final case class PureResolver[F[_], I, A](resolve: I => A) extends Resolver[F, I
     PureResolver(g andThen resolve)
 }
 
-final case class StreamResolver[F[_], I, R, A](
-    stream: I => Stream[F, IorNec[String, R]]
+final case class StreamResolver[F[_], I, A](
+    stream: I => Stream[F, IorNec[String, A]]
 ) extends Resolver[F, I, A] {
   override def mapK[G[_]: Functor](fk: F ~> G): Resolver[G, I, A] =
     StreamResolver(stream.andThen(_.translate(fk)))
 
   override def contramap[B](g: B => I): Resolver[F, B, A] =
-    StreamResolver[F, B, R, A](i => stream(g(i)))
+    StreamResolver[F, B, A](i => stream(g(i)))
 }
 
 final case class CompositionResolver[F[_], I, A, O](
@@ -53,4 +53,15 @@ final case class CompositionResolver[F[_], I, A, O](
 
   override def contramap[B](g: B => I): Resolver[F, B, O] =
     CompositionResolver(left.contramap(g), right)
+}
+
+final case class CacheResolver[F[_], I, I2, O](
+    first: I => F[Either[I2, O]],
+    fallback: Resolver[F, I2, O]
+) extends Resolver[F, I, O] {
+  override def mapK[G[_]: Functor](fk: F ~> G): Resolver[G, I, O] =
+    CacheResolver(first.andThen(fk.apply), fallback.mapK(fk))
+
+  override def contramap[B](g: B => I): Resolver[F, B, O] =
+    CacheResolver(i => first(g(i)), fallback)
 }

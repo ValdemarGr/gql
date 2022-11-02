@@ -39,11 +39,28 @@ object PreparedQuery {
 
   final case class EdgeId(id: Int) extends AnyVal
 
-  final case class PreparedEdge[F[_]](
-      id: EdgeId,
-      resolver: Resolver[F, Any, Any],
-      statisticsName: String
-  )
+  sealed trait PreparedResolver[F[_]]
+  object PreparedResolver {
+    final case class Fallible[F[_]](r: FallibleResolver[F, Any, Any]) extends PreparedResolver[F]
+    final case class Effect[F[_]](r: EffectResolver[F, Any, Any]) extends PreparedResolver[F]
+    final case class Pure[F[_]](r: PureResolver[F, Any, Any]) extends PreparedResolver[F]
+    final case class Stream[F[_]](r: StreamResolver[F, Any, Any]) extends PreparedResolver[F]
+    final case class Batch[F[_]](r: BatchResolver[F, Any, Any]) extends PreparedResolver[F]
+  }
+
+  sealed trait PreparedEdge[F[_]]
+
+  object PreparedEdge {
+    final case class Edge[F[_]](
+        id: EdgeId,
+        resolver: PreparedResolver[F],
+        statisticsName: String
+    ) extends PreparedEdge[F]
+    final case class Skip[F[_]](
+        specify: Any => F[Either[Any, Any]],
+        relativeJump: Int
+    ) extends PreparedEdge[F]
+  }
 
   final case class PreparedCont[F[_]](
       edges: NonEmptyChain[PreparedEdge[F]],
@@ -130,31 +147,37 @@ object PreparedQuery {
       }
   }
 
-  def flattenResolvers[F[_]: Monad, G[_]](parentName: String, resolver: Resolver[G, Any, Any])(implicit
+  def flattenResolvers[F[_]: Monad, G[_]](parentName: String, resolver: Resolver[G, Any, Any], index: Int = 0)(implicit
       S: Stateful[F, Prep]
-  ): F[(NonEmptyChain[PreparedEdge[G]], String)] =
+  ): F[(NonEmptyChain[PreparedEdge[G]], String, Int)] = {
+    import PreparedResolver._
+    import PreparedEdge._
     resolver match {
-      case BatchResolver(id, _) =>
-        nextId[F].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, s"batch_${id.id}")), parentName))
-      case EffectResolver(_) =>
+      case r @ BatchResolver(id, _) =>
+        nextId[F].map(nid => (NonEmptyChain.of(Edge(EdgeId(nid), Batch(r), s"batch_${id.id}")), parentName, index + 1))
+      case r @ EffectResolver(_) =>
         val thisName = s"${parentName}_effect"
-        nextId[F].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, thisName)), thisName))
-      case PureResolver(_) =>
+        nextId[F].map(nid => (NonEmptyChain.of(Edge(EdgeId(nid), Effect(r), thisName)), thisName, index + 1))
+      case r @ PureResolver(_) =>
         val thisName = s"${parentName}_pure"
-        nextId[F].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, thisName)), thisName))
-      case FallibleResolver(_) =>
+        nextId[F].map(nid => (NonEmptyChain.of(Edge(EdgeId(nid), Pure(r), thisName)), thisName, index + 1))
+      case r @ FallibleResolver(_) =>
         val thisName = s"${parentName}_fallible"
-        nextId[F].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, thisName)), thisName))
-      case StreamResolver(_) =>
+        nextId[F].map(nid => (NonEmptyChain.of(Edge(EdgeId(nid), Fallible(r), thisName)), thisName, index + 1))
+      case r @ StreamResolver(_) =>
         val thisName = s"${parentName}_stream"
-        nextId[F].map(nid => (NonEmptyChain.of(PreparedEdge(EdgeId(nid), resolver, thisName)), thisName))
+        nextId[F].map(nid => (NonEmptyChain.of(Edge(EdgeId(nid), Stream(r), thisName)), thisName, index + 1))
+      case CacheResolver(skip, fallback) =>
+        flattenResolvers[F, G](parentName, fallback, index).map { case (children, newParent, newIndex) =>
+          (NonEmptyChain.of(Skip(skip, newIndex + 1 - index)) ++ children, newParent, newIndex)
+        }
       case CompositionResolver(left, right) =>
-        flattenResolvers[F, G](parentName, left.asInstanceOf[Resolver[G, Any, Any]])
-          .flatMap { case (ys, newParentName) =>
-            flattenResolvers[F, G](newParentName, right.asInstanceOf[Resolver[G, Any, Any]])
-              .map { case (zs, outName) => (ys ++ zs, outName) }
+        flattenResolvers[F, G](parentName, left, index)
+          .flatMap { case (ys, newParentName, lidx) =>
+            flattenResolvers[F, G](newParentName, right, lidx).map { case (zs, outName, ridx) => (ys ++ zs, outName, ridx) }
           }
     }
+  }
 
   def underlyingOutputTypename[G[_]](ot: Out[G, ?]): String = (ot: @unchecked) match {
     case Enum(name, _, _)         => name
@@ -360,7 +383,7 @@ object PreparedQuery {
 
       prepF.flatMap { p =>
         nextId[F].flatMap { id =>
-          flattenResolvers[F, G](s"${currentTypename}_${gqlField.name}", resolve).map { case (edges, _) =>
+          flattenResolvers[F, G](s"${currentTypename}_${gqlField.name}", resolve).map { case (edges, _, _) =>
             val pc = PreparedCont(edges, p)
             PreparedDataField(id, gqlField.name, gqlField.alias, pc)
           }

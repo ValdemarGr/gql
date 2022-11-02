@@ -79,12 +79,7 @@ object Interpreter {
         def evaluate(metas: NonEmptyList[RunInput]): F[(Chain[EvalFailure], NonEmptyList[Json], Map[Unique.Token, StreamMetadata[F]])] =
           for {
             costTree <- metas.toList
-              .flatTraverse { ri =>
-                NonEmptyChain.fromSeq(ri.edges) match {
-                  case None      => Planner.costForPrepared[F](ri.cont, 0d)
-                  case Some(nec) => Planner.costForEdges[F](nec, ri.cont, 0d).map(_.toList)
-                }
-              }
+              .flatTraverse(ri => Planner.costForCont[F](ri.edges, ri.cont, 0d))
               .map(Planner.NodeTree(_))
             planned <- planner.plan(costTree)
             accumulator <- BatchAccumulator[F](schemaState, planned)
@@ -336,21 +331,35 @@ class InterpreterImpl[F[_]](
   def submit(name: String, duration: FiniteDuration, size: Int): F[Unit] =
     sup.supervise(stats.updateStats(name, duration, size)).void
 
-  def runEdge(
+  def runEdge_(
       inputs: Chain[EvalNode[Any]],
       edges: List[PreparedEdge[F]],
       cont: Prepared[F, Any]
-  ): W[Chain[EvalNode[Json]]] =
+  ): W[Chain[EvalNode[Any]]] =
     edges match {
-      case Nil => startNext(cont, inputs)
-      case edge :: xs =>
+      case Nil                                                          => W.pure(inputs)
+      case PreparedQuery.PreparedEdge.Skip(specify, relativeJump) :: xs =>
+        // Partition into skipping and non-skipping
+        // Run the non-skipping first so they are in sync
+        // Then continue with tl
+        val (force, skip) = inputs.partitionEither { x =>
+          specify(x.value) match {
+            case Left(y)  => Left(x.setValue(y))
+            case Right(y) => Right(x.setValue(y))
+          }
+        }
+        val (ls, rs) = xs.splitAt(relativeJump)
+        runEdge_(force, ls, cont).flatMap { forced =>
+          runEdge_(skip ++ forced, rs, cont)
+        }
+      case PreparedQuery.PreparedEdge.Edge(id, resolver, statisticsName) :: xs =>
         def evalEffect(resolve: Any => F[Ior[String, Any]]) =
           inputs.parFlatTraverse { in =>
             attemptUser(
               IorT(resolve(in.value)).timed
                 .semiflatMap { case (dur, v) =>
                   val out = Chain(in.setValue(v))
-                  submit(edge.statisticsName, dur, 1) as out
+                  submit(statisticsName, dur, 1) as out
                 }
                 .value
                 .map(_.leftMap(NonEmptyChain.one)),
@@ -358,43 +367,48 @@ class InterpreterImpl[F[_]](
             )
           }
 
-        val edgeRes: WriterT[F, Chain[EvalFailure], Chain[EvalNode[Any]]] =
-          edge.resolver match {
-            case PureResolver(resolve)     => W.pure(inputs.map(en => en.setValue(resolve(en.value))))
-            case EffectResolver(resolve)   => evalEffect(a => resolve(a).map(_.rightIor))
-            case FallibleResolver(resolve) => evalEffect(resolve)
-            case CompositionResolver(_, _) =>
-              W.raiseError(new IllegalStateException("composition resolvers cannot appear in edge interpreter"))
-            case StreamResolver(stream) =>
-              inputs.parFlatTraverse { in =>
-                attemptUserE(
-                  streamAccumulator
-                    .add(Interpreter.StreamMetadata(in.cursor, xs, cont), stream(in.value))
-                    .timed
-                    .map { case (dur, (_, fb)) => fb.tupleLeft(dur) }
-                    .rethrow
-                    .flatMap { case (dur, xs) =>
-                      submit(edge.statisticsName, dur, 1) as xs.map(hd => Chain(in.setValue(hd)))
-                    },
-                  EvalFailure.StreamHeadResolution(in.cursor, _, in.value)
-                )
-              }
-            case BatchResolver(_, run) =>
-              val xs = inputs.map(en => (run(en.value), en.cursor))
+        import PreparedQuery.PreparedResolver._
+        val edgeRes = resolver match {
+          case Pure(r)     => W.pure(inputs.map(en => en.setValue(r.resolve(en.value))))
+          case Effect(r)   => evalEffect(a => r.resolve(a).map(_.rightIor))
+          case Fallible(r) => evalEffect(r.resolve)
+          case Stream(r) =>
+            inputs.parFlatTraverse { in =>
+              attemptUserE(
+                streamAccumulator
+                  .add(Interpreter.StreamMetadata(in.cursor, xs, cont), r.stream(in.value))
+                  .timed
+                  .map { case (dur, (_, fb)) => fb.tupleLeft(dur) }
+                  .rethrow
+                  .flatMap { case (dur, xs) =>
+                    submit(statisticsName, dur, 1) as xs.map(hd => Chain(in.setValue(hd)))
+                  },
+                EvalFailure.StreamHeadResolution(in.cursor, _, in.value)
+              )
+            }
+          case Batch(BatchResolver(_, run)) =>
+            val xs = inputs.map(en => (run(en.value), en.cursor))
 
-              val allKeys = xs.map { case ((keys, _), cg) => (cg, keys) }
+            val allKeys = xs.map { case ((keys, _), cg) => (cg, keys) }
 
-              lift(batchAccumulator.submit(edge.id, allKeys)).map {
-                case None => Chain.empty[EvalNode[Any]]
-                case Some(resultMap) =>
-                  xs.map { case ((keys, reassoc), cg) =>
-                    EvalNode(cg, reassoc(resultMap.view.filterKeys(keys.contains).toMap))
-                  }
-              }
-          }
+            lift(batchAccumulator.submit(id, allKeys)).map {
+              case None => Chain.empty[EvalNode[Any]]
+              case Some(resultMap) =>
+                xs.map { case ((keys, reassoc), cg) =>
+                  EvalNode(cg, reassoc(resultMap.view.filterKeys(keys.contains).toMap))
+                }
+            }
+        }
 
-        edgeRes.flatMap(runEdge(_, xs, cont))
+        edgeRes.flatMap(runEdge_(_, xs, cont))
     }
+
+  def runEdge(
+      inputs: Chain[EvalNode[Any]],
+      edges: List[PreparedEdge[F]],
+      cont: Prepared[F, Any]
+  ): W[Chain[EvalNode[Json]]] =
+    runEdge_(inputs, edges, cont).flatMap(startNext(cont, _))
 
   def runFields(dfs: NonEmptyList[PreparedField[F, Any]], in: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] =
     Chain.fromSeq(dfs.toList).parFlatTraverse {

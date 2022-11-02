@@ -43,48 +43,55 @@ object Planner {
       case PreparedOption(of)  => costForPrepared(of, currentCost)
     }
 
-  def costForEdges[F[_]](pes: NonEmptyChain[PreparedQuery.PreparedEdge[F]], cont: PreparedQuery.Prepared[F, Any], currentCost: Double)(
-      implicit
+  def costForEdges[F[_]](pes: List[PreparedQuery.PreparedEdge.Edge[F]], cont: PreparedQuery.Prepared[F, Any], currentCost: Double)(implicit
       stats: Statistics[F],
       F: Monad[F]
-  ): F[NonEmptyList[Node]] = {
-    val x = pes.head
-    val xs = pes.tail
+  ): F[List[Node]] =
+    pes match {
+      case Nil => costForPrepared[F](cont, currentCost)
+      case x :: xs =>
+        val resolverKey = x.resolver match {
+          case PreparedQuery.PreparedResolver.Batch(BatchResolver(id, _)) => Some(id)
+          case _                                                          => None
+        }
 
-    val resolverKey = x.resolver match {
-      case BatchResolver(id, _) => Some(id)
-      case _                    => None
+        stats
+          .getStatsOpt(x.statisticsName)
+          .map {
+            case None    => Statistics.Stats(100d, 5d)
+            case Some(x) => x
+          }
+          .flatMap { s =>
+            val end = currentCost + s.initialCost
+
+            val childrenF = costForEdges[F](xs, cont, end).map(_.toList)
+
+            childrenF.map { children =>
+              List(
+                Node(
+                  x.statisticsName,
+                  end,
+                  s.initialCost,
+                  s.extraElementCost,
+                  children.toList,
+                  resolverKey,
+                  x.id
+                )
+              )
+            }
+          }
     }
 
-    stats
-      .getStatsOpt(x.statisticsName)
-      .map {
-        case None    => Statistics.Stats(100d, 5d)
-        case Some(x) => x
-      }
-      .flatMap { s =>
-        val end = currentCost + s.initialCost
-
-        val childrenF: F[List[Node]] = NonEmptyChain.fromChain(xs) match {
-          case None      => costForPrepared[F](cont, end)
-          case Some(nel) => costForEdges[F](nel, cont, end).map(_.toList)
-        }
-
-        childrenF.map { children =>
-          NonEmptyList.one(
-            Node(
-              x.statisticsName,
-              end,
-              s.initialCost,
-              s.extraElementCost,
-              children.toList,
-              resolverKey,
-              x.id
-            )
-          )
-        }
-      }
-  }
+  def costForCont[F[_]: Statistics: Monad](
+      edges: List[PreparedQuery.PreparedEdge[F]],
+      cont: PreparedQuery.Prepared[F, Any],
+      currentCost: Double
+  ): F[List[Node]] =
+    costForEdges[F](
+      edges.toList.collect { case e: PreparedQuery.PreparedEdge.Edge[F] => e },
+      cont,
+      currentCost
+    )
 
   def costForFields[F[_]](
       currentCost: Double,
@@ -92,9 +99,9 @@ object Planner {
   )(implicit
       F: Monad[F],
       stats: Statistics[F]
-  ): F[NonEmptyList[Node]] = {
-    prepared.flatTraverse {
-      case PreparedDataField(_, _, _, cont)      => costForEdges[F](cont.edges, cont.cont, currentCost)
+  ): F[List[Node]] = {
+    prepared.toList.flatTraverse {
+      case PreparedDataField(_, _, _, cont)      => costForCont[F](cont.edges.toList, cont.cont, currentCost)
       case PreparedFragField(_, _, _, selection) => costForFields[F](currentCost, selection.fields)
     }
   }
