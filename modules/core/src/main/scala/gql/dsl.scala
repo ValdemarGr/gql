@@ -153,7 +153,10 @@ object dsl {
 
   def optType[A](implicit tpe: => In[A]): In[Option[A]] = InOpt(tpe)
 
-  def arrType[F[_], A, B, G[x] <: Seq[x]](resolver: Resolver[F, A, B])(implicit tpe: => Out[F, B]): Out[F, G[A]] =
+  def arrType[F[_], A, C, B](resolver: Resolver[F, A, B], toSeq: C => Seq[A])(implicit tpe: => Out[F, B]): OutArr[F, A, C, B] =
+    OutArr(tpe, toSeq, resolver)
+
+  def arrType[F[_], A, G[x] <: Seq[x], B](resolver: Resolver[F, A, B])(implicit tpe: => Out[F, B]): OutArr[F, A, G[A], B] =
     OutArr(tpe, identity, resolver)
 
   def arrType[A](implicit tpe: => In[A]): In[Seq[A]] = InArr[A, Seq[A]](tpe, _.asRight)

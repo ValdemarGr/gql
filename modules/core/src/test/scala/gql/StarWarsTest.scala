@@ -85,7 +85,6 @@ class StarWarsTest extends CatsEffectSuite {
       }
       """
     }
-    fail("FAIL"): Unit
   }
 
   test("nested queries") {
