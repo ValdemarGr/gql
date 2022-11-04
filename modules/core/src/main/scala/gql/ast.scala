@@ -145,7 +145,7 @@ object ast extends AstImplicits.Implicits {
 
   final case class Enum[F[_], A](
       name: String,
-      mappings: NonEmptyList[(String, EnumValue[A])],
+      mappings: NonEmptyList[(String, EnumValue[_ <: A])],
       description: Option[String] = None
   ) extends OutToplevel[F, A]
       with InLeaf[A]

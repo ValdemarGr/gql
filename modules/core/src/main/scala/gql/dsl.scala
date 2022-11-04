@@ -9,14 +9,14 @@ import scala.reflect.ClassTag
 
 object dsl {
   def tpe[F[_], A](
-      name: String,
-      hd: (String, Field[F, A, ?, ?]),
-      tl: (String, Field[F, A, ?, ?])*
+    name: String,
+    hd: (String, Field[F, ? >: A, ?, ?]),
+    tl: (String, Field[F, ? >: A, ?, ?])*
   ) = Type[F, A](name, NonEmptyList(hd, tl.toList), Nil)
 
   def input[A](
-      name: String,
-      fields: NonEmptyArg[A]
+    name: String,
+    fields: NonEmptyArg[A]
   ): Input[A] = Input(name, fields)
 
   def arg[A](name: String)(implicit tpe: => In[A]): NonEmptyArg[A] =
@@ -55,7 +55,7 @@ object dsl {
 
   final class PartiallyAppliedField[I](val dummy: Boolean = false) extends AnyVal {
     def apply[F[_], T, A](arg: Arg[A])(resolver: Resolver[F, (I, A), T])(implicit
-        tpe: => Out[F, T]
+      tpe: => Out[F, T]
     ): Field[F, I, T, A] =
       full.field[F, I, T, A](arg)(resolver)(tpe)
 
@@ -73,7 +73,7 @@ object dsl {
 
   final class PartiallyAppliedFallible[I](val dummy: Boolean = false) extends AnyVal {
     def apply[F[_], T, A](
-        arg: Arg[A]
+      arg: Arg[A]
     )(resolver: (I, A) => F[Ior[String, T]])(implicit tpe: => Out[F, T]): Field[F, I, T, A] =
       full.fallible[F, I, T, A](arg)(resolver)(tpe)
 
@@ -105,7 +105,7 @@ object dsl {
 
   object full {
     def field[F[_], I, T, A](arg: Arg[A])(resolver: Resolver[F, (I, A), T])(implicit
-        tpe: => Out[F, T]
+      tpe: => Out[F, T]
     ): Field[F, I, T, A] =
       Field[F, I, T, A](arg, resolver, Eval.later(tpe))
 
@@ -126,7 +126,7 @@ object dsl {
       field(PureResolver[F, I, T](resolver))(tpe)
 
     def fallible[F[_], I, T, A](
-        arg: Arg[A]
+      arg: Arg[A]
     )(resolver: (I, A) => F[Ior[String, T]])(implicit tpe: => Out[F, T]): Field[F, I, T, A] =
       field(arg)(FallibleResolver[F, (I, A), T] { case (i, a) => resolver(i, a) })(tpe)
 
@@ -137,13 +137,13 @@ object dsl {
   def enumVal[A](value: A): EnumValue[A] =
     EnumValue(value)
 
-  def enumType[F[_], A](name: String, hd: (String, EnumValue[A]), tl: (String, EnumValue[A])*) =
+  def enumType[F[_], A](name: String, hd: (String, EnumValue[? <: A]), tl: (String, EnumValue[? <: A])*) =
     Enum[F, A](name, NonEmptyList(hd, tl.toList))
 
   def interface[F[_], A](
-      name: String,
-      hd: (String, Field[F, A, ?, ?]),
-      tl: (String, Field[F, A, ?, ?])*
+    name: String,
+    hd: (String, Field[F, ? >: A, ?, ?]),
+    tl: (String, Field[F, ? >: A, ?, ?])*
   ) = Interface[F, A](name, NonEmptyList(hd, tl.toList), Nil)
 
   def union[F[_], A](name: String) = PartiallyAppliedUnion0[F, A](name)
@@ -153,10 +153,14 @@ object dsl {
 
   def optType[A](implicit tpe: => In[A]): In[Option[A]] = InOpt(tpe)
 
-  def arrType[F[_], A, C, B](resolver: Resolver[F, A, B], toSeq: C => Seq[A])(implicit tpe: => Out[F, B]): OutArr[F, A, C, B] =
+  def arrType[F[_], A, C, B](resolver: Resolver[F, A, B], toSeq: C => Seq[A])(implicit
+    tpe: => Out[F, B]
+  ): OutArr[F, A, C, B] =
     OutArr(tpe, toSeq, resolver)
 
-  def arrType[F[_], A, G[x] <: Seq[x], B](resolver: Resolver[F, A, B])(implicit tpe: => Out[F, B]): OutArr[F, A, G[A], B] =
+  def arrType[F[_], A, G[x] <: Seq[x], B](resolver: Resolver[F, A, B])(implicit
+    tpe: => Out[F, B]
+  ): OutArr[F, A, G[A], B] =
     OutArr(tpe, identity, resolver)
 
   def arrType[A](implicit tpe: => In[A]): In[Seq[A]] = InArr[A, Seq[A]](tpe, _.asRight)
@@ -178,7 +182,8 @@ object dsl {
       resolver.andThen(PureResolver[F, O, O2](f))
   }
 
-  implicit class BatchResolverSyntax[F[_], K, V](val batchResolver: BatchResolver[F, Set[K], Map[K, V]]) extends AnyVal {
+  implicit class BatchResolverSyntax[F[_], K, V](val batchResolver: BatchResolver[F, Set[K], Map[K, V]])
+      extends AnyVal {
     def one: BatchResolver[F, K, Option[V]] = batchResolver.contramap[K](Set(_)).mapBoth { case (k, m) => m.get(k) }
   }
 
@@ -189,7 +194,7 @@ object dsl {
     def subtypeOf[B](implicit ev: A <:< B, tag: ClassTag[A], interface: => Interface[F, B]): Type[F, A] =
       implements[B] { case a: A => a }(interface)
 
-    def addFields(xs: (String, Field[F, A, ?, ?])*) =
+    def addFields(xs: (String, Field[F, ? >: A, ?, ?])*) =
       tpe.copy(fields = tpe.fields concat xs.toList)
   }
 
@@ -200,8 +205,8 @@ object dsl {
     def subtypeOf[B](implicit ev: A <:< B, tag: ClassTag[A], interface: => Interface[F, B]): Interface[F, A] =
       implements[B] { case a: A => a }(interface)
 
-    def addFields(hd: (String, Field[F, A, ?, ?]), tl: (String, Field[F, A, ?, ?])*) =
-      tpe.copy(fields = tpe.fields concat (hd :: tl.toList))
+    def addFields(xs: (String, Field[F, ? >: A, ?, ?])*) =
+      tpe.copy(fields = tpe.fields concat xs.toList)
   }
 
   implicit class UnionSyntax[F[_], A](val tpe: Union[F, A]) extends AnyVal {
