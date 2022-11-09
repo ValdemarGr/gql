@@ -86,6 +86,12 @@ lazy val graphqlWs = project
   .settings(name := "gql-graphqlws")
   .dependsOn(core)
 
+lazy val goi = project
+  .in(file("modules/goi"))
+  .settings(sharedSettings)
+  .settings(name := "gql-goi")
+  .dependsOn(core)
+
 lazy val http4s = project
   .in(file("modules/http4s"))
   .dependsOn(core % "compile->compile;test->test")
@@ -120,5 +126,6 @@ lazy val docs = project
   .dependsOn(core % "compile->compile;compile->test")
   .dependsOn(http4s)
   .dependsOn(graphqlWs)
+  .dependsOn(goi)
   .dependsOn(mdocExt)
   .enablePlugins(MdocPlugin, DocusaurusPlugin, NoPublishPlugin)
