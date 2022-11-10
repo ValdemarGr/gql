@@ -1,36 +1,23 @@
 package gql.goi
 
 // import cats.implicits._
-import java.util.UUID
 
 trait Node {
   def id: String
 }
 
-trait GetNode[F[_], A] {
-  def getNode(id: String): Option[F[Option[A]]]
+final case class NodeId(id: String)
+
+trait NodeInstance[F[_], A] {
+  def id(a: A): NodeId
 }
 
-object Test {
-  final case class Contract(
-      contractId: UUID,
-      contractName: String
-  ) extends Node {
-    lazy val id = s"Contract:$contractId"
+object Node {
+  def fromTypename[F[_], A](typename: String, get: String => F[Option[A]], id: A => String) = {
+    def get0(id: String) = id.split(':').toList match {
+      case x :: xs if x == typename => Some(get(xs.mkString(":")))
+      case _                        => None
+    }
+    def id0(a: A) = s"$typename:${id(a)}"
   }
-
-  import gql.dsl._
-  import gql.ast._
-  implicit def node[F[_], N <: Node](implicit get: GetNode[F, N]) = interface[F, N](
-    "Node",
-    "id" -> pure(_.id),
-    "delete_me" -> pure[F, N](_ => get)(Scalar[F, GetNode[F, N]]("delete_me", _ => gql.Value.StringValue(""), _ => Left("")))
-  )
-
-  implicit def contract[F[_]] = tpe[F, Contract](
-    "Contract",
-    "contractId" -> pure(_.contractId),
-    "contractName" -> pure(_.contractName)
-  )
-  // .implements { case c: Contract => c }(node[F, Contract])
 }
