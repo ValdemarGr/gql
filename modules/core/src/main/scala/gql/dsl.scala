@@ -10,8 +10,8 @@ import scala.reflect.ClassTag
 object dsl {
   def tpe[F[_], A](
       name: String,
-      hd: (String, Field[F, ? >: A, ?, ?]),
-      tl: (String, Field[F, ? >: A, ?, ?])*
+      hd: (String, Field[F, A, ?, ?]),
+      tl: (String, Field[F, A, ?, ?])*
   ) = Type[F, A](name, NonEmptyList(hd, tl.toList), Nil)
 
   def input[A](
@@ -156,8 +156,8 @@ object dsl {
 
   def interface[F[_], A](
       name: String,
-      hd: (String, Field[F, ? >: A, ?, ?]),
-      tl: (String, Field[F, ? >: A, ?, ?])*
+      hd: (String, Field[F, A, ?, ?]),
+      tl: (String, Field[F, A, ?, ?])*
   ) = Interface[F, A](name, NonEmptyList(hd, tl.toList), Nil)
 
   def union[F[_], A](name: String) = PartiallyAppliedUnion0[F, A](name)
@@ -207,7 +207,7 @@ object dsl {
     def subtypeOf[B](implicit ev: A <:< B, tag: ClassTag[A], interface: => Interface[F, B]): Type[F, A] =
       implements[B] { case a: A => a }(interface)
 
-    def addFields(xs: (String, Field[F, ? >: A, ?, ?])*) =
+    def addFields(xs: (String, Field[F, A, ?, ?])*) =
       tpe.copy(fields = tpe.fields concat xs.toList)
   }
 
@@ -218,7 +218,7 @@ object dsl {
     def subtypeOf[B](implicit ev: A <:< B, tag: ClassTag[A], interface: => Interface[F, B]): Interface[F, A] =
       implements[B] { case a: A => a }(interface)
 
-    def addFields(xs: (String, Field[F, ? >: A, ?, ?])*) =
+    def addFields(xs: (String, Field[F, A, ?, ?])*) =
       tpe.copy(fields = tpe.fields concat xs.toList)
   }
 

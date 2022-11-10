@@ -151,6 +151,7 @@ object PreparedQuery {
   def flattenResolvers[F[_]: Monad, G[_]](parentName: String, resolver: Resolver[G, Any, Any], index: Int = 0)(implicit
       S: Stateful[F, Prep]
   ): F[(NonEmptyChain[PreparedEdge[G]], String, Int)] = {
+    def cast(r: Resolver[G, ?, ?]): Resolver[G, Any, Any] = r.asInstanceOf[Resolver[G, Any, Any]]
     import PreparedResolver._
     import PreparedEdge._
     resolver match {
@@ -169,13 +170,19 @@ object PreparedQuery {
         val thisName = s"${parentName}_stream"
         nextId[F].map(nid => (NonEmptyChain.of(Edge(EdgeId(nid), Stream(r), thisName)), thisName, index + 1))
       case CacheResolver(skip, fallback) =>
-        flattenResolvers[F, G](parentName, fallback, index).map { case (children, newParent, newIndex) =>
-          (NonEmptyChain.of(Skip(skip, newIndex + 1 - index)) ++ children, newParent, newIndex)
+        flattenResolvers[F, G](parentName, cast(fallback), index).map { case (children, newParent, newIndex) =>
+          (
+            NonEmptyChain.of(
+              Skip(skip.asInstanceOf[Any => G[Either[Any, Any]]], newIndex + 1 - index)
+            ) ++ children,
+            newParent,
+            newIndex
+          )
         }
       case CompositionResolver(left, right) =>
-        flattenResolvers[F, G](parentName, left, index)
+        flattenResolvers[F, G](parentName, cast(left), index)
           .flatMap { case (ys, newParentName, lidx) =>
-            flattenResolvers[F, G](newParentName, right, lidx).map { case (zs, outName, ridx) => (ys ++ zs, outName, ridx) }
+            flattenResolvers[F, G](newParentName, cast(right), lidx).map { case (zs, outName, ridx) => (ys ++ zs, outName, ridx) }
           }
     }
   }

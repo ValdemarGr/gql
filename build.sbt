@@ -91,6 +91,7 @@ lazy val goi = project
   .settings(sharedSettings)
   .settings(name := "gql-goi")
   .dependsOn(core)
+  .enablePlugins(NoPublishPlugin)
 
 lazy val http4s = project
   .in(file("modules/http4s"))

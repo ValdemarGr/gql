@@ -41,7 +41,7 @@ object ast extends AstImplicits.Implicits {
 
   final case class Type[F[_], A](
       name: String,
-      fields: NonEmptyList[(String, Field[F, ? >: A, ?, ?])],
+      fields: NonEmptyList[(String, Field[F, A, ?, ?])],
       implementations: List[Implementation[F, A, ?]],
       description: Option[String] = None
   ) extends ObjectLike[F, A] {
@@ -98,7 +98,7 @@ object ast extends AstImplicits.Implicits {
 
   final case class Interface[F[_], A](
       name: String,
-      fields: NonEmptyList[(String, Field[F, ? >: A, ?, ?])],
+      fields: NonEmptyList[(String, Field[F, A, ?, ?])],
       implementations: List[Implementation[F, A, ?]],
       description: Option[String] = None
   ) extends ObjectLike[F, A] {
