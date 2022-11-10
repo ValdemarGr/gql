@@ -36,8 +36,8 @@ object Http4sRoutes {
       r.as[CompilerParameters].flatMap { params =>
         compiler(Http4sCompilerParametes(params, r.headers)).flatMap {
           case Left(response)                                => F.pure(response)
-          case Right(Left(CompilationError.Parse(pe)))       => Ok(pe.asGraphQL.asJson)
-          case Right(Left(CompilationError.Preparation(pe))) => Ok(pe.asGraphQL.asJson)
+          case Right(Left(pe: CompilationError.Parse))       => Ok(pe.asGraphQL.asJson)
+          case Right(Left(pe: CompilationError.Preparation)) => Ok(pe.asGraphQL.asJson)
           case Right(Right(app)) =>
             val fa = app match {
               case Application.Mutation(run)     => run
