@@ -48,6 +48,8 @@ ThisBuild / githubWorkflowAddedJobs +=
   )
 
 lazy val sharedSettings = Seq(
+  organization := "io.github.valdemargr",
+  organizationName := "Valdemar Grange",
   autoCompilerPlugins := true,
   libraryDependencies ++= Seq(
     "org.typelevel" %% "cats-effect" % "3.3.14",
