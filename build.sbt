@@ -131,6 +131,6 @@ lazy val docs = project
   .dependsOn(core % "compile->compile;compile->test")
   .dependsOn(http4s)
   .dependsOn(graphqlWs)
-  .dependsOn(goi)
+  /* .dependsOn(goi) */
   .dependsOn(mdocExt)
   .enablePlugins(MdocPlugin, DocusaurusPlugin, NoPublishPlugin)
