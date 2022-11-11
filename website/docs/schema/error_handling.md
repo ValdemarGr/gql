@@ -47,7 +47,7 @@ def go(query: String, tpe: Type[IO, Unit] = multifailSchema) =
   
 go("query { field }")
 // Chain()
-// res0: JsonObject = object[data -> {
+// res0: io.circe.JsonObject = object[data -> {
 //   "field" : 10
 // }]
 ```
@@ -56,7 +56,7 @@ A query can fail gracefully by returning `Ior.left`:
 ```scala
 go("query { field(i: 0) }")
 // Chain(EffectResolution(Cursor(Chain(Field(1,field))),Right(fail gracefully),()))
-// res1: JsonObject = object[errors -> [
+// res1: io.circe.JsonObject = object[errors -> [
 //   {
 //     "message" : "fail gracefully",
 //     "path" : [
@@ -72,7 +72,7 @@ A query can fail hard by raising an exception:
 ```scala
 go("query { field(i: 1) }")
 // Chain(EffectResolution(Cursor(Chain(Field(1,field))),Left(java.lang.Exception: fail hard),()))
-// res2: JsonObject = object[errors -> [
+// res2: io.circe.JsonObject = object[errors -> [
 //   {
 //     "message" : "internal error",
 //     "path" : [
@@ -88,7 +88,7 @@ A query can also fail before even evaluating the query:
 ```scala
 go("query { nonExisting }")
 // Preparation(PositionalError(PrepCursor(Chain()),List(Caret(0,20,20)),unknown field name nonExisting))
-// res3: JsonObject = object[errors -> [
+// res3: io.circe.JsonObject = object[errors -> [
 //   {
 //     "message" : "unknown field name nonExisting",
 //     "locations" : [
@@ -116,17 +116,17 @@ def largerQuery = """
 """
 
 go(largerQuery)
-// Parse(ParseError(Caret(8,8,108),cats.Later@1acb32d7))
-// res4: JsonObject = object[errors -> [
+// Parse(ParseError(Caret(8,4,80),cats.Later@194a7be4))
+// res4: io.circe.JsonObject = object[errors -> [
 //   {
 //     "message" : "could not parse query",
 //     "locations" : [
 //       {
 //         "line" : 8,
-//         "column" : 8
+//         "column" : 4
 //       }
 //     ],
-//     "error" : "\u001b[34mfailed at offset 108 on line 7 with code 45\none of \"...\"\nin char in range A to Z (code 65 to 90)\nin char in range _ to _ (code 95 to 95)\nin char in range a to z (code 97 to 122)\nin query:\n\u001b[0m\u001b[32m| \u001b[0m\u001b[32m\n|       query {\n|         field1\n|         field2(test: 42)\n|       }\n|       \n|       fragment test on Test {\n|         \u001b[41m\u001b[30m-\u001b[0m\u001b[32mvalue1\n| \u001b[31m>>>>>^^^^^^^ line:7 code:45\u001b[0m\u001b[32m\n|         value2 \n|       }\n|     \u001b[0m\u001b[0m"
+//     "error" : "\u001b[34mfailed at offset 80 on line 7 with code 45\none of \"...\"\nin char in range A to Z (code 65 to 90)\nin char in range _ to _ (code 95 to 95)\nin char in range a to z (code 97 to 122)\nin query:\n\u001b[0m\u001b[32m| \u001b[0m\u001b[32m\n|   query {\n|     field1\n|     field2(test: 42)\n|   }\n|   \n|   fragment test on Test {\n|     \u001b[41m\u001b[30m-\u001b[0m\u001b[32mvalue1\n| \u001b[31m>^^^^^^^ line:7 code:45\u001b[0m\u001b[32m\n|     value2 \n|   }\n| \u001b[0m\u001b[0m"
 //   }
 // ]]
 ```

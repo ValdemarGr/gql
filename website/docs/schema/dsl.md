@@ -24,22 +24,20 @@ def intArg = arg[Int]("intArg")
 field(intArg)(FallibleResolver[IO, (String, Int), String]{ case (s, i) => 
   IO.pure((s + i.toString()).rightIor)
 })
-// res0: Field[[A >: Nothing <: Any] => IO[A], String, String, Int] = Field(
+// res0: Field[[A]IO[A], String, String, Int] = Field(
 //   args = NonEmptyArg(
 //     nec = Singleton(
 //       a = ArgValue(
 //         name = "intArg",
-//         input = cats.Later@40dfc763,
+//         input = cats.Later@21f6ad54,
 //         defaultValue = None,
 //         description = None
 //       )
 //     ),
-//     decode = gql.NonEmptyArg$$$Lambda$46244/0x000000010adf0040@5159e94e
+//     decode = gql.NonEmptyArg$$$Lambda$15494/0x00000001024bd840@7e7308cc
 //   ),
-//   resolve = FallibleResolver(
-//     resolve = repl.MdocSession$MdocApp$$Lambda$47527/0x000000010b208040@50ca6b27
-//   ),
-//   output = cats.Later@70923a17,
+//   resolve = FallibleResolver(resolve = <function1>),
+//   output = cats.Later@46503f45,
 //   description = None
 // )
 ```

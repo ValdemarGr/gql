@@ -220,10 +220,9 @@ def query = """
 Now we can parse, plan and evaluate the query:
 
 ```scala
-      schema[IO]
-        .map(Compiler[IO].compile(_, query))
-        .flatMap { case Right(Application.Query(run)) => run.map(_.asGraphQL) }
-      
+schema[IO]
+  .map(Compiler[IO].compile(_, query))
+  .flatMap { case Right(Application.Query(run)) => run.map(_.asGraphQL) }
 // object[data -> {
 //   "c3po" : {
 //     "name" : "C-3PO"
