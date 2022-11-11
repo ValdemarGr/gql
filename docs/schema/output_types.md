@@ -1,7 +1,7 @@
 ---
 title: Output types
 ---
-:::warn
+:::warning
 this is not up to date
 :::
 An output type `Out[F[_], A]` is an ast node that can take some `A` as input and produce a graphql value in the effect `F`.

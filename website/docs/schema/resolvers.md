@@ -1,7 +1,7 @@
 ---
 title: Resolvers
 ---
-:::warn
+:::warning
 this is not up to date
 :::
 Resolvers are the edges that connect fields and types.

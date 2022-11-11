@@ -1,7 +1,7 @@
 ---
 title: The DSL
 ---
-:::warn
+:::warning
 not up to date
 :::
 The DSL consists of a set of smart constructors for the ast nodes of gql.

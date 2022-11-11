@@ -1,7 +1,7 @@
 ---
 title: Compiler
 ---
-:::warn
+:::warning
 not up to date
 :::
 A `Compiler` is an abstraction for combining multiple parts of `gql` into a single executable.

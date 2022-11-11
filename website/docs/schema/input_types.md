@@ -1,7 +1,7 @@
 ---
 title: Input types
 ---
-:::warn
+:::warning
 this is not up to date
 :::
 An input type `In[A]` defines an input type and a mapping from the input type to `A`.
