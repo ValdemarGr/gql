@@ -86,9 +86,10 @@ object Http4sRoutes {
               case Right(x) => F.pure(WebSocketFrame.Text(x.asJson.noSpaces))
             },
             _.evalMap[F, Option[String]] {
-              case WebSocketFrame.Text(x, true)                   => F.pure(Some(x))
-              case c: WebSocketFrame.Close if c.closeCode == 1000 => F.pure(None)
-              case other                                          => F.raiseError(new Exception(s"Unexpected frame: $other"))
+              case WebSocketFrame.Text(x, true) => F.pure(Some(x))
+              case _: WebSocketFrame.Close      => F.pure(None)
+              // case c: WebSocketFrame.Close if c.closeCode == 1000 => F.pure(None)
+              // case other                                          => F.raiseError(new Exception(s"Unexpected frame: $other"))
             }.unNone
               .evalMap { x => F.fromEither(io.circe.parser.decode[GraphqlWS.FromClient](x)) }
               .through(fromClient)

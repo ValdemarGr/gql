@@ -15,8 +15,7 @@
  */
 package gql
 
-// import cats.implicits._
-import cats.effect.implicits._
+import cats.implicits._
 import io.circe._
 import fs2.Stream
 import munit.CatsEffectSuite
@@ -150,8 +149,10 @@ class StreamingTest extends CatsEffectSuite {
   }
 
   test("should stream out some nested elements") {
+    assertEquals(clue(level1Users), 0)
+    assertEquals(clue(level2Users), 0)
     // Run test 100 times
-    (0 to 100).toList.parTraverseN(4) { _ =>
+    (0 to 100).toList.parTraverse { _ =>
       // println(s"running iteration $i")
       // if inner re-emits, outer will remain the same
       // if outer re-emits, inner will restart
@@ -177,10 +178,11 @@ class StreamingTest extends CatsEffectSuite {
         .compile
         .drain
     }
-  }
 
-  test("nesting with fragments works") {
-    val q = """
+    test("nesting with fragments works") {
+      assertEquals(clue(level1Users), 0)
+      assertEquals(clue(level2Users), 0)
+      val q = """
       subscription {
         level1 {
           ... A
@@ -216,18 +218,18 @@ class StreamingTest extends CatsEffectSuite {
       }
     """
 
-    query(q)
-      .take(10)
-      .map(Json.fromJsonObject(_).field("data").field("level1"))
-      .compile
-      .drain
-  }
+      query(q)
+        .take(10)
+        .map(Json.fromJsonObject(_).field("data").field("level1"))
+        .compile
+        .drain
+    }
 
-  test("resource aquisition should work as expected") {
-    assertEquals(clue(level1Users), 0)
-    assertEquals(clue(level2Users), 0)
+    test("resource aquisition should work as expected") {
+      assertEquals(clue(level1Users), 0)
+      assertEquals(clue(level2Users), 0)
 
-    val q = """
+      val q = """
       subscription {
         level1 {
           level2 {
@@ -240,24 +242,25 @@ class StreamingTest extends CatsEffectSuite {
       }
     """
 
-    query(q).pull.uncons1
-      .flatMap {
-        case None => ???
-        case Some((_, _)) =>
-          Pull.eval {
-            IO {
-              // There should be one lease on both resources
-              assert(clue(level1Users) >= 1)
-              assert(clue(level2Users) >= 1)
+      query(q).pull.uncons1
+        .flatMap {
+          case None => ???
+          case Some((_, _)) =>
+            Pull.eval {
+              IO {
+                // There should be one lease on both resources
+                assert(clue(level1Users) >= 1)
+                assert(clue(level2Users) >= 1)
+              }
             }
-          }
-      }
-      .stream
-      .compile
-      .drain >>
-      IO {
-        assert(clue(level1Users) == 0)
-        assert(clue(level2Users) == 0)
-      }
+        }
+        .stream
+        .compile
+        .drain >>
+        IO {
+          assert(clue(level1Users) == 0)
+          assert(clue(level2Users) == 0)
+        }
+    }
   }
 }

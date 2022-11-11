@@ -57,46 +57,88 @@ object StreamSupervisor {
 
                     head <- F.deferred[Either[Throwable, A]]
 
-                    // TODO find a more elegant way of holding fs2 Leases
                     start <- F.deferred[Unit]
 
-                    // Hold fs2 leases by:
-                    // 1. allocate a token for the resource and a killSignal / releaseSignal
-                    // 2. do data publishing
-                    // 3. await one killSignal for every stream element/resource scope
-                    close <- sup
-                      .supervise {
-                        {
-                          fs2.Stream.eval(start.get) >> {
-                            stream.attempt.zipWithIndex
-                              .evalMap { case (a, i) =>
-                                F.deferred[Unit].flatMap { killSignal =>
-                                  F.unique.flatMap { resourceToken =>
-                                    state.update { m =>
-                                      m.get(token) match {
-                                        // We are closed for business
-                                        case None => m
-                                        case Some(state) =>
-                                          val resourceEntry = (resourceToken, killSignal.complete(()).void)
-                                          val newEntry = state.copy(
-                                            allocatedResources = state.allocatedResources :+ resourceEntry
-                                          )
-                                          (m + (token -> newEntry))
-                                      }
-                                    } >> {
-                                      if (i == 0) head.complete(a).void
-                                      else if (openTail) q.offer(Chunk((token, resourceToken, a)))
-                                      else F.unit
-                                    } as killSignal.get
+                    close <- {
+                      def go(stream: fs2.Stream[F, (Either[Throwable, A], Long)]): fs2.Pull[F, Nothing, Unit] =
+                        stream.pull.uncons1
+                          .flatMap {
+                            case None => fs2.Pull.done
+                            case Some(((hd, i), tl)) =>
+                              fs2.Pull.eval(F.deferred[Either[Throwable, Unit]]).flatMap { die =>
+                                fs2.Pull
+                                  .extendScopeTo(fs2.Stream.never[F].interruptWhen(die))
+                                  .evalMap(back => sup.supervise(back.compile.drain))
+                                  .flatMap { resourceFiber =>
+                                    fs2.Pull.eval(F.unique).flatMap { resourceToken =>
+                                      val updateStateF = state.modify { m =>
+                                        m.get(token) match {
+                                          // We are closed for business
+                                          case None => (m, resourceFiber.cancel)
+                                          case Some(state) =>
+                                            val resourceEntry = (resourceToken, resourceFiber.cancel)
+                                            val newEntry = state.copy(
+                                              allocatedResources = state.allocatedResources :+ resourceEntry
+                                            )
+                                            val publish =
+                                              if (i == 0) head.complete(hd).void
+                                              else if (openTail) q.offer(Chunk((token, resourceToken, hd)))
+                                              else F.unit
+                                            (m + (token -> newEntry), publish)
+                                        }
+                                      }.flatten
+
+                                      fs2.Pull.eval(updateStateF) >> go(tl)
+                                    }
                                   }
-                                }
                               }
-                              .map(fs2.Stream.eval(_))
-                              .parJoinUnbounded
                           }
-                        }.compile.drain
+
+                      sup.supervise {
+                        start.get >> go(stream.attempt.zipWithIndex).stream.as(()).compile.drain
                       }
-                      .map(_.cancel)
+                    }.map(_.cancel)
+
+                    // // TODO find a more elegant way of holding fs2 Leases
+                    // start <- F.deferred[Unit]
+
+                    // // Hold fs2 leases by:
+                    // // 1. allocate a token for the resource and a killSignal / releaseSignal
+                    // // 2. do data publishing
+                    // // 3. await one killSignal for every stream element/resource scope
+                    // close <- sup
+                    //   .supervise {
+                    //     {
+                    //       fs2.Stream.eval(start.get) >> {
+                    //         stream.attempt.zipWithIndex
+                    //           .evalMap { case (a, i) =>
+                    //             F.deferred[Unit].flatMap { killSignal =>
+                    //               F.unique.flatMap { resourceToken =>
+                    //                 state.update { m =>
+                    //                   m.get(token) match {
+                    //                     // We are closed for business
+                    //                     case None => m
+                    //                     case Some(state) =>
+                    //                       val resourceEntry = (resourceToken, killSignal.complete(()).void)
+                    //                       val newEntry = state.copy(
+                    //                         allocatedResources = state.allocatedResources :+ resourceEntry
+                    //                       )
+                    //                       (m + (token -> newEntry))
+                    //                   }
+                    //                 } >> {
+                    //                   if (i == 0) head.complete(a).void
+                    //                   else if (openTail) q.offer(Chunk((token, resourceToken, a)))
+                    //                   else F.unit
+                    //                 } as killSignal.get
+                    //               }
+                    //             }
+                    //           }
+                    //           .map(fs2.Stream.eval(_))
+                    //           .parJoinUnbounded
+                    //       }
+                    //     }.compile.drain
+                    //   }
+                    //   .map(_.cancel)
 
                     _ <- state.update(_ + (token -> State(close, Vector.empty)))
                     _ <- start.complete(())
