@@ -90,12 +90,12 @@ lazy val graphqlWs = project
   .settings(name := "gql-graphqlws")
   .dependsOn(core)
 
-lazy val goi = project
-  .in(file("modules/goi"))
-  .settings(sharedSettings)
-  .settings(name := "gql-goi")
-  .dependsOn(core)
-  .enablePlugins(NoPublishPlugin)
+/* lazy val goi = project */
+/*   .in(file("modules/goi")) */
+/*   .settings(sharedSettings) */
+/*   .settings(name := "gql-goi") */
+/*   .dependsOn(core) */
+/*   .enablePlugins(NoPublishPlugin) */
 
 lazy val http4s = project
   .in(file("modules/http4s"))
