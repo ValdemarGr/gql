@@ -4,10 +4,10 @@ title: Getting started
 
 Get it here
 ```scala
-libraryDependencies += "io.github.valdemargr" %% "gql-core" % "0.1-611efd0-20221111T155756Z-SNAPSHOT"
-libraryDependencies += "io.github.valdemargr" %% "gql-http4s" % "0.1-611efd0-20221111T155756Z-SNAPSHOT"
-libraryDependencies += "io.github.valdemargr" %% "gql-natchez" % "0.1-611efd0-20221111T155756Z-SNAPSHOT"
-libraryDependencies += "io.github.valdemargr" %% "gql-graphqlws" % "0.1-611efd0-20221111T155756Z-SNAPSHOT"
+libraryDependencies += "io.github.valdemargr" %% "gql-core" % "0.1-f5dd331-20221111T170827Z-SNAPSHOT"
+libraryDependencies += "io.github.valdemargr" %% "gql-http4s" % "0.1-f5dd331-20221111T170827Z-SNAPSHOT"
+libraryDependencies += "io.github.valdemargr" %% "gql-natchez" % "0.1-f5dd331-20221111T170827Z-SNAPSHOT"
+libraryDependencies += "io.github.valdemargr" %% "gql-graphqlws" % "0.1-f5dd331-20221111T170827Z-SNAPSHOT"
 ```
 
 heyy
