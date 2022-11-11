@@ -1,6 +1,9 @@
 ---
 title: Output types
 ---
+:::warn
+this is not up to date
+:::
 An output type `Out[F[_], A]` is an ast node that can take some `A` as input and produce a graphql value in the effect `F`.
 Output types act as continuations of their input types, such that a schema effectively is a tree of continuations.
 The output types of gql are defined in `gql.ast` and are named after their respective GraphQL types.
@@ -11,7 +14,7 @@ The types can naturally be constructed manually as well, but this can be verbose
 :::
 
 Lets import the things we need: 
-```scala mdoc
+```scala 
 import gql.ast._
 import gql.resolver._
 import gql.dsl._
@@ -29,7 +32,7 @@ A `Value` is a graphql value, which is a superset of json.
 
 gql comes with a few predefined scalars, but you can also define your own.
 For instance, the `ID` type is defined for any `Scalar` as follows:
-```scala mdoc
+```scala 
 final case class ID[A](value: A)
 
 object ID {
@@ -48,7 +51,7 @@ implicitly[Scalar[IO, ID[String]]]
 
 ## Enum
 `Enum` types, like `Scalar` types, are terminal types that consist of a name and non-empty bi-directional mapping from a scala type to a `String`:
-```scala mdoc:silent
+```scala 
 sealed trait Color
 object Color {
   case object Red extends Color
@@ -65,7 +68,7 @@ enumType[IO, Color](
 ```
 
 `Enum` types have no constraints on the values they can encode or decode, so they can in fact, be dynamically typed:
-```scala mdoc:silent
+```scala 
 final case class UntypedEnum(s: String)
 
 enumType[IO, UntypedEnum](
@@ -90,7 +93,7 @@ Check out the [resolver section](./resolvers.md) for more info on how resolvers 
 ## Type (object)
 `Type` is the gql equivalent of `type` in GraphQL parlance.
 A `Type` consists of a name and a non-empty list of fields.
-```scala mdoc:silent
+```scala 
 final case class Domain(
   name: String,
   amount: Int
@@ -115,7 +118,7 @@ Type[IO, Domain](
 ```
 
 `Type`'s look very rough, but are significantly easier to define with the `dsl`:
-```scala mdoc:silent
+```scala 
 tpe[IO, Domain](
   "Domain",
   "name" -> pure(_.name),
@@ -131,7 +134,7 @@ It is highly reccomended to define all `Type`s, `Union`s and `Interface`s as eit
 ## Union
 `Union` types allow unification of arbitary types.
 The `Union` type defines a set of `PartialFunction`s that can specify the the type.
-```scala mdoc:silent
+```scala 
 sealed trait Animal
 final case class Dog(name: String) extends Animal
 final case class Cat(name: String) extends Animal
@@ -164,7 +167,7 @@ If the interpreter cannot find an instance of the value when querying for `__typ
 
 ### Ad-hoc unions
 In the true spirit of unification, `Union` types can be constructed in a more ad-hoc fashion:
-```scala mdoc:silent
+```scala 
 final case class Entity1(value: String)
 final case class Entity2(value: String)
 
@@ -184,13 +187,13 @@ union[IO, Unification]("Unification")
 ```
 ### For the daring
 Since the specify function is a `PartialFunction`, it is indeed possible to have no unifying type:
-```scala mdoc
+```scala 
 union[IO, Any]("AnyUnification")
   .variant{ case x: Entity1 => x }
   .variant{ case x: Entity2 => x }
 ```
 And also complex routing logic:
-```scala mdoc
+```scala 
 union[IO, Unification]("RoutedUnification")
   .variant{ case Unification.E1(x) if x.value == "Jane" => x }
   .variant{ 
@@ -204,7 +207,7 @@ An interface is a `Type` that can be "implemented".
 
 `Interface`s have fields like `Type`s and can also be implemented by other `Type`s and `Interface`s.
 `Interface`s don't declare their implementations, but rather the implementations declare their interfaces.
-```scala mdoc:silent
+```scala 
 sealed trait Node {
  def id: String
 }
@@ -263,7 +266,7 @@ You might want to declare types that are not yet queryable.
 Or maybe you only expose an interface, but not the implementing types, thus the implementations won't be discovered.
 
 The schema lets you declare "extra" types that should occur in introspection, rendering and evaluation (if possible):
-```scala mdoc
+```scala 
 def getNode: Node = Company("gql", "1")
 
 def shape = SchemaShape.make[IO](tpe[IO, Unit]("Query", "node" -> pure(_ => getNode)))

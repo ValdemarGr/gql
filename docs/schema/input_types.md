@@ -1,6 +1,9 @@
 ---
 title: Input types
 ---
+:::warn
+this is not up to date
+:::
 An input type `In[A]` defines an input type and a mapping from the input type to `A`.
 Input types occur as parameters in queries as a way to let the caller provide arguments to query resolution.
 
@@ -16,7 +19,7 @@ More information can be found in the [output types](./output_types#enum) section
 The arg type has a couple of uses.
 The first and simplest way of using args is for, well, arguments.
 The dsl has a smart constructor for arguments that summons the `In[A]` type from the implicit scope, for the argument.
-```scala mdoc:silent
+```scala 
 import gql.dsl._
 import gql.ast._
 
@@ -24,13 +27,13 @@ import gql.ast._
 arg[Int]("superCoolArg")
 ```
 Args can also have default values that can be constructed with the smart constructors from the value dsl `gql.dsl.value`.
-```scala mdoc:silent
+```scala 
 import gql.dsl.value._
 
 arg[Int]("superCoolArg", scalar(42))
 ```
 And they can be documented.
-```scala mdoc:silent
+```scala 
 arg[Int]("superCoolArg", scalar(42), "This is a super cool argument")
 
 arg[Int]("superCoolArg", "This is a super cool argument")
@@ -44,7 +47,7 @@ Consult the [Default values for input objects](./input_types#default-values-for-
 :::
 
 Args also have an `Applicative` instance defined for them:
-```scala mdoc:silent
+```scala 
 import cats.implicits._
 
 (arg[Int]("arg1"), arg[Int]("arg2", scalar(43))).mapN(_ + _)
@@ -53,7 +56,7 @@ arg[Int]("arg1") *> arg[Int]("arg2", scalar(44))
 ```
 
 Args can naturally be used in field definitions:
-```scala mdoc:silent
+```scala 
 import cats._
 import cats.effect._
 
@@ -69,7 +72,7 @@ tpe[IO, Data](
 Input is the record type for `In`.
 Input consists of a `name` along with some fields.
 It turns out that arguments and fields have the same properties and as such, `Arg` is used for fields.
-```scala mdoc
+```scala 
 final case class InputData(
   name: String,
   age: Int
@@ -86,7 +89,7 @@ input[InputData](
 ### Default values for input objects
 For input objects however, a default value cannot be properly type checked at compile time, since the default value might be partial.
 For instance, cosider the following input type:
-```scala mdoc
+```scala 
 final case class SomeInput(
   a: Int,
   b: String,
@@ -105,7 +108,7 @@ implicit lazy val someInput = input[SomeInput](
 )
 ```
 Two valid uses of this type could for instance be:
-```scala mdoc:silent
+```scala 
 arg[SomeInput](
   "someInput1",
   obj(
@@ -127,7 +130,7 @@ arg[SomeInput](
 ## Input validation
 Naturally input can also be validated.
 A function `emap` exists on arg, that maps the input to `ValidatedNec[String, B]` for some `B`.
-```scala mdoc:silent
+```scala 
 import cats.data._
 
 final case class ValidatedInput(

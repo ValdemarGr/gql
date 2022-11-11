@@ -31,7 +31,7 @@ Statistics[IO].flatMap{ stats =>
     stats.updateStats("foo", 4.millis, 10) >>
     stats.getStats("foo")
 }.unsafeRunSync()
-// res0: Statistics.Stats = Stats(
+// res0: Stats = Stats(
 //   initialCost = 1000.0,
 //   extraElementCost = 333.3333333333333
 // )

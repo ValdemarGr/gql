@@ -10,8 +10,12 @@ The `Http4sCompiler` interface is a superset of the `Compiler` interface in that
 
 The default implementation for a `Http4sCompiler` simply decodes
 
+:::warning
+this is not up to date
+:::
+
 We can convert a `Compiler` to a `Http4sCompiler` by using the `Http4sCompiler.fromCompiler` function.
-```scala
+```scala 
 import cats.effect._
 import cats.data._
 import gql._
@@ -30,7 +34,7 @@ However, it is very simple to implement the authorization your application needs
 
 Commonly, authorization is provided in the `Authorization` http header.
 Consider the following authorization implementation, that also threads authorization credentials through the whole graph.
-```scala
+```scala 
 import org.http4s._
 import org.http4s.headers._
 import org.http4s.dsl.io._

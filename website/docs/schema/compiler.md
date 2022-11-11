@@ -1,6 +1,9 @@
 ---
 title: Compiler
 ---
+:::warn
+not up to date
+:::
 A `Compiler` is an abstraction for combining multiple parts of `gql` into a single executable.
 
 An instance `Compiler` has the task of parsing, preparing (validating) and construction an executable version of a GraphQL query.

@@ -81,7 +81,7 @@ recursiveSchema.validate.filter{
   case SchemaShape.Problem(SchemaShape.ValidationError.CyclicDivergingTypeReference("A"), _) => false
   case _ => true
 }
-// res3: cats.data.Chain[SchemaShape.Problem] = Chain()
+// res3: Chain[Problem] = Chain()
 ```
 :::info
 Validation does not attempt structural equallity since this can have unforseen performance consequences.

@@ -1,6 +1,9 @@
 ---
 title: Resolvers
 ---
+:::warn
+this is not up to date
+:::
 Resolvers are the edges that connect fields and types.
 Resolvers can be composed to build simple or complex edge strucures.
 
@@ -19,7 +22,7 @@ The `EffectResolver` can be implemented via the `FallibleResolver`, but requires
 
 Having no typeclass constraints of `F` allows us to construct fields with only one implicit parameter; the type of the field.
 This in turn allows passing the type of the field explicitly instead of caputuring it as an implicit parameter.
-```scala mdoc:silent
+```scala 
 import gql.dsl._
 import gql.ast._
 import cats.effect._
@@ -46,7 +49,7 @@ What if two `BatchResolver`'s were to have their keys merged, what resolver's `S
 :::
 
 A `BatchResolver[F, K, T]` is constructed as follows:
-```scala mdoc
+```scala 
 import gql.resolver._
 import cats.effect._
 
@@ -57,7 +60,7 @@ During schema construction, `State` can be composed using `Monad`ic operations.
 The `Schema` companion object contains smart constructors that run the `State` monad.
 
 `mapBoth` and several `map` variants that exists for all `Resolver`s, can be used to align the input and output types:
-```scala mdoc
+```scala 
 import gql._
 import gql.dsl._
 import gql.ast._
@@ -86,7 +89,7 @@ Reasoning with function addreses is not very intuitive, so this is not the prefe
 :::
 
 Which we can finally run:
-```scala mdoc
+```scala 
 import cats.effect.unsafe.implicits.global
 import cats.implicits._
 
@@ -107,7 +110,7 @@ This means that even if no function exists that effeciently fetches your data, y
 :::
 :::tip
 The `BatchResolver` does not maintain ordering internally, but this doesn't mean that the output values cannot maintain order.
-```scala mdoc
+```scala 
 def br: BatchResolver[IO, Set[Int], Map[Int, String]] = ???
 
 def orderedBr: BatchResolver[IO, List[Int], List[String]] =
@@ -122,7 +125,7 @@ The `BatchResolver` can also be used to fetch multiple fields of different value
 
 Say you had a document store that had may fields, but you only wanted to fetch a few of them.
 You also don't want the interpreter to construct a new request for each field.
-```scala mdoc:silent
+```scala 
 type DocId = String
 
 final case class DocumentQuery(id: DocId, field: String)
@@ -149,7 +152,7 @@ Most applications interact with a database one way or another.
 Usually databases have a way to fetch multiple rows at once, and it is usually more efficient to do so.
 
 Let's define our database:
-```scala mdoc
+```scala 
 trait DatabaseConnection[F[_]] {
   def get(ids: Set[Int]): F[Map[Int, String]]
 }
@@ -164,7 +167,7 @@ object DatabaseConnection {
 }
 ```
 Now we can define our schema:
-```scala mdoc
+```scala 
 final case class Nested(key: Int)
 
 def databaseRoot[F[_]](implicit F: Monad[F], db: DatabaseConnection[F]) =
@@ -190,7 +193,7 @@ def databaseRoot[F[_]](implicit F: Monad[F], db: DatabaseConnection[F]) =
 ```
 
 And finally execute it:
-```scala mdoc
+```scala 
 def databaseQuery = """
   query {
     getFirstField(x: 1)
@@ -213,7 +216,7 @@ Notice how the huristic query planner is able to figure out that waiting till `n
 
 ### Design patterns
 Since `State` itself is a monad, we can compose them into `case class`es for more ergonomic implementation at scale.
-```scala mdoc
+```scala 
 import cats.implicits._
 
 trait User
@@ -239,7 +242,7 @@ final case class DomainBatchers[F[_]](
 ## StreamResolver
 The `StreamResolver` is a very powerful resolver type, that can perform many different tasks.
 First and foremost a `StreamResolver` can update a sub-tree of the schema via some provided stream, like signals in frp or observables.
-```scala mdoc
+```scala 
 def streamSchema = 
   SchemaShape[IO, Unit, Unit, Unit](
     tpe[IO, Unit]("Query", "queryCannotBeEmpty" -> pure(_ => 42)),
@@ -301,7 +304,7 @@ That is, if a node emits but is also about to be removed because a parent has em
 Since stream can embed `Resource`s, some very interesting problems can be solved with `StreamResolver`s.
 
 Say we had a very slow connection to some VPN server that we wanted to fetch data from, but only if data from the VPN had been selected.
-```scala mdoc
+```scala 
 import cats.effect.implicits._
 import scala.concurrent.duration._
 
@@ -356,7 +359,7 @@ object VpnConnection {
 ```
 
 We could embed the VPN connection in a stream and pass it around to types that need it.
-```scala mdoc
+```scala 
 final case class WithVpn[F[_], A](
   vpn: VpnConnection[F],
   value: A
@@ -398,7 +401,7 @@ def root[F[_]: Async] =
 ```
 
 We can now try querying the VPN connection through a GraphQL query:
-```scala mdoc
+```scala 
 import gql.ast._
 
 def subscriptionQuery = """
@@ -433,7 +436,7 @@ def runVPNSubscription(q: String, n: Int, subscription: Type[IO, Username] = roo
 runVPNSubscription(subscriptionQuery, 3).unsafeRunSync()
 ```
 We can also check the performance difference of a queries that open a VPN connection versus and ones that don't:
-```scala mdoc
+```scala 
 def bench(fa: IO[_]) = 
   for {
     before <- IO.monotonic
@@ -458,7 +461,7 @@ bench(runVPNSubscription(fastQuery, 1)).unsafeRunSync()
 
 Say that the VPN connection was based on credentials that needed to be refreshed every 600 milliseconds.
 This is also possible:
-```scala mdoc
+```scala 
 def accessToken[F[_]: Async](username: Username): fs2.Stream[F, Username] =
   fs2.Stream(username)
     .lift[F]

@@ -1,6 +1,9 @@
 ---
 title: The DSL
 ---
+:::warn
+not up to date
+:::
 The DSL consists of a set of smart constructors for the ast nodes of gql.
 The source code for the DSL is very easy to follow and as such, the best documentation is the source code itself :-).
 
@@ -31,7 +34,7 @@ We must decide if the field is pure, an effect or a fallible effect:
 :::note
 The effect constructor is named `eff` to avoid collisions with cats-effect.
 :::
-```scala mdoc:silent
+```scala
 final case class Person(
   name: String
 )
@@ -47,7 +50,7 @@ tpe[IO, Person](
 ```
 
 We can also include arguments in fields:
-```scala mdoc:silent
+```scala
 def familyName = arg[String]("familyName")
 
 tpe[IO, Person](

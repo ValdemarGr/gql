@@ -1,6 +1,9 @@
 ---
 title: The DSL
 ---
+:::warn
+not up to date
+:::
 The DSL consists of a set of smart constructors for the ast nodes of gql.
 The source code for the DSL is very easy to follow and as such, the best documentation is the source code itself :-).
 
@@ -21,20 +24,22 @@ def intArg = arg[Int]("intArg")
 field(intArg)(FallibleResolver[IO, (String, Int), String]{ case (s, i) => 
   IO.pure((s + i.toString()).rightIor)
 })
-// res0: Field[[A]IO[A], String, String, Int] = Field(
+// res0: Field[[A >: Nothing <: Any] => IO[A], String, String, Int] = Field(
 //   args = NonEmptyArg(
 //     nec = Singleton(
 //       a = ArgValue(
 //         name = "intArg",
-//         input = cats.Later@4de34598,
+//         input = cats.Later@40dfc763,
 //         defaultValue = None,
 //         description = None
 //       )
 //     ),
-//     decode = gql.NonEmptyArg$$$Lambda$46400/0x0000000109ffd840@59c7a6f0
+//     decode = gql.NonEmptyArg$$$Lambda$46244/0x000000010adf0040@5159e94e
 //   ),
-//   resolve = FallibleResolver(resolve = <function1>),
-//   output = cats.Later@34cb394,
+//   resolve = FallibleResolver(
+//     resolve = repl.MdocSession$MdocApp$$Lambda$47527/0x000000010b208040@50ca6b27
+//   ),
+//   output = cats.Later@70923a17,
 //   description = None
 // )
 ```

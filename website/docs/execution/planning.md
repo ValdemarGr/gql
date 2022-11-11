@@ -149,18 +149,27 @@ loggedSchema.flatMap{ schema =>
     .traverse_{ case Application.Query(fa) => fa }
 }.unsafeRunSync()
 // name: Query_hero_effect, cost: 100.0, end: 100.0
-//           name: Character_name_pure, cost: 100.0, end: 200.0
-//           >>>>>>>>>>>>>>>>>>>>name: Character_name_pure, cost: 100.0, end: 400.0
-//           name: Character_friends_effect, cost: 100.0, end: 200.0
-//                     name: Character_name_pure, cost: 100.0, end: 300.0
-//                     >>>>>>>>>>name: Character_name_pure, cost: 100.0, end: 400.0
-//                     name: Character_appearsIn_pure, cost: 100.0, end: 300.0
-//                     >>>>>>>>>>name: Character_appearsIn_pure, cost: 100.0, end: 400.0
-//                     name: Character_friends_effect, cost: 100.0, end: 300.0
-//                               name: Character_name_pure, cost: 100.0, end: 400.0
+//      name: Character_name_pure, cost: 100.0, end: 200.0
+//      >>>>>>>>>>>>>>>>>>>>>>name: Character_name_pure, cost: 100.0, end: 600.0
+//            name: Character_name_pure_pure, cost: 100.0, end: 300.0
+//            >>>>>>>>>>>>>>>>>>>>>>name: Character_name_pure_pure, cost: 100.0, end: 700.0
+//      name: Character_friends_effect, cost: 100.0, end: 200.0
+//            name: Character_friends_effect_pure, cost: 100.0, end: 300.0
+//                  name: Character_name_pure, cost: 100.0, end: 400.0
+//                  >>>>>>>>>>>name: Character_name_pure, cost: 100.0, end: 600.0
+//                       name: Character_name_pure_pure, cost: 100.0, end: 500.0
+//                       >>>>>>>>>>>name: Character_name_pure_pure, cost: 100.0, end: 700.0
+//                  name: Character_appearsIn_pure, cost: 100.0, end: 400.0
+//                  >>>>>>>>>>>name: Character_appearsIn_pure, cost: 100.0, end: 600.0
+//                       name: Character_appearsIn_pure_pure, cost: 100.0, end: 500.0
+//                       >>>>>>>>>>>name: Character_appearsIn_pure_pure, cost: 100.0, end: 700.0
+//                  name: Character_friends_effect, cost: 100.0, end: 400.0
+//                       name: Character_friends_effect_pure, cost: 100.0, end: 500.0
+//                             name: Character_name_pure, cost: 100.0, end: 600.0
+//                                   name: Character_name_pure_pure, cost: 100.0, end: 700.0
 // 
-// naive: 700.0
-// optimized: 700.0
+// naive: 1300.0
+// optimized: 1300.0
 ```
 :::note
 The Star Wars schema has no batchers, so the optimized variant will not be particularly interesting.
