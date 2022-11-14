@@ -17,12 +17,15 @@ package gql.resolver
 
 import cats._
 import cats.data._
+import cats.implicits._
 import fs2.Stream
 
-trait Resolver[F[_], -I, A] {
+sealed trait Resolver[F[_], -I, A] {
   def mapK[G[_]: Functor](fk: F ~> G): Resolver[G, I, A]
 
   def contramap[B](g: B => I): Resolver[F, B, A]
+
+  def mapWithInput[I2 <: I, B](f: (I2, A) => B)(implicit F: Functor[F]): Resolver[F, I2, B]
 }
 
 final case class FallibleResolver[F[_], I, A](resolve: I => F[Ior[String, A]]) extends Resolver[F, I, A] {
@@ -31,6 +34,9 @@ final case class FallibleResolver[F[_], I, A](resolve: I => F[Ior[String, A]]) e
 
   def contramap[B](g: B => I): FallibleResolver[F, B, A] =
     FallibleResolver(g andThen resolve)
+
+  override def mapWithInput[I2 <: I, B](f: (I2, A) => B)(implicit F: Functor[F]): FallibleResolver[F, I2, B] =
+    FallibleResolver(i => resolve(i).map(_.map(a => f(i, a))))
 }
 
 final case class EffectResolver[F[_], I, A](resolve: I => F[A]) extends Resolver[F, I, A] {
@@ -39,6 +45,9 @@ final case class EffectResolver[F[_], I, A](resolve: I => F[A]) extends Resolver
 
   def contramap[B](g: B => I): EffectResolver[F, B, A] =
     EffectResolver(g andThen resolve)
+
+  def mapWithInput[I2 <: I, B](f: (I2, A) => B)(implicit F: Functor[F]): EffectResolver[F, I2, B] =
+    EffectResolver(i => resolve(i).map(a => f(i, a)))
 }
 
 final case class PureResolver[F[_], I, A](resolve: I => A) extends Resolver[F, I, A] {
@@ -47,6 +56,9 @@ final case class PureResolver[F[_], I, A](resolve: I => A) extends Resolver[F, I
 
   def contramap[B](g: B => I): PureResolver[F, B, A] =
     PureResolver(g andThen resolve)
+
+  def mapWithInput[I2 <: I, B](f: (I2, A) => B)(implicit F: Functor[F]): PureResolver[F, I2, B] =
+    PureResolver(i => f(i, resolve(i)))
 }
 
 final case class StreamResolver[F[_], I, A](
@@ -57,6 +69,9 @@ final case class StreamResolver[F[_], I, A](
 
   override def contramap[B](g: B => I): Resolver[F, B, A] =
     StreamResolver[F, B, A](i => stream(g(i)))
+
+  override def mapWithInput[I2 <: I, B](f: (I2, A) => B)(implicit F: Functor[F]): StreamResolver[F, I2, B] =
+    StreamResolver[F, I2, B](i => stream(i).map(_.map(a => f(i, a))))
 }
 
 final case class CompositionResolver[F[_], I, A, O](
@@ -68,6 +83,13 @@ final case class CompositionResolver[F[_], I, A, O](
 
   override def contramap[B](g: B => I): Resolver[F, B, O] =
     CompositionResolver(left.contramap(g), right)
+
+  override def mapWithInput[I2 <: I, B](f: (I2, O) => B)(implicit F: Functor[F]): CompositionResolver[F, I2, (I2, A), B] = {
+    val l: Resolver[F, I2, (I2, A)] = left.mapWithInput[I2, (I2, A)]((i, a) => (i, a))
+    val r0: Resolver[F, (I2, A), O] = right.contramap[(I2, A)] { case (_, a) => a }
+    val r1: Resolver[F, (I2, A), B] = r0.mapWithInput[(I2, A), B] { case ((i2, _), o) => f(i2, o) }
+    CompositionResolver(l, r1)
+  }
 }
 
 final case class CacheResolver[F[_], I, I2, O](
@@ -79,4 +101,56 @@ final case class CacheResolver[F[_], I, I2, O](
 
   override def contramap[B](g: B => I): Resolver[F, B, O] =
     CacheResolver(i => first(g(i)), fallback)
+
+  override def mapWithInput[I3 <: I, B](f: (I3, O) => B)(implicit F: Functor[F]): CacheResolver[F, I3, (I2, I3), B] =
+    CacheResolver[F, I3, (I2, I3), B](
+      i3 =>
+        first(i3).map {
+          case Left(i2) => Left((i2, i3))
+          case Right(o) => Right(f(i3, o))
+        },
+      fallback.contramap[(I2, I3)] { case (i2, _) => i2 }.mapWithInput[(I2, I3), B] { case ((_, i3), o) => f(i3, o) }
+    )
+}
+
+abstract case class BatchResolver[F[_], I, O](
+    id: BatchResolver.ResolverKey,
+    run: I => (Set[Any], Map[Any, Any] => O)
+) extends Resolver[F, I, O] {
+  override def mapK[G[_]: Functor](fk: F ~> G): BatchResolver[G, I, O] =
+    new BatchResolver[G, I, O](id, run) {}
+
+  override def contramap[B](g: B => I): BatchResolver[F, B, O] =
+    new BatchResolver[F, B, O](id, b => run(g(b))) {}
+
+  override def mapWithInput[I2 <: I, B](f: (I2, O) => B)(implicit F: Functor[F]): BatchResolver[F, I2, B] =
+    new BatchResolver[F, I2, B](
+      id,
+      { i2 =>
+        val (keys, finalize) = run(i2)
+        (keys, finalize.andThen(f(i2, _)))
+      }
+    ) {}
+}
+
+object BatchResolver {
+  final case class ResolverKey(id: Int) extends AnyVal
+
+  object ResolverKey {
+    implicit val order: Order[ResolverKey] = Order.by(_.id)
+  }
+
+  def apply[F[_], K, T](
+      f: Set[K] => F[Map[K, T]]
+  ): State[gql.SchemaState[F], BatchResolver[F, Set[K], Map[K, T]]] =
+    State { s =>
+      val id = s.nextId
+      val rk = ResolverKey(id)
+      val r = new BatchResolver[F, Set[K], Map[K, T]](
+        rk,
+        k => (k.asInstanceOf[Set[Any]], (m: Map[Any, Any]) => m.asInstanceOf[Map[K, T]])
+      ) {}
+      val entry = f.asInstanceOf[Set[Any] => F[Map[Any, Any]]]
+      (s.copy(nextId = id + 1, batchers = s.batchers + (rk -> entry)), r)
+    }
 }

@@ -209,10 +209,24 @@ object dsl {
 
     def map[O2](f: O => O2): Resolver[F, I, O2] =
       resolver.andThen(PureResolver[F, O, O2](f))
+
+    def mapBoth[O2](f: (I, O) => O2)(implicit F: Functor[F]): Resolver[F, I, O2] =
+      resolver.mapWithInput[I, O2] { case (i, o) => f(i, o) }
+  }
+
+  implicit class FieldSyntax[F[_], I, T, A](val field: Field[F, I, T, A]) extends AnyVal {
+    def compose[I2](g: Resolver[F, I2, I])(implicit F: Functor[F]): Field[F, I2, T, A] =
+      Field(
+        field.args,
+        g.contramap[(I2, A)] { case (b, _) => b }.mapBoth { case ((_, a), i) => (i, a) }.andThen(field.resolve),
+        field.output,
+        field.description
+      )
   }
 
   implicit class BatchResolverSyntax[F[_], K, V](val batchResolver: BatchResolver[F, Set[K], Map[K, V]]) extends AnyVal {
-    def one: BatchResolver[F, K, Option[V]] = batchResolver.contramap[K](Set(_)).mapBoth { case (k, m) => m.get(k) }
+    def one(implicit F: Functor[F]): Resolver[F, K, Option[V]] =
+      batchResolver.contramap[K](Set(_)).mapBoth { case (k, m) => m.get(k) }
   }
 
   implicit class TypeSyntax[F[_], A](val tpe: Type[F, A]) extends AnyVal {
