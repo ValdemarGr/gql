@@ -221,6 +221,9 @@ object SchemaShape {
     final case class OutputType(name: String) extends ValidationEdge
     final case class Arg(name: String) extends ValidationEdge
     final case class InputType(name: String) extends ValidationEdge
+    final case class Index(i: Int) extends ValidationEdge {
+      def name: String = i.toString
+    }
   }
 
   final case class Problem(
@@ -234,6 +237,7 @@ object SchemaShape {
           case ValidationEdge.OutputType(name) => s"($name)"
           case ValidationEdge.Arg(name)        => s".$name"
           case ValidationEdge.InputType(name)  => s"($name)"
+          case ValidationEdge.Index(i)         => s"[$i]"
         }
         .mkString_("")}"
   }
