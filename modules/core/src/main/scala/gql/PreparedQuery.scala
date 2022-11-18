@@ -25,7 +25,6 @@ import P.Value._
 import gql.ast._
 import gql.resolver._
 import cats.parse.Caret
-import gql.parser.QueryParser
 
 object PreparedQuery {
   sealed trait Prepared[F[_], A]

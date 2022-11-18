@@ -172,8 +172,11 @@ object QueryParser {
   lazy val value: P[Value] = P.defer {
     import Value._
     variable.map(VariableValue(_)) |
-      intValue.map(IntValue(_)) |
-      floatValue.map(FloatValue(_)) |
+      p(Numbers.jsonNumber).map { s =>
+        val n = BigDecimal(s)
+        if (n.scale <= 0) Value.IntValue(n.toBigInt)
+        else Value.FloatValue(n)
+      } |
       stringValue.map(StringValue(_)) |
       booleanValue.map(BooleanValue(_)) |
       nullValue.as(NullValue) |

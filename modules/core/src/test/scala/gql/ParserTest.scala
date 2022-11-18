@@ -555,6 +555,11 @@ query ($foo: TestType = { a: 123 }) { id }
     query {
       field(arg: ["l"1"2"])
     }
+  """,
+    s"""
+    query {
+      field(arg: 0.03)
+    }
   """
   )
 

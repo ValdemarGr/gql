@@ -569,4 +569,21 @@ class StarWarsTest extends CatsEffectSuite {
       """
     }
   }
+
+  test("can provide different numeric types") {
+    query("""
+      query {
+        numeric(one: 1, two: 2.0)
+      }
+      """) >> query("""
+      query {
+        numeric(one: 1, two: 2)
+      }
+      """) >>
+      query("""
+      query {
+        numeric(one: 1, two: 2.1)
+      }
+      """)
+  }
 }
