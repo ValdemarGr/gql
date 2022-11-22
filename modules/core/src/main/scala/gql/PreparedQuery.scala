@@ -808,7 +808,7 @@ object PreparedQuery {
 
             val rootType = vd.tpe
             rootValueF
-              .flatTap(e => verify(rootType, e, inOption = false))
+              .flatTap(e => verify(rootType, e, inOption = true))
               .map(v => vd.name -> v)
           }
           .map(_.toMap)
