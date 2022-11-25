@@ -24,6 +24,7 @@ import gql._
 import org.http4s.server.websocket.WebSocketBuilder
 import gql.graphqlws.GraphqlWS
 import org.http4s.websocket.WebSocketFrame
+import org.typelevel.ci._
 
 final case class Http4sCompilerParametes(
     compilerParameters: CompilerParameters,
@@ -80,6 +81,7 @@ object Http4sRoutes {
         wsb
           .withOnClose(close)
           .withFilterPingPongs(true)
+          .withHeaders(Headers(Header.Raw(ci"Sec-WebSocket-Protocol", "graphql-transport-ws")))
           .build(
             toClient.evalMap[F, WebSocketFrame] {
               case Left(te) => F.fromEither(WebSocketFrame.Close(te.code, te.message))
