@@ -25,6 +25,7 @@ import P.Value._
 import gql.ast._
 import gql.resolver._
 import cats.parse.Caret
+import cats.arrow.FunctionK
 
 object PreparedQuery {
   sealed trait Prepared[F[_], A]
@@ -225,18 +226,21 @@ object PreparedQuery {
   def nextId[F[_]: Monad](implicit S: Stateful[F, Prep]) =
     S.inspect(_.nextId) <* S.modify(x => x.copy(nextId = x.nextId + 1))
 
-  def raise[F[_], A](s: String, caret: Option[Caret])(implicit S: Stateful[F, Prep], F: MonadError[F, PositionalError]): F[A] =
-    S.get.map(state => PositionalError(state.cursor, caret.toList, s)).flatMap(F.raiseError[A])
+  def raise[F[_], A](s: String, caret: Option[Caret])(implicit
+      S: Stateful[F, Prep],
+      F: MonadError[F, NonEmptyChain[PositionalError]]
+  ): F[A] =
+    S.get.map(state => NonEmptyChain.one(PositionalError(state.cursor, caret.toList, s))).flatMap(F.raiseError[A])
 
   def raiseOpt[F[_], A](o: Option[A], s: String, caret: Option[Caret])(implicit
       S: Stateful[F, Prep],
-      F: MonadError[F, PositionalError]
+      F: MonadError[F, NonEmptyChain[PositionalError]]
   ): F[A] =
     o.map(_.pure[F]).getOrElse(raise[F, A](s, caret))
 
   def raiseEither[F[_], A](e: Either[String, A], caret: Option[Caret])(implicit
       S: Stateful[F, Prep],
-      F: MonadError[F, PositionalError]
+      F: MonadError[F, NonEmptyChain[PositionalError]]
   ): F[A] =
     e match {
       case Left(value)  => raise[F, A](value, caret)
@@ -266,7 +270,7 @@ object PreparedQuery {
   def ambientFragment[F[_]: Monad, A](name: String)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
     ambientEdge[F, A](PrepEdge.FragmentEdge(name))(fa)
 
-  def prepareSelections[F[_], G[_]](
+  def prepareSelections[F[_]: Parallel, G[_]](
       ol: Selectable[G, Any],
       s: P.SelectionSet,
       variableMap: VariableMap,
@@ -276,7 +280,7 @@ object PreparedQuery {
   )(implicit
       G: Applicative[G],
       S: Stateful[F, Prep],
-      F: MonadError[F, PositionalError],
+      F: MonadError[F, NonEmptyChain[PositionalError]],
       D: Defer[F]
   ): F[NonEmptyList[PreparedField[G, Any]]] = D.defer {
     val syntheticTypename =
@@ -306,7 +310,7 @@ object PreparedQuery {
       )
 
     val schemaMap = ol.fieldMap + ("__typename" -> syntheticTypename)
-    s.selections.traverse[F, PreparedField[G, Any]] {
+    s.selections.parTraverse[F, PreparedField[G, Any]] {
       case Pos(caret, P.Selection.FieldSelection(field)) =>
         (schemaMap.get(field.name): @unchecked) match {
           case None => raise(s"unknown field name ${field.name}", Some(caret))
@@ -341,14 +345,14 @@ object PreparedQuery {
 
   type VariableMap = Map[String, Either[P.Value, Json]]
 
-  def closeFieldParameters[F[_], G[_]](
+  def closeFieldParameters[F[_]: Parallel, G[_]](
       gqlField: P.Field,
       caret: Caret,
       field: Field[G, Any, Any, Any],
       variableMap: VariableMap
   )(implicit
       S: Stateful[F, Prep],
-      F: MonadError[F, PositionalError]
+      F: MonadError[F, NonEmptyChain[PositionalError]]
   ): F[Resolver[G, Any, Any]] = {
     val provided = gqlField.arguments.toList.flatMap(_.nel.toList)
 
@@ -370,7 +374,7 @@ object PreparedQuery {
     decObj.map(a => resolve.contramap[Any]((_, a)))
   }
 
-  def prepareField[F[_], G[_]: Applicative](
+  def prepareField[F[_]: Parallel, G[_]: Applicative](
       gqlField: P.Field,
       caret: Caret,
       field: Field[G, Any, Any, Any],
@@ -380,7 +384,7 @@ object PreparedQuery {
       discoveryState: SchemaShape.DiscoveryState[G]
   )(implicit
       S: Stateful[F, Prep],
-      F: MonadError[F, PositionalError],
+      F: MonadError[F, NonEmptyChain[PositionalError]],
       D: Defer[F]
   ): F[PreparedField[G, Any]] = {
     closeFieldParameters[F, G](gqlField, caret, field, variableMap).flatMap { resolve =>
@@ -432,7 +436,7 @@ object PreparedQuery {
       sel: Selectable[G, Any],
       caret: Caret,
       discoveryState: SchemaShape.DiscoveryState[G]
-  )(implicit F: MonadError[F, PositionalError], S: Stateful[F, Prep]): F[(Selectable[G, Any], Any => Option[Any])] =
+  )(implicit F: MonadError[F, NonEmptyChain[PositionalError]], S: Stateful[F, Prep]): F[(Selectable[G, Any], Any => Option[Any])] =
     if (sel.name == name) F.pure((sel, Some(_)))
     else {
       sel match {
@@ -462,7 +466,7 @@ object PreparedQuery {
       }
     }
 
-  def prepareFragment[F[_], G[_]: Applicative](
+  def prepareFragment[F[_]: Parallel, G[_]: Applicative](
       ol: Selectable[G, Any],
       f: Pos[P.FragmentDefinition],
       variableMap: VariableMap,
@@ -471,7 +475,7 @@ object PreparedQuery {
       discoveryState: SchemaShape.DiscoveryState[G]
   )(implicit
       S: Stateful[F, Prep],
-      F: MonadError[F, PositionalError],
+      F: MonadError[F, NonEmptyChain[PositionalError]],
       D: Defer[F]
   ): F[FragmentDefinition[G, Any]] =
     D.defer {
@@ -513,13 +517,13 @@ object PreparedQuery {
     case Input(name, _, _)     => name
   }
 
-  def parseInputObj[F[_], A](
+  def parseInputObj[F[_]: Parallel, A](
       v: P.Value.ObjectValue,
       fields: NonEmptyArg[A],
       variableMap: Option[VariableMap],
       ambigiousEnum: Boolean
   )(implicit
-      F: MonadError[F, PositionalError],
+      F: MonadError[F, NonEmptyChain[PositionalError]],
       S: Stateful[F, Prep]
   ): F[A] = {
     val xs = v.v
@@ -536,8 +540,8 @@ object PreparedQuery {
     tooMuchF >> parseArg[F, A](fields, m, variableMap, ambigiousEnum)
   }
 
-  def parseInput[F[_], A](v: P.Value, tpe: In[A], variableMap: Option[VariableMap], ambigiousEnum: Boolean)(implicit
-      F: MonadError[F, PositionalError],
+  def parseInput[F[_]: Parallel, A](v: P.Value, tpe: In[A], variableMap: Option[VariableMap], ambigiousEnum: Boolean)(implicit
+      F: MonadError[F, NonEmptyChain[PositionalError]],
       S: Stateful[F, Prep]
   ): F[A] =
     (tpe, v) match {
@@ -582,16 +586,25 @@ object PreparedQuery {
           parseInputObj[F, A](o, fields, variableMap, ambigiousEnum)
         }
       case (InArr(of, dec), P.Value.ListValue(xs)) =>
-        xs
-          .traverse(parseInput[F, A](_, of, variableMap, ambigiousEnum))
+        xs.zipWithIndex
+          .parTraverse { case (x, i) =>
+            ambientIndex(i) {
+              parseInput[F, A](x, of, variableMap, ambigiousEnum)
+            }
+          }
           .flatMap(dec(_).fold(raise(_, None), F.pure(_)))
       case (InOpt(_), P.Value.NullValue) => F.pure(None.asInstanceOf[A])
       case (InOpt(of), x)                => parseInput[F, A](x, of, variableMap, ambigiousEnum).map(Some(_).asInstanceOf[A])
       case (i, _)                        => raise(s"expected ${inName(i)} type, but got ${pValueName(v)}", None)
     }
 
-  def parseArgValue[F[_], A](a: ArgValue[A], input: Map[String, P.Value], variableMap: Option[VariableMap], ambigiousEnum: Boolean)(implicit
-      F: MonadError[F, PositionalError],
+  def parseArgValue[F[_]: Parallel, A](
+      a: ArgValue[A],
+      input: Map[String, P.Value],
+      variableMap: Option[VariableMap],
+      ambigiousEnum: Boolean
+  )(implicit
+      F: MonadError[F, NonEmptyChain[PositionalError]],
       S: Stateful[F, Prep]
   ) = {
     val fa =
@@ -615,14 +628,15 @@ object PreparedQuery {
     }
   }
 
-  def parseArg[F[_], A](arg: Arg[A], input: Map[String, P.Value], variableMap: Option[VariableMap], ambigiousEnum: Boolean)(implicit
-      F: MonadError[F, PositionalError],
+  def parseArg[F[_]: Parallel, A](arg: Arg[A], input: Map[String, P.Value], variableMap: Option[VariableMap], ambigiousEnum: Boolean)(
+      implicit
+      F: MonadError[F, NonEmptyChain[PositionalError]],
       S: Stateful[F, Prep]
   ): F[A] = {
     // All provided fields are of the correct type
     // All required fields are either defiend or defaulted
     val fieldsF: F[Chain[(String, Any)]] =
-      arg.entries.traverse { a =>
+      arg.entries.parTraverse { a =>
         parseArgValue[F, Any](
           a.asInstanceOf[ArgValue[Any]],
           input,
@@ -637,8 +651,8 @@ object PreparedQuery {
       .flatMap(arg.decode(_).fold(raise(_, None), F.pure(_)))
   }
 
-  def parserValueToValue[F[_]](v: P.Value)(implicit
-      F: MonadError[F, PositionalError],
+  def parserValueToValue[F[_]: Parallel](v: P.Value)(implicit
+      F: MonadError[F, NonEmptyChain[PositionalError]],
       S: Stateful[F, Prep]
   ): F[Value] =
     v match {
@@ -646,11 +660,11 @@ object PreparedQuery {
       case FloatValue(v)        => F.pure(Value.FloatValue(v))
       case P.Value.EnumValue(v) => F.pure(Value.EnumValue(v))
       case ListValue(v) =>
-        v.toVector.traverse(parserValueToValue[F]).map(Value.ArrayValue(_))
+        v.toVector.parTraverse(parserValueToValue[F]).map(Value.ArrayValue(_))
       case IntValue(v)      => F.pure(Value.IntValue(v))
       case VariableValue(v) => raise[F, Value](s"variable $v may not occur here", None)
       case ObjectValue(v) =>
-        v.traverse { case (k, v) =>
+        v.parTraverse { case (k, v) =>
           parserValueToValue[F](v).tupleLeft(k)
         }.map(xs => Value.ObjectValue(xs.toMap))
       case BooleanValue(v) => F.pure(Value.BooleanValue(v))
@@ -696,14 +710,14 @@ object PreparedQuery {
 
   // TODO add another phase after finding the OperationDefinition and before this,
   // that checks all that variables have been used
-  def prepareParts[F[_], G[_]: Applicative](
+  def prepareParts[F[_]: Parallel, G[_]: Applicative](
       op: P.OperationDefinition,
       frags: List[Pos[P.FragmentDefinition]],
       schema: Schema[G, ?, ?, ?],
       variableMap: Map[String, Json]
   )(implicit
       S: Stateful[F, Prep],
-      F: MonadError[F, PositionalError],
+      F: MonadError[F, NonEmptyChain[PositionalError]],
       D: Defer[F]
   ): F[(P.OperationType, NonEmptyList[PreparedField[G, Any]])] = {
     val ot = operationType(op)
@@ -733,7 +747,7 @@ object PreparedQuery {
       case P.OperationDefinition.Detailed(_, _, vdsO, _) =>
         vdsO.toList
           .flatMap(_.nel.toList)
-          .traverse { case Pos(caret, vd) =>
+          .parTraverse { case Pos(caret, vd) =>
             val rootValueF: F[Either[P.Value, Json]] = (variableMap.get(vd.name), vd.defaultValue) match {
               case (None, Some(d)) => F.pure(Left(d))
               case (Some(x), _)    => F.pure(Right(x))
@@ -765,7 +779,7 @@ object PreparedQuery {
                 case (P.Type.List(of), v) =>
                   v match {
                     case Left(P.Value.ListValue(vs)) =>
-                      vs.traverseWithIndexM { case (v, i) =>
+                      vs.zipWithIndex.parTraverse { case (v, i) =>
                         ambientIndex(i) {
                           verify(of, Left(v), inOption = true)
                         }
@@ -794,7 +808,7 @@ object PreparedQuery {
                               Some(caret)
                             )
                           case Some(xs) =>
-                            xs.traverseWithIndexM { case (v, i) =>
+                            xs.zipWithIndex.parTraverse { case (v, i) =>
                               ambientIndex(i) {
                                 verify(of, Right(v), inOption = true)
                               }
@@ -836,21 +850,53 @@ object PreparedQuery {
     fa tupleLeft ot
   }
 
-  type H[A] = StateT[EitherT[Eval, PositionalError, *], Prep, A]
+  type H[A] = StateT[EitherT[Eval, NonEmptyChain[PositionalError], *], Prep, A]
+
+  // Invariant, the computation is pure so we can run state's as many times as we want, arbitarily
+  def parallelForPureState[G[_], E: Semigroup, S](implicit G: MonadError[G, E]) = new Parallel[StateT[G, S, *]] {
+    type F[A] = StateT[G, S, A]
+
+    override def sequential: F ~> F = FunctionK.id[F]
+
+    override def parallel: F ~> F = FunctionK.id[F]
+
+    override def applicative: Applicative[F] = new Applicative[F] {
+      override def ap[A, B](ff: F[A => B])(fa: F[A]): F[B] =
+        StateT { s =>
+          ff.run(s).attempt.flatMap {
+            case Right((s2, f)) => fa.run(s2).map { case (s3, a) => (s3, f(a)) }
+            // Okay, there's an error
+            // Let's just run the other side and see if there are more errors to report
+            case Left(e) =>
+              fa.run(s).attempt.flatMap {
+                case Left(e2) => G.raiseError(e |+| e2)
+                case Right(_) => G.raiseError(e)
+              }
+          }
+        }
+
+      override def pure[A](x: A): F[A] = StateT.pure(x)
+    }
+
+    override def monad: Monad[StateT[G, S, *]] = implicitly
+  }
+
+  implicit val par: Parallel[H] =
+    parallelForPureState[EitherT[Eval, NonEmptyChain[PositionalError], *], NonEmptyChain[PositionalError], Prep]
 
   def prepare[F[_]: Applicative](
       executabels: NonEmptyList[P.ExecutableDefinition],
       schema: Schema[F, ?, ?, ?],
       variableMap: Map[String, Json],
       operationName: Option[String]
-  ): Either[PositionalError, (P.OperationType, NonEmptyList[PreparedField[F, Any]])] = {
+  ): EitherNec[PositionalError, (P.OperationType, NonEmptyList[PreparedField[F, Any]])] = {
     val (ops, frags) = executabels.toList.partitionEither {
       case P.ExecutableDefinition.Operation(op)  => Left(op)
       case P.ExecutableDefinition.Fragment(frag) => Right(frag)
     }
 
     getOperationDefinition[Either[(String, List[Caret]), *]](ops, operationName) match {
-      case Left((e, carets)) => Left(PositionalError(PrepCursor.empty, carets, e))
+      case Left((e, carets)) => Left(NonEmptyChain.one(PositionalError(PrepCursor.empty, carets, e)))
       case Right(op) =>
         prepareParts[H, F](op, frags, schema, variableMap)
           .runA(Prep.empty)

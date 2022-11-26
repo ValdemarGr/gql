@@ -107,8 +107,8 @@ object GraphqlWS {
                                   outcome match {
                                     case Left(err) =>
                                       val j = err match {
-                                        case CompilationError.Parse(p)       => p.asGraphQL
-                                        case CompilationError.Preparation(p) => p.asGraphQL
+                                        case CompilationError.Parse(p)       => Chain(p.asGraphQL)
+                                        case CompilationError.Preparation(p) => p.toChain.map(_.asGraphQL)
                                       }
 
                                       val cleanupF = state.update {
@@ -116,7 +116,7 @@ object GraphqlWS {
                                         case x                         => x
                                       }
 
-                                      release >> cleanupF >> send(FromServer.Error(id, Chain(j)))
+                                      release >> cleanupF >> send(FromServer.Error(id, j))
                                     case Right(app) =>
                                       val s = app match {
                                         case Application.Query(run)        => fs2.Stream.eval(run)

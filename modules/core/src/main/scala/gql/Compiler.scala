@@ -21,7 +21,7 @@ import io.circe._
 import cats.effect._
 import gql.parser.{QueryParser => P}
 import gql.interpreter.Interpreter
-import cats.data.NonEmptyList
+import cats.data._
 import gql.parser.QueryParser
 
 sealed trait CompilationError {
@@ -31,8 +31,8 @@ object CompilationError {
   final case class Parse(error: gql.parser.ParseError) extends CompilationError {
     lazy val asGraphQL: JsonObject = JsonObject("errors" -> Json.arr(Json.fromJsonObject(error.asGraphQL)))
   }
-  final case class Preparation(error: gql.PreparedQuery.PositionalError) extends CompilationError {
-    lazy val asGraphQL: JsonObject = JsonObject("errors" -> Json.arr(Json.fromJsonObject(error.asGraphQL)))
+  final case class Preparation(error: NonEmptyChain[gql.PreparedQuery.PositionalError]) extends CompilationError {
+    lazy val asGraphQL: JsonObject = JsonObject("errors" -> Json.arr(error.map(x => Json.fromJsonObject(x.asGraphQL)).toList: _*))
   }
 }
 

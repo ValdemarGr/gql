@@ -586,4 +586,60 @@ class StarWarsTest extends CatsEffectSuite {
       }
       """)
   }
+
+  test("should be able to produce multiple errors") {
+    val q = """
+      query DeadQuery {
+        cors
+        mainHero: hero {
+          name
+          story: secretBackstory
+          horse
+          dorse
+        }
+      }
+    """
+
+    assertJsonIO(query(q)) {
+      """
+      {
+        "errors": [
+  {
+    "message" : "unknown field name cors",
+    "locations" : [
+      {
+        "line" : 3,
+        "column" : 8
+      }
+    ]
+  },
+  {
+    "message" : "unknown field name horse",
+    "locations" : [
+      {
+        "line" : 7,
+        "column" : 10
+      }
+    ],
+    "path" : [
+      "hero"
+    ]
+  },
+  {
+    "message" : "unknown field name dorse",
+    "locations" : [
+      {
+        "line" : 8,
+        "column" : 8
+      }
+    ],
+    "path" : [
+      "hero"
+    ]
+  }
+        ]
+      }
+      """
+    }
+  }
 }

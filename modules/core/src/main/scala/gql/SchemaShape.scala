@@ -362,9 +362,11 @@ object SchemaShape {
                 .runA(PreparedQuery.Prep.empty)
                 .value
                 .value match {
-                case Left(err) =>
-                  val suf = err.position.position.collect { case PreparedQuery.PrepEdge.ASTEdge(x) => x }
-                  raise(InvalidInput(err), suf)
+                case Left(errs) =>
+                  errs.traverse_ { err =>
+                    val suf = err.position.position.collect { case PreparedQuery.PrepEdge.ASTEdge(x) => x }
+                    raise(InvalidInput(err), suf)
+                  }
                 case Right(_) => G.unit
               }
             }
