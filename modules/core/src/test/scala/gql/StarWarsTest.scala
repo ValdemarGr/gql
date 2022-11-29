@@ -306,7 +306,7 @@ class StarWarsTest extends CatsEffectSuite {
       {
         "errors": [
           {
-            "message": "Variable '$someId' is required but was not provided.",
+            "message": "Variable '$someId' is required but was not provided. Hint: Provide variable or a default value for '$someId' of type `String!`.",
             "locations": [
               {
                 "line": 1,
@@ -605,7 +605,7 @@ class StarWarsTest extends CatsEffectSuite {
       {
         "errors": [
   {
-    "message" : "unknown field name cors",
+    "message" : "Unknown field name 'cors'.",
     "locations" : [
       {
         "line" : 3,
@@ -614,7 +614,7 @@ class StarWarsTest extends CatsEffectSuite {
     ]
   },
   {
-    "message" : "unknown field name horse",
+    "message" : "Unknown field name 'horse'.",
     "locations" : [
       {
         "line" : 7,
@@ -626,7 +626,7 @@ class StarWarsTest extends CatsEffectSuite {
     ]
   },
   {
-    "message" : "unknown field name dorse",
+    "message" : "Unknown field name 'dorse'.",
     "locations" : [
       {
         "line" : 8,

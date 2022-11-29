@@ -213,14 +213,18 @@ object PreparedQuery {
     case OutArr(of, _, _)         => underlyingOutputTypename(of)
   }
 
-  def friendlyName[G[_], A](ot: Out[G, A]): String = (ot: @unchecked) match {
-    case Scalar(name, _, _, _)    => name
-    case Enum(name, _, _)         => name
-    case Type(name, _, _, _)      => name
-    case Union(name, _, _)        => name
-    case Interface(name, _, _, _) => name
-    case OutOpt(of, _)            => s"(${friendlyName(of)} | null)"
-    case OutArr(of, _, _)         => s"[${friendlyName(of)}]"
+  def friendlyName[G[_], A](ot: Out[G, A], inOption: Boolean = false): String = {
+    val suffix = if (inOption) "" else "!"
+    val prefix = (ot: @unchecked) match {
+      case Scalar(name, _, _, _)    => name
+      case Enum(name, _, _)         => name
+      case Type(name, _, _, _)      => name
+      case Union(name, _, _)        => name
+      case Interface(name, _, _, _) => name
+      case OutOpt(of, _)            => friendlyName(of, inOption = true)
+      case OutArr(of, _, _)         => s"[${friendlyName(of)}]"
+    }
+    prefix + suffix
   }
 
   def nextId[F[_]: Monad](implicit S: Stateful[F, Prep]) =
@@ -304,7 +308,7 @@ object PreparedQuery {
                 }
           }
 
-          G.pure(typename.toRightIor("typename could not be determined, this is an implementation error"))
+          G.pure(typename.toRightIor("Typename could not be determined, this is an implementation error."))
         },
         Eval.now(gql.ast.stringScalar)
       )
@@ -313,7 +317,7 @@ object PreparedQuery {
     s.selections.parTraverse[F, PreparedField[G, Any]] {
       case Pos(caret, P.Selection.FieldSelection(field)) =>
         (schemaMap.get(field.name): @unchecked) match {
-          case None => raise(s"unknown field name ${field.name}", Some(caret))
+          case None => raise(s"Unknown field name '${field.name}'.", Some(caret))
           case Some(f: Field[G, Any, Any, Any] @unchecked) =>
             ambientField(field.name) {
               prepareField[F, G](field, caret, f, variableMap, fragments, currentTypename, discoveryState)
@@ -321,7 +325,7 @@ object PreparedQuery {
         }
       case Pos(caret, P.Selection.InlineFragmentSelection(f)) =>
         f.typeCondition match {
-          case None => raise(s"inline fragment must have a type condition", Some(caret))
+          case None => raise(s"Inline fragment must have a type condition.", Some(caret))
           case Some(typeCnd) =>
             matchType[F, G](typeCnd, ol, caret, discoveryState).flatMap { case (ol, specialize) =>
               prepareSelections[F, G](ol, f.selectionSet, variableMap, fragments, typeCnd, discoveryState)
@@ -331,7 +335,7 @@ object PreparedQuery {
         }
       case Pos(caret, P.Selection.FragmentSpreadSelection(f)) =>
         fragments.get(f.fragmentName) match {
-          case None => raise(s"unknown fragment name ${f.fragmentName}", Some(caret))
+          case None => raise(s"Unknown fragment name '${f.fragmentName}'.", Some(caret))
           case Some(fd) =>
             ambientFragment(f.fragmentName) {
               prepareFragment[F, G](ol, fd, variableMap, fragments, fd.value.typeCnd, discoveryState)
@@ -366,7 +370,7 @@ object PreparedQuery {
     val decObj = args match {
       case PureArg(value) if provided.isEmpty => value.fold(raise(_, None), F.pure(_))
       case PureArg(_) =>
-        raise(s"field ${gqlField.name} does not accept arguments", Some(caret))
+        raise(s"Field ${gqlField.name} does not accept arguments.", Some(caret))
       case nea @ NonEmptyArg(_, _) =>
         parseInputObj[F, Any](argObj, nea, Some(variableMap), ambigiousEnum = false)
     }
@@ -413,8 +417,8 @@ object PreparedQuery {
                 F.pure(PreparedLeaf(e.name, x => Json.fromString(e.revm(x))))
               case (s: Scalar[G, Any], None) =>
                 F.pure(PreparedLeaf(s.name, x => s.encoder(x).asJson))
-              case (o, Some(_)) => raise(s"type ${friendlyName[G, Any](o)} cannot have selections", Some(selCaret))
-              case (o, None)    => raise(s"object like type ${friendlyName[G, Any](o)} must have a selection", Some(selCaret))
+              case (o, Some(_)) => raise(s"Type `${friendlyName[G, Any](o)}` cannot have selections.", Some(selCaret))
+              case (o, None)    => raise(s"Object like type `${friendlyName[G, Any](o)}` must have a selection.", Some(selCaret))
             }
 
           val prepF: F[Prepared[G, Any]] = typePrep(tpe, parentName)
@@ -441,17 +445,17 @@ object PreparedQuery {
     else {
       sel match {
         case Type(n, _, _, _) =>
-          raise(s"tried to match with type $name on type object type $n", Some(caret))
+          raise(s"Tried to match with type `$name` on type object type `$n`.", Some(caret))
         // What types implement this interface?
         case i @ Interface(n, _, _, _) =>
           raiseOpt(
             discoveryState.implementations.get(i.name),
-            s"the interface ${i.name} is not implemented by any type",
+            s"The interface `${i.name}` is not implemented by any type.",
             caret.some
           ).flatMap { m =>
             raiseOpt(
               m.get(name),
-              s"$name does not implement interface $n, possible implementations are ${m.keySet.mkString(", ")}",
+              s"`$name` does not implement interface `$n`, possible implementations are ${m.keySet.mkString(", ")}.",
               caret.some
             )
           }
@@ -460,7 +464,7 @@ object PreparedQuery {
             u.instanceMap
               .get(name)
               .map(i => (i.tpe.value.asInstanceOf[Type[G, Any]], i.specify)),
-            s"$name is not a member of the union $n, possible members are ${u.instanceMap.keySet.mkString(", ")}",
+            s"`$name` is not a member of the union `$n`, possible members are ${u.instanceMap.keySet.mkString(", ")}.",
             caret.some
           )
       }
@@ -480,7 +484,8 @@ object PreparedQuery {
   ): F[FragmentDefinition[G, Any]] =
     D.defer {
       S.get.flatMap {
-        case c if c.cycleSet(f.value.name) => raise(s"fragment by name ${f.value.name} is cyclic", Some(f.caret))
+        case c if c.cycleSet(f.value.name) =>
+          raise(s"Fragment by name ${f.value.name} is cyclic. Hint: graphql queries must be finite.", Some(f.caret))
         case _ =>
           val beforeF: F[Unit] = S.modify(s => s.copy(cycleSet = s.cycleSet + f.value.name))
           val afterF: F[Unit] = S.modify(s => s.copy(cycleSet = s.cycleSet - f.value.name))
@@ -509,12 +514,16 @@ object PreparedQuery {
       case VariableValue(_)     => "variable"
     }
 
-  def inName[A](in: In[A]): String = (in: @unchecked) match {
-    case InArr(of, _)          => s"list of ${inName(of)}"
-    case Enum(name, _, _)      => name
-    case Scalar(name, _, _, _) => name
-    case InOpt(of)             => s"optional of ${inName(of)}"
-    case Input(name, _, _)     => name
+  def inName[A](in: In[A], inOption: Boolean = false): String = {
+    val suffix = if (inOption) "" else "!"
+    val rec = (in: @unchecked) match {
+      case InArr(of, _)          => s"${inName(of)}"
+      case Enum(name, _, _)      => name
+      case Scalar(name, _, _, _) => name
+      case InOpt(of)             => s"${inName(of, inOption = true)}"
+      case Input(name, _, _)     => name
+    }
+    rec + suffix
   }
 
   def parseInputObj[F[_]: Parallel, A](
@@ -535,7 +544,7 @@ object PreparedQuery {
     val tooMuch = m.keySet -- required.keySet
     val tooMuchF =
       if (tooMuch.isEmpty) F.unit
-      else raise[F, Unit](s"too many fields provided, unknown fields are ${tooMuch.toList.mkString_(", ")}", None)
+      else raise[F, Unit](s"Too many fields provided, unknown fields are ${tooMuch.toList.map(x => s"'$x'").mkString_(", ")}.", None)
 
     tooMuchF >> parseArg[F, A](fields, m, variableMap, ambigiousEnum)
   }
@@ -547,10 +556,14 @@ object PreparedQuery {
     (tpe, v) match {
       case (_, P.Value.VariableValue(v)) =>
         variableMap match {
-          case None => raise(s"variable $v may not occur here", None)
+          case None => raise(s"Variables may not occur here. Variable '$$$v' was provided.", None)
           case Some(vm) =>
             vm.get(v) match {
-              case None             => raise(s"variable $v is not defined", None)
+              case None =>
+                raise(
+                  s"Variable '$$$v' was not declared and provided as a possible variable for this operation. Hint add the variable to the variables list of the operation '(..., $$$v: ${inName(tpe)})' and provide a value in the variables parameter.",
+                  None
+                )
               case Some(Left(pval)) => parseInput[F, A](pval, tpe, None, ambigiousEnum = false)
               case Some(Right(j)) =>
                 val asPVal = valueToParserValue(Value.fromJson(j))
@@ -563,7 +576,7 @@ object PreparedQuery {
             case P.Value.EnumValue(s)                    => F.pure(s)
             case P.Value.StringValue(s) if ambigiousEnum => F.pure(s)
             case _ =>
-              raise(s"enum value expected for $name, but got ${pValueName(v)}", None)
+              raise(s"Enum value expected for `$name`, but got ${pValueName(v)}.", None)
           }
           fa.flatMap { s =>
             e.m.lookup(s) match {
@@ -571,7 +584,7 @@ object PreparedQuery {
               case None =>
                 val names = e.m.keys.toList
                 raise(
-                  s"enum value $s does not occur in enum type $name, possible enum values are ${names.mkString_(", ")}",
+                  s"Enum value `$s` does not occur in enum type `$name`, possible enum values are ${names.map(s => s"`$s`").mkString_(", ")}.",
                   None
                 )
             }
@@ -595,7 +608,7 @@ object PreparedQuery {
           .flatMap(dec(_).fold(raise(_, None), F.pure(_)))
       case (InOpt(_), P.Value.NullValue) => F.pure(None.asInstanceOf[A])
       case (InOpt(of), x)                => parseInput[F, A](x, of, variableMap, ambigiousEnum).map(Some(_).asInstanceOf[A])
-      case (i, _)                        => raise(s"expected ${inName(i)} type, but got ${pValueName(v)}", None)
+      case (i, _)                        => raise(s"Expected type `${inName(i)}`, but got value ${pValueName(v)}.", None)
     }
 
   def parseArgValue[F[_]: Parallel, A](
@@ -615,7 +628,7 @@ object PreparedQuery {
               a.input.value match {
                 case InOpt(_) => F.pure(P.Value.NullValue)
                 case _ =>
-                  raise[F, P.Value](s"required input ${a.name} was not provided and has no default value", None)
+                  raise[F, P.Value](s"Required input for field '${a.name}' was not provided and has no default value.", None)
               }
             // TODO this value being parsed can probably be cached, since the default is the same for every query
             case Some(dv) => F.pure(valueToParserValue(dv))
@@ -640,7 +653,7 @@ object PreparedQuery {
         parseArgValue[F, Any](
           a.asInstanceOf[ArgValue[Any]],
           input,
-          variableMap.asInstanceOf[Option[VariableMap]],
+          variableMap,
           ambigiousEnum
         )
           .tupleLeft(a.name)
@@ -662,7 +675,7 @@ object PreparedQuery {
       case ListValue(v) =>
         v.toVector.parTraverse(parserValueToValue[F]).map(Value.ArrayValue(_))
       case IntValue(v)      => F.pure(Value.IntValue(v))
-      case VariableValue(v) => raise[F, Value](s"variable $v may not occur here", None)
+      case VariableValue(v) => raise[F, Value](s"Variable '$$$v' may not occur here.", None)
       case ObjectValue(v) =>
         v.parTraverse { case (k, v) =>
           parserValueToValue[F](v).tupleLeft(k)
@@ -686,21 +699,33 @@ object PreparedQuery {
   def getOperationDefinition[F[_]](
       ops: List[Pos[P.OperationDefinition]],
       operationName: Option[String]
-  )(implicit F: MonadError[F, (String, List[Caret])]): F[P.OperationDefinition] =
+  )(implicit F: MonadError[F, (String, List[Caret])]): F[P.OperationDefinition] = {
+    lazy val possible = ops
+      .map(_.value)
+      .collect { case d: P.OperationDefinition.Detailed => d.name }
+      .collect { case Some(x) => s"'$x'" }
+      .mkString(", ")
     (ops, operationName) match {
-      case (Nil, _)      => F.raiseError((s"no operations provided", Nil))
+      case (Nil, _)      => F.raiseError((s"No operations provided.", Nil))
       case (x :: Nil, _) => F.pure(x.value)
       case (xs, _) if xs.exists {
-            case Pos(_, _: P.OperationDefinition.Simple) => true
-            case _                                       => false
+            case Pos(_, _: P.OperationDefinition.Simple)                     => true
+            case Pos(_, x: P.OperationDefinition.Detailed) if x.name.isEmpty => true
+            case _                                                           => false
           } =>
-        F.raiseError((s"exactly one operation must be suplied for shorthand queries", xs.map(_.caret)))
+        F.raiseError(
+          (s"Exactly one operation must be suplied if the operations include at least one unnamed operation.", xs.map(_.caret))
+        )
       case (xs, None) =>
-        F.raiseError((s"operation name must be supplied for multiple operations"), xs.map(_.caret))
+        F.raiseError(
+          (s"Operation name must be supplied when supplying multiple operations, provided operations are $possible."),
+          xs.map(_.caret)
+        )
       case (xs, Some(name)) =>
         val o = xs.collectFirst { case Pos(_, d: P.OperationDefinition.Detailed) if d.name.contains(name) => d }
-        F.fromOption(o, (s"unable to find operation $name", xs.map(_.caret)))
+        F.fromOption(o, (s"Unable to find operation '$name', provided possible operations are $possible.", xs.map(_.caret)))
     }
+  }
 
   def operationType(od: P.OperationDefinition) =
     od match {
@@ -730,9 +755,9 @@ object PreparedQuery {
           val q = schema.shape.query.asInstanceOf[Type[G, Any]]
           F.pure(q.copy(fields = q.fields concatNel i.map { case (k, v) => k -> v.contramap[Any](_ => ()) }))
         case P.OperationType.Mutation =>
-          raiseOpt(schema.shape.mutation.map(_.asInstanceOf[Type[G, Any]]), "no mutation defined in schema", None)
+          raiseOpt(schema.shape.mutation.map(_.asInstanceOf[Type[G, Any]]), "No `Mutation` type defined in this schema.", None)
         case P.OperationType.Subscription =>
-          raiseOpt(schema.shape.subscription.map(_.asInstanceOf[Type[G, Any]]), "no subscription defined in schema", None)
+          raiseOpt(schema.shape.subscription.map(_.asInstanceOf[Type[G, Any]]), "No `Subscription` type defined in this schema.", None)
       }
 
     val rootTypename =
@@ -748,11 +773,29 @@ object PreparedQuery {
         vdsO.toList
           .flatMap(_.nel.toList)
           .parTraverse { case Pos(caret, vd) =>
-            val rootValueF: F[Either[P.Value, Json]] = (variableMap.get(vd.name), vd.defaultValue) match {
+            val defaultWithFallback = vd.defaultValue.orElse(vd.tpe match {
+              case P.Type.NonNull(_) => None
+              case _                 => Some(P.Value.NullValue)
+            })
+
+            def printType(t: P.Type, inOption: Boolean = false): String = {
+              val suffix = if (inOption) "" else "!"
+              val prefix = t match {
+                case P.Type.List(of)    => s"[${printType(of)}]"
+                case P.Type.Named(n)    => n
+                case P.Type.NonNull(of) => printType(of, inOption = true)
+              }
+              prefix + suffix
+            }
+
+            val rootValueF: F[Either[P.Value, Json]] = (variableMap.get(vd.name), defaultWithFallback) match {
               case (None, Some(d)) => F.pure(Left(d))
               case (Some(x), _)    => F.pure(Right(x))
               case (None, None) =>
-                raise(s"Variable '$$${vd.name}' is required but was not provided.", Some(caret))
+                raise(
+                  s"Variable '$$${vd.name}' is required but was not provided. Hint: Provide variable or a default value for '$$${vd.name}' of type `${printType(vd.tpe)}`.",
+                  Some(caret)
+                )
             }
 
             def verify(currentType: P.Type, currentValue: Either[P.Value, Json], inOption: Boolean): F[Unit] = {
@@ -760,18 +803,24 @@ object PreparedQuery {
                 case (P.Type.Named(name), v) =>
                   v match {
                     case Left(P.Value.ListValue(_)) =>
-                      raise(s"Expected type `$name` when checking the default value of $$${vd.name}, found list instead.", Some(caret))
+                      raise(
+                        s"Expected a value of type `$name` when checking the default value of '$$${vd.name}', found list instead.",
+                        Some(caret)
+                      )
                     case Left(P.Value.NullValue) if !inOption =>
                       raise(
-                        s"Expected non-nullable type `$name` when checking the default value of $$${vd.name}, found null instead.",
+                        s"Expected a non-nullable value of type `$name` when checking the default value of '$$${vd.name}', found null instead.",
                         Some(caret)
                       )
 
                     case Right(j) if j.isArray =>
-                      raise(s"Expected type `$name` when checking the variable input of $$${vd.name}, found list instead.", Some(caret))
+                      raise(
+                        s"Expected a value of type `$name` when checking the variable input of '$$${vd.name}', found list instead.",
+                        Some(caret)
+                      )
                     case Right(j) if j.isNull && !inOption =>
                       raise(
-                        s"Expected non-nullable type `$name` when checking the variable input of $$${vd.name}, found null instead.",
+                        s"Expected a non-nullable value of type `$name` when checking the variable input of '$$${vd.name}', found null instead.",
                         Some(caret)
                       )
                     case _ => F.unit
@@ -788,23 +837,27 @@ object PreparedQuery {
                       if (inOption) F.unit
                       else
                         raise(
-                          s"Expected non-nullable type in list when checking the default value of $$${vd.name}, found null instead.",
+                          s"Expected a non-nullable value of type list when checking the default value of '$$${vd.name}', found null instead.",
                           Some(caret)
                         )
-                    case Left(_) => raise(s"Expected list when checking the default value of $$${vd.name}.", Some(caret))
+                    case Left(p) =>
+                      raise(
+                        s"Expected a value of type list when checking the default value of '$$${vd.name}', found a graphql value of type ${pValueName(p)}} instead.",
+                        Some(caret)
+                      )
                     case Right(j) =>
                       if (j.isNull) {
                         if (inOption) F.unit
                         else
                           raise(
-                            s"Expected non-nullable type in list when checking the variable input of $$${vd.name}, found null instead.",
+                            s"Expected a non-nullable value of type list when checking the variable input of '$$${vd.name}', found null instead.",
                             Some(caret)
                           )
                       } else {
                         j.asArray match {
                           case None =>
                             raise(
-                              s"Expected type in list when checking the variable input of $$${vd.name}, found ${j.name} instead.",
+                              s"Expected a value of type list when checking the variable input of '$$${vd.name}', found a json value of type ${j.name} instead.",
                               Some(caret)
                             )
                           case Some(xs) =>
