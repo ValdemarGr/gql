@@ -227,7 +227,7 @@ object ast extends AstImplicits.Implicits {
 
   // This can be a bit hard to read
   // For every element in an input array [I1, I2, ...] decode with of such that we have [A1, A2, ...],
-  // then map [A1, A2, ...] into C (which could be another datatype for example)
+  // then map [A1, A2, ...] into C (which could be another datatype, for example a non-empty container)
   final case class InArr[A, C](of: In[A], fromSeq: Seq[A] => Either[String, C]) extends In[C] {
     def emap[B](f: C => Either[String, B]): InArr[A, B] =
       InArr(of, fromSeq.andThen(_.flatMap(f)))

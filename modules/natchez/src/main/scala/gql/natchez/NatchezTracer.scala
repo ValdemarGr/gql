@@ -20,7 +20,7 @@ import gql._
 import _root_.natchez._
 import cats._
 import cats.implicits._
-import cats.data.NonEmptyList
+import cats.data._
 import gql.parser.{QueryParser => P, _}
 import cats.effect.std.Queue
 
@@ -42,16 +42,18 @@ object NatchezTracer {
     }
 
   def tracePreparation[F[_]: Trace, A](
-      prepare: F[Either[PreparedQuery.PositionalError, A]]
-  )(implicit F: Monad[F]): F[Either[PreparedQuery.PositionalError, A]] =
+      prepare: F[EitherNec[PreparedQuery.PositionalError, A]]
+  )(implicit F: Monad[F]): F[EitherNec[PreparedQuery.PositionalError, A]] =
     Trace[F].span("graphql.preparation") {
       prepare.flatMap {
-        case Left(pe) =>
+        case Left(pes) =>
           Trace[F].span("graphql.preparation.error") {
-            Trace[F].put(
-              "graphql.preparation.error.message" -> pe.message,
-              "graphql.preparation.error.path" -> pe.position.position.map(_.name).mkString_(".")
-            ) as Left(pe)
+            pes.traverseWithIndexM { case (pe, i) =>
+              Trace[F].put(
+                s"graphql.preparation.error.$i.message" -> pe.message,
+                s"graphql.preparation.error.$i.path" -> pe.position.position.map(_.name).mkString_(".")
+              )
+            } as Left(pes)
           }
         case Right(pfs) => F.pure(Right(pfs))
       }
