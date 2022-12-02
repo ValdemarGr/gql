@@ -255,7 +255,7 @@ object ast extends AstImplicits.Implicits {
   }
 
   final case class ID[A](value: A) extends AnyVal
-  object ID {
+  object ID extends IDLowPrio {
     implicit def idTpe[F[_], A](implicit s: Scalar[F, A]): Scalar[F, ID[A]] =
       s.imap(ID(_))(_.value)
         .rename("ID")
@@ -264,6 +264,10 @@ object ast extends AstImplicits.Implicits {
              |The ID type appears in a JSON response as a String; however, it is not intended to be human-readable.
              |When expected as an input type, any string (such as `\"4\"`) or integer (such as `4`) input value will be accepted as an ID."""".stripMargin
         )
+
+  }
+  trait IDLowPrio {
+    implicit def idIn[F[_], A](implicit s: Scalar[F, A]): In[ID[A]] = ID.idTpe[F, A]
   }
 }
 
