@@ -22,13 +22,12 @@ import java.util.Base64
 import java.nio.charset.StandardCharsets
 import cats.implicits._
 import scala.reflect.ClassTag
-import cats.mtl.Tell
 import cats.data._
 import cats._
 import gql.SchemaShape
 
 trait Node {
-  def value: Any
+  def value: Any = this
 }
 
 object Node {
@@ -36,29 +35,28 @@ object Node {
 
   def unapply(node: Node): Option[Any] = Some(node.value)
 
-  private case class NodeImpl(value: Any) extends Node
-}
+  private case class NodeImpl(override val value: Any) extends Node
 
-object Goi {
   val nodeInterface = interface[cats.Id, Node](
     "Node",
     "id" -> pure(_ => ID("root"))
   )
 
-  implicit def node[F[_]]: Interface[F, Node] = nodeInterface.asInstanceOf[Interface[F, Node]]
+  implicit def nodeInterfaceF[F[_]]: Interface[F, Node] = nodeInterface.asInstanceOf[Interface[F, Node]]
 
+}
+
+object Goi {
   def makeId[F[_]](typename: String, id: String)(implicit F: Sync[F]): F[String] =
     F.delay(new String(Base64.getEncoder.encode(s"$typename:$id".getBytes()), StandardCharsets.UTF_8))
 
-  def tell[G[_], F[_], A: ClassTag](get: String => F[Option[A]], encode: A => String, ol: ObjectLike[F, A])(implicit
-      F: Sync[F],
-      T: Tell[G, List[GoiNode[F]]]
-  ): G[ObjectLike[F, A]] = {
-    val specify: PartialFunction[Any, A] = { case x: A => x }
-    val impl = gql.ast.Implementation(Eval.now(node.asInstanceOf[Interface[F, Any]]))(specify.lift)
+  def addIdWith[F[_], A](encode: A => String, ol: ObjectLike[F, A], specify: Node => Option[A])(implicit
+      F: Sync[F]
+  ): ObjectLike[F, A] = {
+    val impl = gql.ast.Implementation(Eval.now(Node.nodeInterface.asInstanceOf[Interface[F, Node]]))(specify)
     def encEffect(a: A): F[String] = makeId[F](ol.name, encode(a))
 
-    val newType = ol match {
+    ol match {
       case t @ gql.ast.Type(_, _, _, _) =>
         t.copy(implementations = impl :: t.implementations)
           .addFields("id" -> eff[A](x => encEffect(x).map(ID(_))))
@@ -66,62 +64,52 @@ object Goi {
         i.copy(implementations = impl :: i.implementations)
           .addFields("id" -> eff[A](x => encEffect(x).map(ID(_))))
     }
-    val goiNode = GoiNode[F, A](newType.name, get)
-
-    T.writer(newType, List(goiNode))
   }
 
-  // def tellFrom[G[_], F[_], A <: Node: ClassTag](get: String => F[Option[A]], encode: A => String)(
-  //     ol: ObjectLike[F, A]
-  // )(implicit F: Sync[F], T: Tell[G, List[GoiNode[F]]]): G[ObjectLike[F, A]] = {
+  def addId[F[_], A: ClassTag](encode: A => String, ol: ObjectLike[F, A])(implicit
+      F: Sync[F]
+  ): ObjectLike[F, A] = {
+    val specify: PartialFunction[Node, A] = { case Node(x: A) => x }
+    addIdWith[F, A](encode, ol, specify.lift)
+  }
 
-  //   def encEffect(a: A): F[String] = makeId[F](ol.name, encode(a))
-
-  //   val newType = ol match {
-  //     case t @ gql.ast.Type(_, _, _, _) =>
-  //       t.subtypeOf[Node].addFields("id" -> eff[A](x => encEffect(x).map(ID(_))))
-  //     case i @ gql.ast.Interface(_, _, _, _) =>
-  //       i.subtypeOf[Node].addFields("id" -> eff[A](x => encEffect(x).map(ID(_))))
-  //   }
-  //   val goiNode = GoiNode[F, A](newType.name, get)
-
-  //   T.writer(newType, List(goiNode))
-  // }
-
-  def injectG[G[_]: Applicative, F[_]: Sync, A: ClassTag](get: String => F[Option[A]], encode: A => String, ol: ObjectLike[F, A]) =
-    tell[WriterT[G, List[GoiNode[F]], *], F, A](get, encode, ol)
-
-  def inject[F[_]: Sync, A: ClassTag](get: String => F[Option[A]], encode: A => String, ol: ObjectLike[F, A]) =
-    tell[Writer[List[GoiNode[F]], *], F, A](get, encode, ol)
-
-  def materializeG[G[_]: Functor, F[_], Q, M, S](
-      schema: WriterT[G, List[GoiNode[F]], SchemaShape[F, Q, M, S]]
-  )(implicit F: Sync[F]): G[SchemaShape[F, Q, M, S]] = {
-    schema.run.map { case (state, shape) =>
-      val stateMap = state.map(x => (x.typename, x)).toMap
-      shape.copy(query =
-        shape.query.copy(
-          fields = shape.query.fields.append[(String, Field[F, Q, _, _])](
-            "node" -> fallible[Q](arg[ID[String]]("id")) { case (_, id) =>
-              F.delay(new String(Base64.getDecoder().decode(id.value), StandardCharsets.UTF_8))
-                .map(_.split(":").toList)
-                .flatMap[Ior[String, Option[Node]]] {
-                  case typename :: id :: Nil =>
-                    stateMap.get(typename) match {
-                      case None    => F.pure(s"Typename `$typename` with id '$id' does not have a getter.".leftIor)
-                      case Some(x) => x.get(id).map(_.map(x => Node(x))).map(_.rightIor)
-                    }
-                  case xs => F.pure(s"Invalid id parts ${xs.map(s => s"'$s'").mkString(", ")}".leftIor)
-                }
-            }
-          )
+  def node[F[_], Q, M, S](shape: SchemaShape[F, Q, M, S], xs: (String, String => F[Option[?]])*)(implicit
+      F: Sync[F]
+  ): SchemaShape[F, Q, M, S] = {
+    val lookup = xs.toMap
+    shape.copy(query =
+      shape.query.copy(
+        fields = shape.query.fields.append[(String, Field[F, Q, ?, ?])](
+          "node" -> fallible[Q](arg[ID[String]]("id")) { case (_, id) =>
+            F.delay(new String(Base64.getDecoder().decode(id.value), StandardCharsets.UTF_8))
+              .map(_.split(":").toList)
+              .flatMap[Ior[String, Option[Node]]] {
+                case typename :: id :: Nil =>
+                  lookup.get(typename) match {
+                    case None    => F.pure(s"Typename `$typename` with id '$id' does not have a getter.".leftIor)
+                    case Some(f) => f(id).map(_.map(x => Node(x))).map(_.rightIor)
+                  }
+                case xs => F.pure(s"Invalid id parts ${xs.map(s => s"'$s'").mkString(", ")}".leftIor)
+              }
+          }
         )
       )
-    }
+    )
   }
 
-  def materialize[F[_], Q, M, S](schema: Writer[List[GoiNode[F]], SchemaShape[F, Q, M, S]])(implicit F: Sync[F]): SchemaShape[F, Q, M, S] =
-    materializeG[cats.Id, F, Q, M, S](schema)
+  def instance[F[_]: Functor, A](ot: ObjectLike[F, A])(f: String => F[Option[A]]): (String, String => F[Option[?]]) =
+    (ot.name, f.map(_.map(_.map(x => x))))
+
+  def validate[F[_], Q, M, S](shape: SchemaShape[F, Q, M, S], instances: List[(String, String => F[Option[?]])]): List[String] = {
+    val instanceSet = instances.map { case (name, _) => name }.toSet
+    val nodeInstances = shape.discover.implementations.get(Node.nodeInterface.name)
+    val implementing = nodeInstances.map(_.keySet).getOrElse(Set.empty)
+    val tooMany = instanceSet -- implementing
+    val missing = implementing -- instanceSet
+
+    tooMany.toList.map(n => s"Type `$n` was declared as a node GOI instance but did not extend the `Node` type.") ++
+      missing.toList.map(n => s"Type `$n` extends the `Node` type but was not declared as a node GOI instance.")
+  }
 
   /*
    * Notes and ideas:
@@ -147,26 +135,6 @@ object Goi {
    *   )
    * ).map{ implicit debtor =>
    *   ...
-   * }
-   *
-   * Goi[F, Debtor](
-   *   debtorId => F.fromTry(Try(UUID.fromString(debtorId))).flatMap(debtorService.getDebtor),
-   *   debtor => debtor.entityId.toString
-   * ).map{ debtorGoi: (Type[F, Debtor] => Type[F, Debtor]) =>
-   *   implicit val debtor = debtorGoi(tpe[F, Debtor](
-   *     "Debtor",
-   *     "name" -> pure(_.name),
-   *     "email" -> pure(_.email),
-   *   ))
-   * }
-   *
-   * Goi[F, Debtor]("Debtor", debtorId => F.fromTry(Try(UUID.fromString(debtorId))).flatMap(debtorService.getDebtor)).as{
-   *   implicit val debtor = tpe[F, Debtor](
-   *     "Debtor",
-   *     "id" -> eff(x => mkId("Debtor", x.entityId.toString)),
-   *     "name" -> pure(_.name),
-   *     "email" -> pure(_.email),
-   *   ).subtypeOf[Node]
    * }
    *
    * trait GoiConnstructor[A] {
