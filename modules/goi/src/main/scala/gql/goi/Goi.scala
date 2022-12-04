@@ -25,52 +25,61 @@ import scala.reflect.ClassTag
 import cats.data._
 import cats._
 import gql.SchemaShape
+import gql.resolver.Resolver
 
 trait Node {
   def value: Any = this
+  def id: String
 }
 
 object Node {
-  def apply(value: Any): Node = NodeImpl(value)
+  def apply(value: Any, id: String): Node = NodeImpl(value, id)
 
   def unapply(node: Node): Option[Any] = Some(node.value)
 
-  private case class NodeImpl(override val value: Any) extends Node
+  private case class NodeImpl(override val value: Any, id: String) extends Node
 
   val nodeInterface = interface[cats.Id, Node](
     "Node",
-    "id" -> pure(_ => ID("root"))
+    "id" -> pure(x => ID(x.id))
   )
 
   implicit def nodeInterfaceF[F[_]]: Interface[F, Node] = nodeInterface.asInstanceOf[Interface[F, Node]]
-
 }
 
 object Goi {
   def makeId[F[_]](typename: String, id: String)(implicit F: Sync[F]): F[String] =
     F.delay(new String(Base64.getEncoder.encode(s"$typename:$id".getBytes()), StandardCharsets.UTF_8))
 
-  def addIdWith[F[_], A](encode: A => String, ol: ObjectLike[F, A], specify: Node => Option[A])(implicit
-      F: Sync[F]
-  ): ObjectLike[F, A] = {
-    val impl = gql.ast.Implementation(Eval.now(Node.nodeInterface.asInstanceOf[Interface[F, Node]]))(specify)
-    def encEffect(a: A): F[String] = makeId[F](ol.name, encode(a))
+  def makeImpl[F[_], A](specify: Node => Option[A]) =
+    gql.ast.Implementation(Eval.now(Node.nodeInterfaceF[F]))(specify)
 
-    ol match {
-      case t @ gql.ast.Type(_, _, _, _) =>
-        t.copy(implementations = impl :: t.implementations)
-          .addFields("id" -> eff[A](x => encEffect(x).map(ID(_))))
-      case i @ gql.ast.Interface(_, _, _, _) =>
-        i.copy(implementations = impl :: i.implementations)
-          .addFields("id" -> eff[A](x => encEffect(x).map(ID(_))))
-    }
+  def addIdWith[F[_], A](resolver: Resolver[F, A, String], tpe: Type[F, A], specify: Node => Option[A])(implicit
+      F: Sync[F]
+  ): Type[F, A] =
+    tpe
+      .copy(implementations = makeImpl[F, A](specify) :: tpe.implementations)
+      .addFields("id" -> field(resolver.evalMap(s => makeId[F](tpe.name, s))))
+
+  def addId[F[_], A: ClassTag](resolver: Resolver[F, A, String], t: Type[F, A])(implicit
+      F: Sync[F]
+  ): Type[F, A] = {
+    val specify: PartialFunction[Node, A] = { case Node(x: A) => x }
+    addIdWith[F, A](resolver, t, specify.lift)
   }
 
-  def addId[F[_], A: ClassTag](encode: A => String, ol: ObjectLike[F, A])(implicit
+  def addIdWith[F[_], A](resolver: Resolver[F, A, String], tpe: Interface[F, A], specify: Node => Option[A])(implicit
       F: Sync[F]
-  ): ObjectLike[F, A] = {
+  ): Interface[F, A] =
+    tpe
+      .copy(implementations = makeImpl[F, A](specify) :: tpe.implementations)
+      .addFields("id" -> field(resolver.evalMap(s => makeId[F](tpe.name, s))))
+
+  def addId[F[_], A: ClassTag](resolver: Resolver[F, A, String], t: Interface[F, A])(implicit
+      F: Sync[F]
+  ): Interface[F, A] = {
     val specify: PartialFunction[Node, A] = { case Node(x: A) => x }
-    addIdWith[F, A](encode, ol, specify.lift)
+    addIdWith[F, A](resolver, t, specify.lift)
   }
 
   def node[F[_], Q, M, S](shape: SchemaShape[F, Q, M, S], xs: (String, String => F[Option[?]])*)(implicit
@@ -87,7 +96,7 @@ object Goi {
                 case typename :: id :: Nil =>
                   lookup.get(typename) match {
                     case None    => F.pure(s"Typename `$typename` with id '$id' does not have a getter.".leftIor)
-                    case Some(f) => f(id).map(_.map(x => Node(x))).map(_.rightIor)
+                    case Some(f) => f(id).map(_.map(x => Node(x, id))).map(_.rightIor)
                   }
                 case xs => F.pure(s"Invalid id parts ${xs.map(s => s"'$s'").mkString(", ")}".leftIor)
               }
