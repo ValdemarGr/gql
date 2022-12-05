@@ -94,7 +94,7 @@ object Goi {
 
   def encodeString[A](a: A)(implicit idCodec: IDCodec[A]): String = idCodec.encode(a).mkString_(":")
 
-  def node[F[_], Q, M, S](shape: SchemaShape[F, Q, M, S], xs: (String, String => F[Option[?]])*)(implicit
+  def node[F[_], Q, M, S](shape: SchemaShape[F, Q, M, S], xs: (String, String => F[Either[String, Option[?]]])*)(implicit
       F: Sync[F]
   ): SchemaShape[F, Q, M, S] = {
     val lookup = xs.toMap
@@ -108,7 +108,7 @@ object Goi {
                 case typename :: id :: Nil =>
                   lookup.get(typename) match {
                     case None    => F.pure(s"Typename `$typename` with id '$id' does not have a getter.".leftIor)
-                    case Some(f) => f(id).map(_.map(x => Node(x, id))).map(_.rightIor)
+                    case Some(f) => f(id).map(_.map(_.map(x => Node(x, id))).toIor)
                   }
                 case xs => F.pure(s"Invalid id parts ${xs.map(s => s"'$s'").mkString(", ")}".leftIor)
               }
@@ -117,9 +117,6 @@ object Goi {
       )
     )
   }
-
-  def instance[F[_]: Functor, A](ot: ObjectLike[F, A])(f: String => F[Option[A]]): (String, String => F[Option[?]]) =
-    (ot.name, f.map(_.map(_.map(x => x))))
 
   def validate[F[_], Q, M, S](shape: SchemaShape[F, Q, M, S], instances: List[(String, String => F[Option[?]])]): List[String] = {
     val instanceSet = instances.map { case (name, _) => name }.toSet
