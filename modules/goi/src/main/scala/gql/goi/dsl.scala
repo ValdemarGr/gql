@@ -6,8 +6,6 @@ import gql.ast._
 import cats.effect._
 import scala.reflect.ClassTag
 import gql.resolver._
-import java.util.UUID
-import gql.SchemaShape
 
 object dsl {
   implicit class TypeGOIOps[F[_], A](val t: Type[F, A]) extends AnyVal {
@@ -42,28 +40,4 @@ object dsl {
   }
 
   def instance[B]: PartiallyAppliedInstance[B] = PartiallyAppliedInstance[B]()
-
-  def test[F[_]: cats.effect.Sync] = {
-    import gql.dsl._
-    case class Lol(org: String, id: UUID, a: String)
-    case class LolKey(org: String, a: UUID)
-    import gql.goi.codec._
-    object LolKey {
-      implicit val idCodec: IDCodec[LolKey] = (string, uuid).imapN(LolKey.apply)(x => (x.org, x.a))
-    }
-    val lol = tpe[F, Lol](
-      "Lol",
-      "a" -> pure(_.a)
-    ).goi(x => LolKey(x.org, x.id))
-
-    // ...
-
-    def getlol(key: LolKey): F[Option[Lol]] = ???
-
-    val ss: SchemaShape[F, Unit, Unit, Unit] = ???
-    val ss2 = Goi.node(
-      ss,
-      instance[LolKey](lol)(key => getlol(key))
-    )
-  }
 }
