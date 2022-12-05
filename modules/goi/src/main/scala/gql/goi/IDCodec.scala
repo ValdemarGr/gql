@@ -11,49 +11,64 @@ trait IDCodec[A] { self =>
 
   def decode(s: Array[String]): ValidatedNec[String, A]
 
-  def opt: IDCodec[Option[A]] = new IDCodec[Option[A]] {
-    override def codecs: NonEmptyChain[String] = self.codecs
+  def opt: IDCodec[Option[A]] =
+    IDCodec(
+      self.codecs,
+      s =>
+        if (s.forall(_ == "null")) None.validNec
+        else self.decode(s).map(Some(_)),
+      {
+        case Some(a) => self.encode(a)
+        case None    => NonEmptyChain.one("null")
+      }
+    )
 
-    override def encode(a: Option[A]): NonEmptyChain[String] = a match {
-      case Some(a) => self.encode(a)
-      case None    => NonEmptyChain.one("null")
-    }
+  def eimap[B](f: A => Either[String, B])(g: B => A): IDCodec[B] =
+    IDCodec(
+      self.codecs,
+      s => self.decode(s).andThen(x => f(x).toValidatedNec),
+      b => self.encode(g(b))
+    )
 
-    override def decode(s: Array[String]): ValidatedNec[String, Option[A]] =
-      if (s.forall(_ == "null")) None.validNec
-      else self.decode(s).map(Some(_))
-  }
-
-  def ~[B](that: IDCodec[B]): IDCodec[(A, B)] = new IDCodec[(A, B)] {
-    override def codecs: NonEmptyChain[String] = self.codecs ++ that.codecs
-
-    override def encode(a: (A, B)): NonEmptyChain[String] = {
-      val (a1, b1) = a
-      self.encode(a1) ++ that.encode(b1)
-    }
-
-    override def decode(s: Array[String]): ValidatedNec[String, (A, B)] = {
-      val (s1, s2) = s.splitAt(self.codecs.length.toInt)
-      (self.decode(s1), that.decode(s2)).tupled
-    }
-  }
+  def ~[B](that: IDCodec[B]): IDCodec[(A, B)] =
+    IDCodec(
+      self.codecs ++ that.codecs,
+      s => {
+        val (s1, s2) = s.splitAt(self.codecs.length.toInt)
+        (self.decode(s1), that.decode(s2)).tupled
+      },
+      { a =>
+        val (a1, b1) = a
+        self.encode(a1) ++ that.encode(b1)
+      }
+    )
 }
 
 object IDCodec {
-  def make[A](decode: String => Either[String, A], encode: A => String, name: String): IDCodec[A] = {
+  def apply[A](
+      codecs: NonEmptyChain[String],
+      decode: Array[String] => ValidatedNec[String, A],
+      encode: A => NonEmptyChain[String]
+  ): IDCodec[A] = {
     val decode0 = decode(_)
     val encode0 = encode(_)
+    val codecs0 = codecs
     new IDCodec[A] {
-      override def codecs: NonEmptyChain[String] = NonEmptyChain.one(name)
-
-      override def encode(a: A): NonEmptyChain[String] = NonEmptyChain.one(encode0(a))
-
-      override def decode(s: Array[String]): ValidatedNec[String, A] = s match {
-        case Array(s1) => decode0(s1).toValidatedNec
-        case _ => s"Invalid input for codec $name, expected exactly one input but got ${s.size}: ${s.toSeq.mkString_(":")}".invalidNec
-      }
+      override def codecs: NonEmptyChain[String] = codecs0
+      override def encode(a: A): NonEmptyChain[String] = encode0(a)
+      override def decode(s: Array[String]): ValidatedNec[String, A] = decode0(s)
     }
   }
+
+  def make[A](decode: String => Either[String, A], encode: A => String, name: String): IDCodec[A] =
+    IDCodec(
+      NonEmptyChain.one(name),
+      {
+        case Array(s1) => decode(s1).toValidatedNec
+        case s => s"Invalid input for codec $name, expected exactly one input but got ${s.size}: ${s.toSeq.mkString_(":")}".invalidNec
+      },
+      a => NonEmptyChain.one(encode(a))
+    )
 
   implicit lazy val invariantSemigroupalForIdCodec: InvariantSemigroupal[IDCodec] = new InvariantSemigroupal[IDCodec] {
     override def imap[A, B](fa: IDCodec[A])(f: A => B)(g: B => A): IDCodec[B] =

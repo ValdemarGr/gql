@@ -127,7 +127,9 @@ object Goi {
     val missing = implementing -- instanceSet
 
     tooMany.toList.map(n => s"Type `$n` was declared as a node GOI instance but did not extend the `Node` type.") ++
-      missing.toList.map(n => s"Type `$n` extends the `Node` type but was not declared as a node GOI instance.")
+      missing.toList.map(n =>
+        s"Type `$n` extends the `Node` type but was not declared as a node GOI instance. Hint: You might have forgot to include your GlobalID instance for `$n`."
+      )
   }
 
   /*

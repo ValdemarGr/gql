@@ -8,35 +8,41 @@ import scala.reflect.ClassTag
 import gql.resolver._
 
 object dsl {
-  implicit class TypeGOIOps[F[_], A](val t: Type[F, A]) extends AnyVal {
-    def goi[B](resolve: Resolver[F, A, B])(implicit F: Sync[F], ct: ClassTag[A], idCodec: IDCodec[B]): Type[F, A] =
-      Goi.addId[F, A, B](resolve, t)
+  implicit class GlobalIDOps[F[_], A, K](val gid: GlobalID[F, A, K]) extends AnyVal {
+    def tpe(
+        hd: (String, Field[F, A, ?, ?]),
+        tl: (String, Field[F, A, ?, ?])*
+    )(implicit F: Sync[F], ct: ClassTag[A]) = {
+      implicit val codec = gid.codec
+      Goi.addId[F, A, K](gid.toId, gql.dsl.tpe[F, A](gid.typename, hd, tl: _*))
+    }
 
-    def goi[B](f: A => B)(implicit F: Sync[F], ct: ClassTag[A], idCodec: IDCodec[B]): Type[F, A] =
-      Goi.addId[F, A, B](PureResolver(f), t)
+    def interface(
+        hd: (String, Field[F, A, ?, ?]),
+        tl: (String, Field[F, A, ?, ?])*
+    )(implicit F: Sync[F], ct: ClassTag[A]) = {
+      implicit val codec = gid.codec
+      Goi.addId[F, A, K](gid.toId, gql.dsl.interface[F, A](gid.typename, hd, tl: _*))
+    }
   }
 
-  implicit class InterfaceGOIOps[F[_], A](val t: Interface[F, A]) extends AnyVal {
-    def goi[B](resolve: Resolver[F, A, B])(implicit F: Sync[F], ct: ClassTag[A], idCodec: IDCodec[B]): Interface[F, A] =
-      Goi.addId[F, A, B](resolve, t)
+  def gid[F[_], T, A](typename: String, toId: T => A, fromId: A => F[Option[T]])(implicit codec: IDCodec[A]): GlobalID[F, T, A] =
+    GlobalID(typename, PureResolver(toId), fromId)
 
-    def goi[B](f: A => B)(implicit F: Sync[F], ct: ClassTag[A], idCodec: IDCodec[B]): Interface[F, A] =
-      Goi.addId[F, A, B](PureResolver(f), t)
-  }
+  def gidFrom[F[_], T, A](typename: String, toId: Resolver[F, T, A], fromId: A => F[Option[T]])(implicit codec: IDCodec[A]): GlobalID[F, T, A] =
+    GlobalID(typename, toId, fromId)
 
   def instanceFrom[F[_]: Functor, A](ot: ObjectLike[F, A])(
-    f: Array[String] => F[Either[String, Option[A]]]
+      f: Array[String] => F[Either[String, Option[A]]]
   ): (String, Array[String] => F[Either[String, Option[?]]]) =
     (ot.name, f.map(_.map(_.map(x => x))))
 
   final case class PartiallyAppliedInstance[B](private val dummy: Boolean = false) extends AnyVal {
     def apply[F[_], A](ot: ObjectLike[F, A])(f: B => F[Option[A]])(implicit
-      idCodec: IDCodec[B],
-      F: Monad[F]
+        idCodec: IDCodec[B],
+        F: Monad[F]
     ): (String, Array[String] => F[Either[String, Option[?]]]) =
-      instanceFrom[F, A](ot)(id =>
-        F.pure(Goi.decodeInput[B](idCodec, id).toEither.leftMap(_.mkString_("\n"))).flatMap(_.traverse(f))
-      )
+      instanceFrom[F, A](ot)(id => F.pure(Goi.decodeInput[B](idCodec, id).toEither.leftMap(_.mkString_("\n"))).flatMap(_.traverse(f)))
   }
 
   def instance[B]: PartiallyAppliedInstance[B] = PartiallyAppliedInstance[B]()

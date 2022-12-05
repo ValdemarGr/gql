@@ -93,7 +93,10 @@ lazy val graphqlWs = project
 lazy val goi = project
   .in(file("modules/goi"))
   .settings(sharedSettings)
-  .settings(name := "gql-goi")
+  .settings(
+    name := "gql-goi",
+    libraryDependencies ++= Seq("com.beachape" %% "enumeratum" % "1.7.2")
+  )
   .dependsOn(core)
   .enablePlugins(NoPublishPlugin)
 
