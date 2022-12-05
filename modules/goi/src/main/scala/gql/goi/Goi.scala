@@ -84,17 +84,17 @@ object Goi {
     addIdWith[F, A](resolver.map(encodeString[B]), t, specify.lift)
   }
 
-  def decodeString[A](codec: IDCodec[A], str: String) = {
-    val elems = str.split(":").toArray
+  def decodeInput[A](codec: IDCodec[A], elems: Array[String]) = {
     val xs = codec.codecs
     if (xs.size != elems)
-      s"Invalid Global object identifier size for '$str', expected size ${xs.size} but got ${elems.size}: ${xs.mkString_(":")}.".invalidNec
+      s"Invalid Global object identifier size expected size ${xs.size} but got ${elems.size}: ${xs
+        .mkString_(":")}.".invalidNec
     else codec.decode(elems)
   }
 
   def encodeString[A](a: A)(implicit idCodec: IDCodec[A]): String = idCodec.encode(a).mkString_(":")
 
-  def node[F[_], Q, M, S](shape: SchemaShape[F, Q, M, S], xs: (String, String => F[Either[String, Option[?]]])*)(implicit
+  def node[F[_], Q, M, S](shape: SchemaShape[F, Q, M, S], xs: (String, Array[String] => F[Either[String, Option[?]]])*)(implicit
       F: Sync[F]
   ): SchemaShape[F, Q, M, S] = {
     val lookup = xs.toMap
@@ -103,14 +103,15 @@ object Goi {
         fields = shape.query.fields.append[(String, Field[F, Q, ?, ?])](
           "node" -> fallible[Q](arg[ID[String]]("id")) { case (_, id) =>
             F.delay(new String(Base64.getDecoder().decode(id.value), StandardCharsets.UTF_8))
-              .map(_.split(":").toList)
-              .flatMap[Ior[String, Option[Node]]] {
-                case typename :: id :: Nil =>
-                  lookup.get(typename) match {
-                    case None    => F.pure(s"Typename `$typename` with id '$id' does not have a getter.".leftIor)
-                    case Some(f) => f(id).map(_.map(_.map(x => Node(x, id))).toIor)
-                  }
-                case xs => F.pure(s"Invalid id parts ${xs.map(s => s"'$s'").mkString(", ")}".leftIor)
+              .flatMap[Ior[String, Option[Node]]] { fullId =>
+                fullId.split(":").toList match {
+                  case typename :: xs =>
+                    lookup.get(typename) match {
+                      case None    => F.pure(s"Typename `$typename` with id '$id' does not have a getter.".leftIor)
+                      case Some(f) => f(xs.toArray).map(_.map(_.map(x => Node(x, fullId))).toIor)
+                    }
+                  case xs => F.pure(s"Invalid id parts ${xs.map(s => s"'$s'").mkString(", ")}".leftIor)
+                }
               }
           }
         )
