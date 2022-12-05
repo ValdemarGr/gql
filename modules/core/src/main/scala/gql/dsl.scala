@@ -29,6 +29,12 @@ object dsl {
       tl: (String, Field[F, A, ?, ?])*
   ) = Type[F, A](name, NonEmptyList(hd, tl.toList), Nil)
 
+  def fieldGroup[F[_], A, B](f: B => A)(
+      hd: (String, Field[F, A, ?, ?]),
+      tl: (String, Field[F, A, ?, ?])*
+  ): NonEmptyList[(String, Field[F, B, ?, ?])] =
+    NonEmptyList[(String, Field[F, A, ?, ?])](hd, tl.toList).map { case (k, v) => (k, v.contramap(f)) }
+
   def input[A](
       name: String,
       fields: NonEmptyArg[A]

@@ -15,5 +15,5 @@ object codec {
 
   val uuid: IDCodec[java.util.UUID] = IDCodec.uuidInstance
 
-  val date: IDCodec[java.time.LocalDate] = IDCodec.dateInstance
+  val localDate: IDCodec[java.time.LocalDate] = IDCodec.dateInstance
 }
