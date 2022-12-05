@@ -61,11 +61,12 @@ object Goi {
       .copy(implementations = makeImpl[F, A](specify) :: tpe.implementations)
       .addFields("id" -> field(resolver.evalMap(s => makeId[F](tpe.name, s))))
 
-  def addId[F[_], A: ClassTag](resolver: Resolver[F, A, String], t: Type[F, A])(implicit
-      F: Sync[F]
+  def addId[F[_], A: ClassTag, B](resolver: Resolver[F, A, B], t: Type[F, A])(implicit
+      F: Sync[F],
+      idCodec: IDCodec[B]
   ): Type[F, A] = {
     val specify: PartialFunction[Node, A] = { case Node(x: A) => x }
-    addIdWith[F, A](resolver, t, specify.lift)
+    addIdWith[F, A](resolver.map(encodeString[B]), t, specify.lift)
   }
 
   def addIdWith[F[_], A](resolver: Resolver[F, A, String], tpe: Interface[F, A], specify: Node => Option[A])(implicit
@@ -75,12 +76,23 @@ object Goi {
       .copy(implementations = makeImpl[F, A](specify) :: tpe.implementations)
       .addFields("id" -> field(resolver.evalMap(s => makeId[F](tpe.name, s))))
 
-  def addId[F[_], A: ClassTag](resolver: Resolver[F, A, String], t: Interface[F, A])(implicit
-      F: Sync[F]
+  def addId[F[_], A: ClassTag, B](resolver: Resolver[F, A, B], t: Interface[F, A])(implicit
+      F: Sync[F],
+      idCodec: IDCodec[B]
   ): Interface[F, A] = {
     val specify: PartialFunction[Node, A] = { case Node(x: A) => x }
-    addIdWith[F, A](resolver, t, specify.lift)
+    addIdWith[F, A](resolver.map(encodeString[B]), t, specify.lift)
   }
+
+  def decodeString[A](codec: IDCodec[A], str: String) = {
+    val elems = str.split(":").toArray
+    val xs = codec.codecs
+    if (xs.size != elems)
+      s"Invalid Global object identifier size for '$str', expected size ${xs.size} but got ${elems.size}: ${xs.mkString_(":")}.".invalidNec
+    else codec.decode(elems)
+  }
+
+  def encodeString[A](a: A)(implicit idCodec: IDCodec[A]): String = idCodec.encode(a).mkString_(":")
 
   def node[F[_], Q, M, S](shape: SchemaShape[F, Q, M, S], xs: (String, String => F[Option[?]])*)(implicit
       F: Sync[F]
