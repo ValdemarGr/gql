@@ -3,13 +3,15 @@ package gql.goi
 import gql.resolver.Resolver
 
 trait GlobalID[F[_], T, K] {
+  type Key = K
+
   def typename: String
 
-  def codec: IDCodec[K]
+  def codec: IDCodec[Key]
 
-  def toId: Resolver[F, T, K]
+  def toId: Resolver[F, T, Key]
 
-  def fromId: K => F[Option[T]]
+  def fromId: Key => F[Option[T]]
 }
 
 object GlobalID {

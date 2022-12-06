@@ -94,10 +94,10 @@ object Goi {
 
   def encodeString[A](a: A)(implicit idCodec: IDCodec[A]): String = idCodec.encode(a).mkString_(":")
 
-  def node[F[_], Q, M, S](shape: SchemaShape[F, Q, M, S], xs: (String, Array[String] => F[Either[String, Option[?]]])*)(implicit
+  def node[F[_], Q, M, S](shape: SchemaShape[F, Q, M, S], xs: List[GlobalID[F, ?, ?]])(implicit
       F: Sync[F]
   ): SchemaShape[F, Q, M, S] = {
-    val lookup = xs.toMap
+    val lookup = xs.map(x => x.typename -> x).toMap
     shape.copy(query =
       shape.query.copy(
         fields = shape.query.fields.append[(String, Field[F, Q, ?, ?])](
@@ -107,8 +107,13 @@ object Goi {
                 fullId.split(":").toList match {
                   case typename :: xs =>
                     lookup.get(typename) match {
-                      case None    => F.pure(s"Typename `$typename` with id '$id' does not have a getter.".leftIor)
-                      case Some(f) => f(xs.toArray).map(_.map(_.map(x => Node(x, fullId))).toIor)
+                      case None => F.pure(s"Typename `$typename` with id '$id' does not have a getter.".leftIor)
+                      case Some(gid) =>
+                        decodeInput(gid.codec, xs.toArray).toEither
+                          .leftMap(_.mkString_("\n"))
+                          .toIor
+                          .traverse(gid.fromId)
+                          .map(_.map(_.map(x => Node(x, fullId))))
                     }
                   case xs => F.pure(s"Invalid id parts ${xs.map(s => s"'$s'").mkString(", ")}".leftIor)
                 }
@@ -119,16 +124,28 @@ object Goi {
     )
   }
 
-  def validate[F[_], Q, M, S](shape: SchemaShape[F, Q, M, S], instances: List[(String, String => F[Option[?]])]): List[String] = {
-    val instanceSet = instances.map { case (name, _) => name }.toSet
-    val nodeInstances = shape.discover.implementations.get(Node.nodeInterface.name)
-    val implementing = nodeInstances.map(_.keySet).getOrElse(Set.empty)
-    val tooMany = instanceSet -- implementing
-    val missing = implementing -- instanceSet
+  def validate[F[_], Q, M, S](shape: SchemaShape[F, Q, M, S], instances: List[GlobalID[F, ?, ?]]): List[String] = {
+    val instanceSet = instances.map(_.typename).toSet
+    val all = shape.discover.outputs.keySet
+    // Parameters that have typenames do not occur in the schema
+    val notImplemented = instanceSet -- all
+    // Paramerters that do occur in the schema
+    val implemented = instanceSet -- notImplemented
 
-    tooMany.toList.map(n => s"Type `$n` was declared as a node GOI instance but did not extend the `Node` type.") ++
+    val nodeInstances = shape.discover.implementations.get(Node.nodeInterface.name)
+    // All the typenames that implement the Node interface
+    val implementing = nodeInstances.map(_.keySet).getOrElse(Set.empty)
+    // Does occur but does not extend the Node interface
+    val doesNotExtend = implemented -- implementing
+    // Does extend the Node interface but does not occur in the parameters
+    val missing = implementing -- implemented
+
+    notImplemented.toList.map(n =>
+      s"Type `$n` does not occur in the schema. Hint: GlobalID provides smart constructors for creating types that satisfy the rules of GOI."
+    ) ++
+      doesNotExtend.toList.map(n => s"Type `$n` was declared as a node GlobalID instance but did not extend the `Node` type.") ++
       missing.toList.map(n =>
-        s"Type `$n` extends the `Node` type but was not declared as a node GOI instance. Hint: You might have forgot to include your GlobalID instance for `$n`."
+        s"Type `$n` extends the `Node` type but was not declared as a node GlobalID instance. Hint: You might have forgot to include your GlobalID instance for `$n`."
       )
   }
 
