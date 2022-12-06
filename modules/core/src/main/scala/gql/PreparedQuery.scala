@@ -302,7 +302,10 @@ object PreparedQuery {
                 .get(name)
                 .toList
                 .flatMap(_.values.toList)
-                .collectFirstSome { case (ol, spec) => spec(input) as ol.name }
+                .collectFirstSome {
+                  case (Type(name, _, _, _), spec) => spec(input) as name
+                  case _                           => None
+                }
           }
 
           G.pure(typename.toRightIor("Typename could not be determined, this is an implementation error."))
@@ -441,8 +444,14 @@ object PreparedQuery {
     if (sel.name == name) F.pure((sel, Some(_)))
     else {
       sel match {
-        case Type(n, _, _, _) =>
-          raise(s"Tried to match with type `$name` on type object type `$n`.", Some(caret))
+        case t @ Type(n, _, _, _) =>
+          t.implementsMap.get(name) match {
+            case None => raise(s"Tried to match with type `$name` on type object type `$n`.", Some(caret))
+            case Some(impl) =>
+              val i: Interface[G, _] = impl.implementation.value
+              val spec: _ => Option[Any] = impl.specify
+              F.pure((i.asInstanceOf[Interface[G, Any]], spec.asInstanceOf[Any => Option[Any]]))
+          }
         // What types implement this interface?
         case i @ Interface(n, _, _, _) =>
           raiseOpt(
@@ -457,13 +466,24 @@ object PreparedQuery {
             )
           }
         case u @ Union(n, _, _) =>
-          raiseOpt(
-            u.instanceMap
-              .get(name)
-              .map(i => (i.tpe.value.asInstanceOf[Type[G, Any]], i.specify)),
-            s"`$name` is not a member of the union `$n`, possible members are ${u.instanceMap.keySet.mkString(", ")}.",
-            caret.some
-          )
+          u.instanceMap
+            .get(name) match {
+            case Some(i) => F.pure((i.tpe.value.asInstanceOf[Type[G, Any]], i.specify))
+            case None =>
+              u.types.toList
+                .collectFirstSomeM { v =>
+                  val t: Type[G, _] = v.tpe.value
+                  matchType[F, G](name, t.asInstanceOf[Type[G, Any]], caret, discoveryState).attempt.map(_.toOption)
+                }
+                .flatMap {
+                  case None =>
+                    raise[F, (Selectable[G, Any], Any => Option[Any])](
+                      s"`$name` is not a member of the union `$n`, possible members are ${u.instanceMap.keySet.mkString(", ")}.",
+                      caret.some
+                    )
+                  case Some(x) => F.pure(x)
+                }
+          }
       }
     }
 
