@@ -302,10 +302,7 @@ object PreparedQuery {
                 .get(name)
                 .toList
                 .flatMap(_.values.toList)
-                .collectFirstSome {
-                  case (Type(name, _, _, _), spec) => spec(input) as name
-                  case _                           => None
-                }
+                .collectFirstSome { case (ol, spec) => spec(input) as ol.name }
           }
 
           G.pure(typename.toRightIor("Typename could not be determined, this is an implementation error."))

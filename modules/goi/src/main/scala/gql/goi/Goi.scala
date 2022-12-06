@@ -21,7 +21,6 @@ import cats.effect._
 import java.util.Base64
 import java.nio.charset.StandardCharsets
 import cats.implicits._
-import scala.reflect.ClassTag
 import cats.data._
 import cats._
 import gql.SchemaShape
@@ -29,15 +28,16 @@ import gql.resolver.Resolver
 
 trait Node {
   def value: Any = this
+  def typename: String
   def id: String
 }
 
 object Node {
-  def apply(value: Any, id: String): Node = NodeImpl(value, id)
+  def apply(value: Any, id: String, typename: String): Node = NodeImpl(value, id, typename)
 
   def unapply(node: Node): Option[Any] = Some(node.value)
 
-  private case class NodeImpl(override val value: Any, id: String) extends Node
+  private case class NodeImpl(override val value: Any, id: String, typename: String) extends Node
 
   val nodeInterface = interface[cats.Id, Node](
     "Node",
@@ -61,13 +61,17 @@ object Goi {
       .copy(implementations = makeImpl[F, A](specify) :: tpe.implementations)
       .addFields("id" -> field(resolver.evalMap(s => makeId[F](tpe.name, s))))
 
-  def addId[F[_], A: ClassTag, B](resolver: Resolver[F, A, B], t: Type[F, A])(implicit
+  def addId[F[_], A, B](resolver: Resolver[F, A, B], t: Type[F, A])(implicit
       F: Sync[F],
       idCodec: IDCodec[B]
-  ): Type[F, A] = {
-    val specify: PartialFunction[Node, A] = { case Node(x: A) => x }
-    addIdWith[F, A](resolver.map(encodeString[B]), t, specify.lift)
-  }
+  ): Type[F, A] =
+    addIdWith[F, A](
+      resolver.map(encodeString[B]),
+      t,
+      x =>
+        if (x.typename === t.name) Some(x.value.asInstanceOf[A])
+        else None
+    )
 
   def addIdWith[F[_], A](resolver: Resolver[F, A, String], tpe: Interface[F, A], specify: Node => Option[A])(implicit
       F: Sync[F]
@@ -76,12 +80,17 @@ object Goi {
       .copy(implementations = makeImpl[F, A](specify) :: tpe.implementations)
       .addFields("id" -> field(resolver.evalMap(s => makeId[F](tpe.name, s))))
 
-  def addId[F[_], A: ClassTag, B](resolver: Resolver[F, A, B], t: Interface[F, A])(implicit
+  def addId[F[_], A, B](resolver: Resolver[F, A, B], t: Interface[F, A])(implicit
       F: Sync[F],
       idCodec: IDCodec[B]
   ): Interface[F, A] = {
-    val specify: PartialFunction[Node, A] = { case Node(x: A) => x }
-    addIdWith[F, A](resolver.map(encodeString[B]), t, specify.lift)
+    addIdWith[F, A](
+      resolver.map(encodeString[B]),
+      t,
+      x =>
+        if (x.typename === t.name) Some(x.value.asInstanceOf[A])
+        else None
+    )
   }
 
   def decodeInput[A](codec: IDCodec[A], elems: Array[String]) = {
@@ -113,7 +122,7 @@ object Goi {
                           .leftMap(_.mkString_("\n"))
                           .toIor
                           .traverse(gid.fromId)
-                          .map(_.map(_.map(x => Node(x, fullId))))
+                          .map(_.map(_.map(x => Node(x, fullId, typename))))
                     }
                   case xs => F.pure(s"Invalid id parts ${xs.map(s => s"'$s'").mkString(", ")}".leftIor)
                 }
@@ -132,6 +141,9 @@ object Goi {
     // Paramerters that do occur in the schema
     val implemented = instanceSet -- notImplemented
 
+    // Parameters that are duplicated
+    val duplicates = instances.groupBy(_.typename).toList.collect { case (k, v) if v.size > 1 => (k, v.size) }
+
     val nodeInstances = shape.discover.implementations.get(Node.nodeInterface.name)
     // All the typenames that implement the Node interface
     val implementing = nodeInstances.map(_.keySet).getOrElse(Set.empty)
@@ -146,7 +158,10 @@ object Goi {
       doesNotExtend.toList.map(n => s"Type `$n` was declared as a node GlobalID instance but did not extend the `Node` type.") ++
       missing.toList.map(n =>
         s"Type `$n` extends the `Node` type but was not declared as a node GlobalID instance. Hint: You might have forgot to include your GlobalID instance for `$n`."
-      )
+      ) ++
+      duplicates.toList.map { case (n, size) =>
+        s"Type `$n` was declared $size times as a GlobalID instance. Hint: Ensure that the GlobalID instance for `$n` is only added once."
+      }
   }
 
   /*
