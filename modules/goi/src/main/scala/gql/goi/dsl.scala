@@ -2,7 +2,6 @@ package gql.goi
 
 import gql.ast._
 import cats.effect._
-import scala.reflect.ClassTag
 import gql.resolver._
 
 object dsl {
@@ -10,7 +9,7 @@ object dsl {
     def tpe(
         hd: (String, Field[F, A, ?, ?]),
         tl: (String, Field[F, A, ?, ?])*
-    )(implicit F: Sync[F], ct: ClassTag[A]) = {
+    )(implicit F: Sync[F]) = {
       implicit val codec = gid.codec
       Goi.addId[F, A, K](gid.toId, gql.dsl.tpe[F, A](gid.typename, hd, tl: _*))
     }
@@ -18,7 +17,7 @@ object dsl {
     def interface(
         hd: (String, Field[F, A, ?, ?]),
         tl: (String, Field[F, A, ?, ?])*
-    )(implicit F: Sync[F], ct: ClassTag[A]) = {
+    )(implicit F: Sync[F]) = {
       implicit val codec = gid.codec
       Goi.addId[F, A, K](gid.toId, gql.dsl.interface[F, A](gid.typename, hd, tl: _*))
     }
@@ -27,7 +26,9 @@ object dsl {
   def gid[F[_], T, A](typename: String, toId: T => A, fromId: A => F[Option[T]])(implicit codec: IDCodec[A]): GlobalID[F, T, A] =
     GlobalID(typename, PureResolver(toId), fromId)
 
-  def gidFrom[F[_], T, A](typename: String, toId: Resolver[F, T, A], fromId: A => F[Option[T]])(implicit codec: IDCodec[A]): GlobalID[F, T, A] =
+  def gidFrom[F[_], T, A](typename: String, toId: Resolver[F, T, A], fromId: A => F[Option[T]])(implicit
+      codec: IDCodec[A]
+  ): GlobalID[F, T, A] =
     GlobalID(typename, toId, fromId)
 
   // def instanceFrom[F[_]: Functor, A](ot: ObjectLike[F, A])(
