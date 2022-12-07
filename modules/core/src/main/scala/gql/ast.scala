@@ -50,13 +50,15 @@ object ast extends AstImplicits.Implicits {
     override def mapK[G[_]: Functor](fk: F ~> G): Selectable[G, A]
   }
 
-  sealed trait Abstract[F[_], A] extends OutToplevel[F, A] {
+  sealed trait Selectable2[F[_], A] extends OutToplevel[F, A]
+
+  sealed trait Abstract[F[_], A] extends Selectable2[F, A] {
     def abstractFields: List[(String, AbstractField[F, ?, ?])]
 
     def abstractFieldMap: Map[String, AbstractField[F, ?, ?]]
   }
 
-  sealed trait Concrete[F[_], A] extends OutToplevel[F, A] with Abstract[F, A] {
+  sealed trait Concrete[F[_], A] extends Selectable2[F, A] {
     def concreteFields: List[(String, Field[F, A, ?, ?])]
 
     def concreteFieldsMap: Map[String, Field[F, A, ?, ?]]

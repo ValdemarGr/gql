@@ -137,9 +137,9 @@ object QueryParser {
   lazy val fragmentSpread =
     (s("...") *> fragmentName).map(FragmentSpread.apply)
 
-  final case class InlineFragment(typeCondition: Option[String], selectionSet: SelectionSet)
+  final case class InlineFragment(typeCondition: String, selectionSet: SelectionSet)
   lazy val inlineFragment =
-    ((s("...") *> typeCondition.?).soft ~ selectionSet).map { case (t, s) => InlineFragment(t, s) }
+    ((s("...") *> typeCondition).soft ~ selectionSet).map { case (t, s) => InlineFragment(t, s) }
 
   final case class FragmentDefinition(
       name: String,

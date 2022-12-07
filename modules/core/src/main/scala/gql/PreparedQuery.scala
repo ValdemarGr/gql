@@ -338,15 +338,14 @@ object PreparedQuery {
               prepareField[F, G](field, caret, f, variableMap, fragments, currentTypename, discoveryState)
             }.map(NonEmptyList.one)
         }
-      // TODO verify that the match is legal
       // Types just inline every field
       case Pos(caret, P.Selection.InlineFragmentSelection(f)) =>
-        val _ = f.typeCondition
-        prepareType[F, G](t, f.selectionSet, variableMap, fragments, currentTypename, discoveryState)
+        matchType2[F, G](f.typeCondition, t, caret, discoveryState) >>
+          prepareType[F, G](t, f.selectionSet, variableMap, fragments, currentTypename, discoveryState)
       case Pos(caret, P.Selection.FragmentSpreadSelection(f)) =>
         inFragment(f.fragmentName, fragments, caret.some) { case Pos(_, f) =>
-          val _ = f.typeCnd
-          prepareType[F, G](t, f.selectionSet, variableMap, fragments, currentTypename, discoveryState)
+          matchType2[F, G](f.typeCnd, t, caret, discoveryState) >>
+            prepareType[F, G](t, f.selectionSet, variableMap, fragments, currentTypename, discoveryState)
         }
     }
   }
@@ -373,9 +372,8 @@ object PreparedQuery {
       s.selections
         .collect { case Pos(caret, P.Selection.InlineFragmentSelection(f)) => (caret, f) }
         .map { case (caret, f) =>
-          f.typeCondition match {
-            case None          => raise(s"Inline fragment must have a type condition.", Some(caret))
-            case Some(typeCnd) => matchType[F, G](typeCnd, null, caret, discoveryState)
+          matchType2[F, G](f.typeCondition, i, caret, discoveryState).map{ matched =>
+            ???
           }
         }
     ???
@@ -511,7 +509,7 @@ object PreparedQuery {
             }
         }
       case Pos(caret, P.Selection.InlineFragmentSelection(f)) =>
-        f.typeCondition match {
+        Option(f.typeCondition) match {
           case None => raise(s"Inline fragment must have a type condition.", Some(caret))
           case Some(typeCnd) =>
             matchType[F, G](typeCnd, ol, caret, discoveryState).flatMap { case (ol, specialize) =>
@@ -670,6 +668,66 @@ object PreparedQuery {
   //         }
   //     }
   //   }
+
+  def matchType2[F[_], G[_]](
+      name: String,
+      sel: Selectable2[G, Any],
+      caret: Caret,
+      discoveryState: SchemaShape.DiscoveryState[G]
+  )(implicit F: MonadError[F, NonEmptyChain[PositionalError]], S: Stateful[F, Prep]): F[Selectable2[G, Any]] =
+    if (sel.name == name) F.pure(sel)
+    else {
+      sel match {
+        case t @ Type(n, _, _, _) =>
+          // Check downcast
+          t.implementsMap.get(name) match {
+            case None => raise(s"Tried to match with type `$name` on type object type `$n`.", Some(caret))
+            case Some(impl) =>
+              val i: Interface[G, _] = impl.implementation.value
+              F.pure(i.asInstanceOf[Interface[G, Any]])
+          }
+        // What types implement this interface?
+        // We can both downcast and up-match
+        case i @ Interface(n, _, _, _) =>
+          i.implementsMap.get(name) match {
+            case Some(impl) =>
+              val i: Interface[G, _] = impl.implementation.value
+              F.pure(i.asInstanceOf[Interface[G, Any]])
+            case None =>
+              raiseOpt(
+                discoveryState.implementations.get(i.name),
+                s"The interface `${i.name}` is not implemented by any type.",
+                caret.some
+              ).flatMap { m =>
+                raiseOpt(
+                  m.get(name).map { case (x, _) => x },
+                  s"`$name` does not implement interface `$n`, possible implementations are ${m.keySet.mkString(", ")}.",
+                  caret.some
+                )
+              }
+          }
+        // Can match to any type or any of it's types' interfacees
+        case u @ Union(n, _, _) =>
+          u.instanceMap
+            .get(name) match {
+            case Some(i) => F.pure(i.tpe.value.asInstanceOf[Type[G, Any]])
+            case None =>
+              u.types.toList
+                .collectFirstSome { case v =>
+                  val t: Type[G, _] = v.tpe.value
+                  t.implementsMap.get(name)
+                } match {
+                case None =>
+                  raise(
+                    s"`$name` is not a member of the union `$n` (or any of the union's types' implemented interfaces), possible members are ${u.instanceMap.keySet
+                      .mkString(", ")}.",
+                    caret.some
+                  )
+                case Some(x) => F.pure(x.implementation.value.asInstanceOf[Interface[G, Any]])
+              }
+          }
+      }
+    }
 
   // name is the type in the pattern match case
   // sel is the type we match on
