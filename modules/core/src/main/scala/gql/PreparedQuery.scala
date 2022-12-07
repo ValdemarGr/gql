@@ -350,8 +350,79 @@ object PreparedQuery {
     }
   }
 
-  def prepareAbstract[F[_]: Parallel, G[_]](
-      i: Interface[G, Any],
+  final case class FieldInfo[G[_]](
+      tpe: Type[G, Any],
+      cursor: PrepCursor,
+      selection: NonEmptyList[(Caret, P.Field)]
+  )
+  def collectFieldInfo[F[_]: Parallel, G[_]](
+      s: Selectable2[G, Any],
+      ss: P.SelectionSet,
+      variableMap: VariableMap,
+      fragments: Map[String, Pos[P.FragmentDefinition]],
+      currentTypename: String,
+      discoveryState: SchemaShape.DiscoveryState[G]
+  )(implicit
+      G: Applicative[G],
+      S: Stateful[F, Prep],
+      F: MonadError[F, NonEmptyChain[PositionalError]],
+      D: Defer[F]
+  ): F[NonEmptyList[PreparedField[G, Any]]] = D.defer {
+    val fields = ss.selections.collect { case Pos(caret, P.Selection.FieldSelection(field)) => (caret, field) }.toNel
+
+    // For every type make an inline fragment where fields is selected
+    // val product =
+    //   fields.flatTraverse { nel =>
+    //     S.inspect(_.cursor).map { c =>
+    //       val ts = s match {
+    //         case t @ Type(_, _, _, _) =>
+    //           NonEmptyList.one(FieldInfo())
+    //           val types = findInterfaceImplementations[F, G](i, discoveryState)
+    //           types.map { case (t, _) => FieldInfo(t, c, nel) }.toNel
+    //       }
+          
+    //       ts.toNel
+    //     }
+    //   }
+
+    val realInlines =
+      ss.selections
+        .collect { case Pos(caret, P.Selection.InlineFragmentSelection(f)) => (caret, f) }
+        .flatTraverse { case (caret, f) =>
+          ambientFragment(s"inline_${f.typeCondition}") {
+            matchType2[F, G](f.typeCondition, s, caret, discoveryState).flatMap { matched =>
+              val t = matched.tpe
+              prepareSelectable2[F, G](t, f.selectionSet, variableMap, fragments, t.name, discoveryState).map(_.toList)
+            }
+            /*.flatMap { nel =>
+
+              ???
+              // matched match {
+              //   // If the type is a supertype we check if all types adhere to this type as a lower bound
+              //   // If the supertype matches another disjoint sub-type tree, no type in that sub-tree can occur if this type cannot occur as a lower bound of a resulting type
+              //   case MatchResult.SuperType(_) =>
+              // }
+            }*/
+          }
+        }
+
+    val realFragments =
+      ss.selections
+        .collect { case Pos(caret, P.Selection.FragmentSpreadSelection(f)) => (caret, f) }
+        .flatTraverse { case (caret, f) =>
+          inFragment(f.fragmentName, fragments, caret.some) { case Pos(caret, f) =>
+            matchType2[F, G](f.typeCnd, s, caret, discoveryState).flatMap { matched =>
+              val t = matched.tpe
+              prepareSelectable2[F, G](t, f.selectionSet, variableMap, fragments, t.name, discoveryState).map(_.toList)
+            }
+          }
+        }
+
+    ???
+  }
+
+  def prepareSelectable2[F[_]: Parallel, G[_]](
+      i: Selectable2[G, Any],
       s: P.SelectionSet,
       variableMap: VariableMap,
       fragments: Map[String, Pos[P.FragmentDefinition]],
@@ -363,21 +434,79 @@ object PreparedQuery {
       F: MonadError[F, NonEmptyChain[PositionalError]],
       D: Defer[F]
   ): F[NonEmptyList[PreparedField[G, Any]]] = D.defer {
-    val fields = s.selections
-      .collect { case Pos(caret, P.Selection.FieldSelection(field)) => (caret, field) }
-
-    val types = findInterfaceImplementations[F, G](i, discoveryState)
-    // For every type make an inline fragment where fields is selected
-    val realInlines =
-      s.selections
-        .collect { case Pos(caret, P.Selection.InlineFragmentSelection(f)) => (caret, f) }
-        .map { case (caret, f) =>
-          matchType2[F, G](f.typeCondition, i, caret, discoveryState).map{ matched =>
-            ???
-          }
-        }
     ???
   }
+
+  /*
+interface A {
+  lol: String
+}
+
+interface B implements A {
+  lol: String
+}
+
+interface C implements A {
+  lol: String
+}
+
+type D implements B & A {
+  lol: String
+}
+
+type E implements C & A {
+  lol: String
+}
+
+type Query {
+  doStuff: B
+}
+
+...
+
+query {
+  doStuff {
+    ... on A {
+      ... on C {
+        ... on E {
+          lol
+        }
+        ... on A {
+          ... on C {
+            lol
+          }
+        }
+      }
+    }
+  }
+}
+
+->
+
+query {
+  doStuff {
+    ... on E {
+      lol
+    }
+  }
+}
+
+...
+
+A => Option[B]
+A => Option[C]
+A => Option[D]
+A => Option[E]
+
+B => Option[D]
+C => Option[E]
+
+do interfaces have specify functions?
+yes:
+  we can compose specify functions
+no:
+  toplevel functions on types must provide specify function for all interfaces
+   */
 
   // def prepareSelections2[F[_]: Parallel, G[_]](
   //     ol: Selectable2[G, Any],
@@ -669,13 +798,20 @@ object PreparedQuery {
   //     }
   //   }
 
+  sealed trait MatchResult[G[_]] { def tpe: Selectable2[G, Any] }
+  object MatchResult {
+    final case class SubType[G[_]](tpe: Selectable2[G, Any]) extends MatchResult[G]
+    final case class SuperType[G[_]](tpe: Selectable2[G, Any]) extends MatchResult[G]
+    final case class SameType[G[_]](tpe: Selectable2[G, Any]) extends MatchResult[G]
+  }
+
   def matchType2[F[_], G[_]](
       name: String,
       sel: Selectable2[G, Any],
       caret: Caret,
       discoveryState: SchemaShape.DiscoveryState[G]
-  )(implicit F: MonadError[F, NonEmptyChain[PositionalError]], S: Stateful[F, Prep]): F[Selectable2[G, Any]] =
-    if (sel.name == name) F.pure(sel)
+  )(implicit F: MonadError[F, NonEmptyChain[PositionalError]], S: Stateful[F, Prep]): F[MatchResult[G]] =
+    if (sel.name == name) F.pure(MatchResult.SameType(sel))
     else {
       sel match {
         case t @ Type(n, _, _, _) =>
@@ -684,7 +820,7 @@ object PreparedQuery {
             case None => raise(s"Tried to match with type `$name` on type object type `$n`.", Some(caret))
             case Some(impl) =>
               val i: Interface[G, _] = impl.implementation.value
-              F.pure(i.asInstanceOf[Interface[G, Any]])
+              F.pure(MatchResult.SuperType(i.asInstanceOf[Interface[G, Any]]))
           }
         // What types implement this interface?
         // We can both downcast and up-match
@@ -692,7 +828,7 @@ object PreparedQuery {
           i.implementsMap.get(name) match {
             case Some(impl) =>
               val i: Interface[G, _] = impl.implementation.value
-              F.pure(i.asInstanceOf[Interface[G, Any]])
+              F.pure(MatchResult.SuperType(i.asInstanceOf[Interface[G, Any]]))
             case None =>
               raiseOpt(
                 discoveryState.implementations.get(i.name),
@@ -700,7 +836,7 @@ object PreparedQuery {
                 caret.some
               ).flatMap { m =>
                 raiseOpt(
-                  m.get(name).map { case (x, _) => x },
+                  m.get(name).map { case (x, _) => MatchResult.SubType(x) },
                   s"`$name` does not implement interface `$n`, possible implementations are ${m.keySet.mkString(", ")}.",
                   caret.some
                 )
@@ -710,7 +846,7 @@ object PreparedQuery {
         case u @ Union(n, _, _) =>
           u.instanceMap
             .get(name) match {
-            case Some(i) => F.pure(i.tpe.value.asInstanceOf[Type[G, Any]])
+            case Some(i) => F.pure(MatchResult.SubType(i.tpe.value.asInstanceOf[Type[G, Any]]))
             case None =>
               u.types.toList
                 .collectFirstSome { case v =>
@@ -723,7 +859,7 @@ object PreparedQuery {
                       .mkString(", ")}.",
                     caret.some
                   )
-                case Some(x) => F.pure(x.implementation.value.asInstanceOf[Interface[G, Any]])
+                case Some(x) => F.pure(MatchResult.SubType(x.implementation.value.asInstanceOf[Interface[G, Any]]))
               }
           }
       }
