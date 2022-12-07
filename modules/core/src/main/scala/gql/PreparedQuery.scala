@@ -373,63 +373,7 @@ object PreparedQuery {
     }
   }
 
-  final case class FieldInfo[G[_]](
-      tpe: Type[G, Any],
-      cursor: PrepCursor,
-      selection: NonEmptyList[(Caret, P.Field)]
-  )
-  def collectFieldInfo[F[_]: Parallel, G[_]](
-      s: Selectable2[G, Any],
-      ss: P.SelectionSet,
-      variableMap: VariableMap,
-      fragments: Map[String, Pos[P.FragmentDefinition]],
-      currentTypename: String,
-      discoveryState: SchemaShape.DiscoveryState[G]
-  )(implicit
-      G: Applicative[G],
-      S: Stateful[F, Prep],
-      F: MonadError[F, NonEmptyChain[PositionalError]],
-      D: Defer[F]
-  ): F[NonEmptyList[PreparedField[G, Any]]] = D.defer {
-    val fields = ss.selections.collect { case Pos(caret, P.Selection.FieldSelection(field)) => (caret, field) }
-
-    val actualFields: Map[String, AbstractField[G, ?]] =
-      s.abstractFieldMap + ("__typename" -> AbstractField(Eval.now(stringScalar[G]), None))
-
-    val validateFieldsF = fields.parTraverse_ { case (caret, field) =>
-      actualFields.get(field.name) match {
-        case None    => raise[F, Unit](s"Field '${field.name}' is not a member of `${s.name}`.", Some(caret))
-        case Some(_) => F.unit
-      }
-    }
-
-    // All types that can implement the selected fields
-    // For every type make an inline fragment where fields is selected
-    val product = D.defer {
-      fields.toNel.flatTraverse { nel =>
-        S.inspect(_.cursor).map { c =>
-          val ts = s match {
-            case t @ Type(_, _, _, _) => List(t)
-            case u @ Union(_, _, _)   => u.types.toList.map(_.tpe.value)
-            case i @ Interface(_, _, _, _) =>
-              findInterfaceImplementations[F, G](i, discoveryState).map { case (t, _) => t }
-          }
-
-          ts.toNel
-        }
-      }
-    }
-
-    val realInlines =
-      ss.selections
-        .collect { case Pos(caret, P.Selection.InlineFragmentSelection(f)) => (caret, f) }
-        .flatTraverse { case (caret, f) =>
-          ambientFragment(s"inline_${f.typeCondition}") {
-            matchType2[F, G](f.typeCondition, s, caret, discoveryState).flatMap { matched =>
-              val t = matched.tpe
-              prepareSelectable2[F, G](t, f.selectionSet, variableMap, fragments, t.name, discoveryState).map(_.toList)
-            }
-            /*.flatMap { nel =>
+  /*.flatMap { nel =>
 
               ???
               // matched match {
@@ -438,6 +382,63 @@ object PreparedQuery {
               //   case MatchResult.SuperType(_) =>
               // }
             }*/
+
+  final case class FieldInfo[G[_]](
+      tpe: Type[G, ?],
+      cursor: PrepCursor,
+      selection: NonEmptyList[(Caret, P.Field)]
+  )
+  def collectFieldInfo[F[_]: Parallel, G[_]](
+      s: Selectable2[G, Any],
+      ss: P.SelectionSet,
+      variableMap: VariableMap,
+      fragments: Map[String, Pos[P.FragmentDefinition]],
+      discoveryState: SchemaShape.DiscoveryState[G]
+  )(implicit
+      G: Applicative[G],
+      S: Stateful[F, Prep],
+      F: MonadError[F, NonEmptyChain[PositionalError]],
+      D: Defer[F]
+  ): F[List[FieldInfo[G]]] = D.defer {
+    val fields = ss.selections.collect { case Pos(caret, P.Selection.FieldSelection(field)) => (caret, field) }
+
+    val actualFields: Map[String, AbstractField[G, ?]] =
+      s.abstractFieldMap + ("__typename" -> AbstractField(Eval.now(stringScalar[G]), None))
+
+    // This is purely for debuggability since the implementing type will also check field existence
+    val validateFieldsF: F[Unit] = fields.parTraverse_ { case (caret, field) =>
+      actualFields.get(field.name) match {
+        case None    => raise[F, Unit](s"Field '${field.name}' is not a member of `${s.name}`.", Some(caret))
+        case Some(_) => F.unit
+      }
+    }
+
+    // Contains all types that can implement the selected fields
+    // For every type make an inline fragment where fields is selected
+    val fieldImplProduct: F[List[FieldInfo[G]]] = S.inspect(_.cursor).map { c =>
+      fields.toNel
+        .flatMap { nel =>
+          val ts = s match {
+            case t @ Type(_, _, _, _) => List(t)
+            case u @ Union(_, _, _)   => u.types.toList.map(_.tpe.value)
+            case i @ Interface(_, _, _, _) =>
+              findInterfaceImplementations[F, G](i, discoveryState).map { case (t, _) => t }
+          }
+          ts.map(t => FieldInfo(t, c, nel)).toNel
+        }
+        .toList
+        .flatMap(_.toList)
+    }
+
+    val realInlines =
+      ss.selections
+        .collect { case Pos(caret, P.Selection.InlineFragmentSelection(f)) => (caret, f) }
+        .flatTraverse { case (caret, f) =>
+          ambientFragment(s"inline_on_${f.typeCondition}") {
+            matchType2[F, G](f.typeCondition, s, caret, discoveryState).flatMap { matched =>
+              val t = matched.tpe
+              collectFieldInfo[F, G](t, f.selectionSet, variableMap, fragments, discoveryState).map(_.toList)
+            }
           }
         }
 
@@ -448,12 +449,12 @@ object PreparedQuery {
           inFragment(f.fragmentName, fragments, caret.some) { case Pos(caret, f) =>
             matchType2[F, G](f.typeCnd, s, caret, discoveryState).flatMap { matched =>
               val t = matched.tpe
-              prepareSelectable2[F, G](t, f.selectionSet, variableMap, fragments, t.name, discoveryState).map(_.toList)
+              collectFieldInfo[F, G](t, f.selectionSet, variableMap, fragments, discoveryState).map(_.toList)
             }
           }
         }
 
-    ???
+    ((validateFieldsF >> fieldImplProduct) :: realInlines :: realFragments :: Nil).parFlatSequence
   }
 
   def prepareSelectable2[F[_]: Parallel, G[_]](
