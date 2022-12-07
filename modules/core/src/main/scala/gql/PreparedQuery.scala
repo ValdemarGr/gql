@@ -350,6 +350,29 @@ object PreparedQuery {
     }
   }
 
+  def prepareArgument[F[_]: Parallel, G[_], A](
+      f: P.Field,
+      caret: Caret,
+      arg: Arg[A],
+      variableMap: VariableMap
+  )(implicit
+      F: MonadError[F, NonEmptyChain[PositionalError]],
+      S: Stateful[F, Prep]
+  ): F[A] = {
+    val provided = f.arguments.toList.flatMap(_.nel.toList)
+
+    // Treat input arguments as an object
+    // Decode the args as-if an input
+    val argObj =
+      P.Value.ObjectValue(provided.map(a => a.name -> a.value))
+
+    arg match {
+      case PureArg(value) if provided.isEmpty => value.fold(raise(_, None), F.pure(_))
+      case PureArg(_)                         => raise(s"Field '${f.name}' does not accept arguments.", Some(caret))
+      case nea @ NonEmptyArg(_, _)            => parseInputObj[F, A](argObj, nea, Some(variableMap), ambigiousEnum = false)
+    }
+  }
+
   final case class FieldInfo[G[_]](
       tpe: Type[G, Any],
       cursor: PrepCursor,
@@ -368,22 +391,34 @@ object PreparedQuery {
       F: MonadError[F, NonEmptyChain[PositionalError]],
       D: Defer[F]
   ): F[NonEmptyList[PreparedField[G, Any]]] = D.defer {
-    val fields = ss.selections.collect { case Pos(caret, P.Selection.FieldSelection(field)) => (caret, field) }.toNel
+    val fields = ss.selections.collect { case Pos(caret, P.Selection.FieldSelection(field)) => (caret, field) }
 
+    val actualFields: Map[String, AbstractField[G, ?]] =
+      s.abstractFieldMap + ("__typename" -> AbstractField(Eval.now(stringScalar[G]), None))
+
+    val validateFieldsF = fields.parTraverse_ { case (caret, field) =>
+      actualFields.get(field.name) match {
+        case None    => raise[F, Unit](s"Field '${field.name}' is not a member of `${s.name}`.", Some(caret))
+        case Some(_) => F.unit
+      }
+    }
+
+    // All types that can implement the selected fields
     // For every type make an inline fragment where fields is selected
-    // val product =
-    //   fields.flatTraverse { nel =>
-    //     S.inspect(_.cursor).map { c =>
-    //       val ts = s match {
-    //         case t @ Type(_, _, _, _) =>
-    //           NonEmptyList.one(FieldInfo())
-    //           val types = findInterfaceImplementations[F, G](i, discoveryState)
-    //           types.map { case (t, _) => FieldInfo(t, c, nel) }.toNel
-    //       }
-          
-    //       ts.toNel
-    //     }
-    //   }
+    val product = D.defer {
+      fields.toNel.flatTraverse { nel =>
+        S.inspect(_.cursor).map { c =>
+          val ts = s match {
+            case t @ Type(_, _, _, _) => List(t)
+            case u @ Union(_, _, _)   => u.types.toList.map(_.tpe.value)
+            case i @ Interface(_, _, _, _) =>
+              findInterfaceImplementations[F, G](i, discoveryState).map { case (t, _) => t }
+          }
+
+          ts.toNel
+        }
+      }
+    }
 
     val realInlines =
       ss.selections

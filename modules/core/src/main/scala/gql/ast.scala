@@ -50,22 +50,23 @@ object ast extends AstImplicits.Implicits {
     override def mapK[G[_]: Functor](fk: F ~> G): Selectable[G, A]
   }
 
-  sealed trait Selectable2[F[_], A] extends OutToplevel[F, A]
+  sealed trait Selectable2[F[_], A] extends OutToplevel[F, A] {
+    def abstractFields: List[(String, AbstractField[F, ?])]
 
-  sealed trait Abstract[F[_], A] extends Selectable2[F, A] {
-    def abstractFields: List[(String, AbstractField[F, ?, ?])]
-
-    def abstractFieldMap: Map[String, AbstractField[F, ?, ?]]
+    def abstractFieldMap: Map[String, AbstractField[F, ?]]
   }
+
+  sealed trait Abstract[F[_], A] extends Selectable2[F, A]
 
   sealed trait Concrete[F[_], A] extends Selectable2[F, A] {
     def concreteFields: List[(String, Field[F, A, ?, ?])]
 
     def concreteFieldsMap: Map[String, Field[F, A, ?, ?]]
 
-    def abstractFields: List[(String, AbstractField[F, _, _])] = concreteFields.map { case (k, v) => k -> v.asAbstract }
+    def abstractFields: List[(String, AbstractField[F, ?])] =
+      concreteFields.map { case (k, v) => k -> v.asAbstract }
 
-    def abstractFieldMap: Map[String, AbstractField[F, _, _]] = abstractFields.toMap
+    def abstractFieldMap: Map[String, AbstractField[F, ?]] = abstractFields.toMap
   }
 
   sealed trait ObjectLike[F[_], A] extends Selectable[F, A] with Abstract[F, A] {
@@ -230,18 +231,17 @@ object ast extends AstImplicits.Implicits {
         description
       )
 
-    def asAbstract: AbstractField[F, T, A] = AbstractField(args, output, description)
+    def asAbstract: AbstractField[F, T] = AbstractField(output, description)
   }
 
-  final case class AbstractField[F[_], T, A](
-      args: Arg[A],
+  final case class AbstractField[F[_], T](
       output: Eval[Out[F, T]],
       description: Option[String] = None
   ) {
-    def document(description: String): AbstractField[F, T, A] = copy(description = Some(description))
+    def document(description: String): AbstractField[F, T] = copy(description = Some(description))
 
-    def mapK[G[_]: Functor](fk: F ~> G): AbstractField[G, T, A] =
-      AbstractField[G, T, A](args, output.map(_.mapK(fk)), description)
+    def mapK[G[_]: Functor](fk: F ~> G): AbstractField[G, T] =
+      AbstractField[G, T](output.map(_.mapK(fk)), description)
   }
 
   final case class Variant[F[_], A, B](tpe: Eval[Type[F, B]])(implicit val specify: A => Option[B]) {
