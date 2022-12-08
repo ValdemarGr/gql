@@ -26,6 +26,7 @@ import gql.ast._
 import gql.resolver._
 import cats.parse.Caret
 import cats.arrow.FunctionK
+import gql.parser.QueryParser
 
 object PreparedQuery {
   sealed trait Prepared[F[_], A]
@@ -251,10 +252,13 @@ object PreparedQuery {
       case Right(value) => F.pure(value)
     }
 
-  def ambientEdge[F[_]: Monad, A](edge: PrepEdge)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
+  def ambientAt[F[_]: Monad, A](cursor: PrepCursor)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
     S.inspect(_.cursor).flatMap { c =>
-      S.modify(_.copy(cursor = c.add(edge))) *> fa <* S.modify(_.copy(cursor = c))
+      S.modify(_.copy(cursor = cursor)) *> fa <* S.modify(_.copy(cursor = c))
     }
+
+  def ambientEdge[F[_]: Monad, A](edge: PrepEdge)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
+    S.inspect(_.cursor.add(edge)).flatMap(ambientAt[F, A](_)(fa))
 
   def ambientField[F[_]: Monad, A](name: String)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
     ambientEdge[F, A](PrepEdge.ASTEdge(SchemaShape.ValidationEdge.Field(name)))(fa)
@@ -373,28 +377,16 @@ object PreparedQuery {
     }
   }
 
-  /*.flatMap { nel =>
-
-              ???
-              // matched match {
-              //   // If the type is a supertype we check if all types adhere to this type as a lower bound
-              //   // If the supertype matches another disjoint sub-type tree, no type in that sub-tree can occur if this type cannot occur as a lower bound of a resulting type
-              //   case MatchResult.SuperType(_) =>
-              // }
-            }*/
-
-  final case class FieldInfo[G[_]](
-      tpe: Type[G, ?],
-      cursor: PrepCursor,
-      selection: NonEmptyList[(Caret, P.Field)]
-  )
-
   def concreteDomain[G[_]](s: Selectable2[G, Any], discoveryState: SchemaShape.DiscoveryState[G]) = s match {
     case t @ Type(_, _, _, _)      => List(t)
     case u @ Union(_, _, _)        => u.types.toList.map(_.tpe.value)
     case i @ Interface(_, _, _, _) => findInterfaceImplementations[G](i, discoveryState).map { case (t, _) => t }
   }
 
+  final case class FieldInfo[G[_]](
+      s: Selectable2[G, ?],
+      selection: NonEmptyList[(Caret, P.Field)]
+  )
   /*
    * This function flattens fragment spreads and makes all types terminal,
    * such that only fields remain and the types that those fields can appear in.
@@ -460,14 +452,8 @@ object PreparedQuery {
       }
     }
 
-    // Contains all types that can implement the selected fields
-    // For every type make an inline fragment where fields is selected
-    val fieldImplProduct: F[List[FieldInfo[G]]] = S.inspect(_.cursor).map { c =>
-      fields.toNel
-        .flatMap(nel => concreteDomain[G](s, discoveryState).map(t => FieldInfo(t, c, nel)).toNel)
-        .toList
-        .flatMap(_.toList)
-    }
+    val fieldsHere: List[FieldInfo[G]] =
+      fields.toNel.toList.map(FieldInfo(s, _))
 
     val realInlines =
       ss.selections
@@ -493,44 +479,110 @@ object PreparedQuery {
           }
         }
 
-    ((validateFieldsF >> fieldImplProduct) :: realInlines :: realFragments :: Nil).parFlatSequence
+    ((validateFieldsF as fieldsHere) :: realInlines :: realFragments :: Nil).parFlatSequence
       // Unfortunate, but is always safe here since nel is input
       .map(_.toNel.get)
+  }
+
+  def compareValues[F[_]: Parallel](av: P.Value, bv: P.Value, caret: Caret)(implicit
+      F: MonadError[F, NonEmptyChain[PositionalError]],
+      S: Stateful[F, Prep]
+  ): F[Unit] = {
+    (av, bv) match {
+      case (P.Value.VariableValue(avv), P.Value.VariableValue(bvv)) =>
+        if (avv === bvv) F.unit
+        else raise[F, Unit](s"Variable '$avv' and '$bvv' are not equal.", Some(caret))
+      case (P.Value.IntValue(ai), P.Value.IntValue(bi)) =>
+        if (ai === bi) F.unit
+        else raise[F, Unit](s"Int '$ai' and '$bi' are not equal.", Some(caret))
+      case (P.Value.FloatValue(af), P.Value.FloatValue(bf)) =>
+        if (af === bf) F.unit
+        else raise[F, Unit](s"Float '$af' and '$bf' are not equal.", Some(caret))
+      case (P.Value.StringValue(as), P.Value.StringValue(bs)) =>
+        if (as === bs) F.unit
+        else raise[F, Unit](s"String '$as' and '$bs' are not equal.", Some(caret))
+      case (P.Value.BooleanValue(ab), P.Value.BooleanValue(bb)) =>
+        if (ab === bb) F.unit
+        else raise[F, Unit](s"Boolean '$ab' and '$bb' are not equal.", Some(caret))
+      case (P.Value.EnumValue(ae), P.Value.EnumValue(be)) =>
+        if (ae === be) F.unit
+        else raise[F, Unit](s"Enum '$ae' and '$be' are not equal.", Some(caret))
+      case (P.Value.NullValue, P.Value.NullValue) => F.unit
+      case (P.Value.ListValue(al), P.Value.ListValue(bl)) =>
+        if (al.length === bl.length) {
+          al.zip(bl).zipWithIndex.parTraverse_ { case ((a, b), i) => ambientIndex(i)(compareValues[F](a, b, caret)) }
+        } else
+          raise[F, Unit](s"Lists are not af same size. Found list of length ${al.length} versus list of length ${bl.length}.", Some(caret))
+      case (P.Value.ObjectValue(ao), P.Value.ObjectValue(bo)) =>
+        if (ao.length =!= bo.length)
+          raise[F, Unit](
+            s"Objects are not af same size. Found object of length ${ao.length} versus object of length ${bo.length}.",
+            Some(caret)
+          )
+        else {
+          def checkUniqueness(xs: List[(String, P.Value)]) =
+            xs.groupMap { case (k, _) => k } { case (_, v) => v }
+              .toList
+              .parTraverse {
+                case (k, v :: Nil) => F.pure(k -> v)
+                case (k, _)        => raise[F, (String, P.Value)](s"Key '$k' is not unique in object.", Some(caret))
+              }
+              .map(_.toMap)
+
+          (checkUniqueness(ao), checkUniqueness(bo)).parTupled.flatMap { case (amap, bmap) =>
+            // TODO test that verifies that order does not matter
+            (amap align bmap).toList.parTraverse_ {
+              case (k, Ior.Left(_))    => raise[F, Unit](s"Key '$k' is missing in object.", Some(caret))
+              case (k, Ior.Right(_))   => raise[F, Unit](s"Key '$k' is missing in object.", Some(caret))
+              case (k, Ior.Both(l, r)) => ambientArg(k)(compareValues[F](l, r, caret))
+            }
+          }
+        }
+      case _ => raise[F, Unit](s"Values are not same type, got ${pValueName(av)} and ${pValueName(bv)}.", Some(caret))
+    }
+  }
+
+  def compareArguments[F[_]: Parallel](name: String, aa: P.Arguments, ba: P.Arguments, caret: Caret)(implicit
+      F: MonadError[F, NonEmptyChain[PositionalError]],
+      S: Stateful[F, Prep]
+  ) = {
+    def checkUniqueness(x: P.Arguments): F[Map[String, QueryParser.Argument]] =
+      x.nel.toList
+        .groupBy(_.name)
+        .toList
+        .parTraverse {
+          case (k, v :: Nil) => F.pure(k -> v)
+          case (k, _) =>
+            raise[F, (String, P.Argument)](s"Field '$name's argument '$k' was not unique.", Some(caret))
+        }
+        .map(_.toMap)
+
+    (checkUniqueness(aa), checkUniqueness(ba)).parTupled.flatMap { case (amap, bmap) =>
+      (amap align bmap).toList.parTraverse_ {
+        case (k, Ior.Left(_)) =>
+          raise[F, Unit](s"Field '$name' is already selected with argument '$k', but no argument was given here.", Some(caret))
+        case (k, Ior.Right(_)) =>
+          raise[F, Unit](s"Field '$name' is already selected without argument '$k', but an argument was given here.", Some(caret))
+        case (k, Ior.Both(l, r)) => ambientArg(k)(compareValues[F](l.value, r.value, caret))
+      }
+    }
   }
 
   def mergeFields[F[_]: Parallel](a: P.Field, b: P.Field, caret: Caret)(implicit
       F: MonadError[F, NonEmptyChain[PositionalError]],
       S: Stateful[F, Prep]
-  ) = {
-    (a.arguments, b.arguments) match {
-      case (None, None)    => F.unit
-      case (Some(_), None) => raise[F, Unit](s"Field '${a.name}' is already selected with arguments.", Some(caret))
-      case (None, Some(_)) => raise[F, Unit](s"Field '${a.name}' is already selected without arguments.", Some(caret))
-      case (Some(aa), Some(ba)) =>
-        def checkUniqueness(x: P.Arguments) =
-          x.nel.toList.groupBy(_.name).collect { case (k, xs) if xs.size > 1 => k }.toList.parTraverse_ { dup =>
-            raise[F, Unit](s"Field '${a.name}'s argument '$dup' was not unique.", Some(caret))
-          }
-
-        val aaCheckF = checkUniqueness(aa)
-        val baCheckF = checkUniqueness(ba)
-
-        val aset = aa.nel.toList.toSet
-        val bset = ba.nel.toList.toSet
-
-        val aMissing = (bset -- aset).toList.parTraverse_ { arg =>
-          raise[F, Unit](s"Field '${a.name}' is already selected without argument '${arg.name}'.", Some(caret))
-        }
-        val bMissing = (aset -- bset).toList.parTraverse_ { arg =>
-          raise[F, Unit](s"Field '${a.name}' is already selected with argument '${arg.name}'.", Some(caret))
-        }
-
-        val amap = aa.nel.toList.map(x => (x.name -> x)).toMap
-        ba.nel.toList.foldLeft(amap)
-
-        if (aa.nel.toList.toSet == ba.nel.toList.toSet) F.unit
-        else raise[F, Unit](s"Field '${a.name}' is already selected with different arguments.", Some(caret))
+  ) = ambientField(a.name) {
+    val argsF = (a.arguments, b.arguments) match {
+      case (None, None)         => F.unit
+      case (Some(_), None)      => raise[F, Unit](s"Field '${a.name}' is already selected with arguments.", Some(caret))
+      case (None, Some(_))      => raise[F, Unit](s"Field '${a.name}' is already selected without arguments.", Some(caret))
+      case (Some(aa), Some(ba)) => compareArguments[F](a.name, aa, ba, caret)
     }
+
+    // (a.selectionSet.value, b.selectionSet.value) match {
+    //   case (None, None) =>
+    // }
+    F.unit
   }
 
   def prepareSelectable2[F[_]: Parallel, G[_]](
@@ -550,54 +602,53 @@ object PreparedQuery {
       // We find the types that may appear in this type and intersect the two
       // Such that we find the types that **can** appear
       val possibleTypes = concreteDomain(s, discoveryState).map(_.name).toSet
-      val canAppear = collected.collect { case x if possibleTypes.contains(x.tpe.name) => x }
+      // val canAppear = collected.collect { case x if possibleTypes.contains(x.tpe.name) => x }
 
-      def assembleFieldMap(cache: Map[(String, Option[String]), P.Field], next: FieldInfo[G]) = {
-        next.selection.map { case (caret, field) =>
-          ambientField(field.name) {
-            cache.get((field.name, field.alias)) match {
-              case None =>
-                cache + ((field.name, field.alias) -> field)
-                true
-              case Some(x) =>
-                x
-                true
-            }
-            F.unit
-          }
-        }
-      }
+      // def assembleFieldMap(cache: Map[(String, Option[String]), P.Field], next: FieldInfo[G]) = {
+      //   next.selection.map { case (caret, field) =>
+      //     ambientField(field.name) {
+      //       cache.get((field.name, field.alias)) match {
+      //         case None =>
+      //           cache + ((field.name, field.alias) -> field)
+      //           true
+      //         case Some(x) =>
+      //           x
+      //           true
+      //       }
+      //       F.unit
+      //     }
+      //   }
+      // }
 
       // Based on what type is the root we determine how to spread our way into the different fields
       s match {
         // Alrighty we are a type, we just inline all the fields
         case t: Type[G, ?] =>
-          val fields = canAppear.flatMap(_.selection.toList).toList.distinctBy { case (_, f) => f.name }
-          fields.parTraverse { case (caret, field) =>
-            raiseOpt(
-              t.fieldMap.get(field.name),
-              s"Field '${field.name}' does not occur in type `${t.name}`.",
-              Some(caret)
-            ).flatMap { f =>
-              prepareField[F, G](
-                field,
-                caret,
-                f.asInstanceOf[Field[G, Any, Any, Any]],
-                variableMap,
-                fragments,
-                t.name,
-                discoveryState
-              )
-            }
-          }
+          // val fields = canAppear.flatMap(_.selection.toList).toList.distinctBy { case (_, f) => f.name }
+          // fields.parTraverse { case (caret, field) =>
+          //   raiseOpt(
+          //     t.fieldMap.get(field.name),
+          //     s"Field '${field.name}' does not occur in type `${t.name}`.",
+          //     Some(caret)
+          //   ).flatMap { f =>
+          //     prepareField[F, G](
+          //       field,
+          //       caret,
+          //       f.asInstanceOf[Field[G, Any, Any, Any]],
+          //       variableMap,
+          //       fragments,
+          //       t.name,
+          //       discoveryState
+          //     )
+          //   }
+          // }
         case i: Interface[G, ?] =>
-          val grouped = canAppear.groupBy(_.tpe.name).toList
+          // val grouped = canAppear.groupBy(_.tpe.name).toList
           // grouped.map{ case (k, v) => k -> }
           ???
         case _ => ???
       }
 
-      val _ = canAppear
       // If the type is a supertype we check if all types adhere to this type as a lower bound
       // If the supertype matches another disjoint sub-type tree, no type in that sub-tree can occur if this type cannot occur as a lower bound of a resulting type
     }
