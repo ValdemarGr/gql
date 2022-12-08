@@ -426,7 +426,8 @@ object PreparedQuery {
           case Some(f) => collectFieldInfo[F, G](f, field, caret, variableMap, fragments, discoveryState)
         }
       }
-      .map(_.toNel.toList.map(SelectionInfo(s, _)))
+      .flatMap(_.toNel.toList.traverse(mergeDuplicates[F, G]))
+      .map(_.map(SelectionInfo(s, _)))
 
     val realInlines =
       ss.selections
@@ -457,42 +458,43 @@ object PreparedQuery {
       .map(_.toNel.get)
   }
 
-  def fieldName(f: P.Field): String = s"'${f.alias.getOrElse(f.name)}'${f.alias.map(x => s" (alias for '$x')").mkString}"
+  def fieldName[G[_]](f: FieldInfo[G]): String =
+    s"'${f.alias.getOrElse(f.name)}'${f.alias.map(x => s" (alias for '$x')").mkString}"
 
-  def compareValues[F[_]: Parallel](av: P.Value, bv: P.Value, caret: Caret)(implicit
+  def compareValues[F[_]: Parallel](av: P.Value, bv: P.Value, caret: Option[Caret])(implicit
       F: MonadError[F, NonEmptyChain[PositionalError]],
       S: Stateful[F, Prep]
   ): F[Unit] = {
     (av, bv) match {
       case (P.Value.VariableValue(avv), P.Value.VariableValue(bvv)) =>
         if (avv === bvv) F.unit
-        else raise[F, Unit](s"Variable '$avv' and '$bvv' are not equal.", Some(caret))
+        else raise[F, Unit](s"Variable '$avv' and '$bvv' are not equal.", caret)
       case (P.Value.IntValue(ai), P.Value.IntValue(bi)) =>
         if (ai === bi) F.unit
-        else raise[F, Unit](s"Int '$ai' and '$bi' are not equal.", Some(caret))
+        else raise[F, Unit](s"Int '$ai' and '$bi' are not equal.", caret)
       case (P.Value.FloatValue(af), P.Value.FloatValue(bf)) =>
         if (af === bf) F.unit
-        else raise[F, Unit](s"Float '$af' and '$bf' are not equal.", Some(caret))
+        else raise[F, Unit](s"Float '$af' and '$bf' are not equal.", caret)
       case (P.Value.StringValue(as), P.Value.StringValue(bs)) =>
         if (as === bs) F.unit
-        else raise[F, Unit](s"String '$as' and '$bs' are not equal.", Some(caret))
+        else raise[F, Unit](s"String '$as' and '$bs' are not equal.", caret)
       case (P.Value.BooleanValue(ab), P.Value.BooleanValue(bb)) =>
         if (ab === bb) F.unit
-        else raise[F, Unit](s"Boolean '$ab' and '$bb' are not equal.", Some(caret))
+        else raise[F, Unit](s"Boolean '$ab' and '$bb' are not equal.", caret)
       case (P.Value.EnumValue(ae), P.Value.EnumValue(be)) =>
         if (ae === be) F.unit
-        else raise[F, Unit](s"Enum '$ae' and '$be' are not equal.", Some(caret))
+        else raise[F, Unit](s"Enum '$ae' and '$be' are not equal.", caret)
       case (P.Value.NullValue, P.Value.NullValue) => F.unit
       case (P.Value.ListValue(al), P.Value.ListValue(bl)) =>
         if (al.length === bl.length) {
           al.zip(bl).zipWithIndex.parTraverse_ { case ((a, b), i) => ambientIndex(i)(compareValues[F](a, b, caret)) }
         } else
-          raise[F, Unit](s"Lists are not af same size. Found list of length ${al.length} versus list of length ${bl.length}.", Some(caret))
+          raise[F, Unit](s"Lists are not af same size. Found list of length ${al.length} versus list of length ${bl.length}.", caret)
       case (P.Value.ObjectValue(ao), P.Value.ObjectValue(bo)) =>
         if (ao.length =!= bo.length)
           raise[F, Unit](
             s"Objects are not af same size. Found object of length ${ao.length} versus object of length ${bo.length}.",
-            Some(caret)
+            caret
           )
         else {
           def checkUniqueness(xs: List[(String, P.Value)]) =
@@ -500,24 +502,24 @@ object PreparedQuery {
               .toList
               .parTraverse {
                 case (k, v :: Nil) => F.pure(k -> v)
-                case (k, _)        => raise[F, (String, P.Value)](s"Key '$k' is not unique in object.", Some(caret))
+                case (k, _)        => raise[F, (String, P.Value)](s"Key '$k' is not unique in object.", caret)
               }
               .map(_.toMap)
 
           (checkUniqueness(ao), checkUniqueness(bo)).parTupled.flatMap { case (amap, bmap) =>
             // TODO test that verifies that order does not matter
             (amap align bmap).toList.parTraverse_ {
-              case (k, Ior.Left(_))    => raise[F, Unit](s"Key '$k' is missing in object.", Some(caret))
-              case (k, Ior.Right(_))   => raise[F, Unit](s"Key '$k' is missing in object.", Some(caret))
+              case (k, Ior.Left(_))    => raise[F, Unit](s"Key '$k' is missing in object.", caret)
+              case (k, Ior.Right(_))   => raise[F, Unit](s"Key '$k' is missing in object.", caret)
               case (k, Ior.Both(l, r)) => ambientArg(k)(compareValues[F](l, r, caret))
             }
           }
         }
-      case _ => raise[F, Unit](s"Values are not same type, got ${pValueName(av)} and ${pValueName(bv)}.", Some(caret))
+      case _ => raise[F, Unit](s"Values are not same type, got ${pValueName(av)} and ${pValueName(bv)}.", caret)
     }
   }
 
-  def compareArguments[F[_]: Parallel](name: String, aa: P.Arguments, ba: P.Arguments, caret: Caret)(implicit
+  def compareArguments[F[_]: Parallel](name: String, aa: P.Arguments, ba: P.Arguments, caret: Option[Caret])(implicit
       F: MonadError[F, NonEmptyChain[PositionalError]],
       S: Stateful[F, Prep]
   ) = {
@@ -528,36 +530,55 @@ object PreparedQuery {
         .parTraverse {
           case (k, v :: Nil) => F.pure(k -> v)
           case (k, _) =>
-            raise[F, (String, P.Argument)](s"Argument '$k' of field $name was not unique.", Some(caret))
+            raise[F, (String, P.Argument)](s"Argument '$k' of field $name was not unique.", caret)
         }
         .map(_.toMap)
 
     (checkUniqueness(aa), checkUniqueness(ba)).parTupled.flatMap { case (amap, bmap) =>
       (amap align bmap).toList.parTraverse_ {
         case (k, Ior.Left(_)) =>
-          raise[F, Unit](s"Field $name is already selected with argument '$k', but no argument was given here.", Some(caret))
+          raise[F, Unit](s"Field $name is already selected with argument '$k', but no argument was given here.", caret)
         case (k, Ior.Right(_)) =>
-          raise[F, Unit](s"Field $name is already selected without argument '$k', but an argument was given here.", Some(caret))
+          raise[F, Unit](s"Field $name is already selected without argument '$k', but an argument was given here.", caret)
         case (k, Ior.Both(l, r)) => ambientArg(k)(compareValues[F](l.value, r.value, caret))
       }
     }
   }
 
-  def mergeFields[F[_]: Parallel, G[_]](a: P.Field, b: P.Field, caret: Caret)(implicit
+  def mergeDuplicates[F[_]: Parallel, G[_]](sis: NonEmptyList[FieldInfo[G]])(implicit
       F: MonadError[F, NonEmptyChain[PositionalError]],
       S: Stateful[F, Prep]
-  ) = ambientField(a.name) {
-    val argsF = (a.arguments, b.arguments) match {
+  ) = {
+    val m = sis.groupByNem(x => x.alias.getOrElse(x.name))
+    m.toNel.traverse { case (_, fields) =>
+      fields.reduceLeftM(F.pure(_))(mergeFields[F, G](_, _))
+    }
+  }
+
+  def mergeFields[F[_]: Parallel, G[_]](a: FieldInfo[G], b: FieldInfo[G])(implicit
+      F: MonadError[F, NonEmptyChain[PositionalError]],
+      S: Stateful[F, Prep]
+  ): F[FieldInfo[G]] = ambientField(a.name) {
+    val argsF = (a.args, b.args) match {
       case (None, None)         => F.unit
-      case (Some(_), None)      => raise[F, Unit](s"Field ${fieldName(a)} is already selected with arguments.", Some(caret))
-      case (None, Some(_))      => raise[F, Unit](s"Field ${fieldName(a)} is already selected without arguments.", Some(caret))
-      case (Some(aa), Some(ba)) => compareArguments[F](fieldName(a), aa, ba, caret)
+      case (Some(_), None)      => raise[F, Unit](s"Field ${fieldName(a)} is already selected with arguments.", b.caret)
+      case (None, Some(_))      => raise[F, Unit](s"Field ${fieldName(a)} is already selected without arguments.", b.caret)
+      case (Some(aa), Some(ba)) => compareArguments[F](fieldName(a), aa, ba, b.caret)
     }
 
-    (a.selectionSet.value, b.selectionSet.value) match {
-      case (None, None) =>
-    }
-    F.unit
+    val selectionFieldsF = (a.selections.toNel, b.selections.toNel)
+      .mapN(_ ::: _)
+      .traverseTap { nel =>
+        val x = nel.head.s.name
+        nel.tail.parTraverse { s =>
+          if (s.s.name =!= x) raise[F, Unit](s"Selections are not of same type, got '${s.s.name}' and $x.", None)
+          else F.unit
+        }
+      }
+      .map(_.toList.flatMap(_.toList))
+      .map(sels => b.copy(selections = sels))
+
+    argsF &> selectionFieldsF
   }
 
   def prepareSelectable2[F[_]: Parallel, G[_]](
