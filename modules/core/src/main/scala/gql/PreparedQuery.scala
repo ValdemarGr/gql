@@ -354,29 +354,6 @@ object PreparedQuery {
     }
   }
 
-  def prepareArgument[F[_]: Parallel, G[_], A](
-      f: P.Field,
-      caret: Caret,
-      arg: Arg[A],
-      variableMap: VariableMap
-  )(implicit
-      F: MonadError[F, NonEmptyChain[PositionalError]],
-      S: Stateful[F, Prep]
-  ): F[A] = {
-    val provided = f.arguments.toList.flatMap(_.nel.toList)
-
-    // Treat input arguments as an object
-    // Decode the args as-if an input
-    val argObj =
-      P.Value.ObjectValue(provided.map(a => a.name -> a.value))
-
-    arg match {
-      case PureArg(value) if provided.isEmpty => value.fold(raise(_, None), F.pure(_))
-      case PureArg(_)                         => raise(s"Field '${f.name}' does not accept arguments.", Some(caret))
-      case nea @ NonEmptyArg(_, _)            => parseInputObj[F, A](argObj, nea, Some(variableMap), ambigiousEnum = false)
-    }
-  }
-
   def concreteDomain[G[_]](s: Selectable2[G, Any], discoveryState: SchemaShape.DiscoveryState[G]) = s match {
     case t @ Type(_, _, _, _)      => List(t)
     case u @ Union(_, _, _)        => u.types.toList.map(_.tpe.value)
@@ -384,51 +361,49 @@ object PreparedQuery {
   }
 
   final case class FieldInfo[G[_]](
-      s: Selectable2[G, ?],
-      selection: NonEmptyList[(Caret, P.Field)]
+      name: String,
+      alias: Option[String],
+      caret: Option[Caret],
+      args: Option[P.Arguments],
+      selections: List[SelectionInfo[G]]
   )
-  /*
-   * This function flattens fragment spreads and makes all types terminal,
-   * such that only fields remain and the types that those fields can appear in.
-   * For instance consider the following schema:
-   * ```scala
-   * interface A {
-   *   a: String
-   * }
-   *
-   * type B implements A {
-   *   a: String
-   *   b: String
-   * }
-   *
-   * type C implements A {
-   *   a: String
-   *   c: String
-   * }
-   *
-   * ... on A {
-   *  a
-   *  ... on B {
-   *    b
-   *  }
-   * }
-   * ```
-   * We can transform this query into something executable:
-   * ```scala
-   * ... on B {
-   *   a
-   *   b
-   * }
-   * ... on C {
-   *   a
-   * }
-   * ```
-   * Now all types are concrete; terminal, thus they can be executed.
-   * The field 'a' is selected on `A`,
-   * which is equivalent to evaluating 'a' on every type that can inhabit `A`, `B` and `C`.
-   */
   def collectFieldInfo[F[_]: Parallel, G[_]](
-      s: Selectable2[G, Any],
+      af: AbstractField[G, ?, ?],
+      f: P.Field,
+      caret: Caret,
+      variableMap: VariableMap,
+      fragments: Map[String, Pos[P.FragmentDefinition]],
+      discoveryState: SchemaShape.DiscoveryState[G]
+  )(implicit
+      G: Applicative[G],
+      S: Stateful[F, Prep],
+      F: MonadError[F, NonEmptyChain[PositionalError]],
+      D: Defer[F]
+  ): F[FieldInfo[G]] = {
+    // Verify arguments by decoding them
+    val decF = decodeFieldArgs[F, G, Any](af.arg.asInstanceOf[Arg[Any]], f, caret, variableMap).void
+
+    // Verify subselection
+    val c = f.selectionSet.caret
+    def verifySubsel(t: Out[G, ?]): F[List[SelectionInfo[G]]] =
+      (t, f.selectionSet.value) match {
+        case (OutArr(inner, _, _), _)          => verifySubsel(inner)
+        case (OutOpt(inner, _), _)             => verifySubsel(inner)
+        case (ol: Selectable2[G, ?], Some(ss)) => collectSelectionInfo[F, G](ol, ss, variableMap, fragments, discoveryState).map(_.toList)
+        case (_: Enum[G, ?] | _: Scalar[G, ?], None) => F.pure(Nil)
+        case (o, Some(_))                            => raise(s"Type `${friendlyName(o)}` cannot have selections.", Some(c))
+        case (o, None)                               => raise(s"Object like type `${friendlyName(o)}` must have a selection.", Some(c))
+      }
+
+    decF &> verifySubsel(af.output.value).map(xs => FieldInfo(f.name, f.alias, Some(caret), f.arguments, xs))
+  }
+
+  final case class SelectionInfo[G[_]](
+      s: Selectable2[G, ?],
+      fields: NonEmptyList[FieldInfo[G]]
+  )
+  def collectSelectionInfo[F[_]: Parallel, G[_]](
+      s: Selectable2[G, ?],
       ss: P.SelectionSet,
       variableMap: VariableMap,
       fragments: Map[String, Pos[P.FragmentDefinition]],
@@ -438,22 +413,20 @@ object PreparedQuery {
       S: Stateful[F, Prep],
       F: MonadError[F, NonEmptyChain[PositionalError]],
       D: Defer[F]
-  ): F[NonEmptyList[FieldInfo[G]]] = D.defer {
+  ): F[NonEmptyList[SelectionInfo[G]]] = D.defer {
     val fields = ss.selections.collect { case Pos(caret, P.Selection.FieldSelection(field)) => (caret, field) }
 
-    val actualFields: Map[String, AbstractField[G, ?]] =
-      s.abstractFieldMap + ("__typename" -> AbstractField(Eval.now(stringScalar[G]), None))
+    val actualFields: Map[String, AbstractField[G, ?, ?]] =
+      s.abstractFieldMap + ("__typename" -> AbstractField(Applicative[Arg].unit, Eval.now(stringScalar[G]), None))
 
-    // This is purely for debuggability since the implementing type will also check field existence
-    val validateFieldsF: F[Unit] = fields.parTraverse_ { case (caret, field) =>
-      actualFields.get(field.name) match {
-        case None    => raise[F, Unit](s"Field '${field.name}' is not a member of `${s.name}`.", Some(caret))
-        case Some(_) => F.unit
+    val validateFieldsF: F[List[SelectionInfo[G]]] = fields
+      .parTraverse { case (caret, field) =>
+        actualFields.get(field.name) match {
+          case None    => raise[F, FieldInfo[G]](s"Field '${field.name}' is not a member of `${s.name}`.", Some(caret))
+          case Some(f) => collectFieldInfo[F, G](f, field, caret, variableMap, fragments, discoveryState)
+        }
       }
-    }
-
-    val fieldsHere: List[FieldInfo[G]] =
-      fields.toNel.toList.map(FieldInfo(s, _))
+      .map(_.toNel.toList.map(SelectionInfo(s, _)))
 
     val realInlines =
       ss.selections
@@ -462,7 +435,7 @@ object PreparedQuery {
           ambientFragment(s"inline_on_${f.typeCondition}") {
             matchType2[F, G](f.typeCondition, s, caret, discoveryState).flatMap { matched =>
               val t = matched.tpe
-              collectFieldInfo[F, G](t, f.selectionSet, variableMap, fragments, discoveryState).map(_.toList)
+              collectSelectionInfo[F, G](t, f.selectionSet, variableMap, fragments, discoveryState).map(_.toList)
             }
           }
         }
@@ -474,15 +447,17 @@ object PreparedQuery {
           inFragment(f.fragmentName, fragments, caret.some) { case Pos(caret, f) =>
             matchType2[F, G](f.typeCnd, s, caret, discoveryState).flatMap { matched =>
               val t = matched.tpe
-              collectFieldInfo[F, G](t, f.selectionSet, variableMap, fragments, discoveryState).map(_.toList)
+              collectSelectionInfo[F, G](t, f.selectionSet, variableMap, fragments, discoveryState).map(_.toList)
             }
           }
         }
 
-    ((validateFieldsF as fieldsHere) :: realInlines :: realFragments :: Nil).parFlatSequence
+    (validateFieldsF :: realInlines :: realFragments :: Nil).parFlatSequence
       // Unfortunate, but is always safe here since nel is input
       .map(_.toNel.get)
   }
+
+  def fieldName(f: P.Field): String = s"'${f.alias.getOrElse(f.name)}'${f.alias.map(x => s" (alias for '$x')").mkString}"
 
   def compareValues[F[_]: Parallel](av: P.Value, bv: P.Value, caret: Caret)(implicit
       F: MonadError[F, NonEmptyChain[PositionalError]],
@@ -553,35 +528,35 @@ object PreparedQuery {
         .parTraverse {
           case (k, v :: Nil) => F.pure(k -> v)
           case (k, _) =>
-            raise[F, (String, P.Argument)](s"Field '$name's argument '$k' was not unique.", Some(caret))
+            raise[F, (String, P.Argument)](s"Argument '$k' of field $name was not unique.", Some(caret))
         }
         .map(_.toMap)
 
     (checkUniqueness(aa), checkUniqueness(ba)).parTupled.flatMap { case (amap, bmap) =>
       (amap align bmap).toList.parTraverse_ {
         case (k, Ior.Left(_)) =>
-          raise[F, Unit](s"Field '$name' is already selected with argument '$k', but no argument was given here.", Some(caret))
+          raise[F, Unit](s"Field $name is already selected with argument '$k', but no argument was given here.", Some(caret))
         case (k, Ior.Right(_)) =>
-          raise[F, Unit](s"Field '$name' is already selected without argument '$k', but an argument was given here.", Some(caret))
+          raise[F, Unit](s"Field $name is already selected without argument '$k', but an argument was given here.", Some(caret))
         case (k, Ior.Both(l, r)) => ambientArg(k)(compareValues[F](l.value, r.value, caret))
       }
     }
   }
 
-  def mergeFields[F[_]: Parallel](a: P.Field, b: P.Field, caret: Caret)(implicit
+  def mergeFields[F[_]: Parallel, G[_]](a: P.Field, b: P.Field, caret: Caret)(implicit
       F: MonadError[F, NonEmptyChain[PositionalError]],
       S: Stateful[F, Prep]
   ) = ambientField(a.name) {
     val argsF = (a.arguments, b.arguments) match {
       case (None, None)         => F.unit
-      case (Some(_), None)      => raise[F, Unit](s"Field '${a.name}' is already selected with arguments.", Some(caret))
-      case (None, Some(_))      => raise[F, Unit](s"Field '${a.name}' is already selected without arguments.", Some(caret))
-      case (Some(aa), Some(ba)) => compareArguments[F](a.name, aa, ba, caret)
+      case (Some(_), None)      => raise[F, Unit](s"Field ${fieldName(a)} is already selected with arguments.", Some(caret))
+      case (None, Some(_))      => raise[F, Unit](s"Field ${fieldName(a)} is already selected without arguments.", Some(caret))
+      case (Some(aa), Some(ba)) => compareArguments[F](fieldName(a), aa, ba, caret)
     }
 
-    // (a.selectionSet.value, b.selectionSet.value) match {
-    //   case (None, None) =>
-    // }
+    (a.selectionSet.value, b.selectionSet.value) match {
+      case (None, None) =>
+    }
     F.unit
   }
 
@@ -597,7 +572,7 @@ object PreparedQuery {
       F: MonadError[F, NonEmptyChain[PositionalError]],
       D: Defer[F]
   ): F[NonEmptyList[PreparedField[G, Any]]] = D.defer {
-    collectFieldInfo[F, G](s, ss, variableMap, fragments, discoveryState).map { collected =>
+    collectSelectionInfo[F, G](s, ss, variableMap, fragments, discoveryState).map { collected =>
       // Now we know of all types that may appear in the selection set
       // We find the types that may appear in this type and intersect the two
       // Such that we find the types that **can** appear
@@ -624,24 +599,24 @@ object PreparedQuery {
       s match {
         // Alrighty we are a type, we just inline all the fields
         case t: Type[G, ?] =>
-          // val fields = canAppear.flatMap(_.selection.toList).toList.distinctBy { case (_, f) => f.name }
-          // fields.parTraverse { case (caret, field) =>
-          //   raiseOpt(
-          //     t.fieldMap.get(field.name),
-          //     s"Field '${field.name}' does not occur in type `${t.name}`.",
-          //     Some(caret)
-          //   ).flatMap { f =>
-          //     prepareField[F, G](
-          //       field,
-          //       caret,
-          //       f.asInstanceOf[Field[G, Any, Any, Any]],
-          //       variableMap,
-          //       fragments,
-          //       t.name,
-          //       discoveryState
-          //     )
-          //   }
-          // }
+        // val fields = canAppear.flatMap(_.selection.toList).toList.distinctBy { case (_, f) => f.name }
+        // fields.parTraverse { case (caret, field) =>
+        //   raiseOpt(
+        //     t.fieldMap.get(field.name),
+        //     s"Field '${field.name}' does not occur in type `${t.name}`.",
+        //     Some(caret)
+        //   ).flatMap { f =>
+        //     prepareField[F, G](
+        //       field,
+        //       caret,
+        //       f.asInstanceOf[Field[G, Any, Any, Any]],
+        //       variableMap,
+        //       fragments,
+        //       t.name,
+        //       discoveryState
+        //     )
+        //   }
+        // }
         case i: Interface[G, ?] =>
           // val grouped = canAppear.groupBy(_.tpe.name).toList
           // grouped.map{ case (k, v) => k -> }
@@ -801,6 +776,31 @@ no:
 
   type VariableMap = Map[String, Either[P.Value, Json]]
 
+  def decodeFieldArgs[F[_]: Parallel, G[_], A](
+      a: Arg[A],
+      f: P.Field,
+      caret: Caret,
+      variableMap: VariableMap
+  )(implicit
+      S: Stateful[F, Prep],
+      F: MonadError[F, NonEmptyChain[PositionalError]]
+  ): F[A] = {
+    val provided = f.arguments.toList.flatMap(_.nel.toList)
+
+    // Treat input arguments as an object
+    // Decode the args as-if an input
+    val argObj =
+      P.Value.ObjectValue(provided.map(a => a.name -> a.value))
+
+    a match {
+      case PureArg(value) if provided.isEmpty => value.fold(raise(_, None), F.pure(_))
+      case PureArg(_) =>
+        raise(s"Field '${f.name}' does not accept arguments.", Some(caret))
+      case nea @ NonEmptyArg(_, _) =>
+        parseInputObj[F, A](argObj, nea, Some(variableMap), ambigiousEnum = false)
+    }
+  }
+
   def closeFieldParameters[F[_]: Parallel, G[_]](
       gqlField: P.Field,
       caret: Caret,
@@ -884,16 +884,16 @@ no:
     }
   }
 
-  sealed trait MatchResult[G[_]] { def tpe: Selectable2[G, Any] }
+  sealed trait MatchResult[G[_]] { def tpe: Selectable2[G, ?] }
   object MatchResult {
-    final case class SubType[G[_]](tpe: Selectable2[G, Any]) extends MatchResult[G]
-    final case class SuperType[G[_]](tpe: Selectable2[G, Any]) extends MatchResult[G]
-    final case class SameType[G[_]](tpe: Selectable2[G, Any]) extends MatchResult[G]
+    final case class SubType[G[_]](tpe: Selectable2[G, ?]) extends MatchResult[G]
+    final case class SuperType[G[_]](tpe: Selectable2[G, ?]) extends MatchResult[G]
+    final case class SameType[G[_]](tpe: Selectable2[G, ?]) extends MatchResult[G]
   }
 
   def matchType2[F[_], G[_]](
       name: String,
-      sel: Selectable2[G, Any],
+      sel: Selectable2[G, ?],
       caret: Caret,
       discoveryState: SchemaShape.DiscoveryState[G]
   )(implicit F: MonadError[F, NonEmptyChain[PositionalError]], S: Stateful[F, Prep]): F[MatchResult[G]] =

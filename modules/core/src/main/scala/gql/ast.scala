@@ -51,9 +51,9 @@ object ast extends AstImplicits.Implicits {
   }
 
   sealed trait Selectable2[F[_], A] extends OutToplevel[F, A] {
-    def abstractFields: List[(String, AbstractField[F, ?])]
+    def abstractFields: List[(String, AbstractField[F, ?, ?])]
 
-    def abstractFieldMap: Map[String, AbstractField[F, ?]]
+    def abstractFieldMap: Map[String, AbstractField[F, ?, ?]]
   }
 
   sealed trait Abstract[F[_], A] extends Selectable2[F, A]
@@ -63,10 +63,10 @@ object ast extends AstImplicits.Implicits {
 
     def concreteFieldsMap: Map[String, Field[F, A, ?, ?]]
 
-    def abstractFields: List[(String, AbstractField[F, ?])] =
+    def abstractFields: List[(String, AbstractField[F, ?, ?])] =
       concreteFields.map { case (k, v) => k -> v.asAbstract }
 
-    def abstractFieldMap: Map[String, AbstractField[F, ?]] = abstractFields.toMap
+    def abstractFieldMap: Map[String, AbstractField[F, ?, ?]] = abstractFields.toMap
   }
 
   sealed trait ObjectLike[F[_], A] extends Selectable[F, A] with Abstract[F, A] {
@@ -231,17 +231,18 @@ object ast extends AstImplicits.Implicits {
         description
       )
 
-    def asAbstract: AbstractField[F, T] = AbstractField(output, description)
+    def asAbstract: AbstractField[F, A, T] = AbstractField(args, output, description)
   }
 
-  final case class AbstractField[F[_], T](
+  final case class AbstractField[F[_], A, T](
+      arg: Arg[A],
       output: Eval[Out[F, T]],
       description: Option[String] = None
   ) {
-    def document(description: String): AbstractField[F, T] = copy(description = Some(description))
+    def document(description: String): AbstractField[F, A, T] = copy(description = Some(description))
 
-    def mapK[G[_]: Functor](fk: F ~> G): AbstractField[G, T] =
-      AbstractField[G, T](output.map(_.mapK(fk)), description)
+    def mapK[G[_]: Functor](fk: F ~> G): AbstractField[G, A, T] =
+      AbstractField[G, A, T](arg, output.map(_.mapK(fk)), description)
   }
 
   final case class Variant[F[_], A, B](tpe: Eval[Type[F, B]])(implicit val specify: A => Option[B]) {
