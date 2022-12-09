@@ -556,6 +556,7 @@ object PreparedQuery {
       F: MonadError[F, NonEmptyChain[PositionalError]],
       S: Stateful[F, Prep]
   ): F[NonEmptyList[SelectionInfo[G]]] = {
+    // All fields selected in supertypes of this type can also be selected in this type
     // If the root is a type, merge every supertype of the root type
     // If the root is an interface, merge every supertype and every subtype of the root interface
     // If the root is a union, merge every subtype of the root union (direct types and their interfaces)
@@ -1452,4 +1453,34 @@ object PreparedQuery {
   // Finder alle kompatible typer for en given type i listen of fundet SelectionInfo'er
   // Slaar saa alle fields sammen og returnerer en liste af SelectionInfo'er som er blevet merged
   def mergeSelections: (Selectable, NonEmptyList[SelectionInfo]) => NonEmptyList[SelectionInfo]
+ */
+
+/*
+interface A {
+}
+
+interface B implements A {
+} 
+
+type C implements B & A {
+}
+
+type D implements A {
+}
+
+union E = C | D
+
+type Query {
+  f: C
+}
+
+query {
+  f {
+    ... on A {
+      ... on D {
+      }
+    }
+  }
+}
+
  */
