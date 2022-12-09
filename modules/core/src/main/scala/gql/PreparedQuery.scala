@@ -581,6 +581,24 @@ object PreparedQuery {
     argsF &> selectionFieldsF
   }
 
+  def prepareRoot[F[_]: Parallel, G[_]](
+      t: Type[G, Any],
+      ss: P.SelectionSet,
+      variableMap: VariableMap,
+      fragments: Map[String, Pos[P.FragmentDefinition]],
+      discoveryState: SchemaShape.DiscoveryState[G]
+  )(implicit
+      G: Applicative[G],
+      S: Stateful[F, Prep],
+      F: MonadError[F, NonEmptyChain[PositionalError]],
+      D: Defer[F]
+  ) = D.defer {
+    collectSelectionInfo[F, G](t, ss, variableMap, fragments, discoveryState).map{ xs =>
+      xs
+    }
+    F.unit
+  }
+
   def prepareSelectable2[F[_]: Parallel, G[_]](
       s: Selectable2[G, Any],
       ss: P.SelectionSet,
