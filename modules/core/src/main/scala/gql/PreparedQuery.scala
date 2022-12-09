@@ -379,7 +379,7 @@ object PreparedQuery {
       S: Stateful[F, Prep],
       F: MonadError[F, NonEmptyChain[PositionalError]],
       D: Defer[F]
-  ): F[FieldInfo[G]] = {
+  ): F[FieldInfo[G]] = ambientField(f.name) {
     // Verify arguments by decoding them
     val decF = decodeFieldArgs[F, G, Any](af.arg.asInstanceOf[Arg[Any]], f, caret, variableMap).void
 
@@ -387,9 +387,11 @@ object PreparedQuery {
     val c = f.selectionSet.caret
     def verifySubsel(t: Out[G, ?]): F[List[SelectionInfo[G]]] =
       (t, f.selectionSet.value) match {
-        case (OutArr(inner, _, _), _)          => verifySubsel(inner)
-        case (OutOpt(inner, _), _)             => verifySubsel(inner)
-        case (ol: Selectable2[G, ?], Some(ss)) => collectSelectionInfo[F, G](ol, ss, variableMap, fragments, discoveryState).map(_.toList)
+        case (OutArr(inner, _, _), _) => verifySubsel(inner)
+        case (OutOpt(inner, _), _)    => verifySubsel(inner)
+        case (ol: Selectable2[G, ?], Some(ss)) =>
+          collectSelectionInfo[F, G](ol, ss, variableMap, fragments, discoveryState)
+            .map(_.toList)
         case (_: Enum[G, ?] | _: Scalar[G, ?], None) => F.pure(Nil)
         case (o, Some(_))                            => raise(s"Type `${friendlyName(o)}` cannot have selections.", Some(c))
         case (o, None)                               => raise(s"Object like type `${friendlyName(o)}` must have a selection.", Some(c))
@@ -456,6 +458,7 @@ object PreparedQuery {
     (validateFieldsF :: realInlines :: realFragments :: Nil).parFlatSequence
       // Unfortunate, but is always safe here since nel is input
       .map(_.toNel.get)
+      .flatMap(mergeSelections[F, G](s, _, discoveryState))
   }
 
   def fieldName[G[_]](f: FieldInfo[G]): String =
@@ -545,6 +548,35 @@ object PreparedQuery {
     }
   }
 
+  def mergeSelections[F[_]: Parallel, G[_]](
+      root: Selectable2[G, ?],
+      xs: NonEmptyList[SelectionInfo[G]],
+      discoveryState: SchemaShape.DiscoveryState[G]
+  )(implicit
+      F: MonadError[F, NonEmptyChain[PositionalError]],
+      S: Stateful[F, Prep]
+  ): F[NonEmptyList[SelectionInfo[G]]] = {
+    // If the root is a type, merge every supertype of the root type
+    // If the root is an interface, merge every supertype and every subtype of the root interface
+    // If the root is a union, we don't need to merge anything
+    root match {
+      case t: Type[G, ?] =>
+        val thisImplements = t.implementsMap.keySet
+        val ofInterest = xs.filter(si => t.name === si.s.name || thisImplements.contains(si.s.name))
+        mergeDuplicates[F, G](ofInterest.toNel.get.flatMap(_.fields)).map(xs => NonEmptyList.one(SelectionInfo(root, xs)))
+      case i: Interface[G, ?] =>
+        val implementationsOfThis = discoveryState.implementations.get(i.name).toList.flatMap(_.keySet.toList).toSet
+        val thisImplements = i.implementsMap.keySet
+        val ofInterest = xs.filter { si =>
+          i.name === si.s.name ||
+          thisImplements.contains(si.s.name) ||
+          implementationsOfThis.contains(si.s.name)
+        }
+        mergeDuplicates[F, G](ofInterest.toNel.get.flatMap(_.fields)).map(xs => NonEmptyList.one(SelectionInfo(root, xs)))
+      case _: Union[G, ?] => F.pure(xs)
+    }
+  }
+
   def mergeDuplicates[F[_]: Parallel, G[_]](sis: NonEmptyList[FieldInfo[G]])(implicit
       F: MonadError[F, NonEmptyChain[PositionalError]],
       S: Stateful[F, Prep]
@@ -581,6 +613,22 @@ object PreparedQuery {
     argsF &> selectionFieldsF
   }
 
+  def prepareExecSelectable[F[_]: Parallel, G[_]](
+      s: Selectable2[G, ?],
+      ss: SelectionInfo[G],
+      variableMap: VariableMap,
+      fragments: Map[String, Pos[P.FragmentDefinition]],
+      discoveryState: SchemaShape.DiscoveryState[G]
+  )(implicit
+      G: Applicative[G],
+      S: Stateful[F, Prep],
+      F: MonadError[F, NonEmptyChain[PositionalError]],
+      D: Defer[F]
+  ) = D.defer {
+    ???
+  }
+
+  // Finds and merges all selections in the query, then converts then into something executable
   def prepareRoot[F[_]: Parallel, G[_]](
       t: Type[G, Any],
       ss: P.SelectionSet,
@@ -593,152 +641,11 @@ object PreparedQuery {
       F: MonadError[F, NonEmptyChain[PositionalError]],
       D: Defer[F]
   ) = D.defer {
-    collectSelectionInfo[F, G](t, ss, variableMap, fragments, discoveryState).map{ xs =>
+    collectSelectionInfo[F, G](t, ss, variableMap, fragments, discoveryState).map { xs =>
       xs
     }
     F.unit
   }
-
-  def prepareSelectable2[F[_]: Parallel, G[_]](
-      s: Selectable2[G, Any],
-      ss: P.SelectionSet,
-      variableMap: VariableMap,
-      fragments: Map[String, Pos[P.FragmentDefinition]],
-      discoveryState: SchemaShape.DiscoveryState[G]
-  )(implicit
-      G: Applicative[G],
-      S: Stateful[F, Prep],
-      F: MonadError[F, NonEmptyChain[PositionalError]],
-      D: Defer[F]
-  ): F[NonEmptyList[PreparedField[G, Any]]] = D.defer {
-    collectSelectionInfo[F, G](s, ss, variableMap, fragments, discoveryState).map { collected =>
-      // Now we know of all types that may appear in the selection set
-      // We find the types that may appear in this type and intersect the two
-      // Such that we find the types that **can** appear
-      val possibleTypes = concreteDomain(s, discoveryState).map(_.name).toSet
-      // val canAppear = collected.collect { case x if possibleTypes.contains(x.tpe.name) => x }
-
-      // def assembleFieldMap(cache: Map[(String, Option[String]), P.Field], next: FieldInfo[G]) = {
-      //   next.selection.map { case (caret, field) =>
-      //     ambientField(field.name) {
-      //       cache.get((field.name, field.alias)) match {
-      //         case None =>
-      //           cache + ((field.name, field.alias) -> field)
-      //           true
-      //         case Some(x) =>
-      //           x
-      //           true
-      //       }
-      //       F.unit
-      //     }
-      //   }
-      // }
-
-      // Based on what type is the root we determine how to spread our way into the different fields
-      s match {
-        // Alrighty we are a type, we just inline all the fields
-        case t: Type[G, ?] =>
-        // val fields = canAppear.flatMap(_.selection.toList).toList.distinctBy { case (_, f) => f.name }
-        // fields.parTraverse { case (caret, field) =>
-        //   raiseOpt(
-        //     t.fieldMap.get(field.name),
-        //     s"Field '${field.name}' does not occur in type `${t.name}`.",
-        //     Some(caret)
-        //   ).flatMap { f =>
-        //     prepareField[F, G](
-        //       field,
-        //       caret,
-        //       f.asInstanceOf[Field[G, Any, Any, Any]],
-        //       variableMap,
-        //       fragments,
-        //       t.name,
-        //       discoveryState
-        //     )
-        //   }
-        // }
-        case i: Interface[G, ?] =>
-          // val grouped = canAppear.groupBy(_.tpe.name).toList
-          // grouped.map{ case (k, v) => k -> }
-          ???
-        case _ => ???
-      }
-
-      // If the type is a supertype we check if all types adhere to this type as a lower bound
-      // If the supertype matches another disjoint sub-type tree, no type in that sub-tree can occur if this type cannot occur as a lower bound of a resulting type
-    }
-    ???
-  }
-
-  /*
-interface A {
-  lol: String
-}
-
-interface B implements A {
-  lol: String
-}
-
-interface C implements A {
-  lol: String
-}
-
-type D implements B & A {
-  lol: String
-}
-
-type E implements C & A {
-  lol: String
-}
-
-type Query {
-  doStuff: B
-}
-
-...
-
-query {
-  doStuff {
-    ... on A {
-      ... on C {
-        ... on E {
-          lol
-        }
-        ... on A {
-          ... on C {
-            lol
-          }
-        }
-      }
-    }
-  }
-}
-
-->
-
-query {
-  doStuff {
-    ... on E {
-      lol
-    }
-  }
-}
-
-...
-
-A => Option[B]
-A => Option[C]
-A => Option[D]
-A => Option[E]
-
-B => Option[D]
-C => Option[E]
-
-do interfaces have specify functions?
-yes:
-  we can compose specify functions
-no:
-  toplevel functions on types must provide specify function for all interfaces
-   */
 
   def prepareSelections[F[_]: Parallel, G[_]](
       ol: Selectable[G, Any],
@@ -849,24 +756,8 @@ no:
       S: Stateful[F, Prep],
       F: MonadError[F, NonEmptyChain[PositionalError]]
   ): F[Resolver[G, Any, Any]] = {
-    val provided = gqlField.arguments.toList.flatMap(_.nel.toList)
-
-    val Field(args, resolve, _, _) = field
-
-    // Treat input arguments as an object
-    // Decode the args as-if an input
-    val argObj =
-      P.Value.ObjectValue(provided.map(a => a.name -> a.value))
-
-    val decObj = args match {
-      case PureArg(value) if provided.isEmpty => value.fold(raise(_, None), F.pure(_))
-      case PureArg(_) =>
-        raise(s"Field ${gqlField.name} does not accept arguments.", Some(caret))
-      case nea @ NonEmptyArg(_, _) =>
-        parseInputObj[F, Any](argObj, nea, Some(variableMap), ambigiousEnum = false)
-    }
-
-    decObj.map(a => resolve.contramap[Any]((_, a)))
+    val decObj = decodeFieldArgs[F, G, Any](field.args, gqlField, caret, variableMap)
+    decObj.map(a => field.resolve.contramap[Any]((_, a)))
   }
 
   def prepareField[F[_]: Parallel, G[_]: Applicative](
@@ -1533,3 +1424,28 @@ no:
     }
   }
 }
+/*
+  sealed trait Selectable
+  final case class Union(...) extends Selectable
+  final case class Type(...) extends Selectable
+  final case class Interface(...) extends Selectable
+
+  final case class FieldInfo(
+      name: String,
+      args: Option[Arguments],
+      selections: List[SelectionInfo]
+  )
+  // Loeber gennem alle fields der har en Selectable type og en tilknyttet selection
+  def collectFieldInfo: Field => FieldInfo
+
+  final case class SelectionInfo(
+      s: Selectable,
+      fields: NonEmptyList[FieldInfo]
+  )
+  // For en given type og given selection, loeber gennem alle fields og spreads for at flattene informationen
+  def collectSelectionInfo: (Selectable, NonEmptyList[Field]) => NonEmptyList[SelectionInfo]
+
+  // Finder alle kompatible typer for en given type i listen of fundet SelectionInfo'er
+  // Slaar saa alle fields sammen og returnerer en liste af SelectionInfo'er som er blevet merged
+  def mergeSelections: (Selectable, NonEmptyList[SelectionInfo]) => NonEmptyList[SelectionInfo]
+*/
