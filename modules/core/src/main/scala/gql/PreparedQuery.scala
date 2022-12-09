@@ -558,7 +558,7 @@ object PreparedQuery {
   ): F[NonEmptyList[SelectionInfo[G]]] = {
     // If the root is a type, merge every supertype of the root type
     // If the root is an interface, merge every supertype and every subtype of the root interface
-    // If the root is a union, we don't need to merge anything
+    // If the root is a union, merge every subtype of the root union (direct types and their interfaces)
     root match {
       case t: Type[G, ?] =>
         val thisImplements = t.implementsMap.keySet
@@ -614,8 +614,8 @@ object PreparedQuery {
   }
 
   def prepareExecSelectable[F[_]: Parallel, G[_]](
-      s: Selectable2[G, ?],
-      ss: SelectionInfo[G],
+      root: Selectable2[G, ?],
+      sis: NonEmptyList[SelectionInfo[G]],
       variableMap: VariableMap,
       fragments: Map[String, Pos[P.FragmentDefinition]],
       discoveryState: SchemaShape.DiscoveryState[G]
@@ -625,6 +625,10 @@ object PreparedQuery {
       F: MonadError[F, NonEmptyChain[PositionalError]],
       D: Defer[F]
   ) = D.defer {
+    root match {
+      case u: Union[G, ?] => u
+    }
+    // Create a mapping from concrete implementation -> fields
     ???
   }
 
@@ -1448,4 +1452,4 @@ object PreparedQuery {
   // Finder alle kompatible typer for en given type i listen of fundet SelectionInfo'er
   // Slaar saa alle fields sammen og returnerer en liste af SelectionInfo'er som er blevet merged
   def mergeSelections: (Selectable, NonEmptyList[SelectionInfo]) => NonEmptyList[SelectionInfo]
-*/
+ */
