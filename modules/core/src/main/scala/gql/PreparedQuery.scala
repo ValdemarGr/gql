@@ -681,12 +681,12 @@ object PreparedQuery {
       F: MonadError[F, NonEmptyChain[PositionalError]],
       S: Stateful[F, Prep]
   ): F[NonEmptyList[MergedImplementation[G]]] = {
-    val concreteBase = findImplementations(base, discoveryState).map { case x @ (t, _) => t.name -> x }.toMap.toList
+    val concreteBaseMap = findImplementations(base, discoveryState).map { case x @ (t, _) => t.name -> x }.toMap
+    val concreteBase = concreteBaseMap.toList
 
     val nestedSelections = sels.toList.flatMap { sel =>
       val concreteIntersections = findImplementations(sel.s, discoveryState)
         .map { case (t, _) => t.name }
-        .filter(concreteBase.contains)
 
       concreteIntersections tupleRight sel.fields
     }
@@ -716,7 +716,7 @@ object PreparedQuery {
         case Some(x) => F.pure(x)
         case None =>
           raise[F, NonEmptyList[MergedImplementation[G]]](
-            s"Could not find any implementations of '${base.name}' in the selection set.",
+            s"Could not find any implementations of `${base.name}` in the selection set.",
             None
           )
       }
@@ -1560,12 +1560,11 @@ object PreparedQuery {
     val fa =
       preCheckVariablesF.flatMap { vm =>
         rootSchema.flatMap { root =>
-          prepareSelections[F, G](
+          prepareSelectable2Root[F, G](
             root.asInstanceOf[Type[G, Any]],
             selection,
             vm,
             frags.map(f => f.value.name -> f).toMap,
-            rootTypename,
             schema.shape.discover
           )
         }
