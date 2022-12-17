@@ -27,6 +27,7 @@ import gql.resolver._
 import cats.parse.Caret
 import cats.arrow.FunctionK
 import gql.parser.QueryParser
+import scala.collection.immutable.SortedMap
 
 object PreparedQuery {
   sealed trait Prepared[F[_], A]
@@ -278,6 +279,12 @@ object PreparedQuery {
   def ambientFragment[F[_]: Monad, A](name: String)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
     ambientEdge[F, A](PrepEdge.FragmentEdge(name))(fa)
 
+  def modifyError[F[_], A](f: PositionalError => PositionalError)(fa: F[A])(implicit F: MonadError[F, NonEmptyChain[PositionalError]]) = 
+    F.adaptError(fa)(_.map(f))
+
+  def appendMessage[F[_], A](message: String)(fa: F[A])(implicit F: MonadError[F, NonEmptyChain[PositionalError]]) = 
+    modifyError[F, A](d => d.copy(message = d.message + "\n" + message))(fa)
+
   def findInterfaceImplementations[G[_]](it: Interface[G, ?], discoveryState: SchemaShape.DiscoveryState[G]) = {
     val impls: Map[String, (ObjectLike[G, Any], Any => Option[Any])] =
       discoveryState.implementations.get(it.name).getOrElse(Map.empty)
@@ -318,55 +325,47 @@ object PreparedQuery {
       }
     }
 
-  def prepareType[F[_]: Parallel, G[_]](
-      t: Type[G, Any],
-      s: P.SelectionSet,
-      variableMap: VariableMap,
-      fragments: Map[String, Pos[P.FragmentDefinition]],
-      currentTypename: String,
-      discoveryState: SchemaShape.DiscoveryState[G]
-  )(implicit
-      G: Applicative[G],
-      S: Stateful[F, Prep],
-      F: MonadError[F, NonEmptyChain[PositionalError]],
-      D: Defer[F]
-  ): F[NonEmptyList[PreparedField[G, Any]]] = D.defer {
-    val schemaMap = t.concreteFieldsMap
-    s.selections.parFlatTraverse[F, PreparedField[G, Any]] {
-      case Pos(caret, P.Selection.FieldSelection(field)) =>
-        val f = if (field.name == "__typename") Some(typenameField[G](t.name)) else schemaMap.get(field.name)
-        (f: @unchecked) match {
-          case None => raise(s"Unknown field name '${field.name}'.", Some(caret))
-          case Some(f: Field[G, Any, Any, Any] @unchecked) =>
-            ambientField(field.name) {
-              prepareField[F, G](field, caret, f, variableMap, fragments, currentTypename, discoveryState)
-            }.map(NonEmptyList.one)
-        }
-      // Types just inline every field
-      case Pos(caret, P.Selection.InlineFragmentSelection(f)) =>
-        matchType2[F, G](f.typeCondition, t, caret, discoveryState) >>
-          prepareType[F, G](t, f.selectionSet, variableMap, fragments, currentTypename, discoveryState)
-      case Pos(caret, P.Selection.FragmentSpreadSelection(f)) =>
-        inFragment(f.fragmentName, fragments, caret.some) { case Pos(_, f) =>
-          matchType2[F, G](f.typeCnd, t, caret, discoveryState) >>
-            prepareType[F, G](t, f.selectionSet, variableMap, fragments, currentTypename, discoveryState)
-        }
+  sealed trait SimplifiedType[G[_]] { def selections: List[SelectionInfo[G]] }
+  object SimplifiedType {
+    final case class List[G[_]](t: SimplifiedType[G]) extends SimplifiedType[G] { def selections = t.selections }
+    final case class Option[G[_]](t: SimplifiedType[G]) extends SimplifiedType[G] { def selections = t.selections }
+    final case class Scalar[G[_]](name: String) extends SimplifiedType[G] { def selections = Nil }
+    final case class Enum[G[_]](name: String) extends SimplifiedType[G] { def selections = Nil }
+    final case class Selectable[G[_]](name: String, selection: NonEmptyList[SelectionInfo[G]]) extends SimplifiedType[G] {
+      def selections = selection.toList
     }
   }
 
-  def concreteDomain[G[_]](s: Selectable2[G, Any], discoveryState: SchemaShape.DiscoveryState[G]) = s match {
-    case t @ Type(_, _, _, _)      => List(t)
-    case u @ Union(_, _, _)        => u.types.toList.map(_.tpe.value)
-    case i @ Interface(_, _, _, _) => findInterfaceImplementations[G](i, discoveryState).map { case (t, _) => t }
+  def getSimplifiedTypeString[G[_]](st: SimplifiedType[G], inOption: Boolean = false): String = {
+    val optPart = if (inOption) "" else "!"
+    val n = st match {
+      case SimplifiedType.List(t)             => s"[${getSimplifiedTypeString(t)}]"
+      case SimplifiedType.Option(t)           => getSimplifiedTypeString(t, inOption = true)
+      case SimplifiedType.Scalar(name)        => name
+      case SimplifiedType.Enum(name)          => name
+      case SimplifiedType.Selectable(name, _) => name
+    }
+    n + optPart
   }
 
   final case class FieldInfo[G[_]](
       name: String,
       alias: Option[String],
-      caret: Option[Caret],
       args: Option[P.Arguments],
-      selections: List[SelectionInfo[G]]
-  )
+      tpe: SimplifiedType[G],
+      caret: Caret,
+      path: PrepCursor
+  ) {
+    lazy val outputName: String = alias.getOrElse(name)
+  }
+
+  object FieldInfo {
+    def apply[F[_]: Functor, G[_]](name: String, alias: Option[String], args: Option[P.Arguments], tpe: SimplifiedType[G], caret: Caret)(
+        implicit S: Stateful[F, Prep]
+    ): F[FieldInfo[G]] =
+      S.inspect(_.cursor).map(FieldInfo(name, alias, args, tpe, caret, _))
+  }
+
   def collectFieldInfo[F[_]: Parallel, G[_]](
       af: AbstractField[G, ?, ?],
       f: P.Field,
@@ -385,24 +384,26 @@ object PreparedQuery {
 
     // Verify subselection
     val c = f.selectionSet.caret
-    def verifySubsel(t: Out[G, ?]): F[List[SelectionInfo[G]]] =
+    def verifySubsel(t: Out[G, ?]): F[SimplifiedType[G]] =
       (t, f.selectionSet.value) match {
-        case (OutArr(inner, _, _), _) => verifySubsel(inner)
-        case (OutOpt(inner, _), _)    => verifySubsel(inner)
+        case (OutArr(inner, _, _), _) => verifySubsel(inner).map(SimplifiedType.List(_))
+        case (OutOpt(inner, _), _)    => verifySubsel(inner).map(SimplifiedType.Option(_))
         case (ol: Selectable2[G, ?], Some(ss)) =>
           collectSelectionInfo[F, G](ol, ss, variableMap, fragments, discoveryState)
-            .map(_.toList)
-        case (_: Enum[G, ?] | _: Scalar[G, ?], None) => F.pure(Nil)
-        case (o, Some(_))                            => raise(s"Type `${friendlyName(o)}` cannot have selections.", Some(c))
-        case (o, None)                               => raise(s"Object like type `${friendlyName(o)}` must have a selection.", Some(c))
+            .map(xs => SimplifiedType.Selectable(ol.name, xs))
+        case (e: Enum[G, ?], None)   => F.pure(SimplifiedType.Enum(e.name))
+        case (s: Scalar[G, ?], None) => F.pure(SimplifiedType.Scalar(s.name))
+        case (o, Some(_))            => raise(s"Type `${friendlyName(o)}` cannot have selections.", Some(c))
+        case (o, None)               => raise(s"Object like type `${friendlyName(o)}` must have a selection.", Some(c))
       }
 
-    decF &> verifySubsel(af.output.value).map(xs => FieldInfo(f.name, f.alias, Some(caret), f.arguments, xs))
+    decF &> verifySubsel(af.output.value).flatMap(FieldInfo[F, G](f.name, f.alias, f.arguments, _, caret))
   }
 
   final case class SelectionInfo[G[_]](
       s: Selectable2[G, ?],
-      fields: NonEmptyList[FieldInfo[G]]
+      fields: NonEmptyList[FieldInfo[G]],
+      fragmentName: Option[String]
   )
   def collectSelectionInfo[F[_]: Parallel, G[_]](
       s: Selectable2[G, ?],
@@ -428,8 +429,7 @@ object PreparedQuery {
           case Some(f) => collectFieldInfo[F, G](f, field, caret, variableMap, fragments, discoveryState)
         }
       }
-      .flatMap(_.toNel.toList.traverse(mergeDuplicates[F, G]))
-      .map(_.map(SelectionInfo(s, _)))
+      .map(_.toNel.toList.map(SelectionInfo(s, _, None)))
 
     val realInlines =
       ss.selections
@@ -447,10 +447,12 @@ object PreparedQuery {
       ss.selections
         .collect { case Pos(caret, P.Selection.FragmentSpreadSelection(f)) => (caret, f) }
         .flatTraverse { case (caret, f) =>
-          inFragment(f.fragmentName, fragments, caret.some) { case Pos(caret, f) =>
+          val fn = f.fragmentName
+          inFragment(fn, fragments, caret.some) { case Pos(caret, f) =>
             matchType2[F, G](f.typeCnd, s, caret, discoveryState).flatMap { matched =>
               val t = matched.tpe
-              collectSelectionInfo[F, G](t, f.selectionSet, variableMap, fragments, discoveryState).map(_.toList)
+              collectSelectionInfo[F, G](t, f.selectionSet, variableMap, fragments, discoveryState)
+                .map(_.toList.map(_.copy(fragmentName = Some(fn))))
             }
           }
         }
@@ -458,7 +460,6 @@ object PreparedQuery {
     (validateFieldsF :: realInlines :: realFragments :: Nil).parFlatSequence
       // Unfortunate, but is always safe here since nel is input
       .map(_.toNel.get)
-      .flatMap(mergeSelections[F, G](s, _, discoveryState))
   }
 
   def fieldName[G[_]](f: FieldInfo[G]): String =
@@ -548,108 +549,114 @@ object PreparedQuery {
     }
   }
 
-  def mergeSelections[F[_]: Parallel, G[_]](
-      root: Selectable2[G, ?],
-      xs: NonEmptyList[SelectionInfo[G]],
-      discoveryState: SchemaShape.DiscoveryState[G]
-  )(implicit
-      F: MonadError[F, NonEmptyChain[PositionalError]],
-      S: Stateful[F, Prep]
-  ): F[NonEmptyList[SelectionInfo[G]]] = {
-    // All fields selected in supertypes of this type can also be selected in this type
-    // If the root is a type, merge every supertype of the root type
-    // If the root is an interface, merge every supertype and every subtype of the root interface
-    // If the root is a union, merge every subtype of the root union (direct types and their interfaces)
-    root match {
-      case t: Type[G, ?] =>
-        val thisImplements = t.implementsMap.keySet
-        val ofInterest = xs.filter(si => t.name === si.s.name || thisImplements.contains(si.s.name))
-        mergeDuplicates[F, G](ofInterest.toNel.get.flatMap(_.fields)).map(xs => NonEmptyList.one(SelectionInfo(root, xs)))
-      case i: Interface[G, ?] =>
-        val implementationsOfThis = discoveryState.implementations.get(i.name).toList.flatMap(_.keySet.toList).toSet
-        val thisImplements = i.implementsMap.keySet
-        val ofInterest = xs.filter { si =>
-          i.name === si.s.name ||
-          thisImplements.contains(si.s.name) ||
-          implementationsOfThis.contains(si.s.name)
-        }
-        mergeDuplicates[F, G](ofInterest.toNel.get.flatMap(_.fields)).map(xs => NonEmptyList.one(SelectionInfo(root, xs)))
-      case _: Union[G, ?] => F.pure(xs)
-    }
-  }
-
-  def mergeDuplicates[F[_]: Parallel, G[_]](sis: NonEmptyList[FieldInfo[G]])(implicit
+  // https://spec.graphql.org/draft/#sec-Field-Selection-Merging.Formal-Specification
+  def checkFieldsMerge[F[_]: Parallel, G[_]](a: FieldInfo[G], asi: SelectionInfo[G], b: FieldInfo[G], bsi: SelectionInfo[G])(implicit
       F: MonadError[F, NonEmptyChain[PositionalError]],
       S: Stateful[F, Prep]
   ) = {
-    val m = sis.groupByNem(x => x.alias.getOrElse(x.name))
-    m.toNel.traverse { case (_, fields) =>
-      fields.reduceLeftM(F.pure(_))(mergeFields[F, G](_, _))
+    sealed trait EitherObject
+    object EitherObject {
+      case object FirstIsObject extends EitherObject
+      case object SecondIsObject extends EitherObject
+      case object NeitherIsObject extends EitherObject
+      case object BothAreObjects extends EitherObject
     }
+    lazy val objectPair = (asi.s, bsi.s) match {
+      case (_: Type[G, ?], _: Type[G, ?]) => EitherObject.BothAreObjects
+      case (_: Type[G, ?], _)             => EitherObject.FirstIsObject
+      case (_, _: Type[G, ?])             => EitherObject.SecondIsObject
+      case _                              => EitherObject.NeitherIsObject
+    }
+
+    val parentNameSame = asi.s.name === bsi.s.name
+
+    lazy val aIn = s"${fieldName(a)} in type `${asi.s.name}`"
+    lazy val bIn = s"${fieldName(b)} in type `${bsi.s.name}`"
+
+    lazy val whyMerge = {
+      val why1 = if (parentNameSame) Some("they have the same parent type") else None
+      val why2 = objectPair match {
+        case EitherObject.FirstIsObject   => Some(s"the second field ${fieldName(a)} is not an object but the first was")
+        case EitherObject.SecondIsObject  => Some(s"the first field ${fieldName(b)} is not an object but the second was")
+        case EitherObject.NeitherIsObject => Some(s"neither field ${fieldName(a)} nor ${fieldName(b)} are objects")
+        case EitherObject.BothAreObjects  => None
+      }
+      List(why1, why2).collect { case Some(err) => err }.mkString(" and ") + "."
+    }
+
+    // 2. in FieldsInSetCanMerge
+    val thoroughCheckF = if (parentNameSame || objectPair != EitherObject.BothAreObjects) {
+      val argsF = (a.args, b.args) match {
+        case (None, None)    => F.unit
+        case (Some(_), None) => raise[F, Unit](s"A selection of field ${fieldName(a)} has arguments, while another doesn't.", Some(b.caret))
+        case (None, Some(_)) => raise[F, Unit](s"A selection of field ${fieldName(a)} has arguments, while another doesn't.", Some(b.caret))
+        case (Some(aa), Some(ba)) => compareArguments[F](fieldName(a), aa, ba, Some(b.caret))
+      }
+
+      val nameSameF =
+        if (a.name === b.name) F.unit else {
+          raise[F, Unit](
+            s"Field $aIn and $bIn must have the same name (not alias) when they are merged.",
+            Some(a.caret)
+          )
+        }
+
+      appendMessage(s"They were merged since $whyMerge") { 
+        argsF &> nameSameF
+      }
+    } else F.unit
+
+    val shapeCheckF = checkSimplifiedTypeShape[F, G](a.tpe, b.tpe, a.caret)
+
+    thoroughCheckF &> shapeCheckF
   }
 
-  def mergeFields[F[_]: Parallel, G[_]](a: FieldInfo[G], b: FieldInfo[G])(implicit
+  def checkSelectionsMerge[F[_]: Parallel, G[_]](xs: NonEmptyList[SelectionInfo[G]])(implicit
       F: MonadError[F, NonEmptyChain[PositionalError]],
       S: Stateful[F, Prep]
-  ): F[FieldInfo[G]] = ambientField(a.name) {
-    val argsF = (a.args, b.args) match {
-      case (None, None)         => F.unit
-      case (Some(_), None)      => raise[F, Unit](s"Field ${fieldName(a)} is already selected with arguments.", b.caret)
-      case (None, Some(_))      => raise[F, Unit](s"Field ${fieldName(a)} is already selected without arguments.", b.caret)
-      case (Some(aa), Some(ba)) => compareArguments[F](fieldName(a), aa, ba, b.caret)
-    }
+  ): F[Unit] = {
+    val ys: NonEmptyList[NonEmptyList[(SelectionInfo[G], FieldInfo[G])]] =
+      xs.flatMap(si => si.fields tupleLeft si)
+        .groupByNem { case (_, f) => f.outputName }
+        .toNel
+        .map { case (_, v) => v }
 
-    val selectionFieldsF = (a.selections.toNel, b.selections.toNel)
-      .mapN(_ ::: _)
-      .traverseTap { nel =>
-        val x = nel.head.s.name
-        nel.tail.parTraverse { s =>
-          if (s.s.name =!= x) raise[F, Unit](s"Selections are not of same type, got '${s.s.name}' and $x.", None)
-          else F.unit
-        }
+    ys.parTraverse_ { zs =>
+      val mergeFieldsF = {
+        val (siHead, fiHead) = zs.head
+        zs.tail.parTraverse_ { case (si, fi) => checkFieldsMerge[F, G](fiHead, siHead, fi, si) }
       }
-      .map(_.toList.flatMap(_.toList))
-      .map(sels => b.copy(selections = sels))
 
-    argsF &> selectionFieldsF
+      mergeFieldsF >> zs.toList.flatMap { case (_, fi) => fi.tpe.selections }.toNel.traverse_(checkSelectionsMerge[F, G])
+    }
   }
 
-  def prepareExecSelectable[F[_]: Parallel, G[_]](
-      root: Selectable2[G, ?],
-      sis: NonEmptyList[SelectionInfo[G]],
-      variableMap: VariableMap,
-      fragments: Map[String, Pos[P.FragmentDefinition]],
-      discoveryState: SchemaShape.DiscoveryState[G]
-  )(implicit
-      G: Applicative[G],
-      S: Stateful[F, Prep],
+  // Optimization: we don't check selections recursively since checkSelectionsMerge traverses the whole tree
+  // We only need to check the immidiate children and will eventually have checked the whole tree 
+  def checkSimplifiedTypeShape[F[_]: Parallel, G[_]](a: SimplifiedType[G], b: SimplifiedType[G], caret: Caret)(implicit
       F: MonadError[F, NonEmptyChain[PositionalError]],
-      D: Defer[F]
-  ) = D.defer {
-    root match {
-      case u: Union[G, ?] => u
+      S: Stateful[F, Prep]
+  ): F[Unit] = {
+    (a, b) match {
+      case (SimplifiedType.List(l), SimplifiedType.List(r))     => checkSimplifiedTypeShape[F, G](l, r, caret)
+      case (SimplifiedType.Option(l), SimplifiedType.Option(r)) => checkSimplifiedTypeShape[F, G](l, r, caret)
+      case (SimplifiedType.Selectable(_, l), SimplifiedType.Selectable(_, r)) =>
+        val lComb = l.flatMap(x => x.fields tupleLeft x).groupByNem { case (_, f) => f.outputName }
+        val rComb = r.flatMap(x => x.fields tupleLeft x).groupByNem { case (_, f) => f.outputName }
+        (lComb align rComb).toNel.map{
+          case (_, Ior.Both(_, _)) => F.unit
+          case (k, Ior.Left(_)) => raise[F, Unit](s"Field '$k' was missing when verifying shape equivalence.", Some(caret))
+          case (k, Ior.Right(_)) => raise[F, Unit](s"Field '$k' was missing when verifying shape equivalence.", Some(caret))
+        }
+      case (SimplifiedType.Enum(l), SimplifiedType.Enum(r)) =>
+        if (l === r) F.unit
+        else raise[F, Unit](s"Enums are not the same, got '$l' and '$r'.", Some(caret))
+      case (SimplifiedType.Scalar(l), SimplifiedType.Scalar(r)) =>
+        if (l === r) F.unit
+        else raise[F, Unit](s"Scalars are not the same, got '$l' and '$r'.", Some(caret))
+      case _ =>
+        raise[F, Unit](s"Types are not the same, got ${getSimplifiedTypeString(a)} and ${getSimplifiedTypeString(b)}.", Some(caret))
     }
-    // Create a mapping from concrete implementation -> fields
-    ???
-  }
-
-  // Finds and merges all selections in the query, then converts then into something executable
-  def prepareRoot[F[_]: Parallel, G[_]](
-      t: Type[G, Any],
-      ss: P.SelectionSet,
-      variableMap: VariableMap,
-      fragments: Map[String, Pos[P.FragmentDefinition]],
-      discoveryState: SchemaShape.DiscoveryState[G]
-  )(implicit
-      G: Applicative[G],
-      S: Stateful[F, Prep],
-      F: MonadError[F, NonEmptyChain[PositionalError]],
-      D: Defer[F]
-  ) = D.defer {
-    collectSelectionInfo[F, G](t, ss, variableMap, fragments, discoveryState).map { xs =>
-      xs
-    }
-    F.unit
   }
 
   def prepareSelections[F[_]: Parallel, G[_]](
@@ -1429,58 +1436,3 @@ object PreparedQuery {
     }
   }
 }
-/*
-  sealed trait Selectable
-  final case class Union(...) extends Selectable
-  final case class Type(...) extends Selectable
-  final case class Interface(...) extends Selectable
-
-  final case class FieldInfo(
-      name: String,
-      args: Option[Arguments],
-      selections: List[SelectionInfo]
-  )
-  // Loeber gennem alle fields der har en Selectable type og en tilknyttet selection
-  def collectFieldInfo: Field => FieldInfo
-
-  final case class SelectionInfo(
-      s: Selectable,
-      fields: NonEmptyList[FieldInfo]
-  )
-  // For en given type og given selection, loeber gennem alle fields og spreads for at flattene informationen
-  def collectSelectionInfo: (Selectable, NonEmptyList[Field]) => NonEmptyList[SelectionInfo]
-
-  // Finder alle kompatible typer for en given type i listen of fundet SelectionInfo'er
-  // Slaar saa alle fields sammen og returnerer en liste af SelectionInfo'er som er blevet merged
-  def mergeSelections: (Selectable, NonEmptyList[SelectionInfo]) => NonEmptyList[SelectionInfo]
- */
-
-/*
-interface A {
-}
-
-interface B implements A {
-} 
-
-type C implements B & A {
-}
-
-type D implements A {
-}
-
-union E = C | D
-
-type Query {
-  f: C
-}
-
-query {
-  f {
-    ... on A {
-      ... on D {
-      }
-    }
-  }
-}
-
- */
