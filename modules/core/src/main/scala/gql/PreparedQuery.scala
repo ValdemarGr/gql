@@ -428,7 +428,7 @@ object PreparedQuery {
         .collect { case Pos(caret, P.Selection.InlineFragmentSelection(f)) => (caret, f) }
         .flatTraverse { case (caret, f) =>
           ambientFragment(s"inline_on_${f.typeCondition}") {
-            matchType2[F, G](f.typeCondition, s, caret, discoveryState).flatMap { t =>
+            f.typeCondition.traverse(matchType2[F, G](_, s, caret, discoveryState)).map(_.getOrElse(s)).flatMap { t =>
               collectSelectionInfo[F, G](t, f.selectionSet, variableMap, fragments, discoveryState).map(_.toList)
             }
           }
@@ -912,10 +912,10 @@ object PreparedQuery {
         Option(f.typeCondition) match {
           case None => raise(s"Inline fragment must have a type condition.", Some(caret))
           case Some(typeCnd) =>
-            matchType[F, G](typeCnd, ol, caret, discoveryState).flatMap { case (ol, specialize) =>
-              prepareSelections[F, G](ol, f.selectionSet, variableMap, fragments, typeCnd, discoveryState)
+            matchType[F, G](typeCnd.get, ol, caret, discoveryState).flatMap { case (ol, specialize) =>
+              prepareSelections[F, G](ol, f.selectionSet, variableMap, fragments, typeCnd.get, discoveryState)
                 .map(Selection(_))
-                .flatMap[PreparedField[G, Any]](s => nextId[F].map(id => PreparedFragField(id, typeCnd, specialize, s)))
+                .flatMap[PreparedField[G, Any]](s => nextId[F].map(id => PreparedFragField(id, typeCnd.get, specialize, s)))
             }
         }
       case Pos(caret, P.Selection.FragmentSpreadSelection(f)) =>
