@@ -108,7 +108,7 @@ object QueryParser {
     import Selection._
     field.map(FieldSelection(_)) |
       // expects on, backtrack on failure
-      fragmentSpread.map(FragmentSpreadSelection(_)) |
+      P.backtrack(fragmentSpread.map(FragmentSpreadSelection(_))) |
       inlineFragment.map(InlineFragmentSelection(_))
 
   }
