@@ -605,7 +605,7 @@ class StarWarsTest extends CatsEffectSuite {
       {
         "errors": [
   {
-    "message" : "Unknown field name 'cors'.",
+    "message" : "Field 'cors' is not a member of `Query`.",
     "locations" : [
       {
         "line" : 3,
@@ -614,7 +614,7 @@ class StarWarsTest extends CatsEffectSuite {
     ]
   },
   {
-    "message" : "Unknown field name 'horse'.",
+    "message" : "Field 'horse' is not a member of `Character`.",
     "locations" : [
       {
         "line" : 7,
@@ -626,7 +626,7 @@ class StarWarsTest extends CatsEffectSuite {
     ]
   },
   {
-    "message" : "Unknown field name 'dorse'.",
+    "message" : "Field 'dorse' is not a member of `Character`.",
     "locations" : [
       {
         "line" : 8,

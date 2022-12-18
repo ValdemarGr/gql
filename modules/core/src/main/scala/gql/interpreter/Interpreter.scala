@@ -290,21 +290,19 @@ object Interpreter {
       m: Map[Option[GraphArc], List[(Cursor, Json)]]
   ): JsonObject = {
     sel
-      .map { pf =>
-        pf match {
-          case PreparedFragField(id, typename, _, selection) =>
-            m.get(Some(GraphArc.Fragment(id, typename)))
-              .map { lc =>
-                val m2 = groupNodeValues2(lc)
-                _reconstructSelection(selection.fields, m2)
-              }
-              .getOrElse(JsonObject.empty)
-          case PreparedDataField(id, name, alias, cont) =>
-            val n = alias.getOrElse(name)
-            JsonObject(
-              n -> reconstructField(cont.cont, m.get(Some(GraphArc.Field(id, n))).toList.flatten)
-            )
-        }
+      .map {
+        case PreparedFragField(id, typename, _, selection) =>
+          m.get(Some(GraphArc.Fragment(id, typename)))
+            .map { lc =>
+              val m2 = groupNodeValues2(lc)
+              _reconstructSelection(selection.fields, m2)
+            }
+            .getOrElse(JsonObject.empty)
+        case PreparedDataField(id, name, alias, cont) =>
+          val n = alias.getOrElse(name)
+          JsonObject(
+            n -> reconstructField(cont.cont, m.get(Some(GraphArc.Field(id, n))).toList.flatten)
+          )
       }
       .reduceLeft(_ deepMerge _)
   }
