@@ -277,7 +277,8 @@ object PreparedQuery {
     ambientEdge[F, A](PrepEdge.ASTEdge(SchemaShape.ValidationEdge.InputType(name)))(fa)
 
   def ambientFragment[F[_]: Monad, A](name: String)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
-    ambientEdge[F, A](PrepEdge.FragmentEdge(name))(fa)
+    fa
+    //ambientEdge[F, A](PrepEdge.FragmentEdge(name))(fa)
 
   def modifyError[F[_], A](f: PositionalError => PositionalError)(fa: F[A])(implicit F: MonadError[F, NonEmptyChain[PositionalError]]) =
     F.adaptError(fa)(_.map(f))
