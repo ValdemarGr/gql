@@ -379,14 +379,14 @@ object SchemaShape {
           }
       }
 
-    def validateFields[G[_]: Monad](fields: NonEmptyList[(String, Field[F, ?, ?, ?])])(implicit
+    def validateFields[G[_]: Monad](fields: NonEmptyList[(String, AbstractField[F, ?, ?])])(implicit
         S: Stateful[G, ValidationState]
     ): G[Unit] =
       allUnique[G](DuplicateField.apply, fields.toList.map { case (name, _) => name }) >>
         fields.traverse_ { case (name, field) =>
           useEdge(ValidationEdge.Field(name)) {
             validateFieldName[G](name) >>
-              validateArg[G](field.args) >>
+              validateArg[G](field.arg) >>
               validateOutput[G](field.output.value)
           }
         }
@@ -401,7 +401,7 @@ object SchemaShape {
               allUnique[G](DuplicateUnionInstance.apply, ols.map(_.value.name)) >>
                 ols.traverse_(x => validateOutput[G](x.value))
             // TODO on both (interface extension)
-            case Type(_, fields, _, _)      => validateFields[G](fields)
+            case Type(_, fields, _, _)      => validateFields[G](fields.map{ case (k, v) => k -> v.asAbstract })
             case Interface(_, fields, _, _) => validateFields[G](fields)
             // case Interface(_, instances, fields, _, _) =>
             //   val insts = instances
@@ -516,9 +516,9 @@ object SchemaShape {
         Doc.text(av.name) + Doc.text(": ") + renderModifierStack(getInputModifierStack(av.input.value)) + o
     }
 
-    def renderFieldDoc[G[_]](name: String, field: Field[G, ?, ?, ?]): Doc = {
+    def renderFieldDoc[G[_]](name: String, field: AbstractField[G, ?, ?]): Doc = {
       val args = NonEmptyChain
-        .fromChain(field.args.entries)
+        .fromChain(field.arg.entries)
         .map(nec =>
           Doc.intercalate(Doc.comma + Doc.lineOrSpace, nec.toList.map(renderArgValueDoc)).tightBracketBy(Doc.char('('), Doc.char(')'))
         )
@@ -574,7 +574,7 @@ object SchemaShape {
               val fieldsDoc = Doc
                 .intercalate(
                   Doc.hardLine,
-                  fields.toList.map { case (name, field) => renderFieldDoc(name, field) }
+                  fields.toList.map { case (name, field) => renderFieldDoc(name, field.asAbstract) }
                 )
                 .indent(2)
 
@@ -661,7 +661,7 @@ object SchemaShape {
 
     final case class NamedField(
         name: String,
-        field: Field[F, ?, ?, ?]
+        field: AbstractField[F, ?, ?]
     )
 
     def inclDeprecated = arg[Boolean]("includeDeprecated", value.scalar(false))
@@ -670,7 +670,7 @@ object SchemaShape {
       "__Field",
       "name" -> pure(_.name),
       "description" -> pure(_.field.description),
-      "args" -> pure(inclDeprecated)((x, _) => x.field.args.entries.toList),
+      "args" -> pure(inclDeprecated)((x, _) => x.field.arg.entries.toList),
       "type" -> pure(x => TypeInfo.fromOutput(x.field.output.value)),
       "isDeprecated" -> pure(_ => false),
       "deprecationReason" -> pure(_ => Option.empty[String])
@@ -747,7 +747,7 @@ object SchemaShape {
       "fields" -> pure(inclDeprecated) {
         case (oi: TypeInfo.OutInfo, _) =>
           oi.t match {
-            case Type(_, fields, _, _)      => Some(fields.toList.map { case (k, v) => NamedField(k, v) })
+            case Type(_, fields, _, _)      => Some(fields.toList.map { case (k, v) => NamedField(k, v.asAbstract) })
             case Interface(_, fields, _, _) => Some(fields.toList.map { case (k, v) => NamedField(k, v) })
             case _                          => None
           }

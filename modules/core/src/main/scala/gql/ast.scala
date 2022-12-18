@@ -127,7 +127,7 @@ object ast extends AstImplicits.Implicits {
 
   final case class Interface[F[_], A](
       name: String,
-      fields: NonEmptyList[(String, Field[F, A, ?, ?])],
+      fields: NonEmptyList[(String, AbstractField[F, ?, ?])],
       implementations: List[Implementation[F, A, ?]],
       description: Option[String] = None
   ) extends ObjectLike[F, A] {
@@ -139,11 +139,7 @@ object ast extends AstImplicits.Implicits {
         fields = fields.map { case (k, v) => k -> v.mapK(fk) }
       )
 
-    lazy val fieldsList = fields.toList
-
-    lazy val fieldMap = fields.toNem.toSortedMap.toMap
-
-    lazy val abstractFields = fieldsList.map { case (k, v) => k -> v.asAbstract }
+    lazy val abstractFields = fields.toList
 
     lazy val abstractFieldMap = abstractFields.toMap
 

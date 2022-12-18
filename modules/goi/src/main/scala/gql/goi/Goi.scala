@@ -29,19 +29,18 @@ import gql.resolver.Resolver
 trait Node {
   def value: Any = this
   def typename: String
-  def id: String
 }
 
 object Node {
-  def apply(value: Any, id: String, typename: String): Node = NodeImpl(value, id, typename)
+  def apply(value: Any, typename: String): Node = NodeImpl(value, typename)
 
   def unapply(node: Node): Option[Any] = Some(node.value)
 
-  private case class NodeImpl(override val value: Any, id: String, typename: String) extends Node
+  private case class NodeImpl(override val value: Any, typename: String) extends Node
 
   val nodeInterface = interface[cats.Id, Node](
     "Node",
-    "id" -> pure(x => ID(x.id))
+    "id" -> abst[cats.Id, ID[String]]
   )
 
   implicit def nodeInterfaceF[F[_]]: Interface[F, Node] = nodeInterface.asInstanceOf[Interface[F, Node]]
@@ -122,7 +121,7 @@ object Goi {
                           .leftMap(_.mkString_("\n"))
                           .toIor
                           .traverse(gid.fromId)
-                          .map(_.map(_.map(x => Node(x, fullId, typename))))
+                          .map(_.map(_.map(x => Node(x, fullId))))
                     }
                   case xs => F.pure(s"Invalid id parts ${xs.map(s => s"'$s'").mkString(", ")}".leftIor)
                 }
@@ -163,134 +162,4 @@ object Goi {
         s"Type `$n` was declared $size times as a GlobalID instance. Hint: Ensure that the GlobalID instance for `$n` is only added once."
       }
   }
-
-  /*
-   * Notes and ideas:
-   *
-   * "Debtor:abcd-4ecj-18eho9ou-o8eug" -> "ethOhero.3hore"
-   * "ethOhero.3hore" -> "Debtor:abcd-4ecj-18eho9ou-o8eug" -> Debtor(...)
-   * (Typename, NodeId => F[Option[Debtor]], Debtor => NodeId)
-   *
-   * final case class Debtor(
-   *  entityId: UUID,
-   *  name: String,
-   *  email: String
-   * )
-   *
-   * Goi[F, Debtor](
-   *   debtorId => F.fromTry(Try(UUID.fromString(debtorId))).flatMap(debtorService.getDebtor),
-   *   debtor => debtor.entityId.toString
-   * )(
-   *   tpe[F, Debtor](
-   *     "Debtor",
-   *     "name" -> pure(_.name),
-   *     "email" -> pure(_.email),
-   *   )
-   * ).map{ implicit debtor =>
-   *   ...
-   * }
-   *
-   * trait GoiConnstructor[A] {
-   *  def apply(...)
-   * }
-   *
-   * objec Goi {
-   *  def apply[A](...): Writer[GoiState, GoiConstructor[A]] = ???
-   * }
-   *
-   * final case class LoanAndLeaseConstructors(
-   *  debtor: GoiConstructor[Debtor],
-   *  contract: GoiConstructor[Contract],
-   *  )
-   *
-   * object LoanAndLeaseConstructors {
-   *   def apply(...): Writer[GoiState, LoanAndLeaseConstructors] = {
-   *    val d = Goi[F, Debtor](
-   *      "Debtor",
-   *      debtorId => F.fromTry(Try(UUID.fromString(debtorId))).flatMap(debtorService.getDebtor),
-   *      debtor => debtor.entityId.toString
-   *    )
-   *
-   *    val c = Goi[F, Contract](
-   *      "Contract",
-   *      ...
-   *    )
-   *
-   *    (d, c).mapN(LoanAndLeaseConstructors.apply)
-   *  }
-   * }
-   *
-   * ...
-   *
-   * Goi[F, Debtor](
-   *   "Debtor",
-   *   debtorId => F.fromTry(Try(UUID.fromString(debtorId))).flatMap(debtorService.getDebtor),
-   *   debtor => debtor.entityId.toString
-   * ).map{ mkDebtor =>
-   *   implicit val debtor = mkDebtor(
-   *     "name" -> pure(_.name),
-   *     "email" -> pure(_.email),
-   *   )
-   * }
-   *
-   * ```
-   * interface Node {
-   *   id: ID!
-   * }
-   *
-   * type Debtor implements Node {
-   *   id: ID!
-   *   name: String!
-   *   email: String!
-   * }
-   *
-   * type Query {
-   *   node(id: ID!): Node
-   * }
-   * ```
-   *
-   * {
-   *   implicit val debtor = goi(_.entityId.toString)(tpe[F, Debtor](
-   *     "Debtor",
-   *     "name" -> pure(_.name),
-   *     "email" -> pure(_.email),
-   *   ))
-   *
-   *   ...
-   *
-   *   val schema = makeSchema[F]
-   *   addGoi(schema){
-   *     case ("Debtor", id) => F.fromTry(Try(UUID.fromString(id))).flatMap(debtorService.getDebtor)
-   *   }
-   * }
-   *
-   * {
-   *   implicit val debtor = goi(_.entityId.toString)(tpe[F, Debtor](
-   *     "Debtor",
-   *     "name" -> pure(_.name),
-   *     "email" -> pure(_.email),
-   *   ))
-   *
-   *   ...
-   *
-   *   val schema = makeSchema[F]
-   *   schema
-   *      .addGoi(debtor, id => F.fromTry(Try(UUID.fromString(id))).flatMap(debtorService.getDebtor))
-   * }
-   *
-
-     trait LoanAndLease[F[_]] {
-       implicit def debtor: Type[F, Debtor]
-
-       implicit def contract: Type[F, Contract]
-     }
-
-     class LoanAndLease[F[_]](dep1: Dep1[F]) {
-       implicit lazy val debtor: Type[F, Debtor] = tpe[F, Debtor](
-        "Debtor"
-        ...
-      )
-     }
-   *
-   */
 }
