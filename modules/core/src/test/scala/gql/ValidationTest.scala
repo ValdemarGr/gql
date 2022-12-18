@@ -39,8 +39,8 @@ class ValidationTest extends CatsEffectSuite {
     "missing" -> pure(_ => 42)
   )
 
-  implicit lazy val duplicateInterface: Interface[IO, MutRecInterface] = 
-    interfaceFrom[IO, MutRecInterface](    "MutRecInterface",    duplicateFields  )
+  implicit lazy val duplicateInterface: Interface[IO, MutRecInterface] =
+    interfaceFrom[IO, MutRecInterface]("MutRecInterface", duplicateFields)
 
   implicit def mr1: Type[IO, MutuallyRecursive1] =
     tpe[IO, MutuallyRecursive1](

@@ -401,7 +401,7 @@ object SchemaShape {
               allUnique[G](DuplicateUnionInstance.apply, ols.map(_.value.name)) >>
                 ols.traverse_(x => validateOutput[G](x.value))
             // TODO on both (interface extension)
-            case Type(_, fields, _, _)      => validateFields[G](fields.map{ case (k, v) => k -> v.asAbstract })
+            case Type(_, fields, _, _)      => validateFields[G](fields.map { case (k, v) => k -> v.asAbstract })
             case Interface(_, fields, _, _) => validateFields[G](fields)
             // case Interface(_, instances, fields, _, _) =>
             //   val insts = instances

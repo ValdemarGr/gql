@@ -144,7 +144,10 @@ object dsl {
   def abstWith[F[_], A, T](arg: Arg[A])(implicit tpe: => Out[F, T]): AbstractField[F, A, T] =
     AbstractField[F, A, T](arg, Eval.later(tpe))
 
-  def abstGroup[F[_]](hd: (String, AbstractField[F, ?, ?]), tl: (String, AbstractField[F, ?, ?])*): NonEmptyList[(String, AbstractField[F, ?, ?])] =
+  def abstGroup[F[_]](
+      hd: (String, AbstractField[F, ?, ?]),
+      tl: (String, AbstractField[F, ?, ?])*
+  ): NonEmptyList[(String, AbstractField[F, ?, ?])] =
     NonEmptyList(hd, tl.toList)
 
   object full {
@@ -192,19 +195,19 @@ object dsl {
 
   def interface[F[_], A](
       name: String,
-      fields: NonEmptyList[(String, AbstractField[F, ?, ?])],
+      fields: NonEmptyList[(String, AbstractField[F, ?, ?])]
   ): Interface[F, A] = Interface[F, A](name, fields, Nil)
 
   def interface[F[_], A](
       name: String,
       hd: (String, AbstractField[F, ?, ?]),
-      tl: (String, AbstractField[F, ?, ?])*,
+      tl: (String, AbstractField[F, ?, ?])*
   ): Interface[F, A] = interface[F, A](name, NonEmptyList(hd, tl.toList))
-    
+
   def interfaceFrom[F[_], A](
       name: String,
-      fields: NonEmptyList[(String, Field[F, A, ?, ?])],
-  ): Interface[F, A] = interface[F, A](name, fields.map{ case (k, v) => k -> v.asAbstract })
+      fields: NonEmptyList[(String, Field[F, A, ?, ?])]
+  ): Interface[F, A] = interface[F, A](name, fields.map { case (k, v) => k -> v.asAbstract })
 
   def interfaceFrom[F[_], A](
       name: String,
@@ -288,7 +291,7 @@ object dsl {
       tpe.copy(fields = tpe.fields concat xs.toList)
 
     def addFields(xs: (String, Field[F, A, ?, ?])*) =
-      tpe.copy(fields = tpe.fields concat xs.toList.map{ case (k, v) => k -> v.asAbstract })
+      tpe.copy(fields = tpe.fields concat xs.toList.map { case (k, v) => k -> v.asAbstract })
   }
 
   implicit class UnionSyntax[F[_], A](val tpe: Union[F, A]) extends AnyVal {

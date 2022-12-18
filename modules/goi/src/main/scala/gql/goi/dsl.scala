@@ -22,16 +22,16 @@ object dsl {
       implicit val codec = gid.codec
       Goi.addId[F, A, K](gid.toId, gql.dsl.interface[F, A](gid.typename, hd, tl: _*))
     }
-    
+
     def interface(
         xs: NonEmptyList[(String, AbstractField[F, ?, ?])]
-    )(implicit F: Sync[F]): Interface[F, A] = 
+    )(implicit F: Sync[F]): Interface[F, A] =
       interface(xs.head, xs.tail: _*)
 
     def interfaceFrom(
         xs: NonEmptyList[(String, Field[F, A, ?, ?])]
-    )(implicit F: Sync[F]): Interface[F, A] = { 
-      val fixed = xs.map{ case (k, v) => k -> v.asAbstract }
+    )(implicit F: Sync[F]): Interface[F, A] = {
+      val fixed = xs.map { case (k, v) => k -> v.asAbstract }
       interface(fixed.head, fixed.tail: _*)
     }
 

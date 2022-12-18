@@ -51,9 +51,9 @@ sealed trait EvalFailure {
       JsonObject(
         "message" -> Json.fromString(err.message),
         "path" -> err.path.path.mapFilter {
-          case GraphArc.Field(_, name)    => Some(Json.fromString(name))
-          case GraphArc.Index(idx)        => Some(Json.fromInt(idx))
-          case _:GraphArc.Fragment => None
+          case GraphArc.Field(_, name) => Some(Json.fromString(name))
+          case GraphArc.Index(idx)     => Some(Json.fromInt(idx))
+          case _: GraphArc.Fragment    => None
         }.asJson
       )
     }
