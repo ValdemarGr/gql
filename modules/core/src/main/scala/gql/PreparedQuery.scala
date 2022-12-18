@@ -27,7 +27,6 @@ import gql.resolver._
 import cats.parse.Caret
 import cats.arrow.FunctionK
 import gql.parser.QueryParser
-import scala.collection.immutable.SortedMap
 
 object PreparedQuery {
   sealed trait Prepared[F[_], A]
@@ -276,10 +275,6 @@ object PreparedQuery {
   def ambientInputType[F[_]: Monad, A](name: String)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
     ambientEdge[F, A](PrepEdge.ASTEdge(SchemaShape.ValidationEdge.InputType(name)))(fa)
 
-  def ambientFragment[F[_]: Monad, A](name: String)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
-    fa
-    //ambientEdge[F, A](PrepEdge.FragmentEdge(name))(fa)
-
   def modifyError[F[_], A](f: PositionalError => PositionalError)(fa: F[A])(implicit F: MonadError[F, NonEmptyChain[PositionalError]]) =
     F.adaptError(fa)(_.map(f))
 
@@ -301,7 +296,7 @@ object PreparedQuery {
       S: Stateful[F, Prep],
       F: MonadError[F, NonEmptyChain[PositionalError]],
       D: Defer[F]
-  ) =
+  ): F[A] =
     D.defer {
       S.get.flatMap[A] {
         case c if c.cycleSet(fragmentName) =>
@@ -313,7 +308,7 @@ object PreparedQuery {
               val beforeF: F[Unit] = S.modify(s => s.copy(cycleSet = s.cycleSet + fragmentName))
               val afterF: F[Unit] = S.modify(s => s.copy(cycleSet = s.cycleSet - fragmentName))
 
-              beforeF *> ambientFragment(fragmentName)(faf(f)) <* afterF
+              beforeF *> faf(f) <* afterF
           }
       }
     }
@@ -373,7 +368,7 @@ object PreparedQuery {
       D: Defer[F]
   ): F[FieldInfo[G]] = ambientField(f.name) {
     // Verify arguments by decoding them
-    val decF = decodeFieldArgs[F, G, Any](af.arg.asInstanceOf[Arg[Any]], f, caret, variableMap).void
+    val decF = decodeFieldArgs[F, G, Any](af.arg.asInstanceOf[Arg[Any]], f.alias.getOrElse(f.name), f.arguments, caret, variableMap).void
 
     // Verify subselection
     val c = f.selectionSet.caret
@@ -381,7 +376,7 @@ object PreparedQuery {
       (t, f.selectionSet.value) match {
         case (OutArr(inner, _, _), _) => verifySubsel(inner).map(SimplifiedType.List(_))
         case (OutOpt(inner, _), _)    => verifySubsel(inner).map(SimplifiedType.Option(_))
-        case (ol: Selectable2[G, ?], Some(ss)) =>
+        case (ol: Selectable[G, ?], Some(ss)) =>
           collectSelectionInfo[F, G](ol, ss, variableMap, fragments, discoveryState)
             .map(xs => SimplifiedType.Selectable(ol.name, xs))
         case (e: Enum[G, ?], None)   => F.pure(SimplifiedType.Enum(e.name))
@@ -394,12 +389,12 @@ object PreparedQuery {
   }
 
   final case class SelectionInfo[G[_]](
-      s: Selectable2[G, ?],
+      s: Selectable[G, ?],
       fields: NonEmptyList[FieldInfo[G]],
       fragmentName: Option[String]
   )
   def collectSelectionInfo[F[_]: Parallel, G[_]](
-      s: Selectable2[G, ?],
+      s: Selectable[G, ?],
       ss: P.SelectionSet,
       variableMap: VariableMap,
       fragments: Map[String, Pos[P.FragmentDefinition]],
@@ -427,21 +422,19 @@ object PreparedQuery {
     val realInlines =
       ss.selections
         .collect { case Pos(caret, P.Selection.InlineFragmentSelection(f)) => (caret, f) }
-        .flatTraverse { case (caret, f) =>
-          ambientFragment(s"inline_on_${f.typeCondition}") {
-            f.typeCondition.traverse(matchType2[F, G](_, s, caret, discoveryState)).map(_.getOrElse(s)).flatMap { t =>
-              collectSelectionInfo[F, G](t, f.selectionSet, variableMap, fragments, discoveryState).map(_.toList)
-            }
+        .parFlatTraverse { case (caret, f) =>
+          f.typeCondition.traverse(matchType[F, G](_, s, caret, discoveryState)).map(_.getOrElse(s)).flatMap { t =>
+            collectSelectionInfo[F, G](t, f.selectionSet, variableMap, fragments, discoveryState).map(_.toList)
           }
         }
 
     val realFragments =
       ss.selections
         .collect { case Pos(caret, P.Selection.FragmentSpreadSelection(f)) => (caret, f) }
-        .flatTraverse { case (caret, f) =>
+        .parFlatTraverse { case (caret, f) =>
           val fn = f.fragmentName
           inFragment(fn, fragments, caret.some) { case Pos(caret, f) =>
-            matchType2[F, G](f.typeCnd, s, caret, discoveryState).flatMap { t =>
+            matchType[F, G](f.typeCnd, s, caret, discoveryState).flatMap { t =>
               collectSelectionInfo[F, G](t, f.selectionSet, variableMap, fragments, discoveryState)
                 .map(_.toList.map(_.copy(fragmentName = Some(fn))))
             }
@@ -653,7 +646,7 @@ object PreparedQuery {
   }
 
   def findImplementations[G[_]](
-      s: Selectable2[G, ?],
+      s: Selectable[G, ?],
       discoveryState: SchemaShape.DiscoveryState[G]
   ): List[(Type[G, ?], Option[? => Option[?]])] = s match {
     case t @ Type(_, _, _, _) => List((t, None))
@@ -675,7 +668,7 @@ object PreparedQuery {
       specify: Option[? => Option[?]]
   )
   def mergeImplementations[F[_]: Parallel, G[_]](
-      base: Selectable2[G, ?],
+      base: Selectable[G, ?],
       sels: NonEmptyList[SelectionInfo[G]],
       discoveryState: SchemaShape.DiscoveryState[G]
   )(implicit
@@ -724,7 +717,7 @@ object PreparedQuery {
     }
   }
 
-  def decodeFieldArgs2[F[_]: Parallel, G[_], A](
+  def decodeFieldArgs[F[_]: Parallel, G[_], A](
       a: Arg[A],
       name: String,
       args: Option[P.Arguments],
@@ -750,7 +743,7 @@ object PreparedQuery {
     }
   }
 
-  def closeFieldParameters2[F[_]: Parallel, G[_]](
+  def closeFieldParameters[F[_]: Parallel, G[_]](
       fi: FieldInfo[G],
       field: Field[G, Any, Any, Any],
       variableMap: VariableMap
@@ -758,11 +751,11 @@ object PreparedQuery {
       S: Stateful[F, Prep],
       F: MonadError[F, NonEmptyChain[PositionalError]]
   ): F[Resolver[G, Any, Any]] = {
-    val decObj = decodeFieldArgs2[F, G, Any](field.args, fi.name, fi.args, fi.caret, variableMap)
+    val decObj = decodeFieldArgs[F, G, Any](field.args, fi.name, fi.args, fi.caret, variableMap)
     decObj.map(a => field.resolve.contramap[Any]((_, a)))
   }
 
-  def prepareField2[F[_]: Parallel, G[_]: Applicative](
+  def prepareField[F[_]: Parallel, G[_]: Applicative](
       fi: FieldInfo[G],
       field: Field[G, Any, Any, Any],
       variableMap: VariableMap,
@@ -773,7 +766,7 @@ object PreparedQuery {
       F: MonadError[F, NonEmptyChain[PositionalError]],
       D: Defer[F]
   ): F[PreparedField[G, Any]] = {
-    closeFieldParameters2[F, G](fi, field, variableMap).flatMap { resolve =>
+    closeFieldParameters[F, G](fi, field, variableMap).flatMap { resolve =>
       val tpe = field.output.value
       val selCaret = fi.caret
       val name = fi.name
@@ -790,8 +783,8 @@ object PreparedQuery {
                 flattenResolvers[F, G](parentName, resolver).flatMap { case (edges, parentName, _) =>
                   typePrep(inner, parentName).map(cont => PreparedOption(PreparedCont(edges, cont)))
                 }
-              case (ol: Selectable2[G, ?], Some(ss)) =>
-                prepareSelectable2[F, G](ol, ss, variableMap, discoveryState)
+              case (ol: Selectable[G, ?], Some(ss)) =>
+                prepareSelectable[F, G](ol, ss, variableMap, discoveryState)
                   .map(Selection(_))
               case (e: Enum[G, Any], None) =>
                 F.pure(PreparedLeaf(e.name, x => Json.fromString(e.revm(x))))
@@ -812,8 +805,8 @@ object PreparedQuery {
     }
   }
 
-  def prepareSelectable2[F[_]: Parallel, G[_]](
-      s: Selectable2[G, Any],
+  def prepareSelectable[F[_]: Parallel, G[_]](
+      s: Selectable[G, Any],
       sis: NonEmptyList[SelectionInfo[G]],
       variableMap: VariableMap,
       discoveryState: SchemaShape.DiscoveryState[G]
@@ -827,7 +820,7 @@ object PreparedQuery {
       impls.parFlatTraverse { impl =>
         val fa = impl.selections.parTraverse { sel =>
           val field = (sel.field: Field[G, ?, ?, ?]).asInstanceOf[Field[G, Any, Any, Any]]
-          prepareField2[F, G](sel.info, field, variableMap, impl.leaf.name, discoveryState)
+          prepareField[F, G](sel.info, field, variableMap, impl.leaf.name, discoveryState)
         }
 
         fa.flatMap { xs =>
@@ -843,8 +836,8 @@ object PreparedQuery {
     }
   }
 
-  def prepareSelectable2Root[F[_]: Parallel, G[_]](
-      s: Selectable2[G, ?],
+  def prepareSelectableRoot[F[_]: Parallel, G[_]](
+      s: Selectable[G, ?],
       ss: P.SelectionSet,
       variableMap: VariableMap,
       fragments: Map[String, Pos[P.FragmentDefinition]],
@@ -856,183 +849,18 @@ object PreparedQuery {
       D: Defer[F]
   ) = {
     collectSelectionInfo[F, G](s, ss, variableMap, fragments, discoveryState).flatMap { root =>
-      checkSelectionsMerge[F, G](root) >> prepareSelectable2[F, G](s.asInstanceOf[Selectable2[G, Any]], root, variableMap, discoveryState)
-    }
-  }
-
-  def prepareSelections[F[_]: Parallel, G[_]](
-      ol: Selectable[G, Any],
-      s: P.SelectionSet,
-      variableMap: VariableMap,
-      fragments: Map[String, Pos[P.FragmentDefinition]],
-      currentTypename: String,
-      discoveryState: SchemaShape.DiscoveryState[G]
-  )(implicit
-      G: Applicative[G],
-      S: Stateful[F, Prep],
-      F: MonadError[F, NonEmptyChain[PositionalError]],
-      D: Defer[F]
-  ): F[NonEmptyList[PreparedField[G, Any]]] = D.defer {
-    val syntheticTypename =
-      Field[G, Any, String, Unit](
-        Applicative[Arg].unit,
-        FallibleResolver[G, (Any, Unit), String] { case (input, _) =>
-          // TODO this code shares much with the subtype interfaces below in matchType
-          val typename = ol match {
-            case Type(name, _, _, _) => Some(name)
-            case Union(_, types, _) =>
-              types.collectFirstSome { variant => variant.specify(input) as variant.tpe.value.name }
-            case Interface(name, _, _, _) =>
-              // Only look for concrete types; that is; `Type`s
-              discoveryState.implementations
-                .get(name)
-                .toList
-                .flatMap(_.values.toList)
-                .collectFirstSome {
-                  case (Type(name, _, _, _), spec) => spec(input) as name
-                  case _                           => None
-                }
-          }
-
-          G.pure(typename.toRightIor("Typename could not be determined, this is an implementation error."))
-        },
-        Eval.now(gql.ast.stringScalar)
-      )
-
-    val schemaMap = ol.fieldMap + ("__typename" -> syntheticTypename)
-    s.selections.parTraverse[F, PreparedField[G, Any]] {
-      case Pos(caret, P.Selection.FieldSelection(field)) =>
-        (schemaMap.get(field.name): @unchecked) match {
-          case None => raise(s"Unknown field name '${field.name}'.", Some(caret))
-          case Some(f: Field[G, Any, Any, Any] @unchecked) =>
-            ambientField(field.name) {
-              prepareField[F, G](field, caret, f, variableMap, fragments, currentTypename, discoveryState)
-            }
-        }
-      case Pos(caret, P.Selection.InlineFragmentSelection(f)) =>
-        Option(f.typeCondition) match {
-          case None => raise(s"Inline fragment must have a type condition.", Some(caret))
-          case Some(typeCnd) =>
-            matchType[F, G](typeCnd.get, ol, caret, discoveryState).flatMap { case (ol, specialize) =>
-              prepareSelections[F, G](ol, f.selectionSet, variableMap, fragments, typeCnd.get, discoveryState)
-                .map(Selection(_))
-                .flatMap[PreparedField[G, Any]](s => nextId[F].map(id => PreparedFragField(id, typeCnd.get, specialize, s)))
-            }
-        }
-      case Pos(caret, P.Selection.FragmentSpreadSelection(f)) =>
-        fragments.get(f.fragmentName) match {
-          case None => raise(s"Unknown fragment name '${f.fragmentName}'.", Some(caret))
-          case Some(fd) =>
-            ambientFragment(f.fragmentName) {
-              prepareFragment[F, G](ol, fd, variableMap, fragments, fd.value.typeCnd, discoveryState)
-                .flatMap[PreparedField[G, Any]] { fd =>
-                  nextId[F].map(id => PreparedFragField(id, fd.typeCondition, fd.specify, Selection(fd.fields)))
-                }
-            }
-        }
+      checkSelectionsMerge[F, G](root) >> prepareSelectable[F, G](s.asInstanceOf[Selectable[G, Any]], root, variableMap, discoveryState)
     }
   }
 
   type VariableMap = Map[String, Either[P.Value, Json]]
 
-  def decodeFieldArgs[F[_]: Parallel, G[_], A](
-      a: Arg[A],
-      f: P.Field,
-      caret: Caret,
-      variableMap: VariableMap
-  )(implicit
-      S: Stateful[F, Prep],
-      F: MonadError[F, NonEmptyChain[PositionalError]]
-  ): F[A] = {
-    val provided = f.arguments.toList.flatMap(_.nel.toList)
-
-    // Treat input arguments as an object
-    // Decode the args as-if an input
-    val argObj =
-      P.Value.ObjectValue(provided.map(a => a.name -> a.value))
-
-    a match {
-      case PureArg(value) if provided.isEmpty => value.fold(raise(_, None), F.pure(_))
-      case PureArg(_) =>
-        raise(s"Field '${f.name}' does not accept arguments.", Some(caret))
-      case nea @ NonEmptyArg(_, _) =>
-        parseInputObj[F, A](argObj, nea, Some(variableMap), ambigiousEnum = false)
-    }
-  }
-
-  def closeFieldParameters[F[_]: Parallel, G[_]](
-      gqlField: P.Field,
-      caret: Caret,
-      field: Field[G, Any, Any, Any],
-      variableMap: VariableMap
-  )(implicit
-      S: Stateful[F, Prep],
-      F: MonadError[F, NonEmptyChain[PositionalError]]
-  ): F[Resolver[G, Any, Any]] = {
-    val decObj = decodeFieldArgs[F, G, Any](field.args, gqlField, caret, variableMap)
-    decObj.map(a => field.resolve.contramap[Any]((_, a)))
-  }
-
-  def prepareField[F[_]: Parallel, G[_]: Applicative](
-      gqlField: P.Field,
-      caret: Caret,
-      field: Field[G, Any, Any, Any],
-      variableMap: VariableMap,
-      fragments: Map[String, Pos[P.FragmentDefinition]],
-      currentTypename: String,
-      discoveryState: SchemaShape.DiscoveryState[G]
-  )(implicit
-      S: Stateful[F, Prep],
-      F: MonadError[F, NonEmptyChain[PositionalError]],
-      D: Defer[F]
-  ): F[PreparedField[G, Any]] = {
-    closeFieldParameters[F, G](gqlField, caret, field, variableMap).flatMap { resolve =>
-      val tpe = field.output.value
-      val ss = gqlField.selectionSet.value
-      val selCaret = gqlField.selectionSet.caret
-
-      val tn = underlyingOutputTypename(field.output.value)
-
-      nextId[F].flatMap { id =>
-        flattenResolvers[F, G](s"${currentTypename}_${gqlField.name}", resolve).flatMap { case (edges, parentName, _) =>
-          def typePrep(t: Out[G, Any], parentName: String): F[Prepared[G, Any]] =
-            (t, ss) match {
-              case (OutArr(inner, toSeq, resolver), _) =>
-                flattenResolvers[F, G](parentName, resolver).flatMap { case (edges, parentName, _) =>
-                  typePrep(inner, parentName).map(cont => PreparedList(PreparedCont(edges, cont), toSeq))
-                }
-              case (OutOpt(inner, resolver), _) =>
-                flattenResolvers[F, G](parentName, resolver).flatMap { case (edges, parentName, _) =>
-                  typePrep(inner, parentName).map(cont => PreparedOption(PreparedCont(edges, cont)))
-                }
-              case (ol: Selectable[G, Any], Some(ss)) =>
-                prepareSelections[F, G](ol, ss, variableMap, fragments, tn, discoveryState)
-                  .map(Selection(_))
-              case (e: Enum[G, Any], None) =>
-                F.pure(PreparedLeaf(e.name, x => Json.fromString(e.revm(x))))
-              case (s: Scalar[G, Any], None) =>
-                F.pure(PreparedLeaf(s.name, x => s.encoder(x).asJson))
-              case (o, Some(_)) => raise(s"Type `${friendlyName[G, Any](o)}` cannot have selections.", Some(selCaret))
-              case (o, None)    => raise(s"Object like type `${friendlyName[G, Any](o)}` must have a selection.", Some(selCaret))
-            }
-
-          val prepF: F[Prepared[G, Any]] = typePrep(tpe, parentName)
-
-          prepF.map { p =>
-            val pc = PreparedCont(edges, p)
-            PreparedDataField(id, gqlField.name, gqlField.alias, pc)
-          }
-        }
-      }
-    }
-  }
-
-  def matchType2[F[_], G[_]](
+  def matchType[F[_], G[_]](
       name: String,
-      sel: Selectable2[G, ?],
+      sel: Selectable[G, ?],
       caret: Caret,
       discoveryState: SchemaShape.DiscoveryState[G]
-  )(implicit F: MonadError[F, NonEmptyChain[PositionalError]], S: Stateful[F, Prep]): F[Selectable2[G, ?]] =
+  )(implicit F: MonadError[F, NonEmptyChain[PositionalError]], S: Stateful[F, Prep]): F[Selectable[G, ?]] =
     if (sel.name == name) F.pure(sel)
     else {
       sel match {
@@ -1084,92 +912,6 @@ object PreparedQuery {
                 case Some(x) => F.pure(x.implementation.value.asInstanceOf[Interface[G, Any]])
               }
           }
-      }
-    }
-
-  // name is the type in the pattern match case
-  // sel is the type we match on
-  // sel match { case x if x.name == name  => ... }
-  def matchType[F[_], G[_]](
-      name: String,
-      sel: Selectable[G, Any],
-      caret: Caret,
-      discoveryState: SchemaShape.DiscoveryState[G]
-  )(implicit F: MonadError[F, NonEmptyChain[PositionalError]], S: Stateful[F, Prep]): F[(Selectable[G, Any], Any => Option[Any])] =
-    if (sel.name == name) F.pure((sel, Some(_)))
-    else {
-      sel match {
-        case t @ Type(n, _, _, _) =>
-          t.implementsMap.get(name) match {
-            case None => raise(s"Tried to match with type `$name` on type object type `$n`.", Some(caret))
-            case Some(impl) =>
-              val i: Interface[G, _] = impl.implementation.value
-              val spec: _ => Option[Any] = impl.specify
-              F.pure((i.asInstanceOf[Interface[G, Any]], spec.asInstanceOf[Any => Option[Any]]))
-          }
-        // What types implement this interface?
-        case i @ Interface(n, _, _, _) =>
-          raiseOpt(
-            discoveryState.implementations.get(i.name),
-            s"The interface `${i.name}` is not implemented by any type.",
-            caret.some
-          ).flatMap { m =>
-            raiseOpt(
-              m.get(name),
-              s"`$name` does not implement interface `$n`, possible implementations are ${m.keySet.mkString(", ")}.",
-              caret.some
-            )
-          }
-        case u @ Union(n, _, _) =>
-          u.instanceMap
-            .get(name) match {
-            case Some(i) => F.pure((i.tpe.value.asInstanceOf[Type[G, Any]], i.specify))
-            case None =>
-              u.types.toList
-                .collectFirstSomeM { v =>
-                  val t: Type[G, _] = v.tpe.value
-                  matchType[F, G](name, t.asInstanceOf[Type[G, Any]], caret, discoveryState).attempt.map(_.toOption)
-                }
-                .flatMap {
-                  case None =>
-                    raise[F, (Selectable[G, Any], Any => Option[Any])](
-                      s"`$name` is not a member of the union `$n`, possible members are ${u.instanceMap.keySet.mkString(", ")}.",
-                      caret.some
-                    )
-                  case Some(x) => F.pure(x)
-                }
-          }
-      }
-    }
-
-  def prepareFragment[F[_]: Parallel, G[_]: Applicative](
-      ol: Selectable[G, Any],
-      f: Pos[P.FragmentDefinition],
-      variableMap: VariableMap,
-      fragments: Map[String, Pos[P.FragmentDefinition]],
-      currentTypename: String,
-      discoveryState: SchemaShape.DiscoveryState[G]
-  )(implicit
-      S: Stateful[F, Prep],
-      F: MonadError[F, NonEmptyChain[PositionalError]],
-      D: Defer[F]
-  ): F[FragmentDefinition[G, Any]] =
-    D.defer {
-      S.get.flatMap {
-        case c if c.cycleSet(f.value.name) =>
-          raise(s"Fragment by name ${f.value.name} is cyclic. Hint: graphql queries must be finite.", Some(f.caret))
-        case _ =>
-          val beforeF: F[Unit] = S.modify(s => s.copy(cycleSet = s.cycleSet + f.value.name))
-          val afterF: F[Unit] = S.modify(s => s.copy(cycleSet = s.cycleSet - f.value.name))
-
-          val programF: F[FragmentDefinition[G, Any]] =
-            matchType[F, G](f.value.typeCnd, ol, f.caret, discoveryState)
-              .flatMap { case (t, specify) =>
-                prepareSelections[F, G](t, f.value.selectionSet, variableMap, fragments, currentTypename, discoveryState)
-                  .map(FragmentDefinition(f.value.name, f.value.typeCnd, specify, _))
-              }
-
-          beforeF *> programF <* afterF
       }
     }
 
@@ -1432,13 +1174,6 @@ object PreparedQuery {
           raiseOpt(schema.shape.subscription.map(_.asInstanceOf[Type[G, Any]]), "No `Subscription` type defined in this schema.", None)
       }
 
-    val rootTypename =
-      ot match {
-        case P.OperationType.Query        => "Query"
-        case P.OperationType.Mutation     => "Mutation"
-        case P.OperationType.Subscription => "Subscription"
-      }
-
     val preCheckVariablesF: F[VariableMap] = op match {
       case P.OperationDefinition.Simple(_) => F.pure(Map.empty)
       case P.OperationDefinition.Detailed(_, _, vdsO, _) =>
@@ -1561,7 +1296,7 @@ object PreparedQuery {
     val fa =
       preCheckVariablesF.flatMap { vm =>
         rootSchema.flatMap { root =>
-          prepareSelectable2Root[F, G](
+          prepareSelectableRoot[F, G](
             root.asInstanceOf[Type[G, Any]],
             selection,
             vm,

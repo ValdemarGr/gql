@@ -43,22 +43,12 @@ object ast extends AstImplicits.Implicits {
   sealed trait InToplevel[A] extends In[A] with Toplevel[A]
 
   sealed trait Selectable[F[_], A] extends OutToplevel[F, A] {
-    def fieldsList: List[(String, Field[F, A, ?, ?])]
-
-    def fieldMap: Map[String, Field[F, A, ?, ?]]
-
-    override def mapK[G[_]: Functor](fk: F ~> G): Selectable[G, A]
-  }
-
-  sealed trait Selectable2[F[_], A] extends OutToplevel[F, A] {
     def abstractFields: List[(String, AbstractField[F, ?, ?])]
 
     def abstractFieldMap: Map[String, AbstractField[F, ?, ?]]
   }
 
-  sealed trait Abstract[F[_], A] extends Selectable2[F, A]
-
-  sealed trait Concrete[F[_], A] extends Selectable2[F, A] {
+  sealed trait Concrete[F[_], A] extends Selectable[F, A] {
     def concreteFields: List[(String, Field[F, A, ?, ?])]
 
     def concreteFieldsMap: Map[String, Field[F, A, ?, ?]]
@@ -69,7 +59,7 @@ object ast extends AstImplicits.Implicits {
     def abstractFieldMap: Map[String, AbstractField[F, ?, ?]] = abstractFields.toMap
   }
 
-  sealed trait ObjectLike[F[_], A] extends Selectable[F, A] with Abstract[F, A] {
+  sealed trait ObjectLike[F[_], A] extends Selectable[F, A] {
     def implementsMap: Map[String, Implementation[F, A, ?]]
   }
 
@@ -108,8 +98,7 @@ object ast extends AstImplicits.Implicits {
       name: String,
       types: NonEmptyList[Variant[F, A, ?]],
       description: Option[String] = None
-  ) extends Selectable[F, A]
-      with Abstract[F, A] {
+  ) extends Selectable[F, A] {
     def document(description: String): Union[F, A] = copy(description = Some(description))
 
     def contramap[B](f: B => A): Union[F, B] =

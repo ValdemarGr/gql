@@ -101,9 +101,9 @@ object SchemaShape {
         case t: OutToplevel[F, ?] =>
           outputNotSeen(t) {
             def handleFields(o: ObjectLike[F, ?]): G[Unit] =
-              o.fieldsList.traverse_ { case (_, x) =>
+              o.abstractFields.traverse_ { case (_, x) =>
                 goOutput[G](x.output.value) >>
-                  x.args.entries.traverse_(x => goInput[G](x.input.value.asInstanceOf[In[Any]]))
+                  x.arg.entries.traverse_(x => goInput[G](x.input.value.asInstanceOf[In[Any]]))
               }
 
             t match {
