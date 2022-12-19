@@ -626,14 +626,16 @@ object PreparedQuery {
     (a, b) match {
       case (SimplifiedType.List(l), SimplifiedType.List(r))     => checkSimplifiedTypeShape[F, G](l, r, caret)
       case (SimplifiedType.Option(l), SimplifiedType.Option(r)) => checkSimplifiedTypeShape[F, G](l, r, caret)
-      case (SimplifiedType.Selectable(_, l), SimplifiedType.Selectable(_, r)) =>
-        val lComb = l.flatMap(x => x.fields tupleLeft x).groupByNem { case (_, f) => f.outputName }
-        val rComb = r.flatMap(x => x.fields tupleLeft x).groupByNem { case (_, f) => f.outputName }
-        (lComb align rComb).toNel.parTraverse_ {
-          case (_, Ior.Both(_, _)) => F.unit
-          case (k, Ior.Left(_))    => raise[F, Unit](s"Field '$k' was missing when verifying shape equivalence.", Some(caret))
-          case (k, Ior.Right(_))   => raise[F, Unit](s"Field '$k' was missing when verifying shape equivalence.", Some(caret))
-        }
+      // It turns out we don't care if more fields are selected in one object than the other
+      case (SimplifiedType.Selectable(_, _), SimplifiedType.Selectable(_, _)) => F.unit
+      // case (SimplifiedType.Selectable(_, l), SimplifiedType.Selectable(_, r)) => F.unit
+        // val lComb = l.flatMap(x => x.fields tupleLeft x).groupByNem { case (_, f) => f.outputName }
+        // val rComb = r.flatMap(x => x.fields tupleLeft x).groupByNem { case (_, f) => f.outputName }
+        // (lComb align rComb).toNel.parTraverse_ {
+        //   case (_, Ior.Both(_, _)) => F.unit
+        //   case (k, Ior.Left(_))    => raise[F, Unit](s"Field '$k' was missing when verifying shape equivalence.", Some(caret))
+        //   case (k, Ior.Right(_))   => raise[F, Unit](s"Field '$k' was missing when verifying shape equivalence.", Some(caret))
+        // }
       case (SimplifiedType.Enum(l), SimplifiedType.Enum(r)) =>
         if (l === r) F.unit
         else raise[F, Unit](s"Enums are not the same, got '$l' and '$r'.", Some(caret))
