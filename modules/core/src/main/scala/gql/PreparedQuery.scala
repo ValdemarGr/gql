@@ -654,8 +654,13 @@ object PreparedQuery {
     case t @ Type(_, _, _, _) => List((t, None))
     case u @ Union(_, _, _)   => u.types.toList.map(x => (x.tpe.value, Some(x.specify)))
     case it @ Interface(_, _, _, _) =>
-      val impls: Map[String, (ObjectLike[G, ?], ? => Option[?])] =
-        discoveryState.implementations.get(it.name).getOrElse(Map.empty)
+      type Specify = ? => Option[?]
+
+      val impls: Map[String, (ObjectLike[G, ?], Specify)] =
+        discoveryState.implementations
+          .get(it.name)
+          .getOrElse(Map.empty)
+          .collect { case (k, Right(v)) => k -> v }
 
       impls.toList.collect { case (_, (t @ Type(_, _, _, _), specify)) => (t, Some(specify)) }
   }
@@ -871,7 +876,7 @@ object PreparedQuery {
           t.implementsMap.get(name) match {
             case None => raise(s"Tried to match with type `$name` on type object type `$n`.", Some(caret))
             case Some(impl) =>
-              val i: Interface[G, _] = impl.implementation.value
+              val i: Interface[G, _] = impl.value
               F.pure(i.asInstanceOf[Interface[G, Any]])
           }
         // What types implement this interface?
@@ -879,7 +884,7 @@ object PreparedQuery {
         case i @ Interface(n, _, _, _) =>
           i.implementsMap.get(name) match {
             case Some(impl) =>
-              val i: Interface[G, _] = impl.implementation.value
+              val i: Interface[G, _] = impl.value
               F.pure(i.asInstanceOf[Interface[G, Any]])
             case None =>
               raiseOpt(
@@ -888,7 +893,10 @@ object PreparedQuery {
                 caret.some
               ).flatMap { m =>
                 raiseOpt(
-                  m.get(name).map { case (x, _) => x },
+                  m.get(name).map {
+                    case Right((x, _)) => x
+                    case Left(i)       => i
+                  },
                   s"`$name` does not implement interface `$n`, possible implementations are ${m.keySet.mkString(", ")}.",
                   caret.some
                 )
@@ -911,7 +919,7 @@ object PreparedQuery {
                       .mkString(", ")}.",
                     caret.some
                   )
-                case Some(x) => F.pure(x.implementation.value.asInstanceOf[Interface[G, Any]])
+                case Some(x) => F.pure(x.value.asInstanceOf[Interface[G, Any]])
               }
           }
       }

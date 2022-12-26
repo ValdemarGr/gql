@@ -72,25 +72,8 @@ object Goi {
         else None
     )
 
-  def addIdWith[F[_], A](resolver: Resolver[F, A, String], tpe: Interface[F, A], specify: Node => Option[A])(implicit
-      F: Sync[F]
-  ): Interface[F, A] =
-    tpe
-      .copy(implementations = makeImpl[F, A](specify) :: tpe.implementations)
-      .addFields("id" -> field(resolver.evalMap(s => makeId[F](tpe.name, s))))
-
-  def addId[F[_], A, B](resolver: Resolver[F, A, B], t: Interface[F, A])(implicit
-      F: Sync[F],
-      idCodec: IDCodec[B]
-  ): Interface[F, A] = {
-    addIdWith[F, A](
-      resolver.map(encodeString[B]),
-      t,
-      x =>
-        if (x.typename === t.name) Some(x.value.asInstanceOf[A])
-        else None
-    )
-  }
+  def addId[F[_], A](t: Interface[F, A]): Interface[F, A] =
+    t.addAbstractFields("id" -> abst[F, ID[String]])
 
   def decodeInput[A](codec: IDCodec[A], elems: Array[String]) = {
     val xs = codec.codecs

@@ -62,6 +62,9 @@ object SchemaShape {
 
   def make[F[_]] = new PartiallyAppliedSchemaShape[F]
 
+  type Specify = ? => Option[?]
+  type InterfaceImpl[F[_]] = Either[Interface[F, ?], (Type[F, ?], Specify)]
+
   final case class DiscoveryState[F[_]](
       inputs: Map[String, InToplevel[?]],
       outputs: Map[String, OutToplevel[F, ?]],
@@ -74,7 +77,7 @@ object SchemaShape {
       //
       // There is no implicit interface implementations; all transitive implementations should be explicit
       // (https://spec.graphql.org/draft/#IsValidImplementation())
-      implementations: Map[String, Map[String, (ObjectLike[F, Any], Any => Option[Any])]]
+      implementations: Map[String, Map[String, InterfaceImpl[F]]]
   )
 
   def discover[F[_]](shape: SchemaShape[F, ?, ?, ?]): DiscoveryState[F] = {
@@ -94,6 +97,22 @@ object SchemaShape {
         else S.modify(_.copy(outputs = s.outputs + (tl.name -> tl))) *> ga
       }
 
+    type InterfaceName = String
+    def addValues[G[_]](values: List[(InterfaceName, InterfaceImpl[F])])(implicit S: Stateful[G, DiscoveryState[F]]): G[Unit] = {
+      S.modify { s =>
+        val withNew = values.foldLeft(s.implementations) { case (accum, (interfaceName, next)) =>
+          val name = next.fold(_.name, { case (t, _) => t.name })
+          val entry = name -> next
+          accum.get(interfaceName) match {
+            case None    => accum + (interfaceName -> Map(entry))
+            case Some(m) => accum + (interfaceName -> (m + entry))
+          }
+        }
+
+        s.copy(implementations = withNew)
+      }
+    }
+
     def goOutput[G[_]](out: Out[F, ?])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]]): G[Unit] =
       out match {
         case OutArr(of, _, _) => goOutput[G](of.asInstanceOf[Out[F, Any]])
@@ -108,22 +127,15 @@ object SchemaShape {
 
             t match {
               case ol: ObjectLike[F, ?] =>
-                val xs = ol.implementsMap.values.toList
-                S.modify { s =>
-                  val newImpls = xs.foldLeft(s.implementations) { case (accum, next) =>
-                    val name = next.implementation.value.name
-                    val thisEntry =
-                      (ol.name -> ((ol, next.specify)).asInstanceOf[(gql.ast.ObjectLike[F, Any], Any => Option[Any])])
-                    accum.get(name) match {
-                      case None    => accum + (name -> Map(thisEntry))
-                      case Some(m) => accum + (name -> (m + thisEntry))
-                    }
-                  }
-
-                  s.copy(implementations = newImpls)
-                } >>
+                val values: List[(Interface[F, ?], InterfaceImpl[F])] = ol match {
+                  case t: Type[F, ?] =>
+                    t.implementations.map(x => (x.implementation.value -> Right((t, x.specify))))
+                  case i: Interface[F, ?] =>
+                    i.implementations.map(x => (x.value -> Left(i)))
+                }
+                addValues[G](values.map { case (i, ii) => i.name -> ii }) >>
                   handleFields(ol) >>
-                  xs.traverse_(impl => goOutput[G](impl.implementation.value))
+                  values.traverse_ { case (i, _) => goOutput[G](i) }
               case Union(_, instances, _) =>
                 instances.toList.traverse_(inst => goOutput[G](inst.tpe.value))
               case _ => G.unit
@@ -394,6 +406,11 @@ object SchemaShape {
     def validateToplevel[G[_]](tl: OutToplevel[F, ?])(implicit G: Monad[G], S: Stateful[G, ValidationState]): G[Unit] = {
       useOutputEdge[G](tl) {
         validateTypeName[G](tl.name) >> {
+          // def checkOl(ol: ObjectLike[G, ?]): G[Unit] = {
+          //     allUnique[G](DuplicateInterfaceInstance.apply, t.implementations.map(_.implementation.value.name)) >>
+          //       validateFields[G](fields.map { case (k, v) => k -> v.asAbstract })
+          // }
+
           tl match {
             case Union(_, types, _) =>
               val ols = types.toList.map(_.tpe)
@@ -401,8 +418,12 @@ object SchemaShape {
               allUnique[G](DuplicateUnionInstance.apply, ols.map(_.value.name)) >>
                 ols.traverse_(x => validateOutput[G](x.value))
             // TODO on both (interface extension)
-            case Type(_, fields, _, _)      => validateFields[G](fields.map { case (k, v) => k -> v.asAbstract })
-            case Interface(_, fields, _, _) => validateFields[G](fields)
+            case t @ Type(_, fields, _, _) =>
+              allUnique[G](DuplicateInterfaceInstance.apply, t.implementations.map(_.implementation.value.name)) >>
+                validateFields[G](fields.map { case (k, v) => k -> v.asAbstract })
+            case i @ Interface(_, fields, _, _) =>
+              allUnique[G](DuplicateInterfaceInstance.apply, i.implementations.map(_.value.name)) >>
+                validateFields[G](fields)
             // case Interface(_, instances, fields, _, _) =>
             //   val insts = instances
 
@@ -757,7 +778,7 @@ object SchemaShape {
         case oi: TypeInfo.OutInfo =>
           oi.t match {
             case Type(_, _, impls, _)      => impls.map[TypeInfo](impl => TypeInfo.OutInfo(impl.implementation.value)).some
-            case Interface(_, _, impls, _) => impls.map[TypeInfo](impl => TypeInfo.OutInfo(impl.implementation.value)).some
+            case Interface(_, _, impls, _) => impls.map[TypeInfo](impl => TypeInfo.OutInfo(impl.value)).some
             case _                         => None
           }
         case _ => None
@@ -770,7 +791,10 @@ object SchemaShape {
                 .get(name)
                 .toList
                 .flatMap(_.values.toList)
-                .map { case (ol, _) => TypeInfo.OutInfo(ol) }
+                .map {
+                  case Right((ol, _)) => TypeInfo.OutInfo(ol)
+                  case Left(i)        => TypeInfo.OutInfo(i)
+                }
                 .some
             case Union(_, instances, _) => instances.toList.map[TypeInfo](x => TypeInfo.OutInfo(x.tpe.value)).some
             case _                      => None

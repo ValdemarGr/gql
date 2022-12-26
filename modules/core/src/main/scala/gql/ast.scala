@@ -48,19 +48,8 @@ object ast extends AstImplicits.Implicits {
     def abstractFieldMap: Map[String, AbstractField[F, ?, ?]]
   }
 
-  sealed trait Concrete[F[_], A] extends Selectable[F, A] {
-    def concreteFields: List[(String, Field[F, A, ?, ?])]
-
-    def concreteFieldsMap: Map[String, Field[F, A, ?, ?]]
-
-    def abstractFields: List[(String, AbstractField[F, ?, ?])] =
-      concreteFields.map { case (k, v) => k -> v.asAbstract }
-
-    def abstractFieldMap: Map[String, AbstractField[F, ?, ?]] = abstractFields.toMap
-  }
-
   sealed trait ObjectLike[F[_], A] extends Selectable[F, A] {
-    def implementsMap: Map[String, Implementation[F, A, ?]]
+    def implementsMap: Map[String, Eval[Interface[F, ?]]]
   }
 
   final case class Type[F[_], A](
@@ -69,7 +58,7 @@ object ast extends AstImplicits.Implicits {
       implementations: List[Implementation[F, A, ?]],
       description: Option[String] = None
   ) extends ObjectLike[F, A]
-      with Concrete[F, A] {
+      with Selectable[F, A] {
     def document(description: String): Type[F, A] = copy(description = Some(description))
 
     lazy val fieldsList: List[(String, Field[F, A, ?, ?])] = fields.toList
@@ -80,7 +69,12 @@ object ast extends AstImplicits.Implicits {
 
     lazy val concreteFieldsMap = fieldMap
 
-    lazy val implementsMap = implementations.map(i => i.implementation.value.name -> i).toMap
+    lazy val implementsMap = implementations.map(i => i.implementation.value.name -> i.implementation).toMap
+
+    lazy val abstractFields: List[(String, AbstractField[F, ?, ?])] =
+      concreteFields.map { case (k, v) => k -> v.asAbstract }
+
+    lazy val abstractFieldMap: Map[String, AbstractField[F, ?, ?]] = abstractFields.toMap
 
     def mapK[G[_]: Functor](fk: F ~> G): Type[G, A] =
       Type(name, fields.map { case (k, v) => k -> v.mapK(fk) }, implementations.map(_.mapK(fk)), description)
@@ -128,14 +122,14 @@ object ast extends AstImplicits.Implicits {
   final case class Interface[F[_], A](
       name: String,
       fields: NonEmptyList[(String, AbstractField[F, ?, ?])],
-      implementations: List[Implementation[F, A, ?]],
+      implementations: List[Eval[Interface[F, ?]]],
       description: Option[String] = None
   ) extends ObjectLike[F, A] {
     def document(description: String): Interface[F, A] = copy(description = Some(description))
 
     override def mapK[G[_]: Functor](fk: F ~> G): Interface[G, A] =
       copy[G, A](
-        implementations = implementations.map(_.mapK(fk)),
+        implementations = implementations.map(_.map(_.mapK(fk))),
         fields = fields.map { case (k, v) => k -> v.mapK(fk) }
       )
 
@@ -143,7 +137,7 @@ object ast extends AstImplicits.Implicits {
 
     lazy val abstractFieldMap = abstractFields.toMap
 
-    lazy val implementsMap = implementations.map(i => i.implementation.value.name -> i).toMap
+    lazy val implementsMap = implementations.map(i => i.value.name -> i).toMap
   }
 
   final case class Scalar[F[_], A](

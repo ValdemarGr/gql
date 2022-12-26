@@ -281,16 +281,13 @@ object dsl {
   }
 
   implicit class InterfaceSyntax[F[_], A](val tpe: Interface[F, A]) extends AnyVal {
-    def implements[B](pf: PartialFunction[B, A])(implicit interface: => Interface[F, B]): Interface[F, A] =
-      tpe.copy(implementations = Implementation(Eval.later(interface))(pf.lift) :: tpe.implementations)
+    def implements[B](implicit interface: => Interface[F, B]): Interface[F, A] =
+      tpe.copy(implementations = Eval.later(interface) :: tpe.implementations)
 
-    def subtypeOf[B](implicit ev: A <:< B, tag: ClassTag[A], interface: => Interface[F, B]): Interface[F, A] =
-      implements[B] { case a: A => a }(interface)
-
-    def addAbstractFields(xs: (String, AbstractField[F, ?, ?])*) =
+    def addAbstractFields(xs: (String, AbstractField[F, ?, ?])*): Interface[F, A] =
       tpe.copy(fields = tpe.fields concat xs.toList)
 
-    def addFields(xs: (String, Field[F, A, ?, ?])*) =
+    def addFields(xs: (String, Field[F, A, ?, ?])*): Interface[F, A] =
       tpe.copy(fields = tpe.fields concat xs.toList.map { case (k, v) => k -> v.asAbstract })
   }
 
