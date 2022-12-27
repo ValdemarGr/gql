@@ -215,9 +215,9 @@ object SchemaShape {
     final case class CyclicInterfaceImplementation(typename: String) extends ValidationError {
       def message: String = s"`$typename` is an interface implementation of itself."
     }
-    final case class TransitiveInterfacesNotImplemented(typename: String, interfaces: Set[String]) extends ValidationError {
+    final case class TransitiveInterfacesNotImplemented(typename: String, interfaces: List[(String, String)]) extends ValidationError {
       def message: String =
-        s"$typename does not implement all interfaces ${interfaces.map(i => s"`$i`").mkString(",")} of the transitive interfaces."
+        s"$typename does not implement all interfaces: ${interfaces.map{ case (through, name) => s"`$name` through `$through`" }.mkString(" and ")}."
     }
     final case class WrongInterfaceFieldType(sourceInterface: String, fieldName: String, expected: String, actual: String)
         extends ValidationError {
@@ -406,10 +406,23 @@ object SchemaShape {
     def validateToplevel[G[_]](tl: OutToplevel[F, ?])(implicit G: Monad[G], S: Stateful[G, ValidationState]): G[Unit] = {
       useOutputEdge[G](tl) {
         validateTypeName[G](tl.name) >> {
-          // def checkOl(ol: ObjectLike[G, ?]): G[Unit] = {
-          //     allUnique[G](DuplicateInterfaceInstance.apply, t.implementations.map(_.implementation.value.name)) >>
-          //       validateFields[G](fields.map { case (k, v) => k -> v.asAbstract })
-          // }
+          def checkOl(ol: ObjectLike[F, ?]): G[Unit] = {
+            val uniqF = allUnique[G](DuplicateInterfaceInstance.apply, ol.implementsMap.values.toList.map(_.value.name))
+            val fieldsF = validateFields[G](ol.abstractFieldsNel)
+            // there must be no transitive interface implementations
+            val transitiveInterfaceF = {
+              val explicit = ol.implementsMap.keySet
+              ol.implementsMap.values.toList.traverse_{ e =>
+                val transitive = e.value.implementsMap.keySet
+                val ys = transitive -- explicit
+                if (ys.nonEmpty) raise[G](TransitiveInterfacesNotImplemented(tl.name, ys.toList tupleLeft e.value.name))
+                else G.unit
+              }
+            }
+            // fields must be supersets of the interface fields
+            // TODO
+            uniqF >> fieldsF >> transitiveInterfaceF
+          }
 
           tl match {
             case Union(_, types, _) =>
@@ -418,19 +431,8 @@ object SchemaShape {
               allUnique[G](DuplicateUnionInstance.apply, ols.map(_.value.name)) >>
                 ols.traverse_(x => validateOutput[G](x.value))
             // TODO on both (interface extension)
-            case t @ Type(_, fields, _, _) =>
-              allUnique[G](DuplicateInterfaceInstance.apply, t.implementations.map(_.implementation.value.name)) >>
-                validateFields[G](fields.map { case (k, v) => k -> v.asAbstract })
-            case i @ Interface(_, fields, _, _) =>
-              allUnique[G](DuplicateInterfaceInstance.apply, i.implementations.map(_.value.name)) >>
-                validateFields[G](fields)
-            // case Interface(_, instances, fields, _, _) =>
-            //   val insts = instances
-
-            //   val ols = insts.toList.map(_.ol)
-            //   allUnique[G](DuplicateInterfaceInstance, ols.map(_.value.name)) >>
-            //     ols.traverse_(x => validateOutput[G](x.value)) >>
-            //     validateFields[G](fields)
+            case t @ Type(_, _, _, _) => checkOl(t)
+            case i @ Interface(_, _, _, _) => checkOl(i)
             case Enum(_, _, _)      => G.unit
             case Scalar(_, _, _, _) => G.unit
           }

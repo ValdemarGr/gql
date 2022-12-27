@@ -50,6 +50,8 @@ object ast extends AstImplicits.Implicits {
 
   sealed trait ObjectLike[F[_], A] extends Selectable[F, A] {
     def implementsMap: Map[String, Eval[Interface[F, ?]]]
+
+    def abstractFieldsNel: NonEmptyList[(String, AbstractField[F, ?, ?])]
   }
 
   final case class Type[F[_], A](
@@ -70,9 +72,10 @@ object ast extends AstImplicits.Implicits {
     lazy val concreteFieldsMap = fieldMap
 
     lazy val implementsMap = implementations.map(i => i.implementation.value.name -> i.implementation).toMap
-
-    lazy val abstractFields: List[(String, AbstractField[F, ?, ?])] =
-      concreteFields.map { case (k, v) => k -> v.asAbstract }
+    
+    lazy val abstractFieldsNel = fields.map { case (k, v) => k -> v.asAbstract }
+    
+    lazy val abstractFields: List[(String, AbstractField[F, ?, ?])] = abstractFieldsNel.toList
 
     lazy val abstractFieldMap: Map[String, AbstractField[F, ?, ?]] = abstractFields.toMap
 
@@ -133,9 +136,11 @@ object ast extends AstImplicits.Implicits {
         fields = fields.map { case (k, v) => k -> v.mapK(fk) }
       )
 
+    lazy val abstractFieldsNel = fields
+
     lazy val abstractFields = fields.toList
 
-    lazy val abstractFieldMap = abstractFields.toMap
+    lazy val abstractFieldMap = abstractFields.toList.toMap
 
     lazy val implementsMap = implementations.map(i => i.value.name -> i).toMap
   }
