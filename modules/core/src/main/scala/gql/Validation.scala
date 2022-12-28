@@ -305,7 +305,7 @@ object Validation {
           }
           // fields must be supersets of the interface fields
           // TODO
-          implements.traverse_ { i =>
+          val fieldSubtypeConstraintsF = implements.traverse_ { i =>
             i.value.fields.traverse_ { case (k, v) =>
               ol.abstractFieldMap.get(k) match {
                 case None =>
@@ -320,13 +320,14 @@ object Validation {
 
                   val actualArg = f.arg
                   val expectedArg = v.arg
+                  val _ = (actualArg, expectedArg)
 
                   verifyFieldTypeF
               }
             }
           }
 
-          uniqF >> fieldsF >> transitiveInterfaceF
+          uniqF >> fieldsF >> transitiveInterfaceF >> fieldSubtypeConstraintsF
         }
 
         tl match {
