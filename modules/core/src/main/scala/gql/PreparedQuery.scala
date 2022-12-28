@@ -107,7 +107,7 @@ object PreparedQuery {
     def name: String
   }
   object PrepEdge {
-    final case class ASTEdge(edge: SchemaShape.ValidationEdge) extends PrepEdge {
+    final case class ASTEdge(edge: Validation.Edge) extends PrepEdge {
       def name: String = edge.name
     }
     final case class FragmentEdge(name: String) extends PrepEdge
@@ -261,19 +261,19 @@ object PreparedQuery {
     S.inspect(_.cursor.add(edge)).flatMap(ambientAt[F, A](_)(fa))
 
   def ambientField[F[_]: Monad, A](name: String)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
-    ambientEdge[F, A](PrepEdge.ASTEdge(SchemaShape.ValidationEdge.Field(name)))(fa)
+    ambientEdge[F, A](PrepEdge.ASTEdge(Validation.Edge.Field(name)))(fa)
 
   def ambientOutputType[F[_]: Monad, A](name: String)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
-    ambientEdge[F, A](PrepEdge.ASTEdge(SchemaShape.ValidationEdge.OutputType(name)))(fa)
+    ambientEdge[F, A](PrepEdge.ASTEdge(Validation.Edge.OutputType(name)))(fa)
 
   def ambientArg[F[_]: Monad, A](name: String)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
-    ambientEdge[F, A](PrepEdge.ASTEdge(SchemaShape.ValidationEdge.Arg(name)))(fa)
+    ambientEdge[F, A](PrepEdge.ASTEdge(Validation.Edge.Arg(name)))(fa)
 
   def ambientIndex[F[_]: Monad, A](i: Int)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
-    ambientEdge[F, A](PrepEdge.ASTEdge(SchemaShape.ValidationEdge.Index(i)))(fa)
+    ambientEdge[F, A](PrepEdge.ASTEdge(Validation.Edge.Index(i)))(fa)
 
   def ambientInputType[F[_]: Monad, A](name: String)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
-    ambientEdge[F, A](PrepEdge.ASTEdge(SchemaShape.ValidationEdge.InputType(name)))(fa)
+    ambientEdge[F, A](PrepEdge.ASTEdge(Validation.Edge.InputType(name)))(fa)
 
   def modifyError[F[_], A](f: PositionalError => PositionalError)(fa: F[A])(implicit F: MonadError[F, NonEmptyChain[PositionalError]]) =
     F.adaptError(fa)(_.map(f))
