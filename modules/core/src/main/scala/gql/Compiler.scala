@@ -38,16 +38,27 @@ object CompilationError {
 
 sealed trait Application[F[_]] {
   def mapK[G[_]](f: F ~> G): Application[G]
+
+  def modify(f: QueryResult => QueryResult)(implicit F: Functor[F]): Application[F]
 }
 object Application {
   final case class Query[F[_]](run: F[QueryResult]) extends Application[F] {
     override def mapK[G[_]](f: F ~> G): Query[G] = Query(f(run))
+
+    override def modify(f: QueryResult => QueryResult)(implicit F: Functor[F]): Query[F] =
+      Query(run.map(f))
   }
   final case class Mutation[F[_]](run: F[QueryResult]) extends Application[F] {
     override def mapK[G[_]](f: F ~> G): Mutation[G] = Mutation(f(run))
+
+    override def modify(f: QueryResult => QueryResult)(implicit F: Functor[F]): Mutation[F] =
+      Mutation(run.map(f))
   }
   final case class Subscription[F[_]](run: fs2.Stream[F, QueryResult]) extends Application[F] {
     override def mapK[G[_]](f: F ~> G): Subscription[G] = Subscription(run.translate(f))
+
+    override def modify(f: QueryResult => QueryResult)(implicit F: Functor[F]): Subscription[F] =
+      Subscription(run.map(f))
   }
 }
 
