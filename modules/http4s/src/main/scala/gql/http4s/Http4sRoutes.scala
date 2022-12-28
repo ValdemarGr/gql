@@ -32,40 +32,49 @@ final case class Http4sCompilerParametes(
 )
 
 object Http4sRoutes {
-  protected implicit lazy val cd: Decoder[CompilerParameters] =
+  implicit protected lazy val cd: Decoder[CompilerParameters] =
     io.circe.generic.semiauto.deriveDecoder[CompilerParameters]
-  protected implicit def ed[F[_]: Concurrent]: EntityDecoder[F, CompilerParameters] =
+  implicit protected def ed[F[_]: Concurrent]: EntityDecoder[F, CompilerParameters] =
     org.http4s.circe.jsonOf[F, CompilerParameters]
 
-  type Compiler[F[_]] = Http4sCompilerParametes => F[Either[Response[F], Compiler.Outcome[F]]]
+  type SC[F[_], A] = F[Either[Response[F], A]]
 
-  def sync[F[_]](
-      compiler: Compiler[F],
-      path: String = "graphql"
-  )(implicit F: Concurrent[F]): HttpRoutes[F] = {
+  def syncFull[F[_]](full: Headers => SC[F, CompilerParameters => SC[F, Compiler.Outcome[F]]], path: String = "graphql")(implicit
+      F: Concurrent[F]
+  ): HttpRoutes[F] = {
     val d = new Http4sDsl[F] {}
     import d._
     import io.circe.syntax._
     import org.http4s.circe._
 
     HttpRoutes.of[F] { case r @ POST -> Root / `path` =>
-      r.as[CompilerParameters].flatMap { params =>
-        compiler(Http4sCompilerParametes(params, r.headers)).flatMap {
-          case Left(response)                                => F.pure(response)
-          case Right(Left(pe: CompilationError.Parse))       => Ok(pe.asGraphQL.asJson)
-          case Right(Left(pe: CompilationError.Preparation)) => Ok(pe.asGraphQL.asJson)
-          case Right(Right(app)) =>
-            val fa = app match {
-              case Application.Mutation(run)     => run
-              case Application.Query(run)        => run
-              case Application.Subscription(run) => run.take(1).compile.lastOrError
-            }
+      val fa = full(r.headers)
+      F.flatMap(fa) {
+        case Left(resp) => F.pure(resp)
+        case Right(f) =>
+          r.as[CompilerParameters].flatMap { params =>
+            F.flatMap(f(params)) {
+              case Left(resp)                                    => F.pure(resp)
+              case Right(Left(pe: CompilationError.Parse))       => Ok(pe.asGraphQL.asJson)
+              case Right(Left(pe: CompilationError.Preparation)) => Ok(pe.asGraphQL.asJson)
+              case Right(Right(app)) =>
+                val fa = app match {
+                  case Application.Mutation(run)     => run
+                  case Application.Query(run)        => run
+                  case Application.Subscription(run) => run.take(1).compile.lastOrError
+                }
 
-            fa.flatMap(qr => Ok(qr.asGraphQL.asJson))
-        }
+                fa.flatMap(qr => Ok(qr.asGraphQL.asJson))
+            }
+          }
       }
     }
   }
+
+  def syncSimple[F[_]](
+      compile: CompilerParameters => F[Either[Response[F], Compiler.Outcome[F]]],
+      path: String = "graphql"
+  )(implicit F: Concurrent[F]) = syncFull[F]({ _ => F.pure(Right(compile)) }, path)
 
   def ws[F[_]](
       getCompiler: GraphqlWS.GetCompiler[F],
@@ -93,7 +102,7 @@ object Http4sRoutes {
               // case c: WebSocketFrame.Close if c.closeCode == 1000 => F.pure(None)
               // case other                                          => F.raiseError(new Exception(s"Unexpected frame: $other"))
             }.unNone
-              .evalMap { x => F.fromEither(io.circe.parser.decode[GraphqlWS.FromClient](x)) }
+              .evalMap(x => F.fromEither(io.circe.parser.decode[GraphqlWS.FromClient](x)))
               .through(fromClient)
           )
       }
