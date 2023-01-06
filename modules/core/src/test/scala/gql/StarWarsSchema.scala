@@ -122,7 +122,7 @@ object StarWarsSchema {
     )
 
     implicit lazy val character: Interface[IO, Character] =
-      interfaceFrom[IO, Character]("Character", characterFields)
+      interfaceFromNel[IO, Character]("Character", characterFields)
 
     implicit lazy val human: Type[IO, Human] =
       tpe[IO, Human](

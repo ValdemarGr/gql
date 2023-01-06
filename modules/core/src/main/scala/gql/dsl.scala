@@ -23,6 +23,11 @@ import cats.data._
 import scala.reflect.ClassTag
 
 object dsl {
+  def tpeNel[F[_], A](
+      name: String,
+      entries: NonEmptyList[(String, Field[F, A, ?, ?])],
+  ) = Type[F, A](name, entries, Nil)
+
   def tpe[F[_], A](
       name: String,
       hd: (String, Field[F, A, ?, ?]),
@@ -193,7 +198,7 @@ object dsl {
   def enumType[F[_], A](name: String, hd: (String, EnumValue[? <: A]), tl: (String, EnumValue[? <: A])*) =
     Enum[F, A](name, NonEmptyList(hd, tl.toList))
 
-  def interface[F[_], A](
+  def interfaceNel[F[_], A](
       name: String,
       fields: NonEmptyList[(String, AbstractField[F, ?, ?])]
   ): Interface[F, A] = Interface[F, A](name, fields, Nil)
@@ -202,18 +207,18 @@ object dsl {
       name: String,
       hd: (String, AbstractField[F, ?, ?]),
       tl: (String, AbstractField[F, ?, ?])*
-  ): Interface[F, A] = interface[F, A](name, NonEmptyList(hd, tl.toList))
+  ): Interface[F, A] = interfaceNel[F, A](name, NonEmptyList(hd, tl.toList))
 
-  def interfaceFrom[F[_], A](
+  def interfaceFromNel[F[_], A](
       name: String,
       fields: NonEmptyList[(String, Field[F, A, ?, ?])]
-  ): Interface[F, A] = interface[F, A](name, fields.map { case (k, v) => k -> v.asAbstract })
+  ): Interface[F, A] = interfaceNel[F, A](name, fields.map { case (k, v) => k -> v.asAbstract })
 
   def interfaceFrom[F[_], A](
       name: String,
       hd: (String, Field[F, A, ?, ?]),
       tl: (String, Field[F, A, ?, ?])*
-  ): Interface[F, A] = interfaceFrom[F, A](name, NonEmptyList(hd, tl.toList))
+  ): Interface[F, A] = interfaceFromNel[F, A](name, NonEmptyList(hd, tl.toList))
 
   def union[F[_], A](name: String) = PartiallyAppliedUnion0[F, A](name)
 
