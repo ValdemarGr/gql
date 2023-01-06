@@ -41,7 +41,7 @@ object Validation {
       def message: String = s"Duplicate interface instance `$conflict`."
     }
     final case class InvalidInput(pe: PreparedQuery.PositionalError) extends Error {
-      def message: String = s"Invalid argument input: ${pe.message}."
+      def message: String = s"Invalid argument input: ${pe.message}"
     }
     final case class MissingInterfaceFields(
         typename: String,
