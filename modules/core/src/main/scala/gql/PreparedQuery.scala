@@ -103,18 +103,8 @@ object PreparedQuery {
     }
   }
 
-  sealed trait PrepEdge {
-    def name: String
-  }
-  object PrepEdge {
-    final case class ASTEdge(edge: Validation.Edge) extends PrepEdge {
-      def name: String = edge.name
-    }
-    final case class FragmentEdge(name: String) extends PrepEdge
-  }
-
-  final case class PrepCursor(position: Chain[PrepEdge]) {
-    def add(edge: PrepEdge): PrepCursor = PrepCursor(position append edge)
+  final case class PrepCursor(position: Chain[Validation.Edge]) {
+    def add(edge: Validation.Edge): PrepCursor = PrepCursor(position append edge)
     def pop: PrepCursor = PrepCursor(Chain.fromOption(position.initLast).flatMap { case (xs, _) => xs })
   }
 
@@ -257,23 +247,23 @@ object PreparedQuery {
       S.modify(_.copy(cursor = cursor)) *> fa <* S.modify(_.copy(cursor = c))
     }
 
-  def ambientEdge[F[_]: Monad, A](edge: PrepEdge)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
+  def ambientEdge[F[_]: Monad, A](edge: Validation.Edge)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
     S.inspect(_.cursor.add(edge)).flatMap(ambientAt[F, A](_)(fa))
 
   def ambientField[F[_]: Monad, A](name: String)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
-    ambientEdge[F, A](PrepEdge.ASTEdge(Validation.Edge.Field(name)))(fa)
+    ambientEdge[F, A](Validation.Edge.Field(name))(fa)
 
   def ambientOutputType[F[_]: Monad, A](name: String)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
-    ambientEdge[F, A](PrepEdge.ASTEdge(Validation.Edge.OutputType(name)))(fa)
+    ambientEdge[F, A](Validation.Edge.OutputType(name))(fa)
 
   def ambientArg[F[_]: Monad, A](name: String)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
-    ambientEdge[F, A](PrepEdge.ASTEdge(Validation.Edge.Arg(name)))(fa)
+    ambientEdge[F, A](Validation.Edge.Arg(name))(fa)
 
   def ambientIndex[F[_]: Monad, A](i: Int)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
-    ambientEdge[F, A](PrepEdge.ASTEdge(Validation.Edge.Index(i)))(fa)
+    ambientEdge[F, A](Validation.Edge.Index(i))(fa)
 
   def ambientInputType[F[_]: Monad, A](name: String)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
-    ambientEdge[F, A](PrepEdge.ASTEdge(Validation.Edge.InputType(name)))(fa)
+    ambientEdge[F, A](Validation.Edge.InputType(name))(fa)
 
   def modifyError[F[_], A](f: PositionalError => PositionalError)(fa: F[A])(implicit F: MonadError[F, NonEmptyChain[PositionalError]]) =
     F.adaptError(fa)(_.map(f))
@@ -941,7 +931,7 @@ object PreparedQuery {
   def inName[A](in: In[A], inOption: Boolean = false): String = {
     val suffix = if (inOption) "" else "!"
     val rec = (in: @unchecked) match {
-      case InArr(of, _)          => s"${inName(of)}"
+      case InArr(of, _)          => s"[${inName(of)}]"
       case Enum(name, _, _)      => name
       case Scalar(name, _, _, _) => name
       case InOpt(of)             => s"${inName(of, inOption = true)}"

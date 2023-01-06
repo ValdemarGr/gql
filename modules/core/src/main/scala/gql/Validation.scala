@@ -70,14 +70,62 @@ object Validation {
       def message: String =
         s"Field '$fieldName' in `$typename` is of type `$actual` but expected `$expected` from interface `$sourceInterface`."
     }
-    final case class WrongInterfaceArgument(
+    final case class ArgumentNotDefinedInInterface(
         typename: String,
         sourceInterface: String,
         fieldName: String,
+        argName: String
+    ) extends Error {
+      def message: String =
+        s"Argument '$argName' was defined in field '$fieldName' in type `$typename` but was not defined in interface `$sourceInterface`."
+    }
+    final case class MissingInterfaceFieldArgument(
+        typename: String,
+        sourceInterface: String,
+        fieldName: String,
+        argName: String
+    ) extends Error {
+      def message: String =
+        s"Argument '$argName' was defined in field '$fieldName' in interface `$sourceInterface` but was not defined in type `$typename`."
+    }
+    final case class InterfaceImplementationWrongArgType(
+        typename: String,
+        sourceInterface: String,
+        fieldName: String,
+        argName: String,
         expected: String,
         actual: String
     ) extends Error {
-      def message: String = s"Field '$fieldName' in `$typename` has argument ''"
+      def message: String =
+        s"Argument '$argName' in field '$fieldName' in type `$typename` is of type `$actual` but expected `$expected` from interface `$sourceInterface`."
+    }
+    final case class InterfaceDoesNotDefineDefaultArg(
+        typename: String,
+        sourceInterface: String,
+        fieldName: String,
+        argName: String
+    ) extends Error {
+      def message: String =
+        s"The argument '$argName' in field '$fieldName' in type `$typename` has a default value, but the interface `$sourceInterface` does not define a default value."
+    }
+    final case class InterfaceImplementationMissingDefaultArg(
+        typename: String,
+        sourceInterface: String,
+        fieldName: String,
+        argName: String
+    ) extends Error {
+      def message: String =
+        s"The argument '$argName' in field '$fieldName' in type `$typename` does not have a default value, but the interface `$sourceInterface` defines a default value."
+    }
+    final case class InterfaceImplementationDefaultArgDoesNotMatch(
+        typename: String,
+        sourceInterface: String,
+        fieldName: String,
+        argName: String,
+        msg: String
+    ) extends Error {
+      def message: String =
+        s"The default value of the argument '$argName' in field '$fieldName' in type `$typename` is not equal to the one defined in `$sourceInterface`. The error found was: $msg"
     }
   }
 
@@ -254,7 +302,7 @@ object Validation {
               .value match {
               case Left(errs) =>
                 errs.traverse_ { err =>
-                  val suf = err.position.position.collect { case PreparedQuery.PrepEdge.ASTEdge(x) => x }
+                  val suf = err.position.position
                   raise(InvalidInput(err), suf)
                 }
               case Right(_) => G.unit
@@ -318,11 +366,44 @@ object Validation {
                       raise[F, G](Error.WrongInterfaceFieldType(tl.name, i.value.name, k, expectedStr, actualStr))
                     else G.unit
 
-                  val actualArg = f.arg
-                  val expectedArg = v.arg
-                  val _ = (actualArg, expectedArg)
+                  val actualArg: Chain[ArgValue[?]] = f.arg.entries
+                  val expectedArg: Chain[ArgValue[?]] = v.arg.entries
+                  val comb = actualArg.map(x => x.name -> x) align expectedArg.map(x => x.name -> x)
+                  val verifyArgsF = comb.traverse_{
+                    // Only actual; shouldn't occur
+                    case Ior.Left((argName, _)) => raise[F, G](Error.ArgumentNotDefinedInInterface(ol.name, i.value.name, k, argName))
+                    // Only expected; impl type should implement argument
+                    case Ior.Right((argName, _)) => raise[F, G](Error.MissingInterfaceFieldArgument(ol.name, i.value.name, k, argName))
+                    case Ior.Both((argName, l), (_, r)) => 
+                      val lName = PreparedQuery.inName(l.input.value)
+                      val rName = PreparedQuery.inName(r.input.value)
+                      val verifyTypesF =
+                        if (lName != rName)
+                          raise[F, G](Error.InterfaceImplementationWrongArgType(ol.name, i.value.name, k, argName, rName, lName))
+                        else G.unit
 
-                  verifyFieldTypeF
+                      val defaultMatchF = (l.defaultValue, r.defaultValue) match {
+                        case (None, None) => G.unit
+                        case (Some(_), None) => raise[F, G](Error.InterfaceDoesNotDefineDefaultArg(ol.name, i.value.name, k, argName))
+                        case (None, Some(_)) => raise[F, G](Error.InterfaceImplementationMissingDefaultArg(ol.name, i.value.name, k, argName))
+                        case (Some(ld), Some(rd)) => 
+                          PreparedQuery
+                            .compareValues[PreparedQuery.H](PreparedQuery.valueToParserValue(ld), PreparedQuery.valueToParserValue(rd), None)
+                            .runA(PreparedQuery.Prep.empty)
+                            .value
+                            .value
+                            .swap
+                            .toOption
+                            .traverse_(_.traverse_{ pe => 
+                              val suf = pe.position.position
+                              raise[F, G](Error.InterfaceImplementationDefaultArgDoesNotMatch(ol.name, i.value.name, k, argName, pe.message), suf)
+                            })
+                      }
+
+                      verifyTypesF >> defaultMatchF
+                  }
+
+                  verifyFieldTypeF >> verifyArgsF
               }
             }
           }
