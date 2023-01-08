@@ -342,6 +342,158 @@ class InterpreterImpl[F[_]](
   def submit(name: String, duration: FiniteDuration, size: Int): F[Unit] =
     sup.supervise(stats.updateStats(name, duration, size)).void
 
+  // def runEdge2_(
+  //     inputs: Chain[EvalNode[Any]],
+  //     edges: List[PreparedEdge[F]],
+  //     cont: Prepared[F, Any]
+  // ): W[Chain[Option[EvalNode[Any]]]] =
+  //   edges match {
+  //     case Nil                                                          => W.pure(inputs)
+  //     case PreparedQuery.PreparedEdge.Skip(specify, relativeJump) :: xs =>
+  //       // Partition into skipping and non-skipping
+  //       // Run the non-skipping first so they are in sync
+  //       // Then continue with tl
+  //       val (force, skip) = inputs.partitionEither { x =>
+  //         specify(x.value) match {
+  //           case Left(y)  => Left(x.setValue(y))
+  //           case Right(y) => Right(x.setValue(y))
+  //         }
+  //       }
+  //       val (ls, rs) = xs.splitAt(relativeJump)
+  //       runEdge2_(force, ls, cont).flatMap { forced =>
+  //         // val reassoc = force.zipWith(forced)((en, y) => en.setValue(y))
+  //         runEdge2_(skip ++ forced, rs, cont)
+  //       }
+  //     case PreparedQuery.PreparedEdge.Edge(id, resolver, statisticsName) :: xs =>
+  //       def evalEffect(resolve: Any => F[Ior[String, Any]]): W[Chain[Option[EvalNode[Any]]]] =
+  //         inputs.parTraverse { in =>
+  //           lift {
+  //             IorT(resolve(in.value)).timed.semiflatMap { case (dur, v) =>
+  //               val out = in.setValue(v)
+  //               submit(statisticsName, dur, 1) as out
+  //             }.value
+  //           }.attempt
+  //             .flatMap[Option[EvalNode[Any]]] {
+  //               case Left(ex) =>
+  //                 WriterT.put(Option.empty[EvalNode[Any]])(Chain(EvalFailure.EffectResolution(in.cursor, Left(ex), in.value)))
+  //               case Right(Ior.Both(l, r)) =>
+  //                 WriterT.put(Option[EvalNode[Any]](r))(Chain(EvalFailure.EffectResolution(in.cursor, Right(l), in.value)))
+  //               case Right(Ior.Left(l)) =>
+  //                 WriterT.put(Option.empty[EvalNode[Any]])(Chain(EvalFailure.EffectResolution(in.cursor, Right(l), in.value)))
+  //               case Right(Ior.Right(r)) => WriterT.put(Option[EvalNode[Any]](r))(Chain.empty)
+  //             }
+  //         }
+
+  //       import PreparedQuery.PreparedResolver._
+  //       val edgeRes = resolver match {
+  //         case Pure(r)     => W.pure(inputs.map(en => en.setValue(r.resolve(en.value))))
+  //         case Effect(r)   => evalEffect(a => r.resolve(a).map(_.rightIor))
+  //         case Fallible(r) => evalEffect(r.resolve)
+  //         case Stream(r) =>
+  //           inputs.parFlatTraverse { in =>
+  //             attemptUserE(
+  //               streamAccumulator
+  //                 .add(Interpreter.StreamMetadata(in.cursor, xs, cont), r.stream(in.value))
+  //                 .timed
+  //                 .map { case (dur, (_, fb)) => fb.tupleLeft(dur) }
+  //                 .rethrow
+  //                 .flatMap { case (dur, xs) =>
+  //                   submit(statisticsName, dur, 1) as xs.map(hd => Chain(in.setValue(hd)))
+  //                 },
+  //               EvalFailure.StreamHeadResolution(in.cursor, _, in.value)
+  //             )
+  //           }
+  //         case Batch(BatchResolver(_, run)) =>
+  //           val xs = inputs.map(en => (run(en.value), en.cursor))
+
+  //           val allKeys = xs.map { case ((keys, _), cg) => (cg, keys) }
+
+  //           lift(batchAccumulator.submit(id, allKeys)).map {
+  //             case None => Chain.empty[EvalNode[Any]]
+  //             case Some(resultMap) =>
+  //               xs.map { case ((keys, reassoc), cg) =>
+  //                 EvalNode(cg, reassoc(resultMap.view.filterKeys(keys.contains).toMap))
+  //               }
+  //           }
+  //       }
+
+  //       edgeRes.flatMap(runEdge2_(_, xs, cont))
+  //   }
+
+  // def runEdge2(
+  //     inputs: Chain[EvalNode[Any]],
+  //     edges: List[PreparedEdge[F]],
+  //     cont: Prepared[F, Any]
+  // ): W[Chain[Json]] =
+  //   runEdge2_(inputs, edges, cont).flatMap(startNext2(cont, _))
+
+  // def runDataField2(df: PreparedDataField[F, Any, ?], in: Chain[EvalNode[Any]]): W[Chain[Json]] =
+  //   runEdge2(in.map(_.modify(_.field(df.id, df.alias.getOrElse(df.name)))), df.cont.edges.toList, df.cont.cont)
+
+  // def runFields2(dfs: NonEmptyList[PreparedField[F, Any]], in: Chain[EvalNode[Any]]): W[Chain[Map[String, Json]]] =
+  //   Chain
+  //     .fromSeq(dfs.toList)
+  //     .parFlatTraverse {
+  //       case PreparedSpecification(_, _, specify, selection) =>
+  //         // Partition into what inputs satisfy the fragment and what don't
+  //         // Run the ones that do
+  //         // Then re-build an output, padding every empty output
+  //         val parted = in.map(x => x.setValue(specify(x.value)))
+  //         val somes = parted.collect { case EvalNode(c, Some(x)) => EvalNode(c, x) }
+  //         val fa = selection.traverse { df =>
+  //           runDataField2(df, somes).map(_.map(j => Map(df.name -> j)))
+  //         }
+  //         fa.map(_.toList.map { ys =>
+  //           val (_, b) = parted.foldLeft((ys.toList, Chain.empty[Map[String, Json]])) {
+  //             case ((xs, builder), EvalNode(_, None))         => (xs, builder.append(Map.empty))
+  //             case ((x :: xs, builder), EvalNode(_, Some(_))) => (xs, builder.append(x))
+  //             case _                                          => ???
+  //           }
+  //           b
+  //         }).map(Chain.fromSeq)
+  //       case df @ PreparedDataField(_, _, _, _) =>
+  //         runDataField2(df, in)
+  //           .map(_.map(j => Map(df.name -> j)))
+  //           .map(Chain(_))
+  //     }
+  //     // We have a list (fields) of af list (inputs)
+  //     // We want to transpose this such that inputs are grouped
+  //     // After transposition:
+  //     // Every outer is for every defined input
+  //     // Every inner is for every field for that input
+  //     // For each same input, we then melt all the fields together
+  //     .map(_.toIterable.map(_.toIterable).transpose.map(_.foldLeft(Map.empty[String, Json])(_ ++ _)))
+  //     .map(Chain.fromIterableOnce)
+
+  // def startNext2(s: Prepared[F, Any], in: Chain[EvalNode[Any]]): W[Chain[Json]] = W.defer {
+  //   s match {
+  //     case PreparedLeaf(_, enc) => W.pure(in.map(x => enc(x.value)))
+  //     case Selection(fields)    => runFields2(fields, in).map(_.map(JsonObject.fromMap(_).asJson))
+  //     case PreparedList(of, toSeq) =>
+  //       val partedInput = in.map(x => Chain.fromSeq(toSeq(x.value)).mapWithIndex((y, i) => x.succeed(y, _.index(i))))
+  //       val flattened = partedInput.flatten
+  //       // Input size is output size, we consume the output by folding
+  //       runEdge2(flattened, of.edges.toList, of.cont).map { result =>
+  //         val (_, b) = partedInput.foldLeft((result.toList, Chain.empty[Json])) { case ((dataStack, topBuilder), thisArr) =>
+  //           val (remainingDataStack, b2) = thisArr.foldLeft((dataStack, Chain.empty[Json])) { case ((remaining, builder), _) =>
+  //             (remaining.tail, builder.append(remaining.head))
+  //           }
+  //           (remainingDataStack, topBuilder.append(Json.fromValues(b2.toVector)))
+  //         }
+  //         b
+  //       }
+  //     case PreparedOption(of) =>
+  //       val partedInput = in.map(nv => nv.setValue(nv.value.asInstanceOf[Option[Any]]))
+  //       runEdge2(partedInput.collect { case EvalNode(c, Some(x)) => EvalNode(c, x) }, of.edges.toList, of.cont).map { result =>
+  //         val (_, b) = partedInput.foldLeft((result.toList, Chain.empty[Json])) {
+  //           case ((dataStack, topBuilder), EvalNode(_, None))    => (dataStack, topBuilder.append(Json.Null))
+  //           case ((dataStack, topBuilder), EvalNode(_, Some(_))) => (dataStack.tail, topBuilder.append(dataStack.head))
+  //         }
+  //         b
+  //       }
+  //   }
+  // }
+
   def runEdge_(
       inputs: Chain[EvalNode[Any]],
       edges: List[PreparedEdge[F]],
@@ -420,38 +572,6 @@ class InterpreterImpl[F[_]](
       cont: Prepared[F, Any]
   ): W[Chain[EvalNode[Json]]] =
     runEdge_(inputs, edges, cont).flatMap(startNext(cont, _))
-
-  def runFields2(dfs: NonEmptyList[PreparedField[F, Any]], in: Chain[Any]): W[Chain[Map[String, Json]]] = {
-    Chain
-      .fromSeq(dfs.toList)
-      .parTraverse {
-        case PreparedSpecification(_, _, specify, selection) =>
-          // Partition into what inputs satisfy the fragment and what don't
-          // Run the ones that do
-          // Then re-build an output, padding every empty output
-          val parted = in.map(specify)
-          runFields2(selection, parted.collect { case Some(x) => x }).map { out =>
-            val (_, b) = parted.foldLeft((out.toList, Chain.empty[Map[String, Json]])) {
-              case ((xs, builder), None)         => (xs, builder.append(Map.empty))
-              case ((x :: xs, builder), Some(_)) => (xs, builder.append(x))
-              case _                             => ???
-            }
-            b
-          }
-        case df @ PreparedDataField(_, _, _, _) => ??? //runDataField(df, in)
-      }
-      .map { ys =>
-        // Outer chain is fields, inner is inputs
-        // Every input should be merged
-        // We transpose the data and then merge
-        Chain.fromSeq {
-          ys.toVector
-            .map(_.toVector)
-            .transpose
-            .map(_.foldLeft(Map.empty[String, Json])(_ ++ _))
-        }
-      }
-  }
 
   def runFields(dfs: NonEmptyList[PreparedField[F, Any]], in: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] =
     Chain.fromSeq(dfs.toList).parFlatTraverse {
