@@ -19,7 +19,7 @@ import gql.resolver._
 import cats.implicits._
 import cats.data._
 import gql.PreparedQuery.PreparedDataField
-import gql.PreparedQuery.PreparedFragField
+import gql.PreparedQuery.PreparedSpecification
 import gql.PreparedQuery.PreparedLeaf
 import gql.PreparedQuery.PreparedList
 import gql.PreparedQuery.PreparedOption
@@ -116,8 +116,8 @@ object Planner {
       stats: Statistics[F]
   ): F[List[Node]] = {
     prepared.toList.flatTraverse {
-      case PreparedDataField(_, _, _, cont)      => costForCont[F](cont.edges.toList, cont.cont, currentCost)
-      case PreparedFragField(_, _, _, selection) => costForFields[F](currentCost, selection.fields)
+      case PreparedDataField(_, _, _, cont)          => costForCont[F](cont.edges.toList, cont.cont, currentCost)
+      case PreparedSpecification(_, _, _, selection) => costForFields[F](currentCost, selection)
     }
   }
 

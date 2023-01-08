@@ -40,11 +40,11 @@ object PreparedQuery {
       cont: PreparedCont[F]
   ) extends PreparedField[F, I]
 
-  final case class PreparedFragField[F[_], A](
+  final case class PreparedSpecification[F[_], A](
       id: Int,
       typename: String,
       specify: Any => Option[A],
-      selection: Selection[F, A]
+      selection: NonEmptyList[PreparedDataField[F, A, ?]]
   ) extends PreparedField[F, A]
 
   final case class FragmentDefinition[F[_], A](
@@ -762,7 +762,7 @@ object PreparedQuery {
       S: Stateful[F, Prep],
       F: MonadError[F, NonEmptyChain[PositionalError]],
       D: Defer[F]
-  ): F[PreparedField[G, Any]] = {
+  ): F[PreparedDataField[G, Any, ?]] = {
     closeFieldParameters[F, G](fi, field, variableMap).flatMap { resolve =>
       val tpe = field.output.value
       val selCaret = fi.caret
@@ -825,7 +825,7 @@ object PreparedQuery {
             case None => F.pure(xs)
             case Some(spec) =>
               nextId[F].map { id =>
-                NonEmptyList.one(PreparedFragField(id, s.name, spec.asInstanceOf[Function1[Any, Option[Any]]], Selection(xs)))
+                NonEmptyList.one(PreparedSpecification(id, s.name, spec.asInstanceOf[Function1[Any, Option[Any]]], xs))
               }
           }
         }

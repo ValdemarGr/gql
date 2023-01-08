@@ -291,11 +291,11 @@ object Interpreter {
   ): JsonObject = {
     sel
       .map {
-        case PreparedFragField(id, typename, _, selection) =>
+        case PreparedSpecification(id, typename, _, selection) =>
           m.get(Some(GraphArc.Fragment(id, typename)))
             .map { lc =>
               val m2 = groupNodeValues2(lc)
-              _reconstructSelection(selection.fields, m2)
+              _reconstructSelection(selection, m2)
             }
             .getOrElse(JsonObject.empty)
         case PreparedDataField(id, name, alias, cont) =>
@@ -421,11 +421,43 @@ class InterpreterImpl[F[_]](
   ): W[Chain[EvalNode[Json]]] =
     runEdge_(inputs, edges, cont).flatMap(startNext(cont, _))
 
+  def runFields2(dfs: NonEmptyList[PreparedField[F, Any]], in: Chain[Any]): W[Chain[Map[String, Json]]] = {
+    Chain
+      .fromSeq(dfs.toList)
+      .parTraverse {
+        case PreparedSpecification(_, _, specify, selection) =>
+          // Partition into what inputs satisfy the fragment and what don't
+          // Run the ones that do
+          // Then re-build an output, padding every empty output
+          val parted = in.map(specify)
+          runFields2(selection, parted.collect { case Some(x) => x }).map { out =>
+            val (_, b) = parted.foldLeft((out.toList, Chain.empty[Map[String, Json]])) {
+              case ((xs, builder), None)         => (xs, builder.append(Map.empty))
+              case ((x :: xs, builder), Some(_)) => (xs, builder.append(x))
+              case _                             => ???
+            }
+            b
+          }
+        case df @ PreparedDataField(_, _, _, _) => ??? //runDataField(df, in)
+      }
+      .map { ys =>
+        // Outer chain is fields, inner is inputs
+        // Every input should be merged
+        // We transpose the data and then merge
+        Chain.fromSeq {
+          ys.toVector
+            .map(_.toVector)
+            .transpose
+            .map(_.foldLeft(Map.empty[String, Json])(_ ++ _))
+        }
+      }
+  }
+
   def runFields(dfs: NonEmptyList[PreparedField[F, Any]], in: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] =
     Chain.fromSeq(dfs.toList).parFlatTraverse {
-      case PreparedFragField(id, typename, specify, selection) =>
+      case PreparedSpecification(id, typename, specify, selection) =>
         runFields(
-          selection.fields,
+          selection,
           in.flatMap(x => Chain.fromOption(specify(x.value)).map(y => x.succeed(y, _.fragment(id, typename))))
         )
       case df @ PreparedDataField(_, _, _, _) => runDataField(df, in)
