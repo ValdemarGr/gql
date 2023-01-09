@@ -20,17 +20,15 @@ import cats._
 
 sealed trait GraphArc
 object GraphArc {
-  final case class Field(id: Int, name: String) extends GraphArc
+  final case class Field(name: String) extends GraphArc
   final case class Index(index: Int) extends GraphArc
-  final case class Fragment(id: Int, name: String) extends GraphArc
 }
 
 final case class Cursor(path: Chain[GraphArc]) {
   def add(next: GraphArc): Cursor = Cursor(path :+ next)
 
   def index(idx: Int) = add(GraphArc.Index(idx))
-  def field(id: Int, name: String) = add(GraphArc.Field(id, name))
-  def fragment(id: Int, name: String) = add(GraphArc.Fragment(id, name))
+  def field(name: String) = add(GraphArc.Field( name))
 
   def headOption = path.headOption
 

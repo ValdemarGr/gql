@@ -50,7 +50,7 @@ object Interpreter {
       case None => subTree
       case Some((p, tl)) =>
         p match {
-          case GraphArc.Field(_, name) =>
+          case GraphArc.Field(name) =>
             val oldObj = oldTree.asObject.get
             val oldValue = oldObj(name).get
             val newSubTree = stitchInto(oldValue, subTree, tl)
@@ -58,8 +58,6 @@ object Interpreter {
           case GraphArc.Index(index) =>
             val oldArr = oldTree.asArray.get
             oldArr.updated(index, stitchInto(oldArr(index), subTree, tl)).asJson
-          case GraphArc.Fragment(_, _) =>
-            stitchInto(oldTree, subTree, tl)
         }
     }
 
@@ -291,17 +289,11 @@ object Interpreter {
   ): JsonObject = {
     sel
       .map {
-        case PreparedSpecification(id, typename, _, selection) =>
-          m.get(Some(GraphArc.Fragment(id, typename)))
-            .map { lc =>
-              val m2 = groupNodeValues2(lc)
-              _reconstructSelection(selection, m2)
-            }
-            .getOrElse(JsonObject.empty)
-        case PreparedDataField(id, name, alias, cont) =>
+        case PreparedSpecification(_, _, _, selection) =>  _reconstructSelection(selection, m)
+        case PreparedDataField(_, name, alias, cont) =>
           val n = alias.getOrElse(name)
           JsonObject(
-            n -> reconstructField(cont.cont, m.get(Some(GraphArc.Field(id, n))).toList.flatten)
+            n -> reconstructField(cont.cont, m.get(Some(GraphArc.Field(n))).toList.flatten)
           )
       }
       .reduceLeft(_ deepMerge _)
@@ -575,11 +567,8 @@ class InterpreterImpl[F[_]](
 
   def runFields(dfs: NonEmptyList[PreparedField[F, Any]], in: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] =
     Chain.fromSeq(dfs.toList).parFlatTraverse {
-      case PreparedSpecification(id, typename, specify, selection) =>
-        runFields(
-          selection,
-          in.flatMap(x => Chain.fromOption(specify(x.value)).map(y => x.succeed(y, _.fragment(id, typename))))
-        )
+      case PreparedSpecification(_, _, specify, selection) =>
+        runFields(selection,in.flatMap(x => Chain.fromOption(specify(x.value)).map(x.setValue)))
       case df @ PreparedDataField(_, _, _, _) => runDataField(df, in)
     }
 
@@ -613,5 +602,5 @@ class InterpreterImpl[F[_]](
   }
 
   def runDataField(df: PreparedDataField[F, ?, ?], input: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] =
-    runEdge(input.map(_.modify(_.field(df.id, df.alias.getOrElse(df.name)))), df.cont.edges.toList, df.cont.cont)
+    runEdge(input.map(_.modify(_.field(df.alias.getOrElse(df.name)))), df.cont.edges.toList, df.cont.cont)
 }
