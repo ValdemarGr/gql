@@ -289,7 +289,7 @@ class InterpreterImpl[F[_]](
     sup.supervise(stats.updateStats(name, duration, size)).void
 
   type IndexedValue = (Int, EvalNode[Any])
-  def runEdge2_(
+  def runEdge_(
       inputs: Chain[IndexedValue],
       edges: List[PreparedEdge[F]],
       cont: Prepared[F, Any]
@@ -309,9 +309,9 @@ class InterpreterImpl[F[_]](
               }
             }
             val (ls, rs) = xs.splitAt(relativeJump)
-            runEdge2_(force, ls, cont).flatMap { forced =>
+            runEdge_(force, ls, cont).flatMap { forced =>
               val combined = (forced ++ skip).sortBy{ case (i, _) => i }
-              runEdge2_(combined, rs, cont)
+              runEdge_(combined, rs, cont)
             }
           }
       case PreparedQuery.PreparedEdge.Edge(id, resolver, statisticsName) :: xs =>
@@ -362,7 +362,7 @@ class InterpreterImpl[F[_]](
             }
         }
 
-        edgeRes.flatMap(runEdge2_(_, xs, cont))
+        edgeRes.flatMap(runEdge_(_, xs, cont))
     }
 
   def runEdge(
@@ -371,7 +371,7 @@ class InterpreterImpl[F[_]](
       cont: Prepared[F, Any]
   ): W[Chain[Json]] = {
     val indexed = inputs.zipWithIndex.map(_.swap)
-    runEdge2_(indexed, edges, cont)
+    runEdge_(indexed, edges, cont)
       .flatMap { remaining =>
         startNext(cont, remaining.map { case (_, x) => x })
           .map(_.zipWith(remaining) { case (j, (i, _)) => (i, j) })
