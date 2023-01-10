@@ -385,6 +385,8 @@ class InterpreterImpl[F[_]](
   def runDataField(df: PreparedDataField[F, ?, ?], in: Chain[EvalNode[Any]]): W[Chain[Json]] =
     runEdge(in.map(_.modify(_.field(df.outputName))), df.cont.edges.toList, df.cont.cont)
 
+  // ns is a list of sizes, dat is a list of dat
+  // for every n, there will be consumed n of dat
   def unflatten[A](ns: Vector[Int], dat: Vector[A]): Vector[Vector[A]] =
     ns.mapAccumulate(dat)((ds, n) => ds.splitAt(n).swap)._2
 
@@ -428,7 +430,6 @@ class InterpreterImpl[F[_]](
       case PreparedList(of, toSeq) =>
         val partedInput = in.map(x => Chain.fromSeq(toSeq(x.value)).mapWithIndex((y, i) => x.succeed(y, _.index(i))))
         val flattened = partedInput.flatten
-        // Input size is output size, we consume the output by folding
         runEdge(flattened, of.edges.toList, of.cont).map { result =>
           val out = unflatten(partedInput.map(_.size.toInt).toVector, result.toVector)
           Chain.fromSeq(out.map(Json.fromValues))
