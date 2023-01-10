@@ -61,9 +61,6 @@ object Interpreter {
         }
     }
 
-  def combineSplit(fails: Chain[EvalFailure], succs: Chain[EvalNode[Json]]): Chain[(Cursor, Json)] =
-    fails.flatMap(_.paths).map(m => (m, Json.Null)) ++ succs.map(n => (n.cursor, n.value))
-
   final case class StreamMetadata[F[_]](
       cursor: Cursor,
       edges: List[PreparedEdge[F]],
