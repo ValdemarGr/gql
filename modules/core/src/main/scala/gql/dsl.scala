@@ -23,6 +23,11 @@ import cats.data._
 import scala.reflect.ClassTag
 
 object dsl {
+  def tpeNel[F[_], A](
+      name: String,
+      entries: NonEmptyList[(String, Field[F, A, ?, ?])]
+  ) = Type[F, A](name, entries, Nil)
+
   def tpe[F[_], A](
       name: String,
       hd: (String, Field[F, A, ?, ?]),
@@ -43,20 +48,29 @@ object dsl {
 
   def input[A](
       name: String,
-      fields: NonEmptyArg[A]
+      fields: Arg[A]
   ): Input[A] = Input(name, fields)
 
-  def arg[A](name: String)(implicit tpe: => In[A]): NonEmptyArg[A] =
-    NonEmptyArg.one[A](ArgValue(name, Eval.later(tpe), None, None))
+  def arg[A](name: String)(implicit tpe: => In[A]): Arg[A] =
+    Arg.make[A](ArgValue(name, Eval.later(tpe), None, None))
 
-  def arg[A](name: String, description: String)(implicit tpe: => In[A]): NonEmptyArg[A] =
-    NonEmptyArg.one[A](ArgValue(name, Eval.later(tpe), None, Some(description)))
+  def arg[A](name: String, description: String)(implicit tpe: => In[A]): Arg[A] =
+    Arg.make[A](ArgValue(name, Eval.later(tpe), None, Some(description)))
 
-  def arg[A](name: String, default: Value)(implicit tpe: => In[A]): NonEmptyArg[A] =
-    NonEmptyArg.one[A](ArgValue(name, Eval.later(tpe), Some(default), None))
+  def arg[A](name: String, default: Value)(implicit tpe: => In[A]): Arg[A] =
+    Arg.make[A](ArgValue(name, Eval.later(tpe), Some(default), None))
 
-  def arg[A](name: String, default: Value, description: String)(implicit tpe: => In[A]): NonEmptyArg[A] =
-    NonEmptyArg.one[A](ArgValue(name, Eval.later(tpe), Some(default), Some(description)))
+  def arg[A](name: String, default: Value, description: String)(implicit tpe: => In[A]): Arg[A] =
+    Arg.make[A](ArgValue(name, Eval.later(tpe), Some(default), Some(description)))
+
+  final case class PartiallyAppliedArgFull[A](private val dummy: Boolean = false) extends AnyVal {
+    def apply[B](name: String, default: Option[Value], description: Option[String])(
+        f: ArgParam[A] => Either[String, B]
+    )(implicit tpe: => In[A]): Arg[B] =
+      Arg.makeFrom[A, B](ArgValue(name, Eval.later(tpe), default, description))(f)
+  }
+
+  def argFull[A] = new PartiallyAppliedArgFull[A]
 
   def cache[F[_]: Functor, I, O](resolver: Resolver[F, I, O])(get: I => F[Option[O]]): CacheResolver[F, I, I, O] =
     CacheResolver(i => get(i).map(_.toRight(i)), resolver)
@@ -193,7 +207,7 @@ object dsl {
   def enumType[F[_], A](name: String, hd: (String, EnumValue[? <: A]), tl: (String, EnumValue[? <: A])*) =
     Enum[F, A](name, NonEmptyList(hd, tl.toList))
 
-  def interface[F[_], A](
+  def interfaceNel[F[_], A](
       name: String,
       fields: NonEmptyList[(String, AbstractField[F, ?, ?])]
   ): Interface[F, A] = Interface[F, A](name, fields, Nil)
@@ -202,18 +216,18 @@ object dsl {
       name: String,
       hd: (String, AbstractField[F, ?, ?]),
       tl: (String, AbstractField[F, ?, ?])*
-  ): Interface[F, A] = interface[F, A](name, NonEmptyList(hd, tl.toList))
+  ): Interface[F, A] = interfaceNel[F, A](name, NonEmptyList(hd, tl.toList))
 
-  def interfaceFrom[F[_], A](
+  def interfaceFromNel[F[_], A](
       name: String,
       fields: NonEmptyList[(String, Field[F, A, ?, ?])]
-  ): Interface[F, A] = interface[F, A](name, fields.map { case (k, v) => k -> v.asAbstract })
+  ): Interface[F, A] = interfaceNel[F, A](name, fields.map { case (k, v) => k -> v.asAbstract })
 
   def interfaceFrom[F[_], A](
       name: String,
       hd: (String, Field[F, A, ?, ?]),
       tl: (String, Field[F, A, ?, ?])*
-  ): Interface[F, A] = interfaceFrom[F, A](name, NonEmptyList(hd, tl.toList))
+  ): Interface[F, A] = interfaceFromNel[F, A](name, NonEmptyList(hd, tl.toList))
 
   def union[F[_], A](name: String) = PartiallyAppliedUnion0[F, A](name)
 

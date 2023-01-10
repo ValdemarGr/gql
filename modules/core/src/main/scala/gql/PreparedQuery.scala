@@ -38,13 +38,15 @@ object PreparedQuery {
       name: String,
       alias: Option[String],
       cont: PreparedCont[F]
-  ) extends PreparedField[F, I]
+  ) extends PreparedField[F, I] {
+    lazy val outputName = alias.getOrElse(name)
+  }
 
-  final case class PreparedFragField[F[_], A](
+  final case class PreparedSpecification[F[_], A](
       id: Int,
       typename: String,
       specify: Any => Option[A],
-      selection: Selection[F, A]
+      selection: NonEmptyList[PreparedDataField[F, A, ?]]
   ) extends PreparedField[F, A]
 
   final case class FragmentDefinition[F[_], A](
@@ -103,18 +105,8 @@ object PreparedQuery {
     }
   }
 
-  sealed trait PrepEdge {
-    def name: String
-  }
-  object PrepEdge {
-    final case class ASTEdge(edge: SchemaShape.ValidationEdge) extends PrepEdge {
-      def name: String = edge.name
-    }
-    final case class FragmentEdge(name: String) extends PrepEdge
-  }
-
-  final case class PrepCursor(position: Chain[PrepEdge]) {
-    def add(edge: PrepEdge): PrepCursor = PrepCursor(position append edge)
+  final case class PrepCursor(position: Chain[Validation.Edge]) {
+    def add(edge: Validation.Edge): PrepCursor = PrepCursor(position append edge)
     def pop: PrepCursor = PrepCursor(Chain.fromOption(position.initLast).flatMap { case (xs, _) => xs })
   }
 
@@ -257,23 +249,23 @@ object PreparedQuery {
       S.modify(_.copy(cursor = cursor)) *> fa <* S.modify(_.copy(cursor = c))
     }
 
-  def ambientEdge[F[_]: Monad, A](edge: PrepEdge)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
+  def ambientEdge[F[_]: Monad, A](edge: Validation.Edge)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
     S.inspect(_.cursor.add(edge)).flatMap(ambientAt[F, A](_)(fa))
 
   def ambientField[F[_]: Monad, A](name: String)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
-    ambientEdge[F, A](PrepEdge.ASTEdge(SchemaShape.ValidationEdge.Field(name)))(fa)
+    ambientEdge[F, A](Validation.Edge.Field(name))(fa)
 
   def ambientOutputType[F[_]: Monad, A](name: String)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
-    ambientEdge[F, A](PrepEdge.ASTEdge(SchemaShape.ValidationEdge.OutputType(name)))(fa)
+    ambientEdge[F, A](Validation.Edge.OutputType(name))(fa)
 
   def ambientArg[F[_]: Monad, A](name: String)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
-    ambientEdge[F, A](PrepEdge.ASTEdge(SchemaShape.ValidationEdge.Arg(name)))(fa)
+    ambientEdge[F, A](Validation.Edge.Arg(name))(fa)
 
   def ambientIndex[F[_]: Monad, A](i: Int)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
-    ambientEdge[F, A](PrepEdge.ASTEdge(SchemaShape.ValidationEdge.Index(i)))(fa)
+    ambientEdge[F, A](Validation.Edge.Index(i))(fa)
 
   def ambientInputType[F[_]: Monad, A](name: String)(fa: F[A])(implicit S: Stateful[F, Prep]): F[A] =
-    ambientEdge[F, A](PrepEdge.ASTEdge(SchemaShape.ValidationEdge.InputType(name)))(fa)
+    ambientEdge[F, A](Validation.Edge.InputType(name))(fa)
 
   def modifyError[F[_], A](f: PositionalError => PositionalError)(fa: F[A])(implicit F: MonadError[F, NonEmptyChain[PositionalError]]) =
     F.adaptError(fa)(_.map(f))
@@ -368,7 +360,7 @@ object PreparedQuery {
       D: Defer[F]
   ): F[FieldInfo[G]] = ambientField(f.name) {
     // Verify arguments by decoding them
-    val decF = decodeFieldArgs[F, G, Any](af.arg.asInstanceOf[Arg[Any]], f.alias.getOrElse(f.name), f.arguments, caret, variableMap).void
+    val decF = decodeFieldArgs[F, G, Any](af.arg.asInstanceOf[Arg[Any]], f.arguments, variableMap).void
 
     // Verify subselection
     val c = f.selectionSet.caret
@@ -726,9 +718,7 @@ object PreparedQuery {
 
   def decodeFieldArgs[F[_]: Parallel, G[_], A](
       a: Arg[A],
-      name: String,
       args: Option[P.Arguments],
-      caret: Caret,
       variableMap: VariableMap
   )(implicit
       S: Stateful[F, Prep],
@@ -741,13 +731,13 @@ object PreparedQuery {
     val argObj =
       P.Value.ObjectValue(provided.map(a => a.name -> a.value))
 
-    a match {
-      case PureArg(value) if provided.isEmpty => value.fold(raise(_, None), F.pure(_))
-      case PureArg(_) =>
-        raise(s"Field '$name' does not accept arguments.", Some(caret))
-      case nea @ NonEmptyArg(_, _) =>
-        parseInputObj[F, A](argObj, nea, Some(variableMap), ambigiousEnum = false)
-    }
+    // a match {
+    //   case PureArg(value) if provided.isEmpty => value.fold(raise(_, None), F.pure(_))
+    //   case PureArg(_) =>
+    //     raise(s"Field '$name' does not accept arguments.", Some(caret))
+    // case nea @ NonEmptyArg(_, _) =>
+    parseInputObj[F, A](argObj, a, Some(variableMap), ambigiousEnum = false)
+    // }
   }
 
   def closeFieldParameters[F[_]: Parallel, G[_]](
@@ -758,7 +748,7 @@ object PreparedQuery {
       S: Stateful[F, Prep],
       F: MonadError[F, NonEmptyChain[PositionalError]]
   ): F[Resolver[G, Any, Any]] = {
-    val decObj = decodeFieldArgs[F, G, Any](field.args, fi.name, fi.args, fi.caret, variableMap)
+    val decObj = decodeFieldArgs[F, G, Any](field.args, fi.args, variableMap)
     decObj.map(a => field.resolve.contramap[Any]((_, a)))
   }
 
@@ -772,7 +762,7 @@ object PreparedQuery {
       S: Stateful[F, Prep],
       F: MonadError[F, NonEmptyChain[PositionalError]],
       D: Defer[F]
-  ): F[PreparedField[G, Any]] = {
+  ): F[PreparedDataField[G, Any, ?]] = {
     closeFieldParameters[F, G](fi, field, variableMap).flatMap { resolve =>
       val tpe = field.output.value
       val selCaret = fi.caret
@@ -835,7 +825,7 @@ object PreparedQuery {
             case None => F.pure(xs)
             case Some(spec) =>
               nextId[F].map { id =>
-                NonEmptyList.one(PreparedFragField(id, s.name, spec.asInstanceOf[Function1[Any, Option[Any]]], Selection(xs)))
+                NonEmptyList.one(PreparedSpecification(id, s.name, spec.asInstanceOf[Function1[Any, Option[Any]]], xs))
               }
           }
         }
@@ -941,7 +931,7 @@ object PreparedQuery {
   def inName[A](in: In[A], inOption: Boolean = false): String = {
     val suffix = if (inOption) "" else "!"
     val rec = (in: @unchecked) match {
-      case InArr(of, _)          => s"${inName(of)}"
+      case InArr(of, _)          => s"[${inName(of)}]"
       case Enum(name, _, _)      => name
       case Scalar(name, _, _, _) => name
       case InOpt(of)             => s"${inName(of, inOption = true)}"
@@ -952,7 +942,7 @@ object PreparedQuery {
 
   def parseInputObj[F[_]: Parallel, A](
       v: P.Value.ObjectValue,
-      fields: NonEmptyArg[A],
+      fields: Arg[A],
       variableMap: Option[VariableMap],
       ambigiousEnum: Boolean
   )(implicit
@@ -962,7 +952,7 @@ object PreparedQuery {
     val xs = v.v
 
     val m = xs.toMap
-    val required = fields.nec.map(x => x.name -> x).toList.toMap
+    val required = fields.entries.map(x => x.name -> x).toList.toMap
 
     // All provided fields are defined
     val tooMuch = m.keySet -- required.keySet
@@ -1043,25 +1033,24 @@ object PreparedQuery {
   )(implicit
       F: MonadError[F, NonEmptyChain[PositionalError]],
       S: Stateful[F, Prep]
-  ) = {
-    val fa =
-      input.get(a.name) match {
-        case None =>
-          a.defaultValue match {
-            case None =>
-              a.input.value match {
-                case InOpt(_) => F.pure(P.Value.NullValue)
-                case _ =>
-                  raise[F, P.Value](s"Required input for field '${a.name}' was not provided and has no default value.", None)
-              }
-            // TODO this value being parsed can probably be cached, since the default is the same for every query
-            case Some(dv) => F.pure(valueToParserValue(dv))
-          }
-        case Some(x) => F.pure(x)
-      }
+  ): F[ArgParam[A]] = {
+    val fa: F[ArgParam[P.Value]] = input.get(a.name) match {
+      case Some(x) => F.pure(ArgParam(defaulted = false, x))
+      case None =>
+        a.defaultValue match {
+          // TODO this value being parsed can probably be cached, since the default is the same for every query
+          case Some(dv) => F.pure(ArgParam(defaulted = true, valueToParserValue(dv)))
+          case None =>
+            a.input.value match {
+              case InOpt(_) => F.pure(ArgParam(defaulted = false, P.Value.NullValue))
+              case _ =>
+                raise[F, ArgParam[P.Value]](s"Required input for field '${a.name}' was not provided and has no default value.", None)
+            }
+        }
+    }
 
     ambientArg(a.name) {
-      fa.flatMap(parseInput[F, A](_, a.input.value, variableMap, ambigiousEnum))
+      fa.flatMap(ap => parseInput[F, A](ap.value, a.input.value, variableMap, ambigiousEnum).map(x => ap.copy(value = x)))
     }
   }
 
@@ -1072,7 +1061,7 @@ object PreparedQuery {
   ): F[A] = {
     // All provided fields are of the correct type
     // All required fields are either defiend or defaulted
-    val fieldsF: F[Chain[(String, Any)]] =
+    val fieldsF: F[Chain[(String, ArgParam[Any])]] =
       arg.entries.parTraverse { a =>
         parseArgValue[F, Any](
           a.asInstanceOf[ArgValue[Any]],
@@ -1177,7 +1166,7 @@ object PreparedQuery {
         case P.OperationType.Query =>
           val i: NonEmptyList[(String, Field[G, Unit, ?, ?])] = schema.shape.introspection
           val q = schema.shape.query.asInstanceOf[Type[G, Any]]
-          F.pure(q.copy(fields = q.fields concatNel i.map { case (k, v) => k -> v.contramap[Any](_ => ()) }))
+          F.pure(q.copy(fields = i.map { case (k, v) => k -> v.contramap[Any](_ => ()) } concatNel q.fields))
         case P.OperationType.Mutation =>
           raiseOpt(schema.shape.mutation.map(_.asInstanceOf[Type[G, Any]]), "No `Mutation` type defined in this schema.", None)
         case P.OperationType.Subscription =>

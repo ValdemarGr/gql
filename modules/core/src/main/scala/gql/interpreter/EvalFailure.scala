@@ -33,9 +33,8 @@ trait EvalFailure {
   def asGraphQL: Chain[JsonObject] =
     paths.map { path =>
       val filteredPath = path.path.mapFilter {
-        case GraphArc.Field(_, name) => Some(Json.fromString(name))
+        case GraphArc.Field(name) => Some(Json.fromString(name))
         case GraphArc.Index(idx)     => Some(Json.fromInt(idx))
-        case _: GraphArc.Fragment    => None
       }
       JsonObject(
         "message" -> Json.fromString(error.getOrElse("internal error")),

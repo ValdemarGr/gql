@@ -20,33 +20,33 @@ import cats._
 import cats.implicits._
 import gql.ast._
 
-trait Arg[A] {
-  def entries: Chain[ArgValue[?]]
-
-  def decode: Map[String, ?] => Either[String, A]
-
-  def emap[B](f: A => Either[String, B]): Arg[B]
+final case class Arg[A](
+    entries: Chain[ArgValue[?]],
+    decode: Map[String, ArgParam[?]] => Either[String, A]
+) {
+  def emap[B](f: A => Either[String, B]): Arg[B] =
+    Arg(entries, decode.andThen(_.flatMap(f)))
 }
 
 object Arg {
-  def make[A](name: String, default: Option[Value], description: Option[String])(implicit input: => In[A]): NonEmptyArg[A] =
-    NonEmptyArg.one[A](ArgValue(name, Eval.later(input), default, description))
+  def makeFrom[A, B](av: ArgValue[A])(f: ArgParam[A] => Either[String, B]): Arg[B] =
+    Arg[B](Chain(av), m => f(m(av.name).asInstanceOf[ArgParam[A]]))
+
+  def make[A](av: ArgValue[A]): Arg[A] =
+    makeFrom(av)(_.value.asRight)
 
   implicit lazy val applicativeInstanceForArg: Applicative[Arg] = new Applicative[Arg] {
-    override def pure[A](x: A): Arg[A] = PureArg(x.asRight)
+    override def pure[A](x: A): Arg[A] = Arg(Chain.empty, _ => x.asRight)
 
     override def ap[A, B](ff: Arg[A => B])(fa: Arg[A]): Arg[B] =
-      (ff, fa) match {
-        case (NonEmptyArg(entries1, decode1), NonEmptyArg(entries2, decode2)) =>
-          NonEmptyArg(entries1 ++ entries2, m => (decode1(m), decode2(m)).mapN { case (f, a) => f(a) })
-        case (NonEmptyArg(entries, decode), PureArg(value)) =>
-          NonEmptyArg(entries, m => (decode(m), value).mapN { case (f, a) => f(a) })
-        case (PureArg(value), NonEmptyArg(entries, decode)) =>
-          NonEmptyArg(entries, m => (value, decode(m)).mapN { case (f, a) => f(a) })
-        case (PureArg(f), PureArg(value)) => PureArg((f, value).mapN { case (f, a) => f(a) })
-      }
+      Arg(ff.entries ++ fa.entries, m => (ff.decode(m), fa.decode(m)).mapN((f, a) => f(a)))
   }
 }
+
+final case class ArgParam[A](
+    defaulted: Boolean,
+    value: A
+)
 
 final case class ArgValue[A](
     name: String,
@@ -59,31 +59,7 @@ final case class ArgValue[A](
   def default(value: Value) = copy(defaultValue = Some(value))
 }
 
-final case class NonEmptyArg[A](
-    nec: NonEmptyChain[ArgValue[?]],
-    decode: Map[String, ?] => Either[String, A]
-) extends Arg[A] {
-
-  def entries = nec.toChain
-
-  override def emap[B](f: A => Either[String, B]): NonEmptyArg[B] =
-    NonEmptyArg(nec, decode.andThen(_.flatMap(f)))
-}
-object NonEmptyArg {
-  def one[A](av: ArgValue[A]): NonEmptyArg[A] =
-    NonEmptyArg[A](NonEmptyChain.one(av), _(av.name).asInstanceOf[A].asRight)
-
-  implicit lazy val applicativeInstanceForNonEmptyArg: Apply[NonEmptyArg] = new Apply[NonEmptyArg] {
-    override def map[A, B](fa: NonEmptyArg[A])(f: A => B): NonEmptyArg[B] =
-      NonEmptyArg(fa.nec, fa.decode.andThen(_.map(f)))
-
-    override def ap[A, B](ff: NonEmptyArg[A => B])(fa: NonEmptyArg[A]): NonEmptyArg[B] =
-      NonEmptyArg(ff.nec ++ fa.nec, m => (ff.decode(m), fa.decode(m)).mapN { case (f, a) => f(a) })
-  }
-}
-
-final case class PureArg[A](value: Either[String, A]) extends Arg[A] {
-  def entries = Chain.empty
-  def decode = _ => value
-  override def emap[B](f: A => Either[String, B]): Arg[B] = PureArg(value.flatMap(f))
+object ArgValue {
+  def make[A](name: String, default: Option[Value] = None, description: Option[String] = None)(implicit in: => In[A]): ArgValue[A] =
+    ArgValue(name, Eval.later(in), default, description)
 }

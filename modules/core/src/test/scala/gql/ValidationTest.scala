@@ -40,7 +40,7 @@ class ValidationTest extends CatsEffectSuite {
   )
 
   implicit lazy val duplicateInterface: Interface[IO, MutRecInterface] =
-    interfaceFrom[IO, MutRecInterface]("MutRecInterface", duplicateFields)
+    interfaceFromNel[IO, MutRecInterface]("MutRecInterface", duplicateFields)
 
   implicit def mr1: Type[IO, MutuallyRecursive1] =
     tpe[IO, MutuallyRecursive1](
@@ -82,12 +82,35 @@ class ValidationTest extends CatsEffectSuite {
     .variant { case x: MutuallyRecursive1 => x }
     .variant { case x: MutuallyRecursive2 => x }
 
+  def sharedFields[A] = fieldGroup[IO, A](
+    "one" -> pure(_ => "heya"),
+    "two" -> pure(arg[String]("x")) { case _ => "heya" },
+    "three" -> pure(arg[Int]("x", value.scalar(42))) { case _ => "heya" },
+    "four" -> pure((arg[Int]("x"), arg[String]("h")).tupled) { case _ => "heya" }
+  )
+
+  trait Catch
+  implicit lazy val baseInterface = interfaceFromNel[IO, Catch](
+    "BaseInterface",
+    sharedFields
+  )
+
+  case object CatchSub extends Catch
+  implicit lazy val subtpe = tpe[IO, CatchSub.type](
+    "Subtype",
+    "one" -> pure(arg[String]("x")){ case _ => "heya" },
+    "two" -> pure { case _ => "heya" },
+    "three" -> pure(arg[Int]("x", value.scalar(43))) { case _ => "heya" },
+    "four" -> pure(arg[Int]("x")) { case _ => "heya" }
+  ).subtypeOf[Catch]
+
   lazy val schemaShape: SchemaShape[IO, Unit, Unit, Unit] = SchemaShape.make[IO](
     tpe[IO, Unit](
       "Query",
       "badStructure" -> pure(_ => BadStructure()),
       "duplicateUnion" -> pure(_ => (MutuallyRecursive1(42): MutRecUnion)),
-      "duplicateInterface" -> pure(_ => (MutuallyRecursive1(42): MutRecInterface))
+      "duplicateInterface" -> pure(_ => (MutuallyRecursive1(42): MutRecInterface)),
+      "sub" -> pure(_ => CatchSub),
     )
   )
 
@@ -100,32 +123,36 @@ class ValidationTest extends CatsEffectSuite {
   // }
 
   test("should catch cyclic outputs that are not reference equal") {
-    val err = errors.collect { case (SchemaShape.ValidationError.CyclicDivergingTypeReference("MutuallyRecursive1"), path) =>
+    /*fail(errors.map{ case (e, at) =>
+      s"${e.message}\nat ${at.map(_.name).mkString_(".")}"
+    }.mkString("\n")): Unit*/
+
+    val err = errors.collect { case (Validation.Error.CyclicDivergingTypeReference("MutuallyRecursive1"), path) =>
       path.toList
     }
 
     assert(clue(err).size == 1)
     val s = err.toSet
     assert(clue(s).contains {
-      SchemaShape.ValidationEdge.OutputType("Query") ::
-        SchemaShape.ValidationEdge.Field("duplicateUnion") ::
-        SchemaShape.ValidationEdge.OutputType("MutRecUnion") ::
-        SchemaShape.ValidationEdge.OutputType("MutuallyRecursive1") ::
-        SchemaShape.ValidationEdge.Field("two") ::
-        SchemaShape.ValidationEdge.OutputType("MutuallyRecursive2") ::
-        SchemaShape.ValidationEdge.Field("one") ::
-        SchemaShape.ValidationEdge.OutputType("MutuallyRecursive1") ::
+      Validation.Edge.OutputType("Query") ::
+        Validation.Edge.Field("duplicateUnion") ::
+        Validation.Edge.OutputType("MutRecUnion") ::
+        Validation.Edge.OutputType("MutuallyRecursive1") ::
+        Validation.Edge.Field("two") ::
+        Validation.Edge.OutputType("MutuallyRecursive2") ::
+        Validation.Edge.Field("one") ::
+        Validation.Edge.OutputType("MutuallyRecursive1") ::
         Nil
     })
     // assert(clue(s).contains {
-    //   SchemaShape.ValidationEdge.OutputType("Query") ::
-    //     SchemaShape.ValidationEdge.Field("duplicateInterface") ::
-    //     SchemaShape.ValidationEdge.OutputType("MutRecInterface") ::
-    //     SchemaShape.ValidationEdge.OutputType("MutuallyRecursive1") ::
-    //     SchemaShape.ValidationEdge.Field("two") ::
-    //     SchemaShape.ValidationEdge.OutputType("MutuallyRecursive2") ::
-    //     SchemaShape.ValidationEdge.Field("one") ::
-    //     SchemaShape.ValidationEdge.OutputType("MutuallyRecursive1") ::
+    //   Validation.Edge.OutputType("Query") ::
+    //     Validation.Edge.Field("duplicateInterface") ::
+    //     Validation.Edge.OutputType("MutRecInterface") ::
+    //     Validation.Edge.OutputType("MutuallyRecursive1") ::
+    //     Validation.Edge.Field("two") ::
+    //     Validation.Edge.OutputType("MutuallyRecursive2") ::
+    //     Validation.Edge.Field("one") ::
+    //     Validation.Edge.OutputType("MutuallyRecursive1") ::
     //     Nil
     // })
   }
