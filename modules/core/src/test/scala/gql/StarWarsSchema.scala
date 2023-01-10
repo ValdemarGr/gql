@@ -144,8 +144,7 @@ object StarWarsSchema {
         "hero" -> eff(arg[Option[Episode]]("episode")) { case (_, ep) => getHero(ep) },
         "human" -> eff(arg[String]("id")) { case (_, id) => getHuman(id) },
         "droid" -> eff(arg[String]("id")) { case (_, id) => getDroid(id) },
-        "numeric" -> pure((arg[Int]("one"), arg[Float]("two")).tupled) { (_, a) =>
-          println(a)
+        "numeric" -> pure((arg[Int]("one"), arg[Float]("two")).tupled) { (_, _) =>
           ""
         }
       )

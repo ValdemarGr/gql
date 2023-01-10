@@ -25,7 +25,7 @@ import scala.reflect.ClassTag
 object dsl {
   def tpeNel[F[_], A](
       name: String,
-      entries: NonEmptyList[(String, Field[F, A, ?, ?])],
+      entries: NonEmptyList[(String, Field[F, A, ?, ?])]
   ) = Type[F, A](name, entries, Nil)
 
   def tpe[F[_], A](
@@ -62,6 +62,15 @@ object dsl {
 
   def arg[A](name: String, default: Value, description: String)(implicit tpe: => In[A]): Arg[A] =
     Arg.make[A](ArgValue(name, Eval.later(tpe), Some(default), Some(description)))
+
+  final case class PartiallyAppliedArgFull[A](private val dummy: Boolean = false) extends AnyVal {
+    def apply[B](name: String, default: Option[Value], description: Option[String])(
+        f: ArgParam[A] => Either[String, B]
+    )(implicit tpe: => In[A]): Arg[B] =
+      Arg.makeFrom[A, B](ArgValue(name, Eval.later(tpe), default, description))(f)
+  }
+
+  def argFull[A] = new PartiallyAppliedArgFull[A]
 
   def cache[F[_]: Functor, I, O](resolver: Resolver[F, I, O])(get: I => F[Option[O]]): CacheResolver[F, I, I, O] =
     CacheResolver(i => get(i).map(_.toRight(i)), resolver)

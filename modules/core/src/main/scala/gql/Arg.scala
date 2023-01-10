@@ -29,8 +29,11 @@ final case class Arg[A](
 }
 
 object Arg {
+  def makeFrom[A, B](av: ArgValue[A])(f: ArgParam[A] => Either[String, B]): Arg[B] =
+    Arg[B](Chain(av), m => f(m(av.name).asInstanceOf[ArgParam[A]]))
+
   def make[A](av: ArgValue[A]): Arg[A] =
-    Arg[A](Chain(av), _(av.name).asInstanceOf[A].asRight)
+    makeFrom(av)(_.value.asRight)
 
   implicit lazy val applicativeInstanceForArg: Applicative[Arg] = new Applicative[Arg] {
     override def pure[A](x: A): Arg[A] = Arg(Chain.empty, _ => x.asRight)
@@ -41,8 +44,8 @@ object Arg {
 }
 
 final case class ArgParam[A](
-  defaulted: Boolean,
-  value: A
+    defaulted: Boolean,
+    value: A
 )
 
 final case class ArgValue[A](
@@ -54,4 +57,9 @@ final case class ArgValue[A](
   def document(description: String) = copy(description = Some(description))
 
   def default(value: Value) = copy(defaultValue = Some(value))
+}
+
+object ArgValue {
+  def make[A](name: String, default: Option[Value] = None, description: Option[String] = None)(implicit in: => In[A]): ArgValue[A] =
+    ArgValue(name, Eval.later(in), default, description)
 }
