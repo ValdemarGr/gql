@@ -48,20 +48,20 @@ object dsl {
 
   def input[A](
       name: String,
-      fields: NonEmptyArg[A]
+      fields: Arg[A]
   ): Input[A] = Input(name, fields)
 
-  def arg[A](name: String)(implicit tpe: => In[A]): NonEmptyArg[A] =
-    NonEmptyArg.one[A](ArgValue(name, Eval.later(tpe), None, None))
+  def arg[A](name: String)(implicit tpe: => In[A]): Arg[A] =
+    Arg.make[A](ArgValue(name, Eval.later(tpe), None, None))
 
-  def arg[A](name: String, description: String)(implicit tpe: => In[A]): NonEmptyArg[A] =
-    NonEmptyArg.one[A](ArgValue(name, Eval.later(tpe), None, Some(description)))
+  def arg[A](name: String, description: String)(implicit tpe: => In[A]): Arg[A] =
+    Arg.make[A](ArgValue(name, Eval.later(tpe), None, Some(description)))
 
-  def arg[A](name: String, default: Value)(implicit tpe: => In[A]): NonEmptyArg[A] =
-    NonEmptyArg.one[A](ArgValue(name, Eval.later(tpe), Some(default), None))
+  def arg[A](name: String, default: Value)(implicit tpe: => In[A]): Arg[A] =
+    Arg.make[A](ArgValue(name, Eval.later(tpe), Some(default), None))
 
-  def arg[A](name: String, default: Value, description: String)(implicit tpe: => In[A]): NonEmptyArg[A] =
-    NonEmptyArg.one[A](ArgValue(name, Eval.later(tpe), Some(default), Some(description)))
+  def arg[A](name: String, default: Value, description: String)(implicit tpe: => In[A]): Arg[A] =
+    Arg.make[A](ArgValue(name, Eval.later(tpe), Some(default), Some(description)))
 
   def cache[F[_]: Functor, I, O](resolver: Resolver[F, I, O])(get: I => F[Option[O]]): CacheResolver[F, I, I, O] =
     CacheResolver(i => get(i).map(_.toRight(i)), resolver)

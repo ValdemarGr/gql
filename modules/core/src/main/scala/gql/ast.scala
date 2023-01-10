@@ -85,7 +85,7 @@ object ast extends AstImplicits.Implicits {
 
   final case class Input[A](
       name: String,
-      fields: NonEmptyArg[A],
+      fields: Arg[A],
       description: Option[String] = None
   ) extends InToplevel[A] {
     def document(description: String): Input[A] = copy(description = Some(description))

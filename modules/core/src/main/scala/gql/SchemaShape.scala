@@ -276,7 +276,7 @@ object SchemaShape {
             case Input(name, fields, desc) =>
               doc(desc) +
                 Doc.text(s"input $name") + (Doc.text(" {") + Doc.hardLine + Doc
-                  .intercalate(Doc.hardLine, fields.nec.toList.map(renderArgValueDoc))
+                  .intercalate(Doc.hardLine, fields.entries.toList.map(renderArgValueDoc))
                   .indent(2) + Doc.hardLine + Doc.text("}"))
             // Dont render built-in scalars
             case Scalar(name, _, _, desc) => doc(desc) + Doc.text(s"scalar $name")

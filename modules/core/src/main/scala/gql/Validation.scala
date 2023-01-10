@@ -43,6 +43,9 @@ object Validation {
     final case class InvalidInput(pe: PreparedQuery.PositionalError) extends Error {
       def message: String = s"Invalid argument input: ${pe.message}"
     }
+    final case class InputNoArgs(name: String) extends Error {
+      def message: String = s"Input `$name` has no arguments."
+    }
     final case class MissingInterfaceFields(
         typename: String,
         interfaceName: String,
@@ -264,7 +267,8 @@ object Validation {
       case Right(_) => G.unit
     }
 
-  def validateInput[F[_], G[_]: Monad](input: In[?], discovery: SchemaShape.DiscoveryState[F])(implicit
+  def validateInput[F[_], G[_]](input: In[?], discovery: SchemaShape.DiscoveryState[F])(implicit
+      G: Monad[G],
       S: Stateful[G, ValidationState[F]]
   ): G[Unit] = {
     input match {
@@ -272,7 +276,13 @@ object Validation {
       case InOpt(of)    => validateInput[F, G](of, discovery)
       case t @ Input(name, fields, _) =>
         useInputEdge(t, discovery) {
-          validateTypeName[F, G](name) *> validateArg[F, G](fields, discovery)
+          val validateNonEmptyF =
+            if (fields.entries.isEmpty) raise(InputNoArgs(name))
+            else G.unit
+
+          validateNonEmptyF *>
+            validateTypeName[F, G](name) *>
+            validateArg[F, G](fields, discovery)
         }
       case Enum(name, _, _)      => validateTypeName[F, G](name)
       case Scalar(name, _, _, _) => validateTypeName[F, G](name)
@@ -352,7 +362,6 @@ object Validation {
             }
           }
           // fields must be supersets of the interface fields
-          // TODO
           val fieldSubtypeConstraintsF = implements.traverse_ { i =>
             i.value.fields.traverse_ { case (k, v) =>
               ol.abstractFieldMap.get(k) match {
@@ -369,12 +378,12 @@ object Validation {
                   val actualArg: Chain[ArgValue[?]] = f.arg.entries
                   val expectedArg: Chain[ArgValue[?]] = v.arg.entries
                   val comb = actualArg.map(x => x.name -> x) align expectedArg.map(x => x.name -> x)
-                  val verifyArgsF = comb.traverse_{
+                  val verifyArgsF = comb.traverse_ {
                     // Only actual; shouldn't occur
                     case Ior.Left((argName, _)) => raise[F, G](Error.ArgumentNotDefinedInInterface(ol.name, i.value.name, k, argName))
                     // Only expected; impl type should implement argument
                     case Ior.Right((argName, _)) => raise[F, G](Error.MissingInterfaceFieldArgument(ol.name, i.value.name, k, argName))
-                    case Ior.Both((argName, l), (_, r)) => 
+                    case Ior.Both((argName, l), (_, r)) =>
                       val lName = PreparedQuery.inName(l.input.value)
                       val rName = PreparedQuery.inName(r.input.value)
                       val verifyTypesF =
@@ -383,20 +392,28 @@ object Validation {
                         else G.unit
 
                       val defaultMatchF = (l.defaultValue, r.defaultValue) match {
-                        case (None, None) => G.unit
+                        case (None, None)    => G.unit
                         case (Some(_), None) => raise[F, G](Error.InterfaceDoesNotDefineDefaultArg(ol.name, i.value.name, k, argName))
-                        case (None, Some(_)) => raise[F, G](Error.InterfaceImplementationMissingDefaultArg(ol.name, i.value.name, k, argName))
-                        case (Some(ld), Some(rd)) => 
+                        case (None, Some(_)) =>
+                          raise[F, G](Error.InterfaceImplementationMissingDefaultArg(ol.name, i.value.name, k, argName))
+                        case (Some(ld), Some(rd)) =>
                           PreparedQuery
-                            .compareValues[PreparedQuery.H](PreparedQuery.valueToParserValue(ld), PreparedQuery.valueToParserValue(rd), None)
+                            .compareValues[PreparedQuery.H](
+                              PreparedQuery.valueToParserValue(ld),
+                              PreparedQuery.valueToParserValue(rd),
+                              None
+                            )
                             .runA(PreparedQuery.Prep.empty)
                             .value
                             .value
                             .swap
                             .toOption
-                            .traverse_(_.traverse_{ pe => 
+                            .traverse_(_.traverse_ { pe =>
                               val suf = pe.position.position
-                              raise[F, G](Error.InterfaceImplementationDefaultArgDoesNotMatch(ol.name, i.value.name, k, argName, pe.message), suf)
+                              raise[F, G](
+                                Error.InterfaceImplementationDefaultArgDoesNotMatch(ol.name, i.value.name, k, argName, pe.message),
+                                suf
+                              )
                             })
                       }
 
