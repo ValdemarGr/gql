@@ -38,7 +38,9 @@ object PreparedQuery {
       name: String,
       alias: Option[String],
       cont: PreparedCont[F]
-  ) extends PreparedField[F, I]
+  ) extends PreparedField[F, I] {
+    lazy val outputName = alias.getOrElse(name)
+  }
 
   final case class PreparedSpecification[F[_], A](
       id: Int,
