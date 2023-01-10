@@ -289,7 +289,7 @@ object Interpreter {
   ): JsonObject = {
     sel
       .map {
-        case PreparedSpecification(_, _, _, selection) =>  _reconstructSelection(selection, m)
+        case PreparedSpecification(_, _, _, selection) => _reconstructSelection(selection, m)
         case PreparedDataField(_, name, alias, cont) =>
           val n = alias.getOrElse(name)
           JsonObject(
@@ -508,7 +508,25 @@ class InterpreterImpl[F[_]](
           runEdge_(skip ++ forced, rs, cont)
         }
       case PreparedQuery.PreparedEdge.Edge(id, resolver, statisticsName) :: xs =>
-        def evalEffect(resolve: Any => F[Ior[String, Any]]) =
+        def evalEffect2(resolve: Any => F[Ior[String, Any]]): W[Chain[EvalNode[Option[Any]]]] =
+          inputs.parTraverse { in =>
+            lift {
+              IorT(resolve(in.value)).timed.semiflatMap { case (dur, v) =>
+                val out = in.setValue(v)
+                submit(statisticsName, dur, 1) as out
+              }.value
+            }.attempt
+              .flatMap[EvalNode[Option[Any]]] {
+                case Left(ex) =>
+                  WriterT.put(in.setValue(Option.empty[Any]))(Chain(EvalFailure.EffectResolution(in.cursor, Left(ex), in.value)))
+                case Right(Ior.Both(l, r)) =>
+                  WriterT.put(r.setValue(Option[Any](r.value)))(Chain(EvalFailure.EffectResolution(in.cursor, Right(l), in.value)))
+                case Right(Ior.Left(l)) =>
+                  WriterT.put(in.setValue(Option.empty[Any]))(Chain(EvalFailure.EffectResolution(in.cursor, Right(l), in.value)))
+                case Right(Ior.Right(r)) => WriterT.put(r.setValue(Option[Any](r.value)))(Chain.empty)
+              }
+          }
+        def evalEffect(resolve: Any => F[Ior[String, Any]]): W[Chain[EvalNode[Any]]] =
           inputs.parFlatTraverse { in =>
             attemptUser(
               IorT(resolve(in.value)).timed
@@ -568,7 +586,7 @@ class InterpreterImpl[F[_]](
   def runFields(dfs: NonEmptyList[PreparedField[F, Any]], in: Chain[EvalNode[Any]]): W[Chain[EvalNode[Json]]] =
     Chain.fromSeq(dfs.toList).parFlatTraverse {
       case PreparedSpecification(_, _, specify, selection) =>
-        runFields(selection,in.flatMap(x => Chain.fromOption(specify(x.value)).map(x.setValue)))
+        runFields(selection, in.flatMap(x => Chain.fromOption(specify(x.value)).map(x.setValue)))
       case df @ PreparedDataField(_, _, _, _) => runDataField(df, in)
     }
 
