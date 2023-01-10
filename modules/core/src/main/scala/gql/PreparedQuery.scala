@@ -1164,7 +1164,7 @@ object PreparedQuery {
         case P.OperationType.Query =>
           val i: NonEmptyList[(String, Field[G, Unit, ?, ?])] = schema.shape.introspection
           val q = schema.shape.query.asInstanceOf[Type[G, Any]]
-          F.pure(q.copy(fields = q.fields concatNel i.map { case (k, v) => k -> v.contramap[Any](_ => ()) }))
+          F.pure(q.copy(fields = i.map { case (k, v) => k -> v.contramap[Any](_ => ()) } concatNel q.fields))
         case P.OperationType.Mutation =>
           raiseOpt(schema.shape.mutation.map(_.asInstanceOf[Type[G, Any]]), "No `Mutation` type defined in this schema.", None)
         case P.OperationType.Subscription =>

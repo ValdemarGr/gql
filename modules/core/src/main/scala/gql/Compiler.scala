@@ -114,7 +114,7 @@ object Compiler { outer =>
         queryInput: F[Q] = F.unit,
         mutationInput: F[M] = F.unit,
         subscriptionInput: F[S] = F.unit
-    ) = {
+    ): Application[F] = {
       implicit val s = schema.statistics
       implicit val p = schema.planner
 
