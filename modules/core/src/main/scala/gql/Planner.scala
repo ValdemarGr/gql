@@ -131,72 +131,72 @@ object Planner {
       tree.root.toNel match {
         case None => F.pure(tree.set(tree.root))
         case Some(_) =>
-          val flatNodes = tree.flattened
-
-          val orderedFlatNodes = flatNodes.sortBy(_.end).reverse
-
-          val m = orderedFlatNodes.head.end
-
-          // go through every node sorted by end decending
-          // if the node has a batching name, move node to lastest possible batch (frees up most space for parents to move)
-          def go(
-              remaining: List[Node],
-              handled: Map[PreparedQuery.EdgeId, Node],
-              batchMap: Map[BatchResolver.ResolverKey, Eval[TreeSet[Double]]]
-          ): Map[PreparedQuery.EdgeId, Node] =
-            remaining match {
-              case Nil     => handled
-              case r :: rs =>
-                // the maximum amount we can move down is the child with smallest start
-                val maxEnd: Double = r.children match {
-                  case Nil     => m
-                  case x :: xs =>
-                    // use the already resolved if possible
-                    val children = NonEmptyList(x, xs)
-
-                    children.map(c => handled.get(c.edgeId).getOrElse(c).start).minimum
-                }
-
-                val (newEnd, newMap) =
-                  r.batcher match {
-                    // No batching, free up as much space as possible for parents to move
-                    case None     => (maxEnd, batchMap)
-                    case Some(bn) =>
-                      // Find nodes that we may move to:
-                      // All nodes that end no later than the earliest of our children but end later than us
-                      val compat =
-                        batchMap
-                          .get(bn)
-                          .flatMap { m =>
-                            val o = if (m.value.contains(maxEnd)) Some(maxEnd) else m.value.maxBefore(maxEnd)
-                            o.filter(_ >= r.end)
-                          }
-                          .getOrElse(maxEnd)
-
-                      val newSet =
-                        batchMap.get(bn) match {
-                          case None    => Eval.later(TreeSet(r.end))
-                          case Some(s) => s.map(_ + r.end)
-                        }
-                      val newMap = batchMap + (bn -> newSet)
-
-                      (compat, newMap)
-                  }
-
-                go(rs, handled + (r.edgeId -> r.copy(end = newEnd)), newMap)
+          def findMax(ns: List[Node], current: Double): Eval[Double] = Eval.defer {
+            ns.foldLeftM(current) { case (cur, n) =>
+              findMax(n.children, cur max n.end)
             }
+          }
+          val maxEnd = findMax(tree.root, 0d).value
 
-          val plannedMap = go(orderedFlatNodes.toList, Map.empty, Map.empty)
+          // Move as far down as we can
+          def moveDown(n: Node): Eval[Node] = Eval.defer {
+            n.children
+              .traverse(moveDown)
+              .map { movedChildren =>
+                // This end is the minimum end of all children
+                val thisEnd = movedChildren.foldLeft(maxEnd)((z, c) => z min c.end)
+                n.copy(end = thisEnd, children = movedChildren)
+              }
+          }
 
-          def reConstruct(ns: List[PreparedQuery.EdgeId]): Eval[List[Node]] = Eval.defer {
+          val movedDown = tree.root.traverse(moveDown).value
+
+          // Run though orderd by end time (smallest first)
+          // Then move up to furthest batchable neighbour
+          // If no such neighbour, move up as far as possible
+          def moveUp(ns: List[Node]): Map[PreparedQuery.EdgeId, Double] =
+            ns.mapAccumulate(
+              (
+                // When a parent has been moved, it adds a reference for every children to their parent's end time
+                Map.empty[PreparedQuery.EdgeId, Double],
+                // When a node has been visited and is batchable, it is added here
+                Map.empty[BatchResolver.ResolverKey, TreeSet[Double]]
+              )
+            ) { case ((parentEnds, batchMap), n) =>
+              val minEnd = parentEnds.getOrElse(n.edgeId, 0d) + n.cost
+              val (newEnd, newMap) = n.batcher match {
+                // No batching here, move up as far as possible
+                case None => (minEnd, batchMap)
+                case Some(bn) =>
+                  batchMap.get(bn) match {
+                    case None    => (minEnd, batchMap + (bn -> TreeSet(minEnd)))
+                    case Some(s) =>
+                      // This is a possible batch possibility
+                      val o = if (s.contains(minEnd)) Some(minEnd) else s.minAfter(minEnd)
+                      // If a batch is found, then we can move up to the batch and don't need to modify the set
+                      // If no batch is found, then we move up to the minimum end and add this to the set
+                      o match {
+                        case None    => (minEnd, batchMap + (bn -> (s + minEnd)))
+                        case Some(x) => (x, batchMap)
+                      }
+                  }
+              }
+
+              val newParentEnds = parentEnds ++ n.children.map(c => c.edgeId -> newEnd)
+              ((newParentEnds, newMap), (n.edgeId, newEnd))
+            }._2.toMap
+
+          val ordered = NodeTree(movedDown).flattened.sortBy(_.end)
+
+          val movedUp = moveUp(ordered)
+
+          def reConstruct(ns: List[Node]): Eval[List[Node]] = Eval.defer {
             ns.traverse { n =>
-              val newN = plannedMap(n)
-              val newChildrenF = reConstruct(newN.children.map(_.edgeId)).map(_.toList)
-              newChildrenF.map(x => newN.copy(children = x))
+              reConstruct(n.children).map(cs => n.copy(end = movedUp(n.edgeId), children = cs))
             }
           }
 
-          F.pure(tree.set(reConstruct(tree.root.map(_.edgeId)).value))
+          F.pure(tree.set(reConstruct(tree.root).value))
       }
     }
   }
