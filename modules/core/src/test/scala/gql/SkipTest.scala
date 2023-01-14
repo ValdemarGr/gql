@@ -14,9 +14,7 @@ class SkipTest extends CatsEffectSuite {
     tpe[IO, Unit](
       "Query",
       "num" -> field[Unit] {
-        cacheFull[IO, Unit, Int, Int](
-          EffectResolver(i => effectState.modify(_ => (Some(i), i)))
-        ) { _ =>
+        cacheFull[IO, Unit, Int, Int](EffectResolver(i => effectState.modify(_ => (Some(i), i)))) { _ =>
           effectState.get.flatMap {
             case None    => IO(Left(10))
             case Some(i) => IO.pure(Right(i))
