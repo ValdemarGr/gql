@@ -50,28 +50,30 @@ object Planner {
     lazy val start = end - cost
   }
 
-  def costForPrepared[F[_]: Statistics](p: PreparedQuery.Prepared[F, Any], currentCost: Double)(implicit F: Monad[F]): F[List[Node]] =
+  def costForPrepared[F[_]: Statistics](p: PreparedQuery.Prepared[F], currentCost: Double)(implicit F: Monad[F]): F[List[Node]] =
     p match {
       case PreparedLeaf(_, _)    => F.pure(Nil)
       case Selection(fields)     => costForFields[F](currentCost, fields).map(_.toList)
-      case PreparedList(cont, _) => costForCont[F](cont.edges.toList, cont.cont, currentCost)
-      case PreparedOption(cont)  => costForCont[F](cont.edges.toList, cont.cont, currentCost)
+      case PreparedList(cont, _) => costForCont[F](cont.edges.toChain, cont.cont, currentCost)
+      case PreparedOption(cont)  => costForCont[F](cont.edges.toChain, cont.cont, currentCost)
     }
 
-  def costForEdges[F[_]](pes: List[PreparedQuery.PreparedEdge.Edge[F]], cont: PreparedQuery.Prepared[F, Any], currentCost: Double)(implicit
+  def costForEdges[F[_]](pes: Chain[PreparedQuery.PreparedEdge.Edge[F]], cont: PreparedQuery.Prepared[F], currentCost: Double)(implicit
       stats: Statistics[F],
       F: Monad[F]
   ): F[List[Node]] =
-    pes match {
-      case Nil => costForPrepared[F](cont, currentCost)
-      case x :: xs =>
+    pes.uncons match {
+      case None => costForPrepared[F](cont, currentCost)
+      case Some((x, xs)) =>
         val resolverKey = x.resolver match {
           case PreparedQuery.PreparedResolver.Batch(BatchResolver(id, _)) => Some(id)
           case _                                                          => None
         }
 
+        val uniqueEdgeStr = x.uniqueEdgeName.asString
+
         stats
-          .getStatsOpt(x.statisticsName)
+          .getStatsOpt(uniqueEdgeStr)
           .map {
             case None    => Statistics.Stats(100d, 5d)
             case Some(x) => x
@@ -84,7 +86,7 @@ object Planner {
             childrenF.map { children =>
               List(
                 Node(
-                  x.statisticsName,
+                  uniqueEdgeStr,
                   end,
                   s.initialCost,
                   s.extraElementCost,
@@ -98,31 +100,31 @@ object Planner {
     }
 
   def costForCont[F[_]: Statistics: Monad](
-      edges: List[PreparedQuery.PreparedEdge[F]],
-      cont: PreparedQuery.Prepared[F, Any],
+      edges: Chain[PreparedQuery.PreparedEdge[F]],
+      cont: PreparedQuery.Prepared[F],
       currentCost: Double
   ): F[List[Node]] =
     costForEdges[F](
-      edges.toList.collect { case e: PreparedQuery.PreparedEdge.Edge[F] => e },
+      edges.collect { case e: PreparedQuery.PreparedEdge.Edge[F] => e },
       cont,
       currentCost
     )
 
   def costForFields[F[_]](
       currentCost: Double,
-      prepared: NonEmptyList[PreparedQuery.PreparedField[F, Any]]
+      prepared: NonEmptyList[PreparedQuery.PreparedField[F]]
   )(implicit
       F: Monad[F],
       stats: Statistics[F]
   ): F[List[Node]] = {
     prepared.toList.flatTraverse {
-      case PreparedDataField(_, _, _, cont)          => costForCont[F](cont.edges.toList, cont.cont, currentCost)
+      case PreparedDataField(_, _, _, cont)          => costForCont[F](cont.edges.toChain, cont.cont, currentCost)
       case PreparedSpecification(_, _, _, selection) => costForFields[F](currentCost, selection)
     }
   }
 
   def costTree[F[_]: Monad](
-      prepared: NonEmptyList[PreparedQuery.PreparedField[F, Any]]
+      prepared: NonEmptyList[PreparedQuery.PreparedField[F]]
   )(implicit stats: Statistics[F]): F[NodeTree] =
     costForFields[F](0d, prepared).map(xs => NodeTree(xs.toList))
 

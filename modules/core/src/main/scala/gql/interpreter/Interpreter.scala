@@ -33,15 +33,15 @@ sealed trait Interpreter[F[_]] {
 
   def runEdge(
     inputs: Chain[EvalNode[Any]],
-    edges: List[PreparedEdge[F]],
-    cont: Prepared[F, Any]
+    edges: Chain[PreparedEdge[F]],
+    cont: Prepared[F]
   ): W[Chain[Json]]
 
-  def runFields(dfs: NonEmptyList[PreparedField[F, Any]], in: Chain[EvalNode[Any]]): W[Chain[Map[String, Json]]]
+  def runFields(dfs: NonEmptyList[PreparedField[F]], in: Chain[EvalNode[Any]]): W[Chain[Map[String, Json]]]
 
-  def startNext(s: Prepared[F, Any], in: Chain[EvalNode[Any]]): W[Chain[Json]]
+  def startNext(s: Prepared[F], in: Chain[EvalNode[Any]]): W[Chain[Json]]
 
-  def runDataField(df: PreparedDataField[F, ?, ?], input: Chain[EvalNode[Any]]): W[Chain[Json]]
+  def runDataField(df: PreparedDataField[F], input: Chain[EvalNode[Any]]): W[Chain[Json]]
 }
 
 object Interpreter {
@@ -63,13 +63,13 @@ object Interpreter {
 
   final case class StreamMetadata[F[_]](
       cursor: Cursor,
-      edges: List[PreparedEdge[F]],
-      cont: Prepared[F, Any]
+      edges: Chain[PreparedEdge[F]],
+      cont: Prepared[F]
   )
 
   def constructStream[F[_]: Statistics](
       rootInput: Any,
-      rootSel: NonEmptyList[PreparedField[F, Any]],
+      rootSel: NonEmptyList[PreparedField[F]],
       schemaState: SchemaState[F],
       openTails: Boolean
   )(implicit F: Async[F], planner: Planner[F]): fs2.Stream[F, (Chain[EvalFailure], JsonObject)] =
@@ -81,8 +81,8 @@ object Interpreter {
 
         final case class RunInput(
             position: Cursor,
-            edges: List[PreparedEdge[F]],
-            cont: Prepared[F, Any],
+            edges: Chain[PreparedEdge[F]],
+            cont: Prepared[F],
             inputValue: Any
         )
 
@@ -118,7 +118,7 @@ object Interpreter {
             allErrors = Chain.fromSeq(res.toList).flatMap { case (errs, _, _) => errs } ++ Chain.fromSeq(bes)
           } yield (allErrors, res.map { case (_, j, _) => j }, smas)
 
-        val inital = RunInput(Cursor.empty, Nil, PreparedQuery.Selection(rootSel), rootInput)
+        val inital = RunInput(Cursor.empty, Chain.empty, PreparedQuery.Selection(rootSel), rootInput)
 
         fs2.Stream
           .eval(evaluate(NonEmptyList.one(inital)))
@@ -213,14 +213,14 @@ object Interpreter {
 
   def runStreamed[F[_]: Statistics: Planner](
       rootInput: Any,
-      rootSel: NonEmptyList[PreparedField[F, Any]],
+      rootSel: NonEmptyList[PreparedField[F]],
       schemaState: SchemaState[F]
   )(implicit F: Async[F]): fs2.Stream[F, (Chain[EvalFailure], JsonObject)] =
     constructStream[F](rootInput, rootSel, schemaState, true)
 
   def runSync[F[_]: Async: Statistics: Planner](
       rootInput: Any,
-      rootSel: NonEmptyList[PreparedField[F, Any]],
+      rootSel: NonEmptyList[PreparedField[F]],
       schemaState: SchemaState[F]
   ): F[(Chain[EvalFailure], JsonObject)] =
     constructStream[F](rootInput, rootSel, schemaState, false).take(1).compile.lastOrError
@@ -288,12 +288,12 @@ class InterpreterImpl[F[_]](
   type IndexedValue = (Int, EvalNode[Any])
   def runEdge_(
       inputs: Chain[IndexedValue],
-      edges: List[PreparedEdge[F]],
-      cont: Prepared[F, Any]
+      edges: Chain[PreparedEdge[F]],
+      cont: Prepared[F]
   ): W[Chain[IndexedValue]] =
-    edges match {
-      case Nil                                                          => W.pure(inputs)
-      case PreparedQuery.PreparedEdge.Skip(specify, relativeJump) :: xs =>
+    edges.uncons match {
+      case None                                                          => W.pure(inputs)
+      case Some((PreparedQuery.PreparedEdge.Skip(specify, jumpTo), xs)) =>
         // Partition into skipping and non-skipping
         // Run the non-skipping first so they are in sync
         // Then continue with tl
@@ -305,20 +305,21 @@ class InterpreterImpl[F[_]](
                 case Right(v) => Right((i, x.setValue(v)))
               }
             }
-            val (ls, rs) = xs.splitAt(relativeJump)
-            runEdge_(force, ls, cont).flatMap { forced =>
+            // Sub-stack of edges to force traverse
+            val toForce = Chain.fromSeq(xs.toList.take((xs.size - jumpTo.size).toInt))
+            runEdge_(force, toForce, cont).flatMap { forced =>
               val combined = (forced ++ skip).sortBy{ case (i, _) => i }
-              runEdge_(combined, rs, cont)
+              runEdge_(combined, jumpTo, cont)
             }
           }
-      case PreparedQuery.PreparedEdge.Edge(id, resolver, statisticsName) :: xs =>
+      case Some((PreparedQuery.PreparedEdge.Edge(id, resolver, edgeName), xs)) =>
         def evalEffect(resolve: Any => F[Ior[String, Any]]): W[Chain[IndexedValue]] =
           inputs.parFlatTraverse { case (i, in) =>
             attemptUser(
               IorT(resolve(in.value)).timed
                 .semiflatMap { case (dur, v) =>
                   val out = Chain(in.setValue(v))
-                  submit(statisticsName, dur, 1) as out
+                  submit(edgeName.asString, dur, 1) as out
                 }
                 .value
                 .map(_.leftMap(NonEmptyChain.one)),
@@ -340,7 +341,7 @@ class InterpreterImpl[F[_]](
                   .map { case (dur, (_, fb)) => fb.tupleLeft(dur) }
                   .rethrow
                   .flatMap { case (dur, xs) =>
-                    submit(statisticsName, dur, 1) as xs.map(hd => Chain(in.setValue(hd)))
+                    submit(edgeName.asString, dur, 1) as xs.map(hd => Chain(in.setValue(hd)))
                   },
                 EvalFailure.StreamHeadResolution(in.cursor, _, in.value)
               ).map(_ tupleLeft i)
@@ -364,8 +365,8 @@ class InterpreterImpl[F[_]](
 
   def runEdge(
       inputs: Chain[EvalNode[Any]],
-      edges: List[PreparedEdge[F]],
-      cont: Prepared[F, Any]
+      edges: Chain[PreparedEdge[F]],
+      cont: Prepared[F]
   ): W[Chain[Json]] = {
     val indexed = inputs.zipWithIndex.map(_.swap)
     runEdge_(indexed, edges, cont)
@@ -379,15 +380,15 @@ class InterpreterImpl[F[_]](
       }
   }
 
-  def runDataField(df: PreparedDataField[F, ?, ?], in: Chain[EvalNode[Any]]): W[Chain[Json]] =
-    runEdge(in.map(_.modify(_.field(df.outputName))), df.cont.edges.toList, df.cont.cont)
+  def runDataField(df: PreparedDataField[F], in: Chain[EvalNode[Any]]): W[Chain[Json]] =
+    runEdge(in.map(_.modify(_.field(df.outputName))), df.cont.edges.toChain, df.cont.cont)
 
   // ns is a list of sizes, dat is a list of dat
   // for every n, there will be consumed n of dat
   def unflatten[A](ns: Vector[Int], dat: Vector[A]): Vector[Vector[A]] =
     ns.mapAccumulate(dat)((ds, n) => ds.splitAt(n).swap)._2
 
-  def runFields(dfs: NonEmptyList[PreparedField[F, Any]], in: Chain[EvalNode[Any]]): W[Chain[Map[String, Json]]] =
+  def runFields(dfs: NonEmptyList[PreparedField[F]], in: Chain[EvalNode[Any]]): W[Chain[Map[String, Json]]] =
     Chain
       .fromSeq(dfs.toList)
       .parFlatTraverse {
@@ -420,20 +421,20 @@ class InterpreterImpl[F[_]](
       .map(_.toIterable.map(_.toIterable).transpose.map(_.foldLeft(Map.empty[String, Json])(_ ++ _)))
       .map(Chain.fromIterableOnce)
 
-  def startNext(s: Prepared[F, Any], in: Chain[EvalNode[Any]]): W[Chain[Json]] = W.defer {
+  def startNext(s: Prepared[F], in: Chain[EvalNode[Any]]): W[Chain[Json]] = W.defer {
     s match {
       case PreparedLeaf(_, enc) => W.pure(in.map(x => enc(x.value)))
       case Selection(fields)    => runFields(fields, in).map(_.map(JsonObject.fromMap(_).asJson))
       case PreparedList(of, toSeq) =>
         val partedInput = in.map(x => Chain.fromSeq(toSeq(x.value)).mapWithIndex((y, i) => x.succeed(y, _.index(i))))
         val flattened = partedInput.flatten
-        runEdge(flattened, of.edges.toList, of.cont).map { result =>
+        runEdge(flattened, of.edges.toChain, of.cont).map { result =>
           val out = unflatten(partedInput.map(_.size.toInt).toVector, result.toVector)
           Chain.fromSeq(out.map(Json.fromValues))
         }
       case PreparedOption(of) =>
         val partedInput = in.map(nv => nv.setValue(nv.value.asInstanceOf[Option[Any]]))
-        runEdge(partedInput.collect { case EvalNode(c, Some(x)) => EvalNode(c, x) }, of.edges.toList, of.cont).map { result =>
+        runEdge(partedInput.collect { case EvalNode(c, Some(x)) => EvalNode(c, x) }, of.edges.toChain, of.cont).map { result =>
           Chain.fromSeq {
             unflatten(partedInput.map(_.value.size.toInt).toVector, result.toVector)
               .map(_.headOption.getOrElse(Json.Null))

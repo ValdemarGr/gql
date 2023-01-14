@@ -29,16 +29,16 @@ import cats.arrow.FunctionK
 import gql.parser.QueryParser
 
 object PreparedQuery {
-  sealed trait Prepared[F[_], A]
+  sealed trait Prepared[F[_]]
 
-  sealed trait PreparedField[F[_], A]
+  sealed trait PreparedField[F[_]]
 
-  final case class PreparedDataField[F[_], I, T](
+  final case class PreparedDataField[F[_]](
       id: Int,
       name: String,
       alias: Option[String],
       cont: PreparedCont[F]
-  ) extends PreparedField[F, I] {
+  ) extends PreparedField[F] {
     lazy val outputName = alias.getOrElse(name)
   }
 
@@ -46,14 +46,14 @@ object PreparedQuery {
       id: Int,
       typename: String,
       specify: Any => Option[A],
-      selection: NonEmptyList[PreparedDataField[F, A, ?]]
-  ) extends PreparedField[F, A]
+      selection: NonEmptyList[PreparedDataField[F]]
+  ) extends PreparedField[F]
 
-  final case class FragmentDefinition[F[_], A](
+  final case class FragmentDefinition[F[_]](
       name: String,
       typeCondition: String,
-      specify: Any => Option[A],
-      fields: NonEmptyList[PreparedField[F, A]]
+      specify: Any => Option[Any],
+      fields: NonEmptyList[PreparedField[F]]
   )
 
   final case class EdgeId(id: Int) extends AnyVal
@@ -67,32 +67,42 @@ object PreparedQuery {
     final case class Batch[F[_]](r: BatchResolver[F, Any, Any]) extends PreparedResolver[F]
   }
 
+  final case class UniqueEdgeCursor(path: NonEmptyChain[String]) {
+    def append(name: String): UniqueEdgeCursor = UniqueEdgeCursor(path append name)
+
+    lazy val asString: String = path.mkString_(".")
+  }
+
+  object UniqueEdgeCursor {
+    def apply(name: String): UniqueEdgeCursor = UniqueEdgeCursor(NonEmptyChain.one(name))
+  }
+
   sealed trait PreparedEdge[F[_]]
 
   object PreparedEdge {
     final case class Edge[F[_]](
         id: EdgeId,
         resolver: PreparedResolver[F],
-        statisticsName: String
+        uniqueEdgeName: UniqueEdgeCursor
     ) extends PreparedEdge[F]
     final case class Skip[F[_]](
         specify: Any => F[Either[Any, Any]],
-        relativeJump: Int
+        jumpTo: Chain[PreparedEdge[F]]
     ) extends PreparedEdge[F]
   }
 
   final case class PreparedCont[F[_]](
       edges: NonEmptyChain[PreparedEdge[F]],
-      cont: Prepared[F, Any]
+      cont: Prepared[F]
   )
 
-  final case class Selection[F[_], A](fields: NonEmptyList[PreparedField[F, A]]) extends Prepared[F, A]
+  final case class Selection[F[_]](fields: NonEmptyList[PreparedField[F]]) extends Prepared[F]
 
-  final case class PreparedList[F[_], A](of: PreparedCont[F], toSeq: Any => Seq[A]) extends Prepared[F, A]
+  final case class PreparedList[F[_]](of: PreparedCont[F], toSeq: Any => Seq[Any]) extends Prepared[F]
 
-  final case class PreparedOption[F[_], A](of: PreparedCont[F]) extends Prepared[F, A]
+  final case class PreparedOption[F[_]](of: PreparedCont[F]) extends Prepared[F]
 
-  final case class PreparedLeaf[F[_], A](name: String, encode: A => Json) extends Prepared[F, A]
+  final case class PreparedLeaf[F[_]](name: String, encode: Any => Json) extends Prepared[F]
 
   final case class PositionalError(position: PrepCursor, caret: List[Caret], message: String) {
     lazy val asGraphQL: JsonObject = {
@@ -157,6 +167,50 @@ object PreparedQuery {
       }
   }
 
+  def EdgeCursor[F[_]: Applicative] = StateT.get[F, UniqueEdgeCursor]
+
+  def flattenResolvers[F[_]: Monad, G[_]](root: Resolver[G, Any, Any])(implicit
+      S: Stateful[F, Prep]
+  ): StateT[F, UniqueEdgeCursor, NonEmptyChain[PreparedEdge[G]]] = {
+    def cast(r: Resolver[G, ?, ?]): Resolver[G, Any, Any] = r.asInstanceOf[Resolver[G, Any, Any]]
+    import PreparedResolver._
+    import PreparedEdge._
+
+    def makeWith(pr: PreparedResolver[G], edgeCursor: UniqueEdgeCursor): F[NonEmptyChain[PreparedEdge[G]]] =
+      nextId[F].map(id => NonEmptyChain.one(Edge(EdgeId(id), pr, edgeCursor)))
+
+    def make(pr: PreparedResolver[G], edgeName: String): StateT[F, UniqueEdgeCursor, NonEmptyChain[PreparedEdge[G]]] =
+      EdgeCursor[F].inspect(_ append edgeName).flatMapF(makeWith(pr, _))
+
+    def go(
+        resolver: Resolver[G, Any, Any],
+        rightNeighbour: Chain[PreparedEdge[G]]
+    ): StateT[F, UniqueEdgeCursor, NonEmptyChain[PreparedEdge[G]]] =
+      resolver match {
+        case r @ BatchResolver(id, _) => StateT.liftF(makeWith(Batch(r), UniqueEdgeCursor(s"batch_${id.id}")))
+        case r @ EffectResolver(_)    => make(Effect(r), "effect")
+        case r @ PureResolver(_)      => make(Pure(r), "pure")
+        case r @ FallibleResolver(_)  => make(Fallible(r), "fallible")
+        case r @ StreamResolver(_)    => make(Stream(r), "stream")
+        case CacheResolver(skip, fallback) =>
+          EdgeCursor[F].modify(_ append "cache") >>
+            go(cast(fallback), rightNeighbour).map { c =>
+              c prepend Skip(skip.asInstanceOf[Any => G[Either[Any, Any]]], rightNeighbour)
+            }
+        case CompositionResolver(left, right) =>
+          EdgeCursor[F].flatMap { initial =>
+            val rightCursor = initial append "right"
+            val leftCursor = rightCursor append "left"
+            EdgeCursor[F].modify(_ => rightCursor) >>
+              go(cast(right), rightNeighbour).flatMap { r =>
+                EdgeCursor[F].modify(_ => leftCursor) >> go(cast(left), r.toChain).map(_ ++ r)
+              }
+          }
+      }
+
+    go(root, Chain.empty)
+  }
+  /*
   def flattenResolvers[F[_]: Monad, G[_]](parentName: String, resolver: Resolver[G, Any, Any], index: Int = 0)(implicit
       S: Stateful[F, Prep]
   ): F[(NonEmptyChain[PreparedEdge[G]], String, Int)] = {
@@ -194,7 +248,7 @@ object PreparedQuery {
             flattenResolvers[F, G](newParentName, cast(right), lidx).map { case (zs, outName, ridx) => (ys ++ zs, outName, ridx) }
           }
     }
-  }
+  }*/
 
   def underlyingOutputTypename[G[_]](ot: Out[G, ?]): String = (ot: @unchecked) match {
     case Enum(name, _, _)         => name
@@ -762,42 +816,48 @@ object PreparedQuery {
       S: Stateful[F, Prep],
       F: MonadError[F, NonEmptyChain[PositionalError]],
       D: Defer[F]
-  ): F[PreparedDataField[G, Any, ?]] = {
+  ): F[PreparedDataField[G]] = {
     closeFieldParameters[F, G](fi, field, variableMap).flatMap { resolve =>
       val tpe = field.output.value
       val selCaret = fi.caret
       val name = fi.name
 
       nextId[F].flatMap { id =>
-        flattenResolvers[F, G](s"${currentTypename}_$name", resolve).flatMap { case (edges, parentName, _) =>
-          def typePrep(t: Out[G, Any], parentName: String): F[Prepared[G, Any]] =
-            (t, fi.tpe.selections.toNel) match {
-              case (OutArr(inner, toSeq, resolver), _) =>
-                flattenResolvers[F, G](parentName, resolver).flatMap { case (edges, parentName, _) =>
-                  typePrep(inner, parentName).map(cont => PreparedList(PreparedCont(edges, cont), toSeq))
-                }
-              case (OutOpt(inner, resolver), _) =>
-                flattenResolvers[F, G](parentName, resolver).flatMap { case (edges, parentName, _) =>
-                  typePrep(inner, parentName).map(cont => PreparedOption(PreparedCont(edges, cont)))
-                }
-              case (ol: Selectable[G, ?], Some(ss)) =>
-                prepareSelectable[F, G](ol, ss, variableMap, discoveryState)
-                  .map(Selection(_))
-              case (e: Enum[G, Any], None) =>
-                F.pure(PreparedLeaf(e.name, x => Json.fromString(e.revm(x))))
-              case (s: Scalar[G, Any], None) =>
-                F.pure(PreparedLeaf(s.name, x => s.encoder(x).asJson))
-              case (o, Some(_)) => raise(s"Type `${friendlyName[G, Any](o)}` cannot have selections.", Some(selCaret))
-              case (o, None)    => raise(s"Object like type `${friendlyName[G, Any](o)}` must have a selection.", Some(selCaret))
+        val rootUniqueName = s"${currentTypename}_$name"
+        flattenResolvers[F, G](resolve)
+          .flatMap { edges =>
+            def typePrep(t: Out[G, Any]): StateT[F, UniqueEdgeCursor, Prepared[G]] =
+              (t, fi.tpe.selections.toNel) match {
+                case (OutArr(inner, toSeq, resolver), _) =>
+                  EdgeCursor[F].modify(_ append "array") >>
+                    flattenResolvers[F, G](resolver).flatMap { edges =>
+                      typePrep(inner).map[Prepared[G]](cont => PreparedList(PreparedCont(edges, cont), toSeq))
+                    }
+                case (OutOpt(inner, resolver), _) =>
+                  EdgeCursor[F].modify(_ append "option") >>
+                    flattenResolvers[F, G](resolver).flatMap { edges =>
+                      typePrep(inner).map[Prepared[G]](cont => PreparedOption(PreparedCont(edges, cont)))
+                    }
+                case (ol: Selectable[G, ?], Some(ss)) =>
+                  StateT.liftF(prepareSelectable[F, G](ol, ss, variableMap, discoveryState).map[Prepared[G]](Selection(_)))
+                case (e: Enum[G, Any], None) =>
+                  StateT.pure(PreparedLeaf(e.name, x => Json.fromString(e.revm(x))))
+                case (s: Scalar[G, Any], None) =>
+                  StateT.pure(PreparedLeaf(s.name, x => s.encoder(x).asJson))
+                case (o, Some(_)) =>
+                  StateT.liftF(raise(s"Type `${friendlyName[G, Any](o)}` cannot have selections.", Some(selCaret)))
+                case (o, None) =>
+                  StateT.liftF(raise(s"Object like type `${friendlyName[G, Any](o)}` must have a selection.", Some(selCaret)))
+              }
+
+            val prepF = typePrep(tpe)
+
+            prepF.map { p =>
+              val pc = PreparedCont(edges, p)
+              PreparedDataField(id, name, fi.alias, pc)
             }
-
-          val prepF: F[Prepared[G, Any]] = typePrep(tpe, parentName)
-
-          prepF.map { p =>
-            val pc = PreparedCont(edges, p)
-            PreparedDataField(id, name, fi.alias, pc)
           }
-        }
+          .runA(UniqueEdgeCursor(rootUniqueName))
       }
     }
   }
@@ -812,7 +872,7 @@ object PreparedQuery {
       S: Stateful[F, Prep],
       F: MonadError[F, NonEmptyChain[PositionalError]],
       D: Defer[F]
-  ): F[NonEmptyList[PreparedField[G, Any]]] = {
+  ): F[NonEmptyList[PreparedField[G]]] = {
     mergeImplementations[F, G](s, sis, discoveryState).flatMap { impls =>
       impls.parFlatTraverse { impl =>
         val fa = impl.selections.parTraverse { sel =>
@@ -1157,7 +1217,7 @@ object PreparedQuery {
       S: Stateful[F, Prep],
       F: MonadError[F, NonEmptyChain[PositionalError]],
       D: Defer[F]
-  ): F[(P.OperationType, NonEmptyList[PreparedField[G, Any]])] = {
+  ): F[(P.OperationType, NonEmptyList[PreparedField[G]])] = {
     val ot = operationType(op)
 
     val rootSchema: F[Type[G, Any]] =
@@ -1347,7 +1407,7 @@ object PreparedQuery {
       schema: Schema[F, ?, ?, ?],
       variableMap: Map[String, Json],
       operationName: Option[String]
-  ): EitherNec[PositionalError, (P.OperationType, NonEmptyList[PreparedField[F, Any]])] = {
+  ): EitherNec[PositionalError, (P.OperationType, NonEmptyList[PreparedField[F]])] = {
     val (ops, frags) = executabels.toList.partitionEither {
       case P.ExecutableDefinition.Operation(op)  => Left(op)
       case P.ExecutableDefinition.Fragment(frag) => Right(frag)

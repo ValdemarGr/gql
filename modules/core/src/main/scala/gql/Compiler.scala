@@ -97,7 +97,7 @@ object Compiler { outer =>
     def parsePrep(
         schema: Schema[F, ?, ?, ?],
         cp: CompilerParameters
-    ): Either[CompilationError, (QueryParser.OperationType, NonEmptyList[PreparedQuery.PreparedField[F, Any]])] =
+    ): Either[CompilationError, (QueryParser.OperationType, NonEmptyList[PreparedQuery.PreparedField[F]])] =
       gql.parser.parse(cp.query) match {
         case Left(pe) => Left(CompilationError.Parse(pe))
         case Right(q) =>
@@ -110,7 +110,7 @@ object Compiler { outer =>
     def compilePrepared[Q, M, S](
         schema: Schema[F, Q, M, S],
         operationType: P.OperationType,
-        ps: NonEmptyList[PreparedQuery.PreparedField[F, Any]],
+        ps: NonEmptyList[PreparedQuery.PreparedField[F]],
         queryInput: F[Q] = F.unit,
         mutationInput: F[M] = F.unit,
         subscriptionInput: F[S] = F.unit
