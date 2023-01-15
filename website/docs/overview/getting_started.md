@@ -4,16 +4,16 @@ title: Getting started
 
 Get it here
 ```scala
-libraryDependencies += "io.github.valdemargr" %% "gql-core" % "0.1-a6a8761-20221118T184602Z-SNAPSHOT"
-libraryDependencies += "io.github.valdemargr" %% "gql-http4s" % "0.1-a6a8761-20221118T184602Z-SNAPSHOT"
-libraryDependencies += "io.github.valdemargr" %% "gql-natchez" % "0.1-a6a8761-20221118T184602Z-SNAPSHOT"
-libraryDependencies += "io.github.valdemargr" %% "gql-graphqlws" % "0.1-a6a8761-20221118T184602Z-SNAPSHOT"
+libraryDependencies += "io.github.valdemargr" %% "gql-core" % "0.1-5b8121e-20230115T192447Z-SNAPSHOT"
+libraryDependencies += "io.github.valdemargr" %% "gql-http4s" % "0.1-5b8121e-20230115T192447Z-SNAPSHOT"
+libraryDependencies += "io.github.valdemargr" %% "gql-natchez" % "0.1-5b8121e-20230115T192447Z-SNAPSHOT"
+libraryDependencies += "io.github.valdemargr" %% "gql-graphqlws" % "0.1-5b8121e-20230115T192447Z-SNAPSHOT"
 ```
 
 heyy
 
 ```scala
-import cats.implicits._
+import cats.implicits._
 
 val x = 11
 // x: Int = 11

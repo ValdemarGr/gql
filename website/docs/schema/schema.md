@@ -7,7 +7,7 @@ The `SchemaShape` also contains extra types that should occur in the schema but 
 
 The `SchemaShape` also has derived information embedded in it.
 For instance, one can render the schema:
-```scala
+```scala mdoc
 import cats.effect._
 import cats.implicits._
 import gql._
@@ -22,16 +22,12 @@ def ss = SchemaShape.make[IO](
 )
 
 println(ss.render)
-// type Query {
-//   4hello: String!
-// }
 ```
 
 ### Validation
 Validation of the shape is also derived information:
-```scala
+```scala mdoc
 println(ss.validate)
-// Chain(Invalid field name '4hello', the field name must match /[_A-Za-z][_0-9A-Za-z]*/ at (Query).4hello)
 ```
 Running validation is completely optional, but is highly recommended.
 Running queries against a unvalidated schema can have unforseen consequences.
@@ -47,7 +43,7 @@ Validation also reports other non-critical issues such as cases of ambiguity.
 For instance, if a cyclic type is defined with `def`, validation cannot determine if the type is truely valid.
 Solving this would require an infinite amount of time.
 An exmaple follows:
-```scala
+```scala mdoc
 final case class A()
 
 def cyclicType(i: Int): Type[IO, A] = {
@@ -71,17 +67,15 @@ def recursiveSchema = SchemaShape.make[IO](
 )
 
 recursiveSchema.validate.toList.mkString("\n")
-// res2: String = "Cyclic type `A` is not reference equal. Use lazy val or `cats.Eval` to declare this type. at (Query).a(A).a(A)"
 ```
 After `10000` iterations the type is no longer unifyable.
 
 One can also choose to simply ignore some of the validation errors:
-```scala
+```scala mdoc
 recursiveSchema.validate.filter{
   case SchemaShape.Problem(SchemaShape.ValidationError.CyclicDivergingTypeReference("A"), _) => false
   case _ => true
 }
-// res3: cats.data.Chain[SchemaShape.Problem] = Chain()
 ```
 :::info
 Validation does not attempt structural equallity since this can have unforseen performance consequences.

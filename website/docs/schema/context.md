@@ -9,34 +9,34 @@ gql has no such concept, it is rather a by-product of being written in tagless s
 We can emulate context by using a `ReaderT`/`Kleisli` monad transformer from `cats`.
 Writing `ReaderT`/`Kleisli` everywhere is tedious, instead consider opting for `cats.mtl.Ask`:
 ```scala
-import gql._
-import gql.dsl._
-import gql.ast._
-import cats.mtl.Ask
-import cats._
-import cats.data._
-import cats.implicits._
-import io.circe._
-import cats.effect._
-import cats.effect.unsafe.implicits.global
+import gql._
+import gql.dsl._
+import gql.ast._
+import cats.mtl.Ask
+import cats._
+import cats.data._
+import cats.implicits._
+import io.circe._
+import cats.effect._
+import cats.effect.unsafe.implicits.global
 
 final case class Context(
   userId: String
-)
+)
 
 def queries[F[_]: Functor](implicit A: Ask[F, Context]): Type[F, Unit] = 
   tpe[F, Unit](
     "Query",
     "me" -> eff(_ => A.ask.map(_.userId))
-  )
+  )
 
-type G[A] = Kleisli[IO, Context, A]
+type G[A] = Kleisli[IO, Context, A]
 
 def query = """
   query {
     me
   }
-"""
+"""
 
 Statistics[IO].flatMap{ stats =>
   val schema =

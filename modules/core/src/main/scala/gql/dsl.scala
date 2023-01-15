@@ -152,7 +152,7 @@ object dsl {
 
   def pure[F[_], I] = new PartiallyAppliedPure[F, I]
   
-  def meta[F[_], I]: Resolver[F, I, (I, MetaResolver.Meta)] = 
+  def meta[F[_], I]: Resolver[F, I, (I, Meta)] = 
     MetaResolver[F, I, I](PureResolver(i => i))
 
   def abst[F[_], T](implicit tpe: => Out[F, T]): AbstractField[F, Unit, T] =
@@ -270,7 +270,7 @@ object dsl {
     def mapBoth[O2](f: (I, O) => O2)(implicit F: Functor[F]): Resolver[F, I, O2] =
       resolver.mapWithInput[I, O2] { case (i, o) => f(i, o) }
 
-    def meta: Resolver[F, I, (O, MetaResolver.Meta)] =
+    def meta: Resolver[F, I, (O, Meta)] =
       MetaResolver(resolver)
   }
 

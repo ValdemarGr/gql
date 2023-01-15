@@ -18,11 +18,11 @@ The `intercept` acts the cost of one element while the `slope` is the per elemen
 The `intercept` is the important of the two, since it allows us to compare batch resolvers regardless of their average batch sizes.
 
 ```scala
-import cats.effect._
-import gql._
-import scala.concurrent.duration._
+import cats.effect._
+import gql._
+import scala.concurrent.duration._
 
-import cats.effect.unsafe.implicits.global
+import cats.effect.unsafe.implicits.global
 
 Statistics[IO].flatMap{ stats =>
   stats.updateStats("foo", 1.millis, 1) >>
