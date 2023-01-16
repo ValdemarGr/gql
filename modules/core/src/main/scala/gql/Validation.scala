@@ -220,7 +220,7 @@ object Validation {
             } >>
             S.modify(s => s.copy(seenOutputs = s.seenOutputs + (sel.name -> sel))) *>
             fa <*
-            S.modify(s => s.copy(seenOutputs = s.seenOutputs))
+            S.modify(s => s.copy(seenOutputs = s.seenOutputs - sel.name))
       }
     }
 
@@ -240,7 +240,7 @@ object Validation {
             } >>
             S.modify(s => s.copy(seenInputs = s.seenInputs + (it.name -> it))) *>
             fa <*
-            S.modify(s => s.copy(seenInputs = s.seenInputs))
+            S.modify(s => s.copy(seenInputs = s.seenInputs - it.name))
       }
     }
 
