@@ -204,21 +204,21 @@ object Validation {
         S.modify(_.copy(currentPath = s.currentPath))
     }
 
-  def useOutputEdge[F[_], G[_]](ot: OutToplevel[F, ?], discovery: SchemaShape.DiscoveryState[F])(
+  def useOutputEdge[F[_], G[_]](sel: Selectable[F, ?], discovery: SchemaShape.DiscoveryState[F])(
       fa: G[Unit]
   )(implicit G: Monad[G], S: Stateful[G, ValidationState[F]]): G[Unit] =
-    useEdge(Edge.OutputType(ot.name)) {
-      S.inspect(_.seenOutputs.get(ot.name)).flatMap {
-        case Some(o) if o eq ot => G.unit
-        case Some(_)            => raise(CyclicDivergingTypeReference(ot.name))
+    useEdge(Edge.OutputType(sel.name)) {
+      S.inspect(_.seenOutputs.get(sel.name)).flatMap {
+        case Some(o) if o eq sel => G.unit
+        case Some(_)             => raise(CyclicDivergingTypeReference(sel.name))
         case None =>
           discovery.outputs
-            .get(ot.name)
+            .get(sel.name)
             .traverse_ {
-              case o if o eq ot => G.unit
-              case _            => raise(DivergingTypeReference(ot.name))
+              case o if o eq sel => G.unit
+              case _             => raise(DivergingTypeReference(sel.name))
             } >>
-            S.modify(s => s.copy(seenOutputs = s.seenOutputs + (ot.name -> ot))) *>
+            S.modify(s => s.copy(seenOutputs = s.seenOutputs + (sel.name -> sel))) *>
             fa <*
             S.modify(s => s.copy(seenOutputs = s.seenOutputs))
       }
@@ -337,12 +337,12 @@ object Validation {
         }
       }
 
-  def validateToplevel[F[_], G[_]](tl: OutToplevel[F, ?], discovery: SchemaShape.DiscoveryState[F])(implicit
+  def validateToplevel[F[_], G[_]](sel: Selectable[F, ?], discovery: SchemaShape.DiscoveryState[F])(implicit
       G: Monad[G],
       S: Stateful[G, ValidationState[F]]
   ): G[Unit] =
-    useOutputEdge[F, G](tl, discovery) {
-      validateTypeName[F, G](tl.name) >> {
+    useOutputEdge[F, G](sel, discovery) {
+      validateTypeName[F, G](sel.name) >> {
         def checkOl(ol: ObjectLike[F, ?]): G[Unit] = {
           val uniqF =
             allUnique[F, G](DuplicateInterfaceInstance.apply, ol.implementsMap.values.toList.map(_.value.name))
@@ -357,7 +357,7 @@ object Validation {
               val transitive = e.value.implementsMap.keySet
               val ys = transitive -- explicit
               if (ys.nonEmpty)
-                raise[F, G](TransitiveInterfacesNotImplemented(tl.name, ys.toList tupleLeft e.value.name))
+                raise[F, G](TransitiveInterfacesNotImplemented(sel.name, ys.toList tupleLeft e.value.name))
               else G.unit
             }
           }
@@ -367,14 +367,14 @@ object Validation {
               ol.abstractFieldMap.get(k) match {
                 case None =>
                   raise[F, G](
-                    Error.MissingInterfaceFields(tl.name, i.value.name, k, PreparedQuery.friendlyName(v.output.value))
+                    Error.MissingInterfaceFields(sel.name, i.value.name, k, PreparedQuery.friendlyName(v.output.value))
                   )
                 case Some(f) =>
                   val actualStr = PreparedQuery.friendlyName(v.output.value)
                   val expectedStr = PreparedQuery.friendlyName(f.output.value)
                   val verifyFieldTypeF =
                     if (actualStr != expectedStr)
-                      raise[F, G](Error.WrongInterfaceFieldType(tl.name, i.value.name, k, expectedStr, actualStr))
+                      raise[F, G](Error.WrongInterfaceFieldType(sel.name, i.value.name, k, expectedStr, actualStr))
                     else G.unit
 
                   val actualArg: Chain[ArgValue[?]] = f.arg.entries
@@ -441,7 +441,7 @@ object Validation {
           uniqF >> fieldsF >> transitiveInterfaceF >> fieldSubtypeConstraintsF
         }
 
-        tl match {
+        sel match {
           case Union(_, types, _) =>
             val ols = types.toList.map(_.tpe)
 
@@ -450,18 +450,19 @@ object Validation {
           // TODO on both (interface extension)
           case t @ Type(_, _, _, _)      => checkOl(t)
           case i @ Interface(_, _, _, _) => checkOl(i)
-          case Enum(_, _, _)             => G.unit
-          case Scalar(_, _, _, _)        => G.unit
         }
       }
     }
 
-  def validateOutput[F[_], G[_]: Monad](tl: Out[F, ?], discovery: SchemaShape.DiscoveryState[F])(implicit
-      S: Stateful[G, ValidationState[F]]
+  def validateOutput[F[_], G[_]](tl: Out[F, ?], discovery: SchemaShape.DiscoveryState[F])(implicit
+      S: Stateful[G, ValidationState[F]],
+      G: Monad[G]
   ): G[Unit] =
     tl match {
-      case x: OutToplevel[F, ?] => validateToplevel[F, G](x, discovery)
-      case OutArr(of, _, _)     => validateOutput[F, G](of.asInstanceOf[Out[F, Any]], discovery)
-      case OutOpt(of, _)        => validateOutput[F, G](of.asInstanceOf[Out[F, Any]], discovery)
+      case Enum(_, _, _)       => G.unit
+      case Scalar(_, _, _, _)  => G.unit
+      case s: Selectable[F, ?] => validateToplevel[F, G](s, discovery)
+      case OutArr(of, _, _)    => validateOutput[F, G](of.asInstanceOf[Out[F, Any]], discovery)
+      case OutOpt(of, _)       => validateOutput[F, G](of.asInstanceOf[Out[F, Any]], discovery)
     }
 }
