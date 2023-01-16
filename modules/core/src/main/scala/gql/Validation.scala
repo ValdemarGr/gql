@@ -52,16 +52,17 @@ object Validation {
         fieldName: String,
         fieldType: String
     ) extends Error {
-      def message: String = {
+      def message: String =
         s"Type `$typename` does not implement all of the fields defined in interface `$interfaceName`, missing field '$fieldName' of type `$fieldType`."
-      }
     }
     final case class CyclicInterfaceImplementation(typename: String) extends Error {
       def message: String = s"`$typename` is an interface implementation of itself."
     }
     final case class TransitiveInterfacesNotImplemented(typename: String, interfaces: List[(String, String)]) extends Error {
       def message: String =
-        s"$typename does not implement all interfaces: ${interfaces.map { case (through, name) => s"`$name` through `$through`" }.mkString(" and ")}."
+        s"$typename does not implement all interfaces: ${interfaces
+          .map { case (through, name) => s"`$name` through `$through`" }
+          .mkString(" and ")}."
     }
     final case class WrongInterfaceFieldType(
         typename: String,
@@ -189,7 +190,9 @@ object Validation {
     }
   }
 
-  def raise[F[_], G[_]](err: Error, suffix: Chain[Edge] = Chain.empty)(implicit S: Stateful[G, ValidationState[F]]): G[Unit] =
+  def raise[F[_], G[_]](err: Error, suffix: Chain[Edge] = Chain.empty)(implicit
+      S: Stateful[G, ValidationState[F]]
+  ): G[Unit] =
     S.modify(s => s.copy(problems = s.problems :+ Problem(err, s.currentPath ++ suffix)))
 
   def useEdge[F[_], G[_], A](edge: Edge)(
@@ -205,21 +208,19 @@ object Validation {
       fa: G[Unit]
   )(implicit G: Monad[G], S: Stateful[G, ValidationState[F]]): G[Unit] =
     useEdge(Edge.OutputType(ot.name)) {
-      S.get.flatMap { s =>
-        s.seenOutputs.get(ot.name) match {
-          case Some(o) if (o eq ot) => G.unit
-          case Some(_)              => raise(CyclicDivergingTypeReference(ot.name))
-          case None =>
-            discovery.outputs
-              .get(ot.name)
-              .traverse_ {
-                case o if (o eq ot) => G.unit
-                case _              => raise(DivergingTypeReference(ot.name))
-              } >>
-              S.set(s.copy(seenOutputs = s.seenOutputs + (ot.name -> ot))) *>
-              fa <*
-              S.modify(_.copy(seenOutputs = s.seenOutputs))
-        }
+      S.inspect(_.seenOutputs.get(ot.name)).flatMap {
+        case Some(o) if o eq ot => G.unit
+        case Some(_)            => raise(CyclicDivergingTypeReference(ot.name))
+        case None =>
+          discovery.outputs
+            .get(ot.name)
+            .traverse_ {
+              case o if o eq ot => G.unit
+              case _            => raise(DivergingTypeReference(ot.name))
+            } >>
+            S.modify(s => s.copy(seenOutputs = s.seenOutputs + (ot.name -> ot))) *>
+            fa <*
+            S.modify(s => s.copy(seenOutputs = s.seenOutputs))
       }
     }
 
@@ -227,21 +228,19 @@ object Validation {
       fa: G[Unit]
   )(implicit G: Monad[G], S: Stateful[G, ValidationState[F]]): G[Unit] =
     useEdge(Edge.InputType(it.name)) {
-      S.get.flatMap { s =>
-        s.seenInputs.get(it.name) match {
-          case Some(i) if (i eq it) => G.unit
-          case Some(_)              => raise(CyclicDivergingTypeReference(it.name))
-          case None =>
-            discovery.inputs
-              .get(it.name)
-              .traverse_ {
-                case i if (i eq it) => G.unit
-                case _              => raise(DivergingTypeReference(it.name))
-              } >>
-              S.set(s.copy(seenInputs = s.seenInputs + (it.name -> it))) *>
-              fa <*
-              S.modify(_.copy(seenInputs = s.seenInputs))
-        }
+      S.inspect(_.seenInputs.get(it.name)).flatMap {
+        case Some(i) if i eq it => G.unit
+        case Some(_)            => raise(CyclicDivergingTypeReference(it.name))
+        case None =>
+          discovery.inputs
+            .get(it.name)
+            .traverse_ {
+              case i if i eq it => G.unit
+              case _            => raise(DivergingTypeReference(it.name))
+            } >>
+            S.modify(s => s.copy(seenInputs = s.seenInputs + (it.name -> it))) *>
+            fa <*
+            S.modify(s => s.copy(seenInputs = s.seenInputs))
       }
     }
 
@@ -270,7 +269,7 @@ object Validation {
   def validateInput[F[_], G[_]](input: In[?], discovery: SchemaShape.DiscoveryState[F])(implicit
       G: Monad[G],
       S: Stateful[G, ValidationState[F]]
-  ): G[Unit] = {
+  ): G[Unit] =
     input match {
       case InArr(of, _) => validateInput[F, G](of, discovery)
       case InOpt(of)    => validateInput[F, G](of, discovery)
@@ -287,7 +286,6 @@ object Validation {
       case Enum(name, _, _)      => validateTypeName[F, G](name)
       case Scalar(name, _, _, _) => validateTypeName[F, G](name)
     }
-  }
 
   def validateArg[F[_], G[_]](arg: Arg[?], discovery: SchemaShape.DiscoveryState[F])(implicit
       G: Monad[G],
@@ -342,11 +340,12 @@ object Validation {
   def validateToplevel[F[_], G[_]](tl: OutToplevel[F, ?], discovery: SchemaShape.DiscoveryState[F])(implicit
       G: Monad[G],
       S: Stateful[G, ValidationState[F]]
-  ): G[Unit] = {
+  ): G[Unit] =
     useOutputEdge[F, G](tl, discovery) {
       validateTypeName[F, G](tl.name) >> {
         def checkOl(ol: ObjectLike[F, ?]): G[Unit] = {
-          val uniqF = allUnique[F, G](DuplicateInterfaceInstance.apply, ol.implementsMap.values.toList.map(_.value.name))
+          val uniqF =
+            allUnique[F, G](DuplicateInterfaceInstance.apply, ol.implementsMap.values.toList.map(_.value.name))
           val fieldsF = validateFields[F, G](ol.abstractFieldsNel, discovery)
 
           val implements = ol.implementsMap.values.toList
@@ -357,7 +356,8 @@ object Validation {
             implements.traverse_ { e =>
               val transitive = e.value.implementsMap.keySet
               val ys = transitive -- explicit
-              if (ys.nonEmpty) raise[F, G](TransitiveInterfacesNotImplemented(tl.name, ys.toList tupleLeft e.value.name))
+              if (ys.nonEmpty)
+                raise[F, G](TransitiveInterfacesNotImplemented(tl.name, ys.toList tupleLeft e.value.name))
               else G.unit
             }
           }
@@ -366,7 +366,9 @@ object Validation {
             i.value.fields.traverse_ { case (k, v) =>
               ol.abstractFieldMap.get(k) match {
                 case None =>
-                  raise[F, G](Error.MissingInterfaceFields(tl.name, i.value.name, k, PreparedQuery.friendlyName(v.output.value)))
+                  raise[F, G](
+                    Error.MissingInterfaceFields(tl.name, i.value.name, k, PreparedQuery.friendlyName(v.output.value))
+                  )
                 case Some(f) =>
                   val actualStr = PreparedQuery.friendlyName(v.output.value)
                   val expectedStr = PreparedQuery.friendlyName(f.output.value)
@@ -380,20 +382,25 @@ object Validation {
                   val comb = actualArg.map(x => x.name -> x) align expectedArg.map(x => x.name -> x)
                   val verifyArgsF = comb.traverse_ {
                     // Only actual; shouldn't occur
-                    case Ior.Left((argName, _)) => raise[F, G](Error.ArgumentNotDefinedInInterface(ol.name, i.value.name, k, argName))
+                    case Ior.Left((argName, _)) =>
+                      raise[F, G](Error.ArgumentNotDefinedInInterface(ol.name, i.value.name, k, argName))
                     // Only expected; impl type should implement argument
-                    case Ior.Right((argName, _)) => raise[F, G](Error.MissingInterfaceFieldArgument(ol.name, i.value.name, k, argName))
+                    case Ior.Right((argName, _)) =>
+                      raise[F, G](Error.MissingInterfaceFieldArgument(ol.name, i.value.name, k, argName))
                     case Ior.Both((argName, l), (_, r)) =>
                       val lName = PreparedQuery.inName(l.input.value)
                       val rName = PreparedQuery.inName(r.input.value)
                       val verifyTypesF =
                         if (lName != rName)
-                          raise[F, G](Error.InterfaceImplementationWrongArgType(ol.name, i.value.name, k, argName, rName, lName))
+                          raise[F, G](
+                            Error.InterfaceImplementationWrongArgType(ol.name, i.value.name, k, argName, rName, lName)
+                          )
                         else G.unit
 
                       val defaultMatchF = (l.defaultValue, r.defaultValue) match {
-                        case (None, None)    => G.unit
-                        case (Some(_), None) => raise[F, G](Error.InterfaceDoesNotDefineDefaultArg(ol.name, i.value.name, k, argName))
+                        case (None, None) => G.unit
+                        case (Some(_), None) =>
+                          raise[F, G](Error.InterfaceDoesNotDefineDefaultArg(ol.name, i.value.name, k, argName))
                         case (None, Some(_)) =>
                           raise[F, G](Error.InterfaceImplementationMissingDefaultArg(ol.name, i.value.name, k, argName))
                         case (Some(ld), Some(rd)) =>
@@ -411,7 +418,13 @@ object Validation {
                             .traverse_(_.traverse_ { pe =>
                               val suf = pe.position.position
                               raise[F, G](
-                                Error.InterfaceImplementationDefaultArgDoesNotMatch(ol.name, i.value.name, k, argName, pe.message),
+                                Error.InterfaceImplementationDefaultArgDoesNotMatch(
+                                  ol.name,
+                                  i.value.name,
+                                  k,
+                                  argName,
+                                  pe.message
+                                ),
                                 suf
                               )
                             })
@@ -442,7 +455,6 @@ object Validation {
         }
       }
     }
-  }
 
   def validateOutput[F[_], G[_]: Monad](tl: Out[F, ?], discovery: SchemaShape.DiscoveryState[F])(implicit
       S: Stateful[G, ValidationState[F]]
