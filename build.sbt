@@ -127,7 +127,7 @@ lazy val docs = project
     moduleName := "gql-docs",
     mdocOut := file("website/docs"),
     mdocVariables ++= Map(
-      "VERSION" -> version.value
+      "VERSION" -> tlLatestVersion.value.getOrElse(version.value),
     ),
     tlFatalWarnings := false
   )
