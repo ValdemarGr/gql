@@ -151,9 +151,6 @@ object dsl {
   }
 
   def pure[F[_], I] = new PartiallyAppliedPure[F, I]
-  
-  def meta[F[_], I]: Resolver[F, I, (I, Meta)] = 
-    MetaResolver[F, I, I](PureResolver(i => i))
 
   def abst[F[_], T](implicit tpe: => Out[F, T]): AbstractField[F, Unit, T] =
     AbstractField[F, Unit, T](Applicative[Arg].unit, Eval.later(tpe))
@@ -269,9 +266,6 @@ object dsl {
 
     def mapBoth[O2](f: (I, O) => O2)(implicit F: Functor[F]): Resolver[F, I, O2] =
       resolver.mapWithInput[I, O2] { case (i, o) => f(i, o) }
-
-    def meta: Resolver[F, I, (O, Meta)] =
-      MetaResolver(resolver)
   }
 
   implicit class FieldSyntax[F[_], I, T, A](val field: Field[F, I, T, A]) extends AnyVal {

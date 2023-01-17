@@ -22,6 +22,8 @@ import fs2.Stream
 import gql.interpreter.Cursor
 import gql.PreparedQuery
 import gql.parser.{QueryParser => P}
+import gql.dsl._
+import gql.Arg
 
 sealed trait Resolver[F[_], -I, A] {
   def mapK[G[_]: Functor](fk: F ~> G): Resolver[G, I, A]
@@ -29,6 +31,20 @@ sealed trait Resolver[F[_], -I, A] {
   def contramap[B](g: B => I): Resolver[F, B, A]
 
   def mapWithInput[I2 <: I, B](f: (I2, A) => B)(implicit F: Functor[F]): Resolver[F, I2, B]
+}
+
+final case class ArgResolver[F[_], I, A, O](
+    arg: Arg[A],
+    resolver: Resolver[F, (I, A), O]
+) extends Resolver[F, I, O] {
+  override def mapK[G[_]: Functor](fk: F ~> G): Resolver[G, I, O] = 
+    ArgResolver(arg, resolver.mapK[G](fk))
+    
+  override def contramap[B](g: B => I): Resolver[F, B, O] = 
+    ArgResolver(arg, resolver.contramap[(B, A)]{ case (b, a) => (g(b), a) })
+
+  override def mapWithInput[I2 <: I, B](f: (I2, O) => B)(implicit F: Functor[F]): Resolver[F, I2, B] =
+    ArgResolver(arg, resolver.mapWithInput[(I2, A), B] { case ((i, _), o) => f(i, o) })
 }
 
 final case class FallibleResolver[F[_], I, A](resolve: I => F[Ior[String, A]]) extends Resolver[F, I, A] {
@@ -115,37 +131,21 @@ final case class CacheResolver[F[_], I, I2, O](
       fallback.contramap[(I2, I3)] { case (i2, _) => i2 }.mapWithInput[(I2, I3), B] { case ((_, i3), o) => f(i3, o) }
     )
 }
-/*
-final case class MetaResolver2[F[_], I, O](fa: Resolver[F, (I, MetaResolver.Meta), O]) extends Resolver[F, I, O] {
-  override def mapK[G[_]: Functor](fk: F ~> G): Resolver[G,I,O] =
-    MetaResolver2(fa.mapK(fk))
-
-  override def contramap[B](g: B => I): Resolver[F,B,O] =
-    MetaResolver2(fa.contramap[(B, MetaResolver.Meta)]{ case (b, m) => (g(b), m) })
-
-  override def mapWithInput[I2 <: I, B](f: (I2, O) => B)(implicit F: Functor[F]): Resolver[F,I2,B] =
-    MetaResolver2(fa.mapWithInput[(I2, MetaResolver.Meta), B]{ case ((i2, _), o) => f(i2, o) })
-}
- */
 
 final case class Meta(
-  cursor: Cursor,
-  alias: Option[String],
-  args: Option[P.Arguments],
-  variables: PreparedQuery.VariableMap
+    cursor: Cursor,
+    alias: Option[String],
+    args: Option[P.Arguments],
+    variables: PreparedQuery.VariableMap
 )
 
-final case class MetaResolver[F[_], I, O](fa: Resolver[F, I, O]) extends Resolver[F, I, (O, Meta)] {
-  override def mapK[G[_]: Functor](fk: F ~> G): Resolver[G, I, (O, Meta)] =
-    MetaResolver(fa.mapK(fk))
+final case class MetaResolver[F[_], I, O](fa: Resolver[F, (I, Meta), O]) extends Resolver[F, I, O] {
+  override def mapK[G[_]: Functor](fk: F ~> G): Resolver[G,I,O] = ???
 
-  override def contramap[B](g: B => I): Resolver[F, B, (O, Meta)] =
-    MetaResolver(fa.contramap(g))
+  override def contramap[B](g: B => I): Resolver[F,B,O] = ???
 
-  override def mapWithInput[I2 <: I, B](f: (I2, (O, Meta)) => B)(implicit F: Functor[F]): Resolver[F, I2, B] = {
-    import gql.dsl._
-    MetaResolver(fa.mapWithInput[I2, (I2, O)]((i2, o) => (i2, o))).map { case ((i2, o), m) => f(i2, (o, m)) }
-  }
+  override def mapWithInput[I2 <: I, B](f: (I2, O) => B)(implicit F: Functor[F]): Resolver[F,I2,B] = 
+    MetaResolver(fa.mapWithInput[(I2, Meta), B]{ case ((i, _), o) => f(i, o) })
 }
 
 abstract case class BatchResolver[F[_], I, O](

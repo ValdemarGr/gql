@@ -210,45 +210,6 @@ object PreparedQuery {
 
     go(root, Chain.empty)
   }
-  /*
-  def flattenResolvers[F[_]: Monad, G[_]](parentName: String, resolver: Resolver[G, Any, Any], index: Int = 0)(implicit
-      S: Stateful[F, Prep]
-  ): F[(NonEmptyChain[PreparedEdge[G]], String, Int)] = {
-    def cast(r: Resolver[G, ?, ?]): Resolver[G, Any, Any] = r.asInstanceOf[Resolver[G, Any, Any]]
-    import PreparedResolver._
-    import PreparedEdge._
-    resolver match {
-      case r @ BatchResolver(id, _) =>
-        nextId[F].map(nid => (NonEmptyChain.of(Edge(EdgeId(nid), Batch(r), s"batch_${id.id}")), parentName, index + 1))
-      case r @ EffectResolver(_) =>
-        val thisName = s"${parentName}_effect"
-        nextId[F].map(nid => (NonEmptyChain.of(Edge(EdgeId(nid), Effect(r), thisName)), thisName, index + 1))
-      case r @ PureResolver(_) =>
-        val thisName = s"${parentName}_pure"
-        nextId[F].map(nid => (NonEmptyChain.of(Edge(EdgeId(nid), Pure(r), thisName)), thisName, index + 1))
-      case r @ FallibleResolver(_) =>
-        val thisName = s"${parentName}_fallible"
-        nextId[F].map(nid => (NonEmptyChain.of(Edge(EdgeId(nid), Fallible(r), thisName)), thisName, index + 1))
-      case r @ StreamResolver(_) =>
-        val thisName = s"${parentName}_stream"
-        nextId[F].map(nid => (NonEmptyChain.of(Edge(EdgeId(nid), Stream(r), thisName)), thisName, index + 1))
-      case CacheResolver(skip, fallback) =>
-        flattenResolvers[F, G](parentName, cast(fallback), index).map { case (children, newParent, newIndex) =>
-          (
-            NonEmptyChain.of(
-              Skip(skip.asInstanceOf[Any => G[Either[Any, Any]]], newIndex + 1 - index)
-            ) ++ children,
-            newParent,
-            newIndex
-          )
-        }
-      case CompositionResolver(left, right) =>
-        flattenResolvers[F, G](parentName, cast(left), index)
-          .flatMap { case (ys, newParentName, lidx) =>
-            flattenResolvers[F, G](newParentName, cast(right), lidx).map { case (zs, outName, ridx) => (ys ++ zs, outName, ridx) }
-          }
-    }
-  }*/
 
   def underlyingOutputTypename[G[_]](ot: Out[G, ?]): String = (ot: @unchecked) match {
     case Enum(name, _, _)         => name
