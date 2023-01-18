@@ -33,15 +33,31 @@ sealed trait Resolver[F[_], -I, A] {
   def mapWithInput[I2 <: I, B](f: (I2, A) => B)(implicit F: Functor[F]): Resolver[F, I2, B]
 }
 
+object Resolver {
+  import cats.arrow._
+  implicit def arrowForResolver[F[_]: Functor] = new Arrow[Resolver[F, *, *]] {
+    override def compose[A, B, C](f: Resolver[F, B, C], g: Resolver[F, A, B]): Resolver[F, A, C] =
+      CompositionResolver(g, f)
+
+    override def first[A, B, C](fa: Resolver[F, A, B]): Resolver[F, (A, C), (B, C)] =
+      fa
+        .contramap[(A, C)] { case (a, _) => a }
+        .mapWithInput[(A, C), (B, C)] { case ((_, c), b) => (b, c) }
+
+    override def lift[A, B](f: A => B): Resolver[F, A, B] = 
+      PureResolver(f)
+  }
+}
+
 final case class ArgResolver[F[_], I, A, O](
     arg: Arg[A],
     resolver: Resolver[F, (I, A), O]
 ) extends Resolver[F, I, O] {
-  override def mapK[G[_]: Functor](fk: F ~> G): Resolver[G, I, O] = 
+  override def mapK[G[_]: Functor](fk: F ~> G): Resolver[G, I, O] =
     ArgResolver(arg, resolver.mapK[G](fk))
-    
-  override def contramap[B](g: B => I): Resolver[F, B, O] = 
-    ArgResolver(arg, resolver.contramap[(B, A)]{ case (b, a) => (g(b), a) })
+
+  override def contramap[B](g: B => I): Resolver[F, B, O] =
+    ArgResolver(arg, resolver.contramap[(B, A)] { case (b, a) => (g(b), a) })
 
   override def mapWithInput[I2 <: I, B](f: (I2, O) => B)(implicit F: Functor[F]): Resolver[F, I2, B] =
     ArgResolver(arg, resolver.mapWithInput[(I2, A), B] { case ((i, _), o) => f(i, o) })
@@ -132,20 +148,13 @@ final case class CacheResolver[F[_], I, I2, O](
     )
 }
 
-final case class Meta(
-    cursor: Cursor,
-    alias: Option[String],
-    args: Option[P.Arguments],
-    variables: PreparedQuery.VariableMap
-)
-
 final case class MetaResolver[F[_], I, O](fa: Resolver[F, (I, Meta), O]) extends Resolver[F, I, O] {
-  override def mapK[G[_]: Functor](fk: F ~> G): Resolver[G,I,O] = ???
+  override def mapK[G[_]: Functor](fk: F ~> G): Resolver[G, I, O] = ???
 
-  override def contramap[B](g: B => I): Resolver[F,B,O] = ???
+  override def contramap[B](g: B => I): Resolver[F, B, O] = ???
 
-  override def mapWithInput[I2 <: I, B](f: (I2, O) => B)(implicit F: Functor[F]): Resolver[F,I2,B] = 
-    MetaResolver(fa.mapWithInput[(I2, Meta), B]{ case ((i, _), o) => f(i, o) })
+  override def mapWithInput[I2 <: I, B](f: (I2, O) => B)(implicit F: Functor[F]): Resolver[F, I2, B] =
+    MetaResolver(fa.mapWithInput[(I2, Meta), B] { case ((i, _), o) => f(i, o) })
 }
 
 abstract case class BatchResolver[F[_], I, O](
