@@ -89,6 +89,10 @@ object PreparedQuery {
         specify: Any => F[Either[Any, Any]],
         jumpTo: Chain[PreparedEdge[F]]
     ) extends PreparedEdge[F]
+    final case class Skip2[F[_]](
+        specify: Any => F[Either[Any, Any]],
+        children: Int
+    ) extends PreparedEdge[F]
   }
 
   final case class PreparedCont[F[_]](
@@ -209,6 +213,42 @@ object PreparedQuery {
       }
 
     go(root, Chain.empty)
+  }
+
+  final case class FlatteningState(
+    cursor: UniqueEdgeCursor,
+    errors: List[String]
+  )
+  type FlatteningResult[F[_]] = Either[NonEmptyChain[String], NonEmptyChain[PreparedEdge[F]]]
+  def flattenResolvers2[F[_]: Monad, G[_]](resolver: Resolver[G, Any, Any])(implicit
+      S: Stateful[F, Prep]
+  ): StateT[F, UniqueEdgeCursor, NonEmptyChain[PreparedEdge[G]]] = {
+    def cast(r: Resolver[G, ?, ?]): Resolver[G, Any, Any] = r.asInstanceOf[Resolver[G, Any, Any]]
+    import PreparedResolver._
+    import PreparedEdge._
+
+    def makeWith(pr: PreparedResolver[G], edgeCursor: UniqueEdgeCursor): F[NonEmptyChain[PreparedEdge[G]]] =
+      nextId[F].map(id => NonEmptyChain.one(Edge(EdgeId(id), pr, edgeCursor)))
+
+    def make(pr: PreparedResolver[G], edgeName: String): StateT[F, UniqueEdgeCursor, NonEmptyChain[PreparedEdge[G]]] =
+      EdgeCursor[F].inspect(_ append edgeName).flatMapF(makeWith(pr, _))
+
+    resolver match {
+      case r @ BatchResolver(id, _) => StateT.liftF(makeWith(Batch(r), UniqueEdgeCursor(s"batch_${id.id}")))
+      case r @ EffectResolver(_)    => make(Effect(r), "effect")
+      case r @ PureResolver(_)      => make(Pure(r), "pure")
+      case r @ FallibleResolver(_)  => make(Fallible(r), "fallible")
+      case r @ StreamResolver(_)    => make(Stream(r), "stream")
+      case CacheResolver(skip, fallback) =>
+        EdgeCursor[F].modify(_ append "cache") >>
+          flattenResolvers2[F, G](cast(fallback)).map { c =>
+            c prepend Skip2(skip.asInstanceOf[Any => G[Either[Any, Any]]], c.size.toInt)
+          }
+      case CompositionResolver(left, right) =>
+        flattenResolvers2[F, G](cast(left)).flatMap { l =>
+          flattenResolvers2[F, G](cast(right)).map(l ++ _)
+        }
+    }
   }
 
   def underlyingOutputTypename[G[_]](ot: Out[G, ?]): String = (ot: @unchecked) match {
