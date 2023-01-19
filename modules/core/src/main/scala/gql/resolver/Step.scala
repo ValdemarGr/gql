@@ -58,22 +58,13 @@ object Step {
 
   def mapK[F[_], G[_], I, O](step: Step[F, I, O], fk: F ~> G): Step[G, I, O] =
     Alg.MapK[F, G, I, O](step, fk)
+
+  import cats.arrow._
+  implicit def arrowForStep[F[_]] = new Arrow[Step[F, *, *]] {
+    override def compose[A, B, C](f: Step[F, B, C], g: Step[F, A, B]): Step[F, A, C] = compose(f, g)
+
+    override def first[A, B, C](fa: Step[F, A, B]): Step[F, (A, C), (B, C)] = first(fa)
+
+    override def lift[A, B](f: A => B): Step[F, A, B] = pure(f)
+  }
 }
-
-// final class Step[F[_], -I, O](val resolver: Resolver[F, I, O]) extends AnyRef {}
-
-// object Step {
-//   import cats.arrow._
-//   implicit def arrowForStep[F[_]: Functor] = new Arrow[Step[F, *, *]] {
-//     val A = Arrow[Resolver[F, *, *]]
-
-//     override def compose[A, B, C](f: Step[F, B, C], g: Step[F, A, B]): Step[F, A, C] =
-//       new Step(A.compose(f.resolver, g.resolver))
-
-//     override def first[A, B, C](fa: Step[F, A, B]): Step[F, (A, C), (B, C)] =
-//       new Step(A.first(fa.resolver))
-
-//     override def lift[A, B](f: A => B): Step[F, A, B] =
-//       new Step(A.lift(f))
-//   }
-// }
