@@ -58,6 +58,35 @@ object PreparedQuery {
 
   final case class EdgeId(id: Int) extends AnyVal
 
+  sealed trait PreparedStep[F[_], -I, O]
+
+  final case class StepWithInfo[F[_], -I, O](
+      edgeId: EdgeId,
+      step: PreparedStep[F, I, O],
+      stableUniqueEdgeName: UniqueEdgeCursor
+  )
+
+  final case class PreparedMeta(
+      variables: VariableMap,
+      alias: Option[String],
+      args: Option[P.Arguments]
+  )
+
+  object PreparedStep {
+    final case class Pure[F[_], I, O](f: I => O) extends AnyRef with PreparedStep[F, I, O]
+    final case class Effect[F[_], I, O](f: I => F[O]) extends AnyRef with PreparedStep[F, I, O]
+    final case class Raise[F[_], I, O](f: I => Ior[String, O]) extends AnyRef with PreparedStep[F, I, O]
+    final case class Compose[F[_], I, A, O](left: StepWithInfo[F, I, A], right: StepWithInfo[F, A, O])
+        extends AnyRef
+        with PreparedStep[F, I, O]
+    final case class Stream[F[_], I, O](f: I => fs2.Stream[F, IorNec[String, O]]) extends AnyRef with PreparedStep[F, I, O]
+    final case class Skip[F[_], I, I2, O](check: StepWithInfo[F, I, Either[I2, O]], step: StepWithInfo[F, I2, O])
+        extends AnyRef
+        with PreparedStep[F, I, O]
+    final case class GetMeta[F[_], I](meta: PreparedMeta) extends AnyRef with PreparedStep[F, I, Meta]
+    final case class First[F[_], I, O, C](step: StepWithInfo[F, I, O]) extends AnyRef with PreparedStep[F, (I, C), (O, C)]
+  }
+
   sealed trait PreparedResolver[F[_]]
   object PreparedResolver {
     final case class Fallible[F[_]](r: FallibleResolver[F, Any, Any]) extends PreparedResolver[F]
@@ -215,9 +244,54 @@ object PreparedQuery {
     go(root, Chain.empty)
   }
 
+  def statefulForKleisli[F[_]: Monad, S, E](implicit S: Stateful[F, S]): Stateful[Kleisli[F, E, *], S] =
+    new Stateful[Kleisli[F, E, *], S] {
+      override def monad: Monad[Kleisli[F, E, *]] =
+        implicitly
+
+      override def get: Kleisli[F, E, S] =
+        Kleisli.liftF(S.get)
+
+      override def set(s: S): Kleisli[F, E, Unit] =
+        Kleisli.liftF(S.set(s))
+    }
+
+  def compileStep[F[_]: Monad: Parallel, G[_], I, O](step: Step[G, I, O], meta: PreparedMeta)(implicit
+      S: Stateful[F, Prep],
+      L: Local[F, UniqueEdgeCursor]
+  ): F[StepWithInfo[G, I, O]] = {
+    def makeInfo(step: PreparedStep[G, I, O]) =
+      L.ask.flatMap { cursor =>
+        nextId[F].map(id => StepWithInfo(EdgeId(id), step, cursor))
+      }
+
+    def compileNext[I2, O2](step: Step[G, I2, O2]): F[StepWithInfo[G, I2, O2]] =
+      compileStep[F, G, I2, O2](step, meta)
+
+    step match {
+      case Step.Alg.Pure(f)   => makeInfo(PreparedStep.Pure(f))
+      case Step.Alg.Effect(f) => makeInfo(PreparedStep.Effect(f))
+      case Step.Alg.Raise(f)  => makeInfo(PreparedStep.Raise(f))
+      case alg: Step.Alg.Compose[G, i, a, o] =>
+        val left = L.local(compileNext[i, a](alg.left))(_ append "left")
+        val right = L.local(compileNext[a, o](alg.right))(_ append "right")
+        (left, right).parTupled.flatMap { case (l, r) => makeInfo(PreparedStep.Compose(l, r)) }
+      case Step.Alg.Stream(f) => makeInfo(PreparedStep.Stream(f))
+      case alg: Step.Alg.Skip[G, i, i2, o] =>
+        val checkF = L.local(compileNext[i, Either[i2, o]](alg.check))(_ append "skip_check")
+        val stepF = L.local(compileNext[i2, o](alg.step))(_ append "skip_step")
+        (checkF, stepF).parTupled.flatMap { case (c, s) => makeInfo(PreparedStep.Skip(c, s)) }
+      case Step.Alg.GetMeta() => makeInfo(PreparedStep.GetMeta(meta))
+      case alg: Step.Alg.First[G, i, o, c] =>
+        L.local(compileNext[i, o](alg.step))(_ append "first").flatMap(s => makeInfo(PreparedStep.First(s)))
+      case Step.Alg.Argument(a) =>
+        ???
+    }
+  }
+
   final case class FlatteningState(
-    cursor: UniqueEdgeCursor,
-    errors: List[String]
+      cursor: UniqueEdgeCursor,
+      errors: List[String]
   )
   type FlatteningResult[F[_]] = Either[NonEmptyChain[String], NonEmptyChain[PreparedEdge[F]]]
   def flattenResolvers2[F[_]: Monad, G[_]](resolver: Resolver[G, Any, Any])(implicit
