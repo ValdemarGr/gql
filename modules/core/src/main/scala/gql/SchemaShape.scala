@@ -61,8 +61,12 @@ object SchemaShape {
 
   def make[F[_]] = new PartiallyAppliedSchemaShape[F]
 
-  type Specify = ? => Option[?]
-  type InterfaceImpl[F[_]] = Either[Interface[F, ?], (Type[F, ?], Specify)]
+  type Specify[A, B] = A => Option[B]
+  sealed trait InterfaceImpl[F[_], A]
+  object InterfaceImpl {
+    final case class OtherInterface[F[_], A](i: Interface[F, A]) extends InterfaceImpl[F, A]
+    final case class TypeImpl[F[_], A, B](t: Type[F, B], specify: A => Option[B]) extends InterfaceImpl[F, A]
+  }
 
   final case class DiscoveryState[F[_]](
       inputs: Map[String, InToplevel[?]],
@@ -76,7 +80,7 @@ object SchemaShape {
       //
       // There is no implicit interface implementations; all transitive implementations should be explicit
       // (https://spec.graphql.org/draft/#IsValidImplementation())
-      implementations: Map[String, Map[String, InterfaceImpl[F]]]
+      implementations: Map[String, Map[String, InterfaceImpl[F, ?]]]
   )
 
   def discover[F[_]](shape: SchemaShape[F, ?, ?, ?]): DiscoveryState[F] = {
@@ -97,10 +101,13 @@ object SchemaShape {
       }
 
     type InterfaceName = String
-    def addValues[G[_]](values: List[(InterfaceName, InterfaceImpl[F])])(implicit S: Stateful[G, DiscoveryState[F]]): G[Unit] = {
+    def addValues[G[_]](values: List[(InterfaceName, InterfaceImpl[F, ?])])(implicit S: Stateful[G, DiscoveryState[F]]): G[Unit] = {
       S.modify { s =>
         val withNew = values.foldLeft(s.implementations) { case (accum, (interfaceName, next)) =>
-          val name = next.fold(_.name, { case (t, _) => t.name })
+          val name = next match {
+            case InterfaceImpl.OtherInterface(i) => i.name
+            case InterfaceImpl.TypeImpl(t, _)    => t.name
+          }
           val entry = name -> next
           accum.get(interfaceName) match {
             case None    => accum + (interfaceName -> Map(entry))
@@ -126,11 +133,11 @@ object SchemaShape {
 
             t match {
               case ol: ObjectLike[F, ?] =>
-                val values: List[(Interface[F, ?], InterfaceImpl[F])] = ol match {
-                  case t: Type[F, ?] =>
-                    t.implementations.map(x => (x.implementation.value -> Right((t, x.specify))))
+                val values: List[(Interface[F, ?], InterfaceImpl[F, ?])] = ol match {
+                  case t: Type[F, a] =>
+                    t.implementations.map(x => (x.implementation.value -> InterfaceImpl.TypeImpl(t, x.specify)))
                   case i: Interface[F, ?] =>
-                    i.implementations.map(x => (x.value -> Left(i)))
+                    i.implementations.map(x => (x.value -> InterfaceImpl.OtherInterface(i)))
                 }
                 addValues[G](values.map { case (i, ii) => i.name -> ii }) >>
                   handleFields(ol) >>
@@ -497,8 +504,8 @@ object SchemaShape {
                 .toList
                 .flatMap(_.values.toList)
                 .map {
-                  case Right((ol, _)) => TypeInfo.OutInfo(ol)
-                  case Left(i)        => TypeInfo.OutInfo(i)
+                  case InterfaceImpl.TypeImpl(ol, _)   => TypeInfo.OutInfo(ol)
+                  case InterfaceImpl.OtherInterface(i) => TypeInfo.OutInfo(i)
                 }
                 .some
             case Union(_, instances, _) => instances.toList.map[TypeInfo](x => TypeInfo.OutInfo(x.tpe.value)).some
