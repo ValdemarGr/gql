@@ -56,33 +56,34 @@ object Planner {
   ) {
     lazy val start = end - cost
   }
-  /*
-  def costForPrepared2[F[_]: Statistics](p: PreparedQuery.Prepared2[F, ?], currentCost: Double)(implicit F: Monad[F]): F[List[Node]] =
-    p match {
-      case PreparedLeaf2(_, _)    => F.pure(Nil)
-      case Selection2(fields)     => costForFields[F](currentCost, fields).map(_.toList)
-      case PreparedList2(cont, _) => costForCont[F](cont.edges.toChain, cont.cont, currentCost)
-      case PreparedOption2(cont)  => costForCont[F](cont.edges.toChain, cont.cont, currentCost)
-    }*/
+
+  final case class TraversalState(
+      id: Int,
+      currentCost: Double
+  )
+
+  def scopeCost[F[_]: Monad, A](fa: F[A])(implicit S: Stateful[F, TraversalState]): F[A] =
+    S.inspect(_.currentCost).flatMap { initial =>
+      fa <* S.modify(_.copy(currentCost = initial))
+    }
+
+  def getId[F[_]: Applicative](implicit S: Stateful[F, TraversalState]): F[Int] =
+    S.inspect(_.id) <* S.modify(s => s.copy(id = s.id + 1))
 
   def nextId[F[_]: Applicative](implicit S: Stateful[F, Int]): F[Int] =
     S.get <* S.modify(_ + 1)
 
-  def costForStep[F[_]](swi: StepWithInfo[F, ?, ?], cont: Double => F[List[Node2]], currentCost: Double)(implicit
+  def costForStep[F[_]](swi: StepWithInfo[F, ?, ?], right: F[List[Node2]])(implicit
       stats: Statistics[F],
       F: Monad[F],
-      S: Stateful[F, Int]
+      S: Stateful[F, TraversalState]
   ): F[List[Node2]] = {
     import PreparedStep._
     swi.step match {
-      case Pure(_) | Raise(_) | GetMeta(_) => cont(currentCost)
-      case Compose(l, r) =>
-        val contR = (c: Double) => costForStep[F](r, cont, c)
-        costForStep[F](l, contR, currentCost)
-      case Skip(check, force) =>
-        val contR = (c: Double) => costForStep[F](check, cont, c)
-        costForStep[F](force, contR, currentCost)
-      case alg: First[F, ?, ?, ?] => costForStep[F](alg.step, cont, currentCost)
+      case Pure(_) | Raise(_) | GetMeta(_) => right
+      case Compose(l, r)                   => costForStep[F](l, costForStep[F](r, right))
+      case Skip(check, force)              => costForStep[F](check, costForStep[F](force, right))
+      case alg: First[F, ?, ?, ?]          => costForStep[F](alg.step, right)
       case Batch(_) | Effect(_) | Stream(_) =>
         val name = swi.stableUniqueEdgeName.asString
 
@@ -90,64 +91,65 @@ object Planner {
           .getStatsOpt(name)
           .map(_.getOrElse(Statistics.Stats(100d, 5d)))
 
-        costF.flatMap { s =>
-          val end = currentCost + s.initialCost
-
-          val childrenF = cont(end)
-
-          childrenF.flatMap { children =>
-            nextId[F].map { id =>
-              List(
-                Node2(
-                  id,
-                  name,
-                  end,
-                  s.initialCost,
-                  s.extraElementCost,
-                  children,
-                  swi.step match {
-                    case Batch(id) => Some(id)
-                    case _         => None
-                  }
-                )
-              )
+        costF.flatMap { cost =>
+          S.inspect(_.currentCost).flatMap { currentCost =>
+            val end = currentCost + cost.initialCost
+            S.modify(_.copy(currentCost = end)) >> {
+              right.flatMap { children =>
+                getId[F].map { id =>
+                  List(
+                    Node2(
+                      id,
+                      name,
+                      end,
+                      cost.initialCost,
+                      cost.extraElementCost,
+                      children,
+                      swi.step match {
+                        case Batch(id) => Some(id)
+                        case _         => None
+                      }
+                    )
+                  )
+                }
+              }
             }
           }
         }
     }
   }
 
-  def costForFields2[F[_]](
-      prepared: NonEmptyList[PreparedQuery.PreparedField2[F, ?]],
-      currentCost: Double
-  )(implicit
+  def costForFields2[F[_]](prepared: NonEmptyList[PreparedQuery.PreparedField2[F, ?]])(implicit
       F: Monad[F],
       stats: Statistics[F],
-      S: Stateful[F, Int]
+      S: Stateful[F, TraversalState]
   ): F[List[Node2]] = {
-    prepared.toList.flatTraverse {
-      case PreparedDataField2(_, _, cont)          => costForCont2[F](cont.edges, cont.cont, currentCost)
-      case PreparedSpecification2(_, _, selection) => costForFields2[F](selection, currentCost)
+    prepared.toList.flatTraverse { pf =>
+      scopeCost {
+        pf match {
+          case PreparedDataField2(_, _, cont)          => costForCont2[F](cont.edges, cont.cont)
+          case PreparedSpecification2(_, _, selection) => costForFields2[F](selection)
+        }
+      }
     }
   }
 
-  def costForPrepared2[F[_]: Statistics](p: Prepared2[F, ?], currentCost: Double)(implicit
+  def costForPrepared2[F[_]: Statistics](p: Prepared2[F, ?])(implicit
       F: Monad[F],
-      S: Stateful[F, Int]
+      S: Stateful[F, TraversalState]
   ): F[List[Node2]] =
     p match {
       case PreparedLeaf2(_, _)          => F.pure(Nil)
-      case Selection2(fields)           => costForFields2[F](fields, currentCost).map(_.toList)
-      case l: PreparedList2[F, ?, ?, ?] => costForCont2[F](l.of.edges, l.of.cont, currentCost)
-      case o: PreparedOption2[F, ?, ?]  => costForCont2[F](o.of.edges, o.of.cont, currentCost)
+      case Selection2(fields)           => costForFields2[F](fields).map(_.toList)
+      case l: PreparedList2[F, ?, ?, ?] => costForCont2[F](l.of.edges, l.of.cont)
+      case o: PreparedOption2[F, ?, ?]  => costForCont2[F](o.of.edges, o.of.cont)
     }
 
   def costForCont2[F[_]: Statistics: Monad](
       edges: StepWithInfo[F, ?, ?],
-      cont: Prepared2[F, ?],
-      currentCost: Double
-  )(implicit S: Stateful[F, Int]): F[List[Node2]] =
-    costForStep[F](edges, costForPrepared2[F](cont, _), currentCost)
+      cont: Prepared2[F, ?]
+  )(implicit S: Stateful[F, TraversalState]): F[List[Node2]] =
+    costForStep[F](edges, costForPrepared2[F](cont))
 
   def costForPrepared[F[_]: Statistics](p: PreparedQuery.Prepared[F], currentCost: Double)(implicit F: Monad[F]): F[List[Node]] =
     p match {
