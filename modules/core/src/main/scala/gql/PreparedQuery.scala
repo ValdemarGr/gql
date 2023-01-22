@@ -304,8 +304,9 @@ object PreparedQuery {
         val checkF = rec[i, Either[i2, o]](alg.check, "skip_check")
         val stepF = rec[i2, o](alg.step, "skip_step")
         (checkF, stepF).parTupled.flatMap { case (c, s) => makeInfo(PreparedStep.Skip(c, s)) }
-      case Step.Alg.GetMeta()           => makeInfo(PreparedStep.GetMeta(meta))
-      case alg: Step.Alg.Batch[G, k, v] => makeInfo(PreparedStep.Batch[G, k, v](alg.id))
+      case Step.Alg.GetMeta() => makeInfo(PreparedStep.GetMeta(meta))
+      case alg: Step.Alg.Batch[G, k, v] =>
+        Used[F].pure(StepWithInfo(PreparedStep.Batch[G, k, v](alg.id), UniqueEdgeCursor(s"batch_${alg.id}")))
       case alg: Step.Alg.First[G, i, o, c] =>
         rec[i, o](alg.step, "first").flatMap(s => makeInfo(PreparedStep.First(s)))
       case Step.Alg.Argument(a) =>
