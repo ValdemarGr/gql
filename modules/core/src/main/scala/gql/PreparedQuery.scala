@@ -50,19 +50,19 @@ object PreparedQuery {
 
   final case class PreparedLeaf2[F[_], I](name: String, encode: I => Json) extends Prepared2[F, I]
 
-  final case class PreparedDataField2[F[_], A, C](
+  final case class PreparedDataField2[F[_], A](
       name: String,
       alias: Option[String],
-      cont: PreparedCont2[F, A, C]
+      cont: PreparedCont2[F, A, ?]
   ) extends PreparedField2[F, A] {
     lazy val outputName = alias.getOrElse(name)
   }
 
-  final case class PreparedSpecification2[F[_], I, A, C](
+  final case class PreparedSpecification2[F[_], I, A](
       typename: String,
       specify: I => Option[A],
-      selection: NonEmptyList[PreparedDataField2[F, A, C]]
-  ) extends PreparedField2[F, A]
+      selection: NonEmptyList[PreparedDataField2[F, A]]
+  ) extends PreparedField2[F, I]
 
   final case class PreparedDataField[F[_]](
       id: Int,
@@ -275,20 +275,20 @@ object PreparedQuery {
   }
 
   type UsedArgs = Set[String]
-  def inStep[F[_], A](name: String)(fa: F[A])(implicit L: Local[F, (UniqueEdgeCursor, PreparedMeta)]) =
-    L.local(fa) { case (c, m) => (c append name, m) }
-
-  def compileStep[F[_]: Parallel, G[_], I, O](step: Step[G, I, O])(implicit
-      W: Tell[F, UsedArgs],
-      L: Local[F, (UniqueEdgeCursor, PreparedMeta)],
+  type Used[F[_], A] = WriterT[F, UsedArgs, A]
+  object Used {
+    def apply[F[_]](implicit F: MonadError[F, NonEmptyChain[PositionalError]]) = MonadError[Used[F, *], NonEmptyChain[PositionalError]]
+    def liftF[F[_]: Applicative, A](fa: F[A]) = WriterT.liftF[F, UsedArgs, A](fa)
+  }
+  def compileStep[F[_]: Parallel, G[_], I, O](step: Step[G, I, O], cursor: UniqueEdgeCursor, meta: PreparedMeta)(implicit
       S: Stateful[F, Prep],
       F: MonadError[F, NonEmptyChain[PositionalError]]
-  ): F[StepWithInfo[G, I, O]] = {
-    def makeInfo(step: PreparedStep[G, I, O]): F[StepWithInfo[G, I, O]] =
-      L.ask.map { case (c, _) => StepWithInfo(step, c) }
+  ): Used[F, StepWithInfo[G, I, O]] = {
+    def makeInfo(step: PreparedStep[G, I, O]): Used[F, StepWithInfo[G, I, O]] =
+      Used[F].pure(StepWithInfo(step, cursor))
 
-    def rec[I2, O2](step: Step[G, I2, O2], edge: String): F[StepWithInfo[G, I2, O2]] =
-      inStep(edge)(compileStep[F, G, I2, O2](step))
+    def rec[I2, O2](step: Step[G, I2, O2], edge: String): Used[F, StepWithInfo[G, I2, O2]] =
+      compileStep[F, G, I2, O2](step, cursor append edge, meta)
 
     step match {
       case Step.Alg.Pure(f)   => makeInfo(PreparedStep.Pure(f))
@@ -303,14 +303,14 @@ object PreparedQuery {
         val checkF = rec[i, Either[i2, o]](alg.check, "skip_check")
         val stepF = rec[i2, o](alg.step, "skip_step")
         (checkF, stepF).parTupled.flatMap { case (c, s) => makeInfo(PreparedStep.Skip(c, s)) }
-      case Step.Alg.GetMeta() => L.ask.flatMap { case (_, m) => makeInfo(PreparedStep.GetMeta(m)) }
+      case Step.Alg.GetMeta() => makeInfo(PreparedStep.GetMeta(meta))
       case alg: Step.Alg.First[G, i, o, c] =>
         rec[i, o](alg.step, "first").flatMap(s => makeInfo(PreparedStep.First(s)))
       case Step.Alg.Argument(a) =>
-        W.tell(a.entries.map(_.name).toList.toSet) >>
-          L.ask
-            .flatMap { case (_, m) => decodeFieldArgs[F, G, O](a, m.args, m.variables) }
-            .flatMap(o => makeInfo(PreparedStep.Pure[G, I, O](_ => o)))
+        Used
+          .liftF(decodeFieldArgs[F, G, O](a, meta.args, meta.variables))
+          .flatMap(o => makeInfo(PreparedStep.Pure[G, I, O](_ => o))) <*
+          WriterT.tell(a.entries.map(_.name).toList.toSet)
     }
   }
 
@@ -391,9 +391,9 @@ object PreparedQuery {
   def appendMessage[F[_], A](message: String)(fa: F[A])(implicit F: MonadError[F, NonEmptyChain[PositionalError]]) =
     modifyError[F, A](d => d.copy(message = d.message + "\n" + message))(fa)
 
-  def typenameField[G[_]](typename: String) = {
+  def typenameField[G[_], A](typename: String) = {
     import gql.dsl._
-    pure[G, Any](_ => typename)
+    pure[G, A](_ => typename)
   }
 
   def inFragment[F[_], A](
@@ -757,12 +757,19 @@ object PreparedQuery {
     }
   }
 
+  final case class FoundImplementation[G[_], A, B](
+      tpe: Type[G, B],
+      specify: A => Option[B]
+  )
   def findImplementations2[G[_], A](
       s: Selectable[G, A],
       discoveryState: SchemaShape.DiscoveryState[G]
-  ): List[(Type[G, ?], Option[A => Option[?]])] = s match {
-    case t @ Type(_, _, _, _) => List((t, None))
-    case u @ Union(_, _, _)   => u.types.toList.map(x => (x.tpe.value, Some(x.specify)))
+  ): List[FoundImplementation[G, A, ?]] = s match {
+    case t @ Type(_, _, _, _) => List(FoundImplementation(t, Some(_)))
+    case u @ Union(_, _, _) =>
+      u.types.toList.map { case x: gql.ast.Variant[G, A, b] =>
+        FoundImplementation(x.tpe.value, x.specify)
+      }
     case it @ Interface(_, _, _, _) =>
       val m: Map[String, SchemaShape.InterfaceImpl[G, A]] =
         discoveryState.implementations
@@ -771,7 +778,7 @@ object PreparedQuery {
           .collect { case (k, v: SchemaShape.InterfaceImpl[G, A] @unchecked) => (k, v) }
 
       m.values.toList
-        .map { case SchemaShape.InterfaceImpl.TypeImpl(t, s) => (t, Some(s)) }
+        .map { case ti: SchemaShape.InterfaceImpl.TypeImpl[G, A, b] => FoundImplementation(ti.t, ti.specify) }
   }
 
   def findImplementations[G[_]](
@@ -792,64 +799,66 @@ object PreparedQuery {
       impls.toList.collect { case (_, (t @ Type(_, _, _, _), specify)) => (t, Some(specify)) }
   }
 
-  final case class PairedFieldSelection2[G[_]](
+  final case class PairedFieldSelection2[G[_], A](
       info: FieldInfo[G],
-      field: Field[G, ?, ?, ?]
+      field: Field[G, A, ?, ?]
   )
-  final case class MergedImplementation2[G[_]](
-      leaf: Type[G, ?],
-      selections: NonEmptyList[PairedFieldSelection2[G]],
-      specify: Option[? => Option[?]]
+  final case class MergedImplementation2[G[_], A, B](
+      leaf: Type[G, B],
+      selections: NonEmptyList[PairedFieldSelection2[G, B]],
+      specify: A => Option[B]
   )
-  // def mergeImplementations2[F[_]: Parallel, G[_], A](
-  //     base: Selectable[G, ?],
-  //     sels: NonEmptyList[SelectionInfo[G]],
-  //     discoveryState: SchemaShape.DiscoveryState[G]
-  // )(implicit
-  //     F: MonadError[F, NonEmptyChain[PositionalError]],
-  //     S: Stateful[F, Prep]
-  // ): F[NonEmptyList[MergedImplementation[G, A]]] = {
-  //   val concreteBaseMap = findImplementations(base, discoveryState).map { case x @ (t, _) => t.name -> x }.toMap
-  //   val concreteBase = concreteBaseMap.toList
+  def mergeImplementations2[F[_]: Parallel, G[_], A](
+      base: Selectable[G, A],
+      sels: NonEmptyList[SelectionInfo[G]],
+      discoveryState: SchemaShape.DiscoveryState[G]
+  )(implicit
+      F: MonadError[F, NonEmptyChain[PositionalError]],
+      S: Stateful[F, Prep]
+  ): F[NonEmptyList[MergedImplementation2[G, A, ?]]] = {
+    val concreteBaseMap = findImplementations2[G, A](base, discoveryState).map(x => x.tpe.name -> x).toMap
+    val concreteBase = concreteBaseMap.toList
 
-  //   val nestedSelections = sels.toList.flatMap { sel =>
-  //     val concreteIntersections = findImplementations(sel.s, discoveryState)
-  //       .map { case (t, _) => t.name }
+    val nestedSelections = sels.toList.flatMap { sel =>
+      val concreteIntersections = findImplementations(sel.s, discoveryState)
+        .map { case (t, _) => t.name }
 
-  //     concreteIntersections tupleRight sel.fields
-  //   }
+      concreteIntersections tupleRight sel.fields
+    }
 
-  //   val grouped = nestedSelections
-  //     .groupMap { case (k, _) => k } { case (_, vs) => vs }
-  //     .collect { case (k, x :: xs) => k -> NonEmptyList(x, xs).flatten.map(x => x.outputName -> x).toNem.toNonEmptyList }
+    val grouped = nestedSelections
+      .groupMap { case (k, _) => k } { case (_, vs) => vs }
+      .collect { case (k, x :: xs) => k -> NonEmptyList(x, xs).flatten.map(x => x.outputName -> x).toNem.toNonEmptyList }
 
-  //   val collected = concreteBase.parFlatTraverse { case (k, (t, specify)) =>
-  //     grouped.get(k).toList.traverse { fields =>
-  //       fields
-  //         .parTraverse { f =>
-  //           if (f.name === "__typename") F.pure(PairedFieldSelection(f, typenameField[G](t.name)))
-  //           else {
-  //             t.fieldMap.get(f.name) match {
-  //               case None        => raise[F, PairedFieldSelection[G]](s"Could not find field '${f.name}' on type `${t.name}`.", None)
-  //               case Some(field) => F.pure(PairedFieldSelection(f, field))
-  //             }
-  //           }
-  //         }
-  //         .map(fields => MergedImplementation(t, fields, specify))
-  //     }
-  //   }
+    val collected: F[List[MergedImplementation2[G, A, ?]]] = concreteBase.parFlatTraverse { case (k, (fi: FoundImplementation[G, A, b])) =>
+      val t = fi.tpe
+      val specify = fi.specify
+      grouped.get(k).toList.traverse { fields =>
+        fields
+          .parTraverse { f =>
+            if (f.name === "__typename") F.pure(PairedFieldSelection2[G, b](f, typenameField[G, b](t.name)))
+            else {
+              t.fieldMap.get(f.name) match {
+                case None        => raise[F, PairedFieldSelection2[G, b]](s"Could not find field '${f.name}' on type `${t.name}`.", None)
+                case Some(field) => F.pure(PairedFieldSelection2[G, b](f, field))
+              }
+            }
+          }
+          .map(fields => MergedImplementation2[G, A, b](t, fields, specify))
+      }
+    }
 
-  //   collected.flatMap { xs =>
-  //     xs.toNel match {
-  //       case Some(x) => F.pure(x)
-  //       case None =>
-  //         raise[F, NonEmptyList[MergedImplementation[G]]](
-  //           s"Could not find any implementations of `${base.name}` in the selection set.",
-  //           None
-  //         )
-  //     }
-  //   }
-  // }
+    collected.flatMap { xs =>
+      xs.toNel match {
+        case Some(x) => F.pure(x)
+        case None =>
+          raise[F, NonEmptyList[MergedImplementation2[G, A, ?]]](
+            s"Could not find any implementations of `${base.name}` in the selection set.",
+            None
+          )
+      }
+    }
+  }
 
   final case class PairedFieldSelection[G[_]](
       info: FieldInfo[G],
@@ -886,7 +895,7 @@ object PreparedQuery {
       grouped.get(k).toList.traverse { fields =>
         fields
           .parTraverse { f =>
-            if (f.name === "__typename") F.pure(PairedFieldSelection(f, typenameField[G](t.name)))
+            if (f.name === "__typename") F.pure(PairedFieldSelection(f, typenameField[G, Any](t.name)))
             else {
               t.fieldMap.get(f.name) match {
                 case None        => raise[F, PairedFieldSelection[G]](s"Could not find field '${f.name}' on type `${t.name}`.", None)
@@ -948,63 +957,75 @@ object PreparedQuery {
 
   def prepareField2[F[_]: Parallel, G[_]: Applicative, I, T](
       fi: FieldInfo[G],
-      tpe: Out[G, T],
+      field: Field[G, I, T, ?],
       step: Step[G, I, T],
       currentTypename: String,
+      variableMap: VariableMap,
       discoveryState: SchemaShape.DiscoveryState[G]
   )(implicit
-      W: Tell[F, UsedArgs],
-      L: Local[F, (UniqueEdgeCursor, PreparedMeta)],
       S: Stateful[F, Prep],
       F: MonadError[F, NonEmptyChain[PositionalError]],
       D: Defer[F]
-  ): F[PreparedDataField2[G, I, T]] = D.defer {
+  ): F[PreparedDataField2[G, I]] = D.defer {
+    val tpe = field.output.value
     val selCaret = fi.caret
     val name = fi.name
 
-    val rootUniqueName = s"${currentTypename}_$name"
+    val rootUniqueName = UniqueEdgeCursor(s"${currentTypename}_$name")
 
-    def compileCont[A](t: Out[G, A]): F[Prepared2[G, A]] =
+    val meta: PreparedMeta = PreparedMeta(
+      variableMap,
+      fi.alias,
+      fi.args
+    )
+
+    def compileCont[A](t: Out[G, A], cursor: UniqueEdgeCursor): Used[F, Prepared2[G, A]] =
       (t, fi.tpe.selections.toNel) match {
         case (out: gql.ast.OutArr[G, a, c, b], _) =>
           val innerStep: Step[G, a, b] = null
-          inStep("array") {
-            val compiledStep = compileStep[F, G, a, b](innerStep)
-            val compiledCont = compileCont[b](out.of)
-            (compiledStep, compiledCont).parMapN { case (s, c) =>
-              PreparedList2(PreparedCont2(s, c), out.toSeq)
-            }
+          val nc = cursor append "array"
+          val compiledStep = compileStep[F, G, a, b](innerStep, nc, meta)
+          val compiledCont = compileCont[b](out.of, nc)
+          (compiledStep, compiledCont).parMapN { case (s, c) =>
+            PreparedList2(PreparedCont2(s, c), out.toSeq)
           }
         case (out: gql.ast.OutOpt[G, a, b], _) =>
           val innerStep: Step[G, a, b] = null
-          inStep("option") {
-            val compiledStep = compileStep[F, G, a, b](innerStep)
-            val compiledCont = compileCont[b](out.of)
-            (compiledStep, compiledCont).parMapN { case (s, c) =>
-              PreparedOption2(PreparedCont2(s, c))
-            }
+          val nc = cursor append "option"
+          val compiledStep = compileStep[F, G, a, b](innerStep, nc, meta)
+          val compiledCont = compileCont[b](out.of, nc)
+          (compiledStep, compiledCont).parMapN { case (s, c) =>
+            PreparedOption2(PreparedCont2(s, c))
           }
-        case (ol: Selectable[G, a], Some(ss)) =>
+        case (s: Selectable[G, a], Some(ss)) =>
+          prepareSelectable2[F, G, a](s, ss, variableMap, discoveryState)
+            .map(Selection2(_))
           ???
         case (e: Enum[G, a], None) =>
-          F.pure(PreparedLeaf2(e.name, x => Json.fromString(e.revm(x))))
+          Used[F].pure(PreparedLeaf2(e.name, x => Json.fromString(e.revm(x))))
         case (s: Scalar[G, a], None) =>
-          F.pure(PreparedLeaf2(s.name, x => s.encoder(x).asJson))
+          Used[F].pure(PreparedLeaf2(s.name, x => s.encoder(x).asJson))
         case (o, Some(_)) =>
-          raise(s"Type `${friendlyName(o)}` cannot have selections.", Some(selCaret))
+          Used.liftF(raise(s"Type `${friendlyName(o)}` cannot have selections.", Some(selCaret)))
         case (o, None) =>
-          raise(s"Object like type `${friendlyName(o)}` must have a selection.", Some(selCaret))
+          Used.liftF(raise(s"Object like type `${friendlyName(o)}` must have a selection.", Some(selCaret)))
       }
 
-    inStep(rootUniqueName) {
-      (
-        compileStep[F, G, I, T](step),
-        compileCont(tpe)
-      ).parMapN { case (s, c) =>
-        val pc = PreparedCont2(s, c)
-        PreparedDataField2(name, fi.alias, pc)
-      }
+    val usedF = (
+      compileStep[F, G, I, T](step, rootUniqueName, meta),
+      compileCont(tpe, rootUniqueName)
+    ).parMapN { case (s, c) =>
+      val pc = PreparedCont2(s, c)
+      PreparedDataField2(name, fi.alias, pc)
     }
+
+    usedF.run
+      .flatMap { case (used, a) =>
+        val provided = fi.args.toList.flatMap(_.nel.toList).map(_.name).toSet
+        val tooMany = provided -- used
+        if (tooMany.isEmpty) F.pure(a)
+        else raise(s"Field '$name' does not accept the arguments ${tooMany.map(s => s"'$s'").toList.mkString_(", ")}", Some(selCaret))
+      }
   }
 
   def prepareField[F[_]: Parallel, G[_]: Applicative](
@@ -1073,23 +1094,17 @@ object PreparedQuery {
       S: Stateful[F, Prep],
       F: MonadError[F, NonEmptyChain[PositionalError]],
       D: Defer[F]
-  ): F[NonEmptyList[PreparedField[G]]] = {
-    mergeImplementations[F, G](s, sis, discoveryState).flatMap { impls =>
-      impls.parFlatTraverse { impl =>
-        val fa = impl.selections.parTraverse { sel =>
-          val field = (sel.field: Field[G, ?, ?, ?]).asInstanceOf[Field[G, Any, Any, Any]]
-          prepareField[F, G](sel.info, field, variableMap, impl.leaf.name, discoveryState)
-        }
-
-        fa.flatMap { xs =>
-          impl.specify match {
-            case None => F.pure(xs)
-            case Some(spec) =>
-              nextId[F].map { id =>
-                NonEmptyList.one(PreparedSpecification(id, s.name, spec.asInstanceOf[Function1[Any, Option[Any]]], xs))
-              }
+  ): F[NonEmptyList[PreparedSpecification2[G, A, ?]]] = {
+    mergeImplementations2[F, G, A](s, sis, discoveryState).flatMap { impls =>
+      impls.parTraverse { case impl: MergedImplementation2[G, A, b] =>
+        val fa: F[NonEmptyList[PreparedDataField2[G, b]]] = impl.selections.parTraverse { sel =>
+          sel.field match {
+            case field: Field[G, b2, t, ?] =>
+              prepareField2[F, G, b, t](sel.info, field, null, impl.leaf.name, variableMap, discoveryState)
           }
         }
+
+        fa.map(xs => PreparedSpecification2[G, A, b](s.name, impl.specify, xs))
       }
     }
   }
