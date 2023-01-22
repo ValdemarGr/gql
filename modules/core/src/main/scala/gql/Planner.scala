@@ -151,6 +151,13 @@ object Planner {
   )(implicit S: Stateful[F, TraversalState]): F[List[Node2]] =
     costForStep[F](edges, costForPrepared2[F](cont))
 
+  type H[F[_], A] = StateT[F, TraversalState, A]
+  def liftStatistics[F[_]: Applicative](stats: Statistics[F]): Statistics[H[F, *]] =
+    stats.mapK(StateT.liftK[F, TraversalState])
+
+  def runCostAnalysis[F[_]: Monad, A](f: Statistics[H[F, *]] => H[F, A])(implicit stats: Statistics[F]): F[A] =
+    f(liftStatistics[F](stats)).runA(TraversalState(1, 0d))
+
   def costForPrepared[F[_]: Statistics](p: PreparedQuery.Prepared[F], currentCost: Double)(implicit F: Monad[F]): F[List[Node]] =
     p match {
       case PreparedLeaf(_, _)    => F.pure(Nil)
@@ -303,6 +310,111 @@ object Planner {
           F.pure(tree.set(reConstruct(tree.root).value))
       }
     }
+  }
+final case class NodeTree2(
+      root: List[Node2],
+      source: Option[NodeTree2] = None
+) {
+    def set(newRoot: List[Node2]): NodeTree2 =
+      NodeTree2(newRoot, Some(this))
+
+    lazy val flattened: List[Node2] = {
+      def go(xs: List[Node2]): Eval[List[Node2]] = Eval.defer {
+        xs.flatTraverse {
+          case n @ Node2(_, _, _, _, _, Nil, _) => Eval.now(List(n))
+          case n @ Node2(_, _, _, _, _, xs, _)  => go(xs).map(n :: _)
+        }
+      }
+
+      go(root).value
+    }
+
+    lazy val batches: List[(Int, NonEmptyChain[Int])] =
+      flattened
+        .map(n => (n.batchId, n))
+        .collect { case (Some(batcherKey), node) => (batcherKey, node) }
+        .groupByNec { case (_, node) => node.end }
+        .toList
+        .flatMap { case (_, endGroup) =>
+          endGroup
+            .groupBy { case (batcherKey, _) => batcherKey }
+            .toSortedMap
+            .toList
+            .map { case (batcherKey, batch) =>
+              batcherKey -> batch.map { case (_, node) => node.id }
+            }
+        }
+
+    def totalCost: Double = {
+      val thisFlat = flattened
+      val thisFlattenedMap = thisFlat.map(n => n.id -> n).toMap
+      val thisBatches = batches.filter { case (_, edges) => edges.size > 1 }
+
+      val naiveCost = thisFlat.map(_.cost).sum
+
+      val batchSubtraction = thisBatches.map { case (_, xs) =>
+        // cost * (size - 1 )
+        thisFlattenedMap(xs.head).cost * (xs.size - 1)
+      }.sum
+
+      naiveCost - batchSubtraction
+    }
+
+    def show(showImprovement: Boolean = false, ansiColors: Boolean = false) = {
+      val (default, displaced) =
+        if (showImprovement)
+          source match {
+            case Some(x) => (x, Some(this))
+            case None    => (this, None)
+          }
+        else (this, None)
+
+      val maxEnd = displaced.getOrElse(default).flattened.maxByOption(_.end).map(_.end).getOrElse(0d)
+
+      val (red, green, blue, reset) =
+        if (ansiColors) (AnsiColor.RED_B, AnsiColor.GREEN_B, AnsiColor.BLUE_B, AnsiColor.RESET)
+        else ("", "", "", "")
+
+      val prefix =
+        if (ansiColors)
+          displaced.as {
+            s"""|
+          |${red}old field schedule$reset
+          |${green}new field offset (deferral of execution)$reset
+          |""".stripMargin
+          }.mkString
+        else ""
+
+      val per = math.max((maxEnd / 40d), 1)
+
+      def go(default: List[Node2], displacement: Map[Int, Node2]): String = {
+        default
+          .sortBy(_.id)
+          .map { n =>
+            val disp = displacement.get(n.id)
+            val basePrefix = " " * (n.start / per).toInt
+            val showDisp = disp
+              .filter(_.end.toInt != n.end.toInt)
+              .map { d =>
+                val pushedPrefix = blue + ">" * ((d.start - n.start) / per).toInt + green
+                s"$basePrefix${pushedPrefix}name: ${d.name}, cost: ${d.cost}, end: ${d.end}$reset"
+              }
+            val showHere =
+              s"$basePrefix${if (showDisp.isDefined) red else ""}name: ${n.name}, cost: ${n.cost}, end: ${n.end}$reset"
+
+            val all = showHere + showDisp.map("\n" + _).mkString
+            val children = go(n.children, disp.map(_.children.map(x => x.id -> x).toMap).getOrElse(Map.empty))
+            all + "\n" + children
+          }
+          .mkString("")
+      }
+
+      prefix +
+        go(default.root, displaced.map(_.root.map(x => x.id -> x).toMap).getOrElse(Map.empty))
+    }
+  }
+  object NodeTree2 {
+    implicit lazy val showForNodeTree: Show[NodeTree2] = Show.show[NodeTree2](_.show(showImprovement = true))
   }
 
   final case class NodeTree(
