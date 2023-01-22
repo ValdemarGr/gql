@@ -778,7 +778,7 @@ object PreparedQuery {
           .collect { case (k, v: SchemaShape.InterfaceImpl[G, A] @unchecked) => (k, v) }
 
       m.values.toList
-        .map { case ti: SchemaShape.InterfaceImpl.TypeImpl[G, A, b] => FoundImplementation(ti.t, ti.specify) }
+        .collect { case ti: SchemaShape.InterfaceImpl.TypeImpl[G, A, b] => FoundImplementation(ti.t, ti.specify) }
   }
 
   def findImplementations[G[_]](
