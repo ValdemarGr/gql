@@ -115,6 +115,7 @@ object PreparedQuery {
         with PreparedStep[F, I, O]
     final case class GetMeta[F[_], I](meta: PreparedMeta) extends AnyRef with PreparedStep[F, I, Meta]
     final case class First[F[_], I, O, C](step: StepWithInfo[F, I, O]) extends AnyRef with PreparedStep[F, (I, C), (O, C)]
+    final case class Batch[F[_], K, V](id: Int) extends AnyRef with PreparedStep[F, Set[K], Map[K, V]]
   }
 
   sealed trait PreparedResolver[F[_]]
@@ -303,7 +304,8 @@ object PreparedQuery {
         val checkF = rec[i, Either[i2, o]](alg.check, "skip_check")
         val stepF = rec[i2, o](alg.step, "skip_step")
         (checkF, stepF).parTupled.flatMap { case (c, s) => makeInfo(PreparedStep.Skip(c, s)) }
-      case Step.Alg.GetMeta() => makeInfo(PreparedStep.GetMeta(meta))
+      case Step.Alg.GetMeta()           => makeInfo(PreparedStep.GetMeta(meta))
+      case alg: Step.Alg.Batch[G, k, v] => makeInfo(PreparedStep.Batch[G, k, v](alg.id))
       case alg: Step.Alg.First[G, i, o, c] =>
         rec[i, o](alg.step, "first").flatMap(s => makeInfo(PreparedStep.First(s)))
       case Step.Alg.Argument(a) =>
