@@ -25,6 +25,8 @@ object Step {
     final case class GetMeta[F[_], I]() extends Step[F, I, Meta]
 
     final case class First[F[_], A, B, C](step: Step[F, A, B]) extends Step[F, (A, C), (B, C)]
+
+    final case class Batch[F[_], K, V](id: Int) extends Step[F, Set[K], Map[K, V]]
   }
 
   def pure[F[_], I, O](f: I => O): Step[F, I, O] =
@@ -50,6 +52,12 @@ object Step {
 
   def first[F[_], A, B, C](step: Step[F, A, B]): Step[F, (A, C), (B, C)] =
     Alg.First(step)
+
+  def batch[F[_], K, V](f: Set[K] => F[Map[K, V]]): State[gql.SchemaState[F], Step[F, Set[K], Map[K, V]]] =
+    State { s =>
+      val id = s.nextId
+      (s.copy(nextId = id + 1, batchFunctions = s.batchFunctions + (id -> SchemaState.BatchFunction(f))), Alg.Batch(id))
+    }
 
   import cats.arrow._
   implicit def arrowForStep[F[_]] = new Arrow[Step[F, *, *]] {

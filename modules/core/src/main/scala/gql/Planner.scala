@@ -18,12 +18,7 @@ package gql
 import gql.resolver._
 import cats.implicits._
 import cats.data._
-import gql.PreparedQuery.PreparedDataField
-import gql.PreparedQuery.PreparedSpecification
-import gql.PreparedQuery.PreparedLeaf
-import gql.PreparedQuery.PreparedList
-import gql.PreparedQuery.PreparedOption
-import gql.PreparedQuery.Selection
+import gql.PreparedQuery._
 import scala.collection.immutable.TreeSet
 import cats._
 import scala.io.AnsiColor
@@ -49,6 +44,35 @@ object Planner {
   ) {
     lazy val start = end - cost
   }
+/*
+  def costForPrepared2[F[_]: Statistics](p: PreparedQuery.Prepared2[F, ?], currentCost: Double)(implicit F: Monad[F]): F[List[Node]] =
+    p match {
+      case PreparedLeaf2(_, _)    => F.pure(Nil)
+      case Selection2(fields)     => costForFields[F](currentCost, fields).map(_.toList)
+      case PreparedList2(cont, _) => costForCont[F](cont.edges.toChain, cont.cont, currentCost)
+      case PreparedOption2(cont)  => costForCont[F](cont.edges.toChain, cont.cont, currentCost)
+    }*/
+/*
+  def costForStep[F[_]](swi: StepWithInfo[F, ?, ?], cont: Prepared2[F, ?], currentCost: Double)(implicit
+      stats: Statistics[F],
+      F: Monad[F]
+  ): F[NonEmptyList[Node]] =
+    swi.step match {
+      case PreparedStep.
+    }*/
+    /*
+  def costForFields2[F[_]](
+      currentCost: Double,
+      prepared: NonEmptyList[PreparedQuery.PreparedField2[F]]
+  )(implicit
+      F: Monad[F],
+      stats: Statistics[F]
+  ): F[List[Node]] = {
+    prepared.toList.flatTraverse {
+      case PreparedDataField2(_, _, _, cont)          => costForCont2[F](cont.edges.toChain, cont.cont, currentCost)
+      case PreparedSpecification2(_, _, _, selection) => costForFields2[F](currentCost, selection)
+    }
+  }*/
 
   def costForPrepared[F[_]: Statistics](p: PreparedQuery.Prepared[F], currentCost: Double)(implicit F: Monad[F]): F[List[Node]] =
     p match {
