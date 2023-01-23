@@ -29,6 +29,9 @@ trait BatchAccumulator[F[_]] {
   // Emits the whole result of the batch, so the calle must filter
   def submit(id: PreparedQuery.EdgeId, values: Chain[(Cursor, Set[BatchKey])]): F[Option[Map[BatchKey, BatchValue]]]
 
+  // Emits the whole result of the batch, so the calle must filter
+  def submit2[K, V](id: Int, values: Chain[(Cursor, Set[K])]): F[Option[Map[K, V]]] = ???
+
   def getErrors: F[List[EvalFailure.BatchResolution]]
 }
 

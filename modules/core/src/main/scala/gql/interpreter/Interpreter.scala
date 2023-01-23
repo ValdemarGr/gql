@@ -348,17 +348,55 @@ class InterpreterImpl[F[_]](
         inputs.map { id =>
           val runF = attemptTimed(e => EvalFailure.StreamHeadResolution(id.node.cursor, Left(e), id.node.value)) {
             id
-              .traverse{ i => 
+              .traverse { i =>
                 streamAccumulator
-                .add2(f(i))
-                .map{ case (_, e) => e }
-                .rethrow
+                  .add2(f(i))
+                  .map { case (_, e) => e }
+                  .rethrow
               }
           }
           runF.map(Chain.fromOption(_))
         }
       case alg: Skip[F, ?, i2, ?] =>
-        ???
+        val contR: Chain[IndexedData[Either[i2, C]]] => W[Chain[IndexedData[O]]] = { xs =>
+          val (force, skip) = xs.partitionEither(in =>
+            in.node.value match {
+              case Left(i2) => Left(in as i2)
+              case Right(c) => Right(in as c)
+            }
+          )
+          val contR2: Chain[IndexedData[C]] => W[Chain[IndexedData[O]]] = forced => cont(forced ++ skip)
+
+          runEdge2_[i2, C, O](force, alg.step, contR2)
+        }
+
+        runEdge2_[I, Either[i2, C], O](inputs, alg.check, contR)
+      case GetMeta(pm) =>
+        W.pure(inputs.map(in => in as Meta(in.node.cursor, pm.alias, pm.args, pm.variables)))
+      case alg: First[F, i2, o2, c2] =>
+        // (o2, c2) <:< C
+        // (i2, c2) <:< I
+        val inputMap: Map[Int, c2] =
+          inputs.map(in => in.index -> (in.map { case (_, c2) => c2 }.node.value)).toIterable.toMap
+        val contR: Chain[IndexedData[o2]] => W[Chain[IndexedData[O]]] = { xs =>
+          val zs: Chain[IndexedData[C]] = xs.map(id => id tupleRight inputMap(id.index))
+          cont(zs)
+        }
+        runEdge2_[i2, o2, O](inputs.map(_.map { case (i2, _) => i2 }), alg.step, contR)
+      case alg: Batch[F, k, v] =>
+        val keys: Chain[(Cursor, Set[k])] = inputs.map(id => id.node.cursor -> id.node.value)
+
+        lift {
+          batchAccumulator.submit2[k, v](alg.id, keys).map {
+            case None => Chain.empty
+            case Some(m) =>
+              inputs.map { id =>
+                id.map{ keys => 
+                  Chain.fromIterableOnce(keys).mapFilter(k => m.get(k) tupleLeft k).iterator.toMap
+                }
+              }
+          }
+        }
     }
     W.pure(Chain.empty)
   }
