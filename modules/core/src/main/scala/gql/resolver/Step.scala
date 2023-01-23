@@ -18,7 +18,7 @@ object Step {
 
     final case class Compose[F[_], I, A, O](left: Step[F, I, A], right: Step[F, A, O]) extends Step[F, I, O]
 
-    final case class Stream[F[_], I, O](f: I => fs2.Stream[F, IorNec[String, O]]) extends AnyRef with Step[F, I, O]
+    final case class Stream[F[_], I, O](f: I => fs2.Stream[F, O]) extends AnyRef with Step[F, I, O]
 
     final case class Skip[F[_], I, I2, O](check: Step[F, I, Either[I2, O]], step: Step[F, I2, O]) extends Step[F, I, O]
 
@@ -44,7 +44,7 @@ object Step {
   def compose[F[_], I, A, O](left: Step[F, I, A], right: Step[F, A, O]): Step[F, I, O] =
     Alg.Compose(left, right)
 
-  def stream[F[_], I, O](f: I => fs2.Stream[F, IorNec[String, O]]): Step[F, I, O] =
+  def stream[F[_], I, O](f: I => fs2.Stream[F, O]): Step[F, I, O] =
     Alg.Stream(f)
 
   def getMeta[F[_]]: Step[F, Any, Meta] =

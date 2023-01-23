@@ -22,6 +22,8 @@ import fs2.Stream
 trait StreamMetadataAccumulator[F[_], A, B] {
   def add(context: A, stream: Stream[F, B]): F[(Unique.Token, Either[Throwable, B])]
 
+  def add2[B](/*context: A, */stream: Stream[F, B]): F[(Unique.Token, Either[Throwable, B])] = ???
+
   def getState: F[Map[Unique.Token, A]]
 }
 

@@ -27,14 +27,15 @@ import cats.effect.std.Supervisor
 import scala.concurrent.duration.FiniteDuration
 import cats._
 import gql._
+import cats.data.Ior.Both
 
 sealed trait Interpreter[F[_]] {
   type W[A] = WriterT[F, Chain[EvalFailure], A]
 
   def runEdge(
-    inputs: Chain[EvalNode[Any]],
-    edges: Chain[PreparedEdge[F]],
-    cont: Prepared[F]
+      inputs: Chain[EvalNode[Any]],
+      edges: Chain[PreparedEdge[F]],
+      cont: Prepared[F]
   ): W[Chain[Json]]
 
   def runFields(dfs: NonEmptyList[PreparedField[F]], in: Chain[EvalNode[Any]]): W[Chain[Map[String, Json]]]
@@ -93,7 +94,7 @@ object Interpreter {
               .map(Planner.NodeTree(_))
             planned <- planner.plan(costTree)
             accumulator <- BatchAccumulator[F](schemaState, planned)
-            (res: NonEmptyList[(Chain[EvalFailure], Json, Map[Unique.Token,StreamMetadata[F]])]) <- metas.parTraverse { ri =>
+            (res: NonEmptyList[(Chain[EvalFailure], Json, Map[Unique.Token, StreamMetadata[F]])]) <- metas.parTraverse { ri =>
               StreamMetadataAccumulator[F, StreamMetadata[F], IorNec[String, Any]].flatMap { sma =>
                 val interpreter = new InterpreterImpl[F](sma, accumulator, sup)
                 interpreter
@@ -285,6 +286,83 @@ class InterpreterImpl[F[_]](
   def submit(name: String, duration: FiniteDuration, size: Int): F[Unit] =
     sup.supervise(stats.updateStats(name, duration, size)).void
 
+  final case class IndexedData[A](
+      index: Int,
+      node: EvalNode[A]
+  )
+  object IndexedData {
+    implicit val traverseForIndexedData: Traverse[IndexedData] = new Traverse[IndexedData] {
+      override def foldLeft[A, B](fa: IndexedData[A], b: B)(f: (B, A) => B): B =
+        f(b, fa.node.value)
+      override def foldRight[A, B](fa: IndexedData[A], lb: Eval[B])(f: (A, Eval[B]) => Eval[B]): Eval[B] =
+        f(fa.node.value, lb)
+      override def traverse[G[_]: Applicative, A, B](fa: IndexedData[A])(f: A => G[B]): G[IndexedData[B]] =
+        f(fa.node.value).map(b => IndexedData(fa.index, fa.node.setValue(b)))
+    }
+  }
+  def runEdge2_[I, C, O](
+      inputs: Chain[IndexedData[I]],
+      step: StepWithInfo[F, I, C],
+      cont: Chain[IndexedData[C]] => W[Chain[IndexedData[O]]]
+  ): W[Chain[IndexedData[O]]] = {
+    import PreparedStep._
+    def liftError[A](a: A, e: Throwable, constructor: Throwable => EvalFailure): W[A] =
+      WriterT.put(a)(Chain(constructor(e)))
+
+    def attemptEffect[A](constructor: Throwable => EvalFailure)(fo: F[A]): W[Option[A]] =
+      lift(fo.attempt).flatMap {
+        case Left(ex) => liftError[Option[A]](None, ex, constructor)
+        case Right(o) => W.pure(Some(o))
+      }
+
+    def attemptTimed[A](constructor: Throwable => EvalFailure)(fo: F[A]): W[Option[A]] =
+      attemptEffect(constructor) {
+        fo.timed.flatMap { case (dur, x) =>
+          submit(step.stableUniqueEdgeName.asString, dur, 1) as x
+        }
+      }
+
+    step.step match {
+      case Pure(f) => W.pure(inputs.map(_.map(f)))
+      case Effect(f) =>
+        inputs.parFlatTraverse { id =>
+          val runF = attemptTimed(e => EvalFailure.EffectResolution(id.node.cursor, Left(e), id.node.value)) {
+            id.traverse(f)
+          }
+
+          runF.map(Chain.fromOption(_))
+        }
+      case Raise(f) =>
+        inputs.traverse { id =>
+          val ior = id.traverse(f)
+          WriterT.put[F, Chain[EvalFailure], Chain[IndexedData[C]]](
+            Chain.fromOption(ior.right)
+          )(
+            Chain.fromOption(ior.left.map(e => EvalFailure.Raised(id.node.cursor, e)))
+          )
+        }
+      case alg: Compose[F, ?, a, ?] =>
+        val contR: Chain[IndexedData[a]] => W[Chain[IndexedData[O]]] = runEdge2_[a, C, O](_, alg.right, cont)
+        runEdge2_[I, a, O](inputs, alg.left, contR)
+      case Stream(f) =>
+        inputs.map { id =>
+          val runF = attemptTimed(e => EvalFailure.StreamHeadResolution(id.node.cursor, Left(e), id.node.value)) {
+            id
+              .traverse{ i => 
+                streamAccumulator
+                .add2(f(i))
+                .map{ case (_, e) => e }
+                .rethrow
+              }
+          }
+          runF.map(Chain.fromOption(_))
+        }
+      case alg: Skip[F, ?, i2, ?] =>
+        ???
+    }
+    W.pure(Chain.empty)
+  }
+
   type IndexedValue = (Int, EvalNode[Any])
   def runEdge_(
       inputs: Chain[IndexedValue],
@@ -292,7 +370,7 @@ class InterpreterImpl[F[_]](
       cont: Prepared[F]
   ): W[Chain[IndexedValue]] =
     edges.uncons match {
-      case None                                                          => W.pure(inputs)
+      case None                                                         => W.pure(inputs)
       case Some((PreparedQuery.PreparedEdge.Skip(specify, jumpTo), xs)) =>
         // Partition into skipping and non-skipping
         // Run the non-skipping first so they are in sync
@@ -308,7 +386,7 @@ class InterpreterImpl[F[_]](
             // Sub-stack of edges to force traverse
             val toForce = Chain.fromSeq(xs.toList.take((xs.size - jumpTo.size).toInt))
             runEdge_(force, toForce, cont).flatMap { forced =>
-              val combined = (forced ++ skip).sortBy{ case (i, _) => i }
+              val combined = (forced ++ skip).sortBy { case (i, _) => i }
               runEdge_(combined, jumpTo, cont)
             }
           }
@@ -375,7 +453,7 @@ class InterpreterImpl[F[_]](
           .map(_.zipWith(remaining) { case (j, (i, _)) => (i, j) })
           .map { indexedJson =>
             val m = indexedJson.toList.toMap
-            indexed.map{ case (i, _) => m.get(i).getOrElse(Json.Null) }
+            indexed.map { case (i, _) => m.get(i).getOrElse(Json.Null) }
           }
       }
   }

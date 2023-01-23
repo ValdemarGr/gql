@@ -155,8 +155,11 @@ object Planner {
   def liftStatistics[F[_]: Applicative](stats: Statistics[F]): Statistics[H[F, *]] =
     stats.mapK(StateT.liftK[F, TraversalState])
 
-  def runCostAnalysis[F[_]: Monad, A](f: Statistics[H[F, *]] => H[F, A])(implicit stats: Statistics[F]): F[A] =
+  def runCostAnalysisFor[F[_]: Monad, A](f: Statistics[H[F, *]] => H[F, A])(implicit stats: Statistics[F]): F[A] =
     f(liftStatistics[F](stats)).runA(TraversalState(1, 0d))
+
+  def runCostAnalysis[F[_]: Monad: Statistics](f: Statistics[H[F, *]] => H[F, List[Node2]]): F[NodeTree2] =
+    runCostAnalysisFor[F, List[Node2]](f).map(NodeTree2(_))
 
   def costForPrepared[F[_]: Statistics](p: PreparedQuery.Prepared[F], currentCost: Double)(implicit F: Monad[F]): F[List[Node]] =
     p match {

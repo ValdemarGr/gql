@@ -75,4 +75,12 @@ object EvalFailure {
   ) extends EvalFailure {
     lazy val paths = Chain(path)
   }
+
+  final case class Raised(
+      path: Cursor,
+      raisedError: String,
+  ) extends EvalFailure {
+    lazy val paths = Chain(path)
+    lazy val error = Right(raisedError)
+  }
 }

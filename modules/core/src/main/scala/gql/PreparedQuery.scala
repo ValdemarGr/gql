@@ -109,7 +109,7 @@ object PreparedQuery {
     final case class Compose[F[_], I, A, O](left: StepWithInfo[F, I, A], right: StepWithInfo[F, A, O])
         extends AnyRef
         with PreparedStep[F, I, O]
-    final case class Stream[F[_], I, O](f: I => fs2.Stream[F, IorNec[String, O]]) extends AnyRef with PreparedStep[F, I, O]
+    final case class Stream[F[_], I, O](f: I => fs2.Stream[F, O]) extends AnyRef with PreparedStep[F, I, O]
     final case class Skip[F[_], I, I2, O](check: StepWithInfo[F, I, Either[I2, O]], step: StepWithInfo[F, I2, O])
         extends AnyRef
         with PreparedStep[F, I, O]
