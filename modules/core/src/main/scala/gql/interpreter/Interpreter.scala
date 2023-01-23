@@ -323,7 +323,7 @@ class InterpreterImpl[F[_]](
       }
 
     step.step match {
-      case Pure(f) => W.pure(inputs.map(_.map(f)))
+      case Pure(f) => cont(inputs.map(_.map(f)))
       case Effect(f) =>
         inputs.parFlatTraverse { id =>
           val runF = attemptTimed(e => EvalFailure.EffectResolution(id.node.cursor, Left(e), id.node.value)) {
@@ -331,21 +331,21 @@ class InterpreterImpl[F[_]](
           }
 
           runF.map(Chain.fromOption(_))
-        }
+        } >>= cont
       case Raise(f) =>
-        inputs.traverse { id =>
+        inputs.flatTraverse { id =>
           val ior = id.traverse(f)
           WriterT.put[F, Chain[EvalFailure], Chain[IndexedData[C]]](
             Chain.fromOption(ior.right)
           )(
             Chain.fromOption(ior.left.map(e => EvalFailure.Raised(id.node.cursor, e)))
           )
-        }
+        } >>= cont
       case alg: Compose[F, ?, a, ?] =>
         val contR: Chain[IndexedData[a]] => W[Chain[IndexedData[O]]] = runEdge2_[a, C, O](_, alg.right, cont)
         runEdge2_[I, a, O](inputs, alg.left, contR)
       case Stream(f) =>
-        inputs.map { id =>
+        inputs.flatTraverse { id =>
           val runF = attemptTimed(e => EvalFailure.StreamHeadResolution(id.node.cursor, Left(e), id.node.value)) {
             id
               .traverse { i =>
@@ -356,7 +356,7 @@ class InterpreterImpl[F[_]](
               }
           }
           runF.map(Chain.fromOption(_))
-        }
+        } >>= cont
       case alg: Skip[F, ?, i2, ?] =>
         val contR: Chain[IndexedData[Either[i2, C]]] => W[Chain[IndexedData[O]]] = { xs =>
           val (force, skip) = xs.partitionEither(in =>
@@ -372,7 +372,7 @@ class InterpreterImpl[F[_]](
 
         runEdge2_[I, Either[i2, C], O](inputs, alg.check, contR)
       case GetMeta(pm) =>
-        W.pure(inputs.map(in => in as Meta(in.node.cursor, pm.alias, pm.args, pm.variables)))
+        cont(inputs.map(in => in as Meta(in.node.cursor, pm.alias, pm.args, pm.variables)))
       case alg: First[F, i2, o2, c2] =>
         // (o2, c2) <:< C
         // (i2, c2) <:< I
@@ -396,9 +396,8 @@ class InterpreterImpl[F[_]](
                 }
               }
           }
-        }
+        } >>= cont
     }
-    W.pure(Chain.empty)
   }
 
   type IndexedValue = (Int, EvalNode[Any])
