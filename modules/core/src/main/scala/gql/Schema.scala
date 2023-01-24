@@ -41,7 +41,7 @@ object Schema {
   def stateful[F[_]: Applicative, Q, M, S](
       statistics: Statistics[F]
   )(fa: State[SchemaState[F], SchemaShape[F, Q, M, S]]): Schema[F, Q, M, S] = {
-    val (state, shape) = fa.run(SchemaState(0, Map.empty, Map.empty)).value
+    val (state, shape) = fa.run(SchemaState(0, Map.empty)).value
     Schema(shape, state, statistics, Planner[F])
   }
 

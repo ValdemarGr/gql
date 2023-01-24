@@ -34,7 +34,7 @@ object PreparedQuery {
   sealed trait Prepared2[F[_], I]
 
   final case class PreparedCont2[F[_], I, A](
-      edges: StepWithInfo[F, I, A],
+      edges: PreparedStep[F, I, A],
       cont: Prepared2[F, A]
   )
 
@@ -62,11 +62,6 @@ object PreparedQuery {
 
   sealed trait PreparedStep[F[_], -I, O]
 
-  final case class StepWithInfo[F[_], -I, O](
-      step: PreparedStep[F, I, O],
-      stableUniqueEdgeName: UniqueEdgeCursor
-  )
-
   final case class PreparedMeta(
       variables: VariableMap,
       alias: Option[String],
@@ -75,17 +70,23 @@ object PreparedQuery {
 
   object PreparedStep {
     final case class Pure[F[_], I, O](f: I => O) extends AnyRef with PreparedStep[F, I, O]
-    final case class Effect[F[_], I, O](f: I => F[O]) extends AnyRef with PreparedStep[F, I, O]
+    final case class Effect[F[_], I, O](
+      f: I => F[O],
+      stableUniqueEdgeName: UniqueEdgeCursor
+    ) extends AnyRef with PreparedStep[F, I, O]
     final case class Raise[F[_], I, O](f: I => Ior[String, O]) extends AnyRef with PreparedStep[F, I, O]
-    final case class Compose[F[_], I, A, O](left: StepWithInfo[F, I, A], right: StepWithInfo[F, A, O])
+    final case class Compose[F[_], I, A, O](left: PreparedStep[F, I, A], right: PreparedStep[F, A, O])
         extends AnyRef
         with PreparedStep[F, I, O]
-    final case class Stream[F[_], I, O](f: I => fs2.Stream[F, O]) extends AnyRef with PreparedStep[F, I, O]
-    final case class Skip[F[_], I, I2, O](check: StepWithInfo[F, I, Either[I2, O]], step: StepWithInfo[F, I2, O])
+    final case class Stream[F[_], I, O](
+      f: I => fs2.Stream[F, O],
+      stableUniqueEdgeName: UniqueEdgeCursor
+    ) extends AnyRef with PreparedStep[F, I, O]
+    final case class Skip[F[_], I, I2, O](check: PreparedStep[F, I, Either[I2, O]], step: PreparedStep[F, I2, O])
         extends AnyRef
         with PreparedStep[F, I, O]
     final case class GetMeta[F[_], I](meta: PreparedMeta) extends AnyRef with PreparedStep[F, I, Meta]
-    final case class First[F[_], I, O, C](step: StepWithInfo[F, I, O]) extends AnyRef with PreparedStep[F, (I, C), (O, C)]
+    final case class First[F[_], I, O, C](step: PreparedStep[F, I, O]) extends AnyRef with PreparedStep[F, (I, C), (O, C)]
     final case class Batch[F[_], K, V](id: Int) extends AnyRef with PreparedStep[F, Set[K], Map[K, V]]
   }
 
@@ -139,35 +140,32 @@ object PreparedQuery {
   def compileStep[F[_]: Parallel, G[_], I, O](step: Step[G, I, O], cursor: UniqueEdgeCursor, meta: PreparedMeta)(implicit
       S: Stateful[F, Prep],
       F: MonadError[F, NonEmptyChain[PositionalError]]
-  ): Used[F, StepWithInfo[G, I, O]] = {
-    def makeInfo(step: PreparedStep[G, I, O]): Used[F, StepWithInfo[G, I, O]] =
-      Used[F].pure(StepWithInfo(step, cursor))
-
-    def rec[I2, O2](step: Step[G, I2, O2], edge: String): Used[F, StepWithInfo[G, I2, O2]] =
+  ): Used[F, PreparedStep[G, I, O]] = {
+    def rec[I2, O2](step: Step[G, I2, O2], edge: String): Used[F, PreparedStep[G, I2, O2]] =
       compileStep[F, G, I2, O2](step, cursor append edge, meta)
 
     step match {
-      case Step.Alg.Pure(f)   => makeInfo(PreparedStep.Pure(f))
-      case Step.Alg.Effect(f) => makeInfo(PreparedStep.Effect(f))
-      case Step.Alg.Raise(f)  => makeInfo(PreparedStep.Raise(f))
+      case Step.Alg.Pure(f)   => Used[F].pure(PreparedStep.Pure(f))
+      case Step.Alg.Raise(f)  => Used[F].pure(PreparedStep.Raise(f))
       case alg: Step.Alg.Compose[G, i, a, o] =>
         val left = rec[i, a](alg.left, "left")
         val right = rec[a, o](alg.right, "right")
-        (left, right).parTupled.flatMap { case (l, r) => makeInfo(PreparedStep.Compose(l, r)) }
-      case Step.Alg.Stream(f) => makeInfo(PreparedStep.Stream(f))
+        (left, right).parTupled.map { case (l, r) => PreparedStep.Compose(l, r) }
+      case Step.Alg.Effect(f) =>  Used[F].pure(PreparedStep.Effect(f, cursor))
+      case Step.Alg.Stream(f) =>  Used[F].pure(PreparedStep.Stream(f, cursor))
       case alg: Step.Alg.Skip[G, i, i2, o] =>
         val checkF = rec[i, Either[i2, o]](alg.check, "skip_check")
         val stepF = rec[i2, o](alg.step, "skip_step")
-        (checkF, stepF).parTupled.flatMap { case (c, s) => makeInfo(PreparedStep.Skip(c, s)) }
-      case Step.Alg.GetMeta() => makeInfo(PreparedStep.GetMeta(meta))
+        (checkF, stepF).parTupled.map { case (c, s) => PreparedStep.Skip(c, s) }
+      case Step.Alg.GetMeta() => Used[F].pure(PreparedStep.GetMeta(meta))
       case alg: Step.Alg.Batch[G, k, v] =>
-        Used[F].pure(StepWithInfo(PreparedStep.Batch[G, k, v](alg.id), UniqueEdgeCursor(s"batch_${alg.id}")))
+        Used[F].pure(PreparedStep.Batch[G, k, v](alg.id))
       case alg: Step.Alg.First[G, i, o, c] =>
-        rec[i, o](alg.step, "first").flatMap(s => makeInfo(PreparedStep.First(s)))
+        rec[i, o](alg.step, "first").map(s => PreparedStep.First(s))
       case Step.Alg.Argument(a) =>
         Used
           .liftF(decodeFieldArgs[F, G, O](a, meta.args, meta.variables))
-          .flatMap(o => makeInfo(PreparedStep.Pure[G, I, O](_ => o))) <*
+          .map[PreparedStep[G, I, O]](o => PreparedStep.Pure[G, I, O](_ => o)) <*
           WriterT.tell(a.entries.map(_.name).toList.toSet)
     }
   }

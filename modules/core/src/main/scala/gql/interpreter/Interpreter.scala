@@ -28,27 +28,12 @@ import scala.concurrent.duration.FiniteDuration
 import cats._
 import gql._
 
-sealed trait Interpreter[F[_]] {
+trait Interpreter[F[_]] {
   type W[A] = WriterT[F, Chain[EvalFailure], A]
-
-  final case class IndexedData[A](
-      index: Int,
-      node: EvalNode[A]
-  )
-  object IndexedData {
-    implicit val traverseForIndexedData: Traverse[IndexedData] = new Traverse[IndexedData] {
-      override def foldLeft[A, B](fa: IndexedData[A], b: B)(f: (B, A) => B): B =
-        f(b, fa.node.value)
-      override def foldRight[A, B](fa: IndexedData[A], lb: Eval[B])(f: (A, Eval[B]) => Eval[B]): Eval[B] =
-        f(fa.node.value, lb)
-      override def traverse[G[_]: Applicative, A, B](fa: IndexedData[A])(f: A => G[B]): G[IndexedData[B]] =
-        f(fa.node.value).map(b => IndexedData(fa.index, fa.node.setValue(b)))
-    }
-  }
 
   def runEdge[I, O](
       inputs: Chain[IndexedData[I]],
-      step: StepWithInfo[F, I, O],
+      step: PreparedStep[F, I, O],
       cont: Prepared2[F, O]
   ): W[Chain[Json]]
 
@@ -78,7 +63,7 @@ object Interpreter {
 
   final case class StreamMetadata[F[_], A, B](
       cursor: Cursor,
-      edges: StepWithInfo[F, A, B],
+      edges: PreparedStep[F, A, B],
       cont: Prepared2[F, B]
   )
 
@@ -88,7 +73,7 @@ object Interpreter {
       schemaState: SchemaState[F],
       openTails: Boolean
   )(implicit F: Async[F], planner: Planner[F]): fs2.Stream[F, (Chain[EvalFailure], JsonObject)] =
-    StreamSupervisor[F, IorNec[String, Any]](openTails).flatMap { implicit streamSup =>
+    StreamSupervisor[F, Any](openTails).flatMap { implicit streamSup =>
       fs2.Stream.resource(Supervisor[F]).flatMap { sup =>
         val changeStream = streamSup.changes
           .map(_.toList.reverse.distinctBy { case (tok, _, _) => tok }.toNel)
@@ -96,20 +81,20 @@ object Interpreter {
 
         final case class RunInput[A, B](
             position: Cursor,
-            edges: StepWithInfo[F, A, B],
+            cps: Chain[IndexedData[A]] => WriterT[F, Chain[EvalFailure], Chain[IndexedData[B]]],
             cont: Prepared2[F, B],
-            inputValue: Any
+            inputValue: A
         )
 
-        def evaluate(metas: NonEmptyList[RunInput]): F[(Chain[EvalFailure], NonEmptyList[Json], Map[Unique.Token, StreamMetadata[F]])] =
+        def evaluate(metas: NonEmptyList[RunInput[?, ?]]): F[(Chain[EvalFailure], NonEmptyList[Json], Map[Unique.Token, StreamMetadata[F, ? , ?]])] =
           for {
             costTree <- metas.toList
               .flatTraverse(ri => Planner.costForCont[F](ri.edges, ri.cont, 0d))
               .map(Planner.NodeTree(_))
             planned <- planner.plan(costTree)
             accumulator <- BatchAccumulator[F](schemaState, planned)
-            (res: NonEmptyList[(Chain[EvalFailure], Json, Map[Unique.Token, StreamMetadata[F]])]) <- metas.parTraverse { ri =>
-              StreamMetadataAccumulator[F, StreamMetadata[F], IorNec[String, Any]].flatMap { sma =>
+            (res: NonEmptyList[(Chain[EvalFailure], Json, Map[Unique.Token, StreamMetadata[F, ?, ?]])]) <- metas.parTraverse { case ri: RunInput[a, b] =>
+              StreamMetadataAccumulator[F, StreamMetadata[F, ?, ?], Any].flatMap { sma =>
                 val interpreter = new InterpreterImpl[F](sma, accumulator, sup)
                 interpreter
                   .runEdge(Chain(EvalNode.empty(ri.inputValue)), ri.edges, ri.cont)
@@ -226,19 +211,19 @@ object Interpreter {
       }
     }
 
-  def runStreamed[F[_]: Statistics: Planner](
-      rootInput: Any,
-      rootSel: NonEmptyList[PreparedField[F]],
+  def runStreamed[F[_]: Statistics: Planner, A](
+      rootInput: A,
+      rootSel: NonEmptyList[PreparedField2[F, A]],
       schemaState: SchemaState[F]
   )(implicit F: Async[F]): fs2.Stream[F, (Chain[EvalFailure], JsonObject)] =
-    constructStream[F](rootInput, rootSel, schemaState, true)
+    constructStream[F, A](rootInput, rootSel, schemaState, true)
 
-  def runSync[F[_]: Async: Statistics: Planner](
-      rootInput: Any,
-      rootSel: NonEmptyList[PreparedField[F]],
+  def runSync[F[_]: Async: Statistics: Planner, A](
+      rootInput: A,
+      rootSel: NonEmptyList[PreparedField2[F, A]],
       schemaState: SchemaState[F]
   ): F[(Chain[EvalFailure], JsonObject)] =
-    constructStream[F](rootInput, rootSel, schemaState, false).take(1).compile.lastOrError
+    constructStream[F, A](rootInput, rootSel, schemaState, false).take(1).compile.lastOrError
 
   def findToRemove[A](nodes: List[(Cursor, A)], s: Set[A]): Set[A] = {
     val (children, nodeHere) = nodes
@@ -272,8 +257,24 @@ object Interpreter {
     nvs.groupMap { case (c, _) => c.head } { case (c, v) => (c.tail, v) }
 }
 
+final case class IndexedData[A](
+    index: Int,
+    node: EvalNode[A]
+)
+object IndexedData {
+  implicit val traverseForIndexedData: Traverse[IndexedData] = new Traverse[IndexedData] {
+    override def foldLeft[A, B](fa: IndexedData[A], b: B)(f: (B, A) => B): B =
+      f(b, fa.node.value)
+    override def foldRight[A, B](fa: IndexedData[A], lb: Eval[B])(f: (A, Eval[B]) => Eval[B]): Eval[B] =
+      f(fa.node.value, lb)
+    override def traverse[G[_]: Applicative, A, B](fa: IndexedData[A])(f: A => G[B]): G[IndexedData[B]] =
+      f(fa.node.value).map(b => IndexedData(fa.index, fa.node.setValue(b)))
+  }
+}
+
+
 class InterpreterImpl[F[_]](
-    streamAccumulator: StreamMetadataAccumulator[F, Interpreter.StreamMetadata[F], IorNec[String, Any]],
+    streamAccumulator: StreamMetadataAccumulator[F, Interpreter.StreamMetadata[F, ?, ?], Any],
     batchAccumulator: BatchAccumulator[F],
     sup: Supervisor[F]
 )(implicit F: Async[F], stats: Statistics[F])
@@ -302,7 +303,7 @@ class InterpreterImpl[F[_]](
 
   def runEdge_[I, C, O](
       inputs: Chain[IndexedData[I]],
-      step: StepWithInfo[F, I, C],
+      step: PreparedStep[F, I, C],
       cont: Chain[IndexedData[C]] => W[Chain[IndexedData[O]]]
   ): W[Chain[IndexedData[O]]] = {
     import PreparedStep._
@@ -315,18 +316,18 @@ class InterpreterImpl[F[_]](
         case Right(o) => W.pure(Some(o))
       }
 
-    def attemptTimed[A](constructor: Throwable => EvalFailure)(fo: F[A]): W[Option[A]] =
+    def attemptTimed[A](cursor: UniqueEdgeCursor, constructor: Throwable => EvalFailure)(fo: F[A]): W[Option[A]] =
       attemptEffect(constructor) {
         fo.timed.flatMap { case (dur, x) =>
-          submit(step.stableUniqueEdgeName.asString, dur, 1) as x
+          submit(cursor.asString, dur, 1) as x
         }
       }
 
-    step.step match {
+    step match {
       case Pure(f) => cont(inputs.map(_.map(f)))
-      case Effect(f) =>
+      case Effect(f, cursor) =>
         inputs.parFlatTraverse { id =>
-          val runF = attemptTimed(e => EvalFailure.EffectResolution(id.node.cursor, Left(e), id.node.value)) {
+          val runF = attemptTimed(cursor, e => EvalFailure.EffectResolution(id.node.cursor, Left(e), id.node.value)) {
             id.traverse(f)
           }
 
@@ -344,9 +345,9 @@ class InterpreterImpl[F[_]](
       case alg: Compose[F, ?, a, ?] =>
         val contR: Chain[IndexedData[a]] => W[Chain[IndexedData[O]]] = runEdge_[a, C, O](_, alg.right, cont)
         runEdge_[I, a, O](inputs, alg.left, contR)
-      case Stream(f) =>
+      case Stream(f, cursor) =>
         inputs.flatTraverse { id =>
-          val runF = attemptTimed(e => EvalFailure.StreamHeadResolution(id.node.cursor, Left(e), id.node.value)) {
+          val runF = attemptTimed(cursor, e => EvalFailure.StreamHeadResolution(id.node.cursor, Left(e), id.node.value)) {
             id
               .traverse { i =>
                 streamAccumulator
@@ -402,7 +403,7 @@ class InterpreterImpl[F[_]](
 
   def runEdge[I, O](
       inputs: Chain[EvalNode[I]],
-      edges: StepWithInfo[F, I, O],
+      edges: PreparedStep[F, I, O],
       cont: Prepared2[F, O]
   ): W[Chain[Json]] = {
     val indexed = inputs.zipWithIndex.map { case (en, i) => IndexedData(i, en) }
