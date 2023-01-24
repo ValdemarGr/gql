@@ -86,32 +86,35 @@ object Interpreter {
             inputValue: A
         )
 
-        def evaluate(metas: NonEmptyList[RunInput[?, ?]]): F[(Chain[EvalFailure], NonEmptyList[Json], Map[Unique.Token, StreamMetadata[F, ? , ?]])] =
+        def evaluate(
+            metas: NonEmptyList[RunInput[?, ?]]
+        ): F[(Chain[EvalFailure], NonEmptyList[Json], Map[Unique.Token, StreamMetadata[F, ?, ?]])] =
           for {
             costTree <- metas.toList
               .flatTraverse(ri => Planner.costForCont[F](ri.edges, ri.cont, 0d))
               .map(Planner.NodeTree(_))
             planned <- planner.plan(costTree)
             accumulator <- BatchAccumulator[F](schemaState, planned)
-            (res: NonEmptyList[(Chain[EvalFailure], Json, Map[Unique.Token, StreamMetadata[F, ?, ?]])]) <- metas.parTraverse { case ri: RunInput[a, b] =>
-              StreamMetadataAccumulator[F, StreamMetadata[F, ?, ?], Any].flatMap { sma =>
-                val interpreter = new InterpreterImpl[F](sma, accumulator, sup)
-                interpreter
-                  .runEdge(Chain(EvalNode.empty(ri.inputValue)), ri.edges, ri.cont)
-                  .run
-                  .map { case (fail, succs) =>
-                    val j = succs.headOption.get
-                    //val comb = combineSplit(fail, succs)
-                    //val j = reconstructField[F](ri.cont, comb.toList)
-                    (fail, j)
-                  }
-                  .flatMap { case (fail, j) =>
-                    // All the cursors in sma should be prefixed with the start position
-                    sma.getState
-                      .map(_.fmap(x => x.copy(cursor = ri.position |+| x.cursor)))
-                      .map((fail, j, _))
-                  }
-              }
+            (res: NonEmptyList[(Chain[EvalFailure], Json, Map[Unique.Token, StreamMetadata[F, ?, ?]])]) <- metas.parTraverse {
+              case ri: RunInput[a, b] =>
+                StreamMetadataAccumulator[F, StreamMetadata[F, ?, ?], Any].flatMap { sma =>
+                  val interpreter = new InterpreterImpl[F](sma, accumulator, sup)
+                  interpreter
+                    .runEdge(Chain(EvalNode.empty(ri.inputValue)), ri.edges, ri.cont)
+                    .run
+                    .map { case (fail, succs) =>
+                      val j = succs.headOption.get
+                      //val comb = combineSplit(fail, succs)
+                      //val j = reconstructField[F](ri.cont, comb.toList)
+                      (fail, j)
+                    }
+                    .flatMap { case (fail, j) =>
+                      // All the cursors in sma should be prefixed with the start position
+                      sma.getState
+                        .map(_.fmap(x => x.copy(cursor = ri.position |+| x.cursor)))
+                        .map((fail, j, _))
+                    }
+                }
             }
             smas = res.foldMapK { case (_, _, sma) => sma }
             bes <- accumulator.getErrors
@@ -272,6 +275,14 @@ object IndexedData {
   }
 }
 
+sealed trait StepCont[F[_], I, O]
+object StepCont {
+  final case class Done[F[_], I]() extends StepCont[F, I, I]
+  final case class Continue[F[_], I, C, O](
+      step: PreparedStep[F, I, C],
+      next: StepCont[F, C, O]
+  ) extends StepCont[F, I, O]
+}
 
 class InterpreterImpl[F[_]](
     streamAccumulator: StreamMetadataAccumulator[F, Interpreter.StreamMetadata[F, ?, ?], Any],
@@ -304,9 +315,17 @@ class InterpreterImpl[F[_]](
   def runEdge_[I, C, O](
       inputs: Chain[IndexedData[I]],
       step: PreparedStep[F, I, C],
-      cont: Chain[IndexedData[C]] => W[Chain[IndexedData[O]]]
+      cont: Chain[IndexedData[C]] => W[Chain[IndexedData[O]]],
+      cont2: StepCont[F, C, O] = null
   ): W[Chain[IndexedData[O]]] = {
     import PreparedStep._
+
+    def runNext(cs: Chain[IndexedData[C]]): W[Chain[IndexedData[O]]] =
+      cont2 match {
+        case c: StepCont.Continue[F, ?, c, ?] => runEdge_[C, c, O](cs, c.step, null, c.next)
+        case _: StepCont.Done[F, ?]           => W.pure(cs)
+      }
+
     def liftError[A](a: A, e: Throwable, constructor: Throwable => EvalFailure): W[A] =
       WriterT.put(a)(Chain(constructor(e)))
 
@@ -324,7 +343,7 @@ class InterpreterImpl[F[_]](
       }
 
     step match {
-      case Pure(f) => cont(inputs.map(_.map(f)))
+      case Pure(f) => runNext(inputs.map(_.map(f)))
       case Effect(f, cursor) =>
         inputs.parFlatTraverse { id =>
           val runF = attemptTimed(cursor, e => EvalFailure.EffectResolution(id.node.cursor, Left(e), id.node.value)) {
@@ -332,7 +351,7 @@ class InterpreterImpl[F[_]](
           }
 
           runF.map(Chain.fromOption(_))
-        } >>= cont
+        } >>= runNext
       case Raise(f) =>
         inputs.flatTraverse { id =>
           val ior = id.traverse(f)
@@ -341,10 +360,10 @@ class InterpreterImpl[F[_]](
           )(
             Chain.fromOption(ior.left.map(e => EvalFailure.Raised(id.node.cursor, e)))
           )
-        } >>= cont
+        } >>= runNext
       case alg: Compose[F, ?, a, ?] =>
-        val contR: Chain[IndexedData[a]] => W[Chain[IndexedData[O]]] = runEdge_[a, C, O](_, alg.right, cont)
-        runEdge_[I, a, O](inputs, alg.left, contR)
+        val contR: StepCont[F, a, O] = StepCont.Continue[F, a, C, O](alg.right, cont2)
+        runEdge_[I, a, O](inputs, alg.left, null, contR)
       case Stream(f, cursor) =>
         inputs.flatTraverse { id =>
           val runF = attemptTimed(cursor, e => EvalFailure.StreamHeadResolution(id.node.cursor, Left(e), id.node.value)) {
@@ -357,8 +376,12 @@ class InterpreterImpl[F[_]](
               }
           }
           runF.map(Chain.fromOption(_))
-        } >>= cont
+        } >>= runNext
       case alg: Skip[F, ?, i2, ?] =>
+        // val contR = StepCont.Continue[F, Either[i2, C], C, O](
+        //   PreparedStep.Pure[F, Either[i2, C]]{
+        //   },
+        // )
         val contR: Chain[IndexedData[Either[i2, C]]] => W[Chain[IndexedData[O]]] = { xs =>
           val (force, skip) = xs.partitionEither(in =>
             in.node.value match {
