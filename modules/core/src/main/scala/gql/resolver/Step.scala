@@ -20,7 +20,7 @@ object Step {
 
     final case class Stream[F[_], I, O](f: I => fs2.Stream[F, O]) extends AnyRef with Step[F, I, O]
 
-    final case class Skip[F[_], I, I2, O](check: Step[F, I, Either[I2, O]], step: Step[F, I2, O]) extends Step[F, I, O]
+    final case class Skip[F[_], I, O](compute: Step[F, I, O]) extends Step[F, Either[I, O], O]
 
     final case class GetMeta[F[_], I]() extends Step[F, I, Meta]
 

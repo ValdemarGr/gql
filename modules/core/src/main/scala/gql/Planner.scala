@@ -70,11 +70,11 @@ object Planner {
     step match {
       case Pure(_) | Raise(_) | GetMeta(_) => right
       case Compose(l, r)                   => costForStep[F](l, costForStep[F](r, right))
-      case Skip(check, force)              => costForStep[F](check, costForStep[F](force, right))
+      case alg: Skip[F, ?, ?]              => costForStep[F](alg.compute, right)
       case alg: First[F, ?, ?, ?]          => costForStep[F](alg.step, right)
       case Batch(_) | Effect(_, _) | Stream(_, _) =>
         val name = step match {
-          case Batch(id) => s"batch_$id"
+          case Batch(id)         => s"batch_$id"
           case Effect(_, cursor) => cursor.asString
           case Stream(_, cursor) => cursor.asString
         }
@@ -228,10 +228,10 @@ object Planner {
       }
     }
   }
-final case class NodeTree2(
+  final case class NodeTree2(
       root: List[Node2],
       source: Option[NodeTree2] = None
-) {
+  ) {
     def set(newRoot: List[Node2]): NodeTree2 =
       NodeTree2(newRoot, Some(this))
 

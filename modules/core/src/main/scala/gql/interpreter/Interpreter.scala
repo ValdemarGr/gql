@@ -282,6 +282,9 @@ object StepCont {
       step: PreparedStep[F, I, C],
       next: StepCont[F, C, O]
   ) extends StepCont[F, I, O]
+  /*final case class Skipped[F[_], I, O](
+
+  )*/
 }
 
 class InterpreterImpl[F[_]](
@@ -377,7 +380,7 @@ class InterpreterImpl[F[_]](
           }
           runF.map(Chain.fromOption(_))
         } >>= runNext
-      case alg: Skip[F, ?, i2, ?] =>
+      /*case alg: Skip[F, ?, i2, ?] =>
         // val contR = StepCont.Continue[F, Either[i2, C], C, O](
         //   PreparedStep.Pure[F, Either[i2, C]]{
         //   },
@@ -394,7 +397,7 @@ class InterpreterImpl[F[_]](
           runEdge_[i2, C, O](force, alg.step, contR2)
         }
 
-        runEdge_[I, Either[i2, C], O](inputs, alg.check, contR)
+        runEdge_[I, Either[i2, C], O](inputs, alg.check, contR)*/
       case GetMeta(pm) =>
         cont(inputs.map(in => in as Meta(in.node.cursor, pm.alias, pm.args, pm.variables)))
       case alg: First[F, i2, o2, c2] =>

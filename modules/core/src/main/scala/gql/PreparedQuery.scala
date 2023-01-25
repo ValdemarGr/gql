@@ -82,9 +82,9 @@ object PreparedQuery {
       f: I => fs2.Stream[F, O],
       stableUniqueEdgeName: UniqueEdgeCursor
     ) extends AnyRef with PreparedStep[F, I, O]
-    final case class Skip[F[_], I, I2, O](check: PreparedStep[F, I, Either[I2, O]], step: PreparedStep[F, I2, O])
+    final case class Skip[F[_], I, O](compute: PreparedStep[F, I, O])
         extends AnyRef
-        with PreparedStep[F, I, O]
+        with PreparedStep[F, Either[I, O], O]
     final case class GetMeta[F[_], I](meta: PreparedMeta) extends AnyRef with PreparedStep[F, I, Meta]
     final case class First[F[_], I, O, C](step: PreparedStep[F, I, O]) extends AnyRef with PreparedStep[F, (I, C), (O, C)]
     final case class Batch[F[_], K, V](id: Int) extends AnyRef with PreparedStep[F, Set[K], Map[K, V]]
@@ -153,10 +153,8 @@ object PreparedQuery {
         (left, right).parTupled.map { case (l, r) => PreparedStep.Compose(l, r) }
       case Step.Alg.Effect(f) =>  Used[F].pure(PreparedStep.Effect(f, cursor))
       case Step.Alg.Stream(f) =>  Used[F].pure(PreparedStep.Stream(f, cursor))
-      case alg: Step.Alg.Skip[G, i, i2, o] =>
-        val checkF = rec[i, Either[i2, o]](alg.check, "skip_check")
-        val stepF = rec[i2, o](alg.step, "skip_step")
-        (checkF, stepF).parTupled.map { case (c, s) => PreparedStep.Skip(c, s) }
+      case alg: Step.Alg.Skip[G, i, o] =>
+        rec[i, o](alg.compute, "skip").map(s => PreparedStep.Skip(s))
       case Step.Alg.GetMeta() => Used[F].pure(PreparedStep.GetMeta(meta))
       case alg: Step.Alg.Batch[G, k, v] =>
         Used[F].pure(PreparedStep.Batch[G, k, v](alg.id))
