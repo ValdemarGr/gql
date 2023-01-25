@@ -41,24 +41,20 @@ object ast extends AstImplicits.Implicits {
   sealed trait InToplevel[A] extends In[A] with Toplevel[A]
 
   sealed trait Selectable[F[_], A] extends OutToplevel[F, A] {
-    def abstractFields: List[(String, AbstractField[F, ?, ?])]
+    def abstractFields: List[(String, AbstractField[F, ?])]
 
-    def abstractFieldMap: Map[String, AbstractField[F, ?, ?]]
+    def abstractFieldMap: Map[String, AbstractField[F, ?]]
   }
 
   sealed trait ObjectLike[F[_], A] extends Selectable[F, A] {
     def implementsMap: Map[String, Eval[Interface[F, ?]]]
 
-    def abstractFieldsNel: NonEmptyList[(String, AbstractField[F, ?, ?])]
+    def abstractFieldsNel: NonEmptyList[(String, AbstractField[F, ?])]
   }
 
   final case class Implementation[F[_], A, B](implementation: Eval[Interface[F, B]])(implicit
       val specify: B => Option[A]
-  ) {
-    def mapK[G[_]: Functor](fk: F ~> G): Implementation[G, A, B] =
-      Implementation(implementation.map(_.mapK(fk)))
-  }
-
+  )
 
   final case class Type[F[_], A](
       name: String,
@@ -80,12 +76,9 @@ object ast extends AstImplicits.Implicits {
 
     lazy val abstractFieldsNel = fields.map { case (k, v) => k -> v.asAbstract }
 
-    lazy val abstractFields: List[(String, AbstractField[F, ?, ?])] = abstractFieldsNel.toList
+    lazy val abstractFields: List[(String, AbstractField[F, ?])] = abstractFieldsNel.toList
 
-    lazy val abstractFieldMap: Map[String, AbstractField[F, ?, ?]] = abstractFields.toMap
-
-    def mapK[G[_]: Functor](fk: F ~> G): Type[G, A] =
-      Type(name, fields.map { case (k, v) => k -> v.mapK(fk) }, implementations.map(_.mapK(fk)), description)
+    lazy val abstractFieldMap: Map[String, AbstractField[F, ?]] = abstractFields.toMap
   }
 
   final case class Input[A](
@@ -97,9 +90,6 @@ object ast extends AstImplicits.Implicits {
   }
 
   final case class Variant[F[_], A, B](tpe: Eval[Type[F, B]])(implicit val specify: A => Option[B]) {
-    def mapK[G[_]: Functor](fk: F ~> G): Variant[G, A, B] =
-      Variant(tpe.map(_.mapK(fk)))
-
     def contramap[C](g: C => A): Variant[F, C, B] =
       Variant[F, C, B](tpe)(c => specify(g(c)))
   }
@@ -123,24 +113,15 @@ object ast extends AstImplicits.Implicits {
     lazy val abstractFields = Nil
 
     lazy val abstractFieldMap = Map.empty
-
-    def mapK[G[_]: Functor](fk: F ~> G): Union[G, A] =
-      Union(name, types.map(_.mapK(fk)), description)
   }
 
   final case class Interface[F[_], A](
       name: String,
-      fields: NonEmptyList[(String, AbstractField[F, ?, ?])],
+      fields: NonEmptyList[(String, AbstractField[F, A])],
       implementations: List[Eval[Interface[F, ?]]],
       description: Option[String] = None
   ) extends ObjectLike[F, A] {
     def document(description: String): Interface[F, A] = copy(description = Some(description))
-
-    override def mapK[G[_]: Functor](fk: F ~> G): Interface[G, A] =
-      copy[G, A](
-        implementations = implementations.map(_.map(_.mapK(fk))),
-        fields = fields.map { case (k, v) => k -> v.mapK(fk) }
-      )
 
     lazy val abstractFieldsNel = fields
 
@@ -200,45 +181,22 @@ object ast extends AstImplicits.Implicits {
       output: Eval[Out[F, T]],
       description: Option[String] = None
   ) {
-    def document(description: String): Field[F, I, T, A] = copy(description = Some(description))
+    def document(description: String): Field[F, I, T] = copy(description = Some(description))
 
-    def mapK[G[_]: Functor](fk: F ~> G): Field[G, I, T, A] =
-      Field[G, I, T, A](
-        args,
-        resolve.mapK(fk),
-        output.map(_.mapK(fk)),
-        description
-      )
-
-    def contramap[B](g: B => I): Field[F, B, T, A] =
-      Field(
-        args,
-        resolve.contramap[(B, A)] { case (b, a) => (g(b), a) },
-        output,
-        description
-      )
-
-    def asAbstract: AbstractField[F, A, T] = AbstractField(args, output, description)
+    def asAbstract: AbstractField[F, T] = AbstractField(null, output, description)
   }
 
-  final case class AbstractField[F[_], A, T](
-      arg: Arg[A],
+  final case class AbstractField[F[_], T](
+      arg: Arg[?],
       output: Eval[Out[F, T]],
       description: Option[String] = None
   ) {
-    def document(description: String): AbstractField[F, A, T] = copy(description = Some(description))
-
-    def mapK[G[_]: Functor](fk: F ~> G): AbstractField[G, A, T] =
-      AbstractField[G, A, T](arg, output.map(_.mapK(fk)), description)
+    def document(description: String): AbstractField[F, T] = copy(description = Some(description))
   }
 
-  final case class OutOpt[F[_], A, B](of: Out[F, B], resolver: Resolver[F, A, B]) extends Out[F, Option[A]] {
-    def mapK[G[_]: Functor](fk: F ~> G): OutOpt[G, A, B] = OutOpt(of.mapK(fk), resolver.mapK(fk))
-  }
+  final case class OutOpt[F[_], A, B](of: Out[F, B], resolver: Resolver[F, A, B]) extends Out[F, Option[A]]
 
   final case class OutArr[F[_], A, C, B](of: Out[F, B], toSeq: C => Seq[A], resolver: Resolver[F, A, B]) extends Out[F, C] {
-    def mapK[G[_]: Functor](fk: F ~> G): OutArr[G, A, C, B] = OutArr(of.mapK(fk), toSeq, resolver.mapK(fk))
-
     def contramap[D](f: D => C): OutArr[F, A, D, B] = OutArr(of, f.andThen(toSeq), resolver)
   }
 

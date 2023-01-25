@@ -29,9 +29,6 @@ final case class SchemaShape[F[_], Q, M, S](
     outputTypes: List[OutToplevel[F, ?]] = Nil,
     inputTypes: List[InToplevel[?]] = Nil
 ) {
-  def mapK[G[_]: Functor](fk: F ~> G): SchemaShape[G, Q, M, S] =
-    SchemaShape(query.mapK(fk), mutation.map(_.mapK(fk)), subscription.map(_.mapK(fk)), outputTypes.map(_.mapK(fk)), inputTypes)
-
   def addOutputTypes(t: OutToplevel[F, ?]*): SchemaShape[F, Q, M, S] =
     copy(outputTypes = t.toList ++ outputTypes)
 
@@ -249,7 +246,7 @@ object SchemaShape {
         Doc.text(av.name) + Doc.text(": ") + renderModifierStack(getInputModifierStack(av.input.value)) + o
     }
 
-    def renderFieldDoc[G[_]](name: String, field: AbstractField[G, ?, ?]): Doc = {
+    def renderFieldDoc[G[_]](name: String, field: AbstractField[G, ?]): Doc = {
       val args = NonEmptyChain
         .fromChain(field.arg.entries)
         .map(nec =>

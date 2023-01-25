@@ -47,6 +47,9 @@ object Step {
   def stream[F[_], I, O](f: I => fs2.Stream[F, O]): Step[F, I, O] =
     Alg.Stream(f)
 
+  def skip[F[_], I, O](compute: Step[F, I, O]): Step[F, Either[I, O], O] =
+    Alg.Skip(compute)
+
   def getMeta[F[_]]: Step[F, Any, Meta] =
     Alg.GetMeta()
 

@@ -327,7 +327,7 @@ object Validation {
         }
     }
 
-  def validateFields[F[_], G[_]: Monad](fields: NonEmptyList[(String, AbstractField[F, ?, ?])], discovery: SchemaShape.DiscoveryState[F])(
+  def validateFields[F[_], G[_]: Monad](fields: NonEmptyList[(String, AbstractField[F, ?])], discovery: SchemaShape.DiscoveryState[F])(
       implicit S: Stateful[G, ValidationState[F]]
   ): G[Unit] =
     allUnique[F, G](DuplicateField.apply, fields.toList.map { case (name, _) => name }) >>
