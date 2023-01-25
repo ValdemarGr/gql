@@ -31,11 +31,16 @@ import gql._
 trait Interpreter[F[_]] {
   type W[A] = WriterT[F, Chain[EvalFailure], A]
 
-  def runEdge[I, O](
+  def runStep[I, C, O](
       inputs: Chain[IndexedData[I]],
-      step: PreparedStep[F, I, O],
-      cont: Prepared2[F, O]
-  ): W[Chain[Json]]
+      step: PreparedStep[F, I, C],
+      cont: StepCont[F, C, O]
+  ): W[Chain[(Int, Json)]]
+
+  def runEdgeCont[I, O](
+      cs: Chain[IndexedData[I]],
+      cont: StepCont[F, I, O]
+  ): W[Chain[(Int, Json)]]
 
   def runFields[I](dfs: NonEmptyList[PreparedField2[F, I]], in: Chain[EvalNode[I]]): W[Chain[Map[String, Json]]]
 
@@ -62,13 +67,13 @@ object Interpreter {
     }
 
   final case class StreamMetadata[F[_], A, B](
+      originIndex: Int,
       cursor: Cursor,
-      edges: PreparedStep[F, A, B],
-      cont: Prepared2[F, B]
+      edges: StepCont[F, A, B]
   )
 
   def constructStream[F[_]: Statistics, A](
-      rootInput: Any,
+      rootInput: A,
       rootSel: NonEmptyList[PreparedField2[F, A]],
       schemaState: SchemaState[F],
       openTails: Boolean
@@ -80,10 +85,8 @@ object Interpreter {
           .unNone
 
         final case class RunInput[A, B](
-            position: Cursor,
-            cps: Chain[IndexedData[A]] => WriterT[F, Chain[EvalFailure], Chain[IndexedData[B]]],
-            cont: Prepared2[F, B],
-            inputValue: A
+            data: IndexedData[A],
+            cps: StepCont[F, A, B]
         )
 
         def evaluate(
@@ -91,37 +94,44 @@ object Interpreter {
         ): F[(Chain[EvalFailure], NonEmptyList[Json], Map[Unique.Token, StreamMetadata[F, ?, ?]])] =
           for {
             costTree <- metas.toList
-              .flatTraverse(ri => Planner.costForCont[F](ri.edges, ri.cont, 0d))
-              .map(Planner.NodeTree(_))
+              .flatTraverse { ri =>
+                Planner.runCostAnalysisFor[F, List[Planner.Node2]] { implicit stats2 =>
+                  def contCost(step: StepCont[F, ?, ?]): Planner.H[F, List[Planner.Node2]] =
+                    step match {
+                      case d: StepCont.Done[F, ?]           => Planner.costForPrepared2[Planner.H[F, *], F](d.prep)
+                      case c: StepCont.Continue[F, ?, ?, ?] => Planner.costForStep[Planner.H[F, *], F](c.step, contCost(c.next))
+                      case StepCont.AppendClosure(_, next)  => contCost(next)
+                      case StepCont.TupleWith(_, next)      => contCost(next)
+                    }
+                  contCost(ri.cps)
+                }
+              }
+              .map(Planner.NodeTree2(_))
             planned <- planner.plan(costTree)
             accumulator <- BatchAccumulator[F](schemaState, planned)
-            (res: NonEmptyList[(Chain[EvalFailure], Json, Map[Unique.Token, StreamMetadata[F, ?, ?]])]) <- metas.parTraverse {
-              case ri: RunInput[a, b] =>
+            res <-
+              metas.parTraverse { case ri: RunInput[a, b] =>
                 StreamMetadataAccumulator[F, StreamMetadata[F, ?, ?], Any].flatMap { sma =>
                   val interpreter = new InterpreterImpl[F](sma, accumulator, sup)
                   interpreter
-                    .runEdge(Chain(EvalNode.empty(ri.inputValue)), ri.edges, ri.cont)
+                    .runEdgeCont(Chain(ri.data), ri.cps)
                     .run
                     .map { case (fail, succs) =>
-                      val j = succs.headOption.get
-                      //val comb = combineSplit(fail, succs)
-                      //val j = reconstructField[F](ri.cont, comb.toList)
+                      val (_, j) = succs.headOption.get
                       (fail, j)
                     }
                     .flatMap { case (fail, j) =>
                       // All the cursors in sma should be prefixed with the start position
-                      sma.getState
-                        .map(_.fmap(x => x.copy(cursor = ri.position |+| x.cursor)))
-                        .map((fail, j, _))
+                      sma.getState.map((fail, j, _))
                     }
                 }
-            }
+              }
             smas = res.foldMapK { case (_, _, sma) => sma }
             bes <- accumulator.getErrors
             allErrors = Chain.fromSeq(res.toList).flatMap { case (errs, _, _) => errs } ++ Chain.fromSeq(bes)
           } yield (allErrors, res.map { case (_, j, _) => j }, smas)
 
-        val inital = RunInput(Cursor.empty, Chain.empty, PreparedQuery.Selection(rootSel), rootInput)
+        val inital = RunInput(IndexedData(0, EvalNode.empty(rootInput)), StepCont.Done(PreparedQuery.Selection2(rootSel)))
 
         fs2.Stream
           .eval(evaluate(NonEmptyList.one(inital)))
@@ -151,13 +161,19 @@ object Interpreter {
                             case Left(ex) =>
                               (Chain(EvalFailure.StreamTailResolution(sm.cursor, Left(ex))), None, sm.cursor)
                             case Right(nec) =>
-                              (
-                                Chain.fromOption(nec.left).flatMap(_.toChain).map { msg =>
-                                  EvalFailure.StreamTailResolution(sm.cursor, Right(msg))
-                                },
-                                nec.right.map(RunInput(sm.cursor, sm.edges, sm.cont, _)),
-                                sm.cursor
-                              )
+                              sm.edges match {
+                                case sc: StepCont[F, a, b] =>
+                                  (
+                                    Chain.empty,
+                                    Some(
+                                      RunInput(
+                                        IndexedData(sm.originIndex, EvalNode(sm.cursor, nec.asInstanceOf[a])),
+                                        sc
+                                      )
+                                    ),
+                                    sm.cursor
+                                  )
+                              }
                           }
                         }
 
@@ -175,7 +191,7 @@ object Interpreter {
                               .collect { case (x, _) => x }
                               .toNel
                               .traverse(evaluate)
-                              .flatMap[(List[(Json, Cursor)], Chain[EvalFailure], Map[Unique.Token, StreamMetadata[F]])] {
+                              .flatMap[(List[(Json, Cursor)], Chain[EvalFailure], Map[Unique.Token, StreamMetadata[F, ?, ?]])] {
                                 case None => F.pure((Nil, Chain.empty, activeStreams))
                                 case Some((newFails, newOutputs, newStreams)) =>
                                   val succWithInfo = newOutputs.toList zip defined.map { case (_, c) => c }
@@ -277,14 +293,33 @@ object IndexedData {
 
 sealed trait StepCont[F[_], I, O]
 object StepCont {
-  final case class Done[F[_], I]() extends StepCont[F, I, I]
+  final case class Done[F[_], I](prep: Prepared2[F, I]) extends StepCont[F, I, Json]
   final case class Continue[F[_], I, C, O](
       step: PreparedStep[F, I, C],
       next: StepCont[F, C, O]
   ) extends StepCont[F, I, O]
-  /*final case class Skipped[F[_], I, O](
+  final case class AppendClosure[F[_], I, O](
+      xs: Chain[IndexedData[I]],
+      next: StepCont[F, I, O]
+  ) extends StepCont[F, I, O]
+  final case class TupleWith[F[_], I, C, O](
+      m: Map[Int, C],
+      next: StepCont[F, (I, C), O]
+  ) extends StepCont[F, I, O]
 
-  )*/
+  trait Visitor[F[_]] {
+    def visitContinue[I, C, O](step: Continue[F, I, C, O]): StepCont[F, I, O] = step
+    def visitAppendClosure[I, O](xs: AppendClosure[F, I, O]): StepCont[F, I, O] = xs
+    def visitTupleWith[I, C, O](m: TupleWith[F, I, C, O]): StepCont[F, I, O] = m
+  }
+
+  def visit[F[_], I, O](cont: StepCont[F, I, O])(visitor: Visitor[F]): StepCont[F, I, O] =
+    cont match {
+      case x: Continue[F, I, c, O]   => visitor.visitContinue(x.copy(next = visit(x.next)(visitor)))
+      case x: AppendClosure[F, I, O] => visitor.visitAppendClosure(x.copy(next = visit(x.next)(visitor)))
+      case x: TupleWith[F, I, c, O]  => visitor.visitTupleWith(x.copy(next = visit(x.next)(visitor)))
+      case x: Done[F, I]             => x
+    }
 }
 
 class InterpreterImpl[F[_]](
@@ -315,19 +350,29 @@ class InterpreterImpl[F[_]](
   def submit(name: String, duration: FiniteDuration, size: Int): F[Unit] =
     sup.supervise(stats.updateStats(name, duration, size)).void
 
-  def runEdge_[I, C, O](
+  def runEdgeCont[I, O](
+      cs: Chain[IndexedData[I]],
+      cont: StepCont[F, I, O]
+  ): W[Chain[(Int, Json)]] =
+    cont match {
+      case c: StepCont.Continue[F, ?, c, ?] => runStep[I, c, O](cs, c.step, c.next)
+      case StepCont.AppendClosure(xs, next) => runEdgeCont(cs ++ xs, next)
+      case t: StepCont.TupleWith[F, i, c, ?] =>
+        runEdgeCont[(i, c), O](cs.map(id => id.map(i => (i, t.m(id.index)))), t.next)
+      case d: StepCont.Done[F, ?] =>
+        startNext(d.prep, cs.map(_.node))
+          .map(_.zipWith(cs) { case (j, IndexedData(i, _)) => (i, j) })
+    }
+
+  def runStep[I, C, O](
       inputs: Chain[IndexedData[I]],
       step: PreparedStep[F, I, C],
-      cont: Chain[IndexedData[C]] => W[Chain[IndexedData[O]]],
-      cont2: StepCont[F, C, O] = null
-  ): W[Chain[IndexedData[O]]] = {
+      cont: StepCont[F, C, O]
+  ): W[Chain[(Int, Json)]] = {
     import PreparedStep._
 
-    def runNext(cs: Chain[IndexedData[C]]): W[Chain[IndexedData[O]]] =
-      cont2 match {
-        case c: StepCont.Continue[F, ?, c, ?] => runEdge_[C, c, O](cs, c.step, null, c.next)
-        case _: StepCont.Done[F, ?]           => W.pure(cs)
-      }
+    def runNext(cs: Chain[IndexedData[C]]): W[Chain[(Int, Json)]] =
+      runEdgeCont(cs, cont)
 
     def liftError[A](a: A, e: Throwable, constructor: Throwable => EvalFailure): W[A] =
       WriterT.put(a)(Chain(constructor(e)))
@@ -365,51 +410,60 @@ class InterpreterImpl[F[_]](
           )
         } >>= runNext
       case alg: Compose[F, ?, a, ?] =>
-        val contR: StepCont[F, a, O] = StepCont.Continue[F, a, C, O](alg.right, cont2)
-        runEdge_[I, a, O](inputs, alg.left, null, contR)
+        val contR: StepCont[F, a, O] = StepCont.Continue[F, a, C, O](alg.right, cont)
+        runStep[I, a, O](inputs, alg.left, contR)
       case Stream(f, cursor) =>
         inputs.flatTraverse { id =>
-          val runF = attemptTimed(cursor, e => EvalFailure.StreamHeadResolution(id.node.cursor, Left(e), id.node.value)) {
-            id
-              .traverse { i =>
-                streamAccumulator
-                  .add2(f(i))
-                  .map { case (_, e) => e }
-                  .rethrow
-              }
-          }
+          // We modify the cont for the next stream emission
+          // We need to get rid of the skips since they are a part of THIS evaluation, not the next
+          val ridded = StepCont.visit(cont)(new StepCont.Visitor[F] {
+            def visitAppendClosure[I, O](cont: StepCont.AppendClosure[F, I, O]): StepCont[F, I, O] =
+              cont.copy(xs = Chain.empty)
+          })
+
+          val runF =
+            attemptTimed(cursor, e => EvalFailure.StreamHeadResolution(id.node.cursor, Left(e), id.node.value)) {
+              id
+                .traverse { i =>
+                  streamAccumulator
+                    .add(
+                      Interpreter.StreamMetadata(
+                        id.index,
+                        id.node.cursor,
+                        ridded
+                      ),
+                      f(i)
+                    )
+                    .map { case (_, e) => e }
+                    .rethrow
+                }
+            }
           runF.map(Chain.fromOption(_))
         } >>= runNext
-      /*case alg: Skip[F, ?, i2, ?] =>
-        // val contR = StepCont.Continue[F, Either[i2, C], C, O](
-        //   PreparedStep.Pure[F, Either[i2, C]]{
-        //   },
-        // )
-        val contR: Chain[IndexedData[Either[i2, C]]] => W[Chain[IndexedData[O]]] = { xs =>
-          val (force, skip) = xs.partitionEither(in =>
-            in.node.value match {
-              case Left(i2) => Left(in as i2)
-              case Right(c) => Right(in as c)
-            }
-          )
-          val contR2: Chain[IndexedData[C]] => W[Chain[IndexedData[O]]] = forced => cont(forced ++ skip)
-
-          runEdge_[i2, C, O](force, alg.step, contR2)
+      case alg: Skip[F, i, ?] =>
+        val (force0, skip: Chain[IndexedData[C]]) = inputs.partitionEither { in =>
+          in.node.value match {
+            case Left(i2) => Left(in as i2)
+            case Right(c) => Right(in as c)
+          }
         }
-
-        runEdge_[I, Either[i2, C], O](inputs, alg.check, contR)*/
+        val force: Chain[IndexedData[i]] = force0
+        val contR = StepCont.AppendClosure(skip, cont)
+        runStep[i, C, O](force, alg.compute, contR)
       case GetMeta(pm) =>
-        cont(inputs.map(in => in as Meta(in.node.cursor, pm.alias, pm.args, pm.variables)))
+        runNext(inputs.map(in => in as Meta(in.node.cursor, pm.alias, pm.args, pm.variables)))
       case alg: First[F, i2, o2, c2] =>
         // (o2, c2) <:< C
         // (i2, c2) <:< I
         val inputMap: Map[Int, c2] =
           inputs.map(in => in.index -> (in.map { case (_, c2) => c2 }.node.value)).toIterable.toMap
-        val contR: Chain[IndexedData[o2]] => W[Chain[IndexedData[O]]] = { xs =>
-          val zs: Chain[IndexedData[C]] = xs.map(id => id tupleRight inputMap(id.index))
-          cont(zs)
-        }
-        runEdge_[i2, o2, O](inputs.map(_.map { case (i2, _) => i2 }), alg.step, contR)
+
+        val base: StepCont[F, (o2, c2), O] = cont
+        val contR = StepCont.TupleWith[F, o2, c2, O](
+          inputMap,
+          base
+        )
+        runStep[i2, o2, O](inputs.map(_.map { case (i2, _) => i2 }), alg.step, contR)
       case alg: Batch[F, k, v] =>
         val keys: Chain[(Cursor, Set[k])] = inputs.map(id => id.node.cursor -> id.node.value)
 
@@ -423,7 +477,7 @@ class InterpreterImpl[F[_]](
                 }
               }
           }
-        } >>= cont
+        } >>= runNext
     }
   }
 
@@ -433,14 +487,10 @@ class InterpreterImpl[F[_]](
       cont: Prepared2[F, O]
   ): W[Chain[Json]] = {
     val indexed = inputs.zipWithIndex.map { case (en, i) => IndexedData(i, en) }
-    runEdge_[I, O, O](indexed, edges, xs => W.pure(xs))
-      .flatMap { remaining =>
-        startNext(cont, remaining.map { case IndexedData(_, x) => x })
-          .map(_.zipWith(remaining) { case (j, IndexedData(i, _)) => (i, j) })
-          .map { indexedJson =>
-            val m = indexedJson.toList.toMap
-            indexed.map { case IndexedData(i, _) => m.get(i).getOrElse(Json.Null) }
-          }
+    runStep(indexed, edges, StepCont.Done(cont))
+      .map { indexedJson =>
+        val m = indexedJson.toList.toMap
+        indexed.map(_.index).map(i => m.get(i).getOrElse(Json.Null))
       }
   }
 

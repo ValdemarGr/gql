@@ -62,13 +62,13 @@ object ast extends AstImplicits.Implicits {
 
   final case class Type[F[_], A](
       name: String,
-      fields: NonEmptyList[(String, Field[F, A, ?, ?])],
+      fields: NonEmptyList[(String, Field[F, A, ?])],
       implementations: List[Implementation[F, A, ?]],
       description: Option[String] = None
   ) extends ObjectLike[F, A] {
     def document(description: String): Type[F, A] = copy(description = Some(description))
 
-    lazy val fieldsList: List[(String, Field[F, A, ?, ?])] = fields.toList
+    lazy val fieldsList: List[(String, Field[F, A, ?])] = fields.toList
 
     lazy val fieldMap = fields.toNem.toSortedMap.toMap
 
@@ -118,7 +118,7 @@ object ast extends AstImplicits.Implicits {
 
     lazy val fieldMap = Map.empty
 
-    lazy val fieldsList: List[(String, Field[F, A, ?, ?])] = Nil
+    lazy val fieldsList: List[(String, Field[F, A, ?])] = Nil
 
     lazy val abstractFields = Nil
 
@@ -195,9 +195,8 @@ object ast extends AstImplicits.Implicits {
     lazy val revm = kv.map(_.swap).toList.toMap
   }
 
-  final case class Field[F[_], -I, T, A](
-      args: Arg[A],
-      resolve: Resolver[F, (I, A), T],
+  final case class Field[F[_], -I, T](
+      resolve: Resolver[F, I, T],
       output: Eval[Out[F, T]],
       description: Option[String] = None
   ) {

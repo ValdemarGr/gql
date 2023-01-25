@@ -91,13 +91,12 @@ object Compiler { outer =>
         mutationInput: F[M] = F.unit,
         subscriptionInput: F[S] = F.unit
     ): Outcome[F] =
-      parsePrep(schema, cp)
-        .map { case (ot, pfs) => compilePrepared(schema, ot, pfs, queryInput, mutationInput, subscriptionInput) }
+      parsePrep(schema, cp).map(compilePrepared(schema, _, queryInput, mutationInput, subscriptionInput))
 
-    def parsePrep(
-        schema: Schema[F, ?, ?, ?],
+    def parsePrep[Q, M, S](
+        schema: Schema[F, Q, M, S],
         cp: CompilerParameters
-    ): Either[CompilationError, (QueryParser.OperationType, NonEmptyList[PreparedQuery.PreparedField[F]])] =
+    ): Either[CompilationError, PreparedQuery.PrepResult[F, Q, M, S]] =
       gql.parser.parse(cp.query) match {
         case Left(pe) => Left(CompilationError.Parse(pe))
         case Right(q) =>
@@ -109,8 +108,7 @@ object Compiler { outer =>
 
     def compilePrepared[Q, M, S](
         schema: Schema[F, Q, M, S],
-        operationType: P.OperationType,
-        ps: NonEmptyList[PreparedQuery.PreparedField[F]],
+        ps: PreparedQuery.PrepResult[F, Q, M, S],
         queryInput: F[Q] = F.unit,
         mutationInput: F[M] = F.unit,
         subscriptionInput: F[S] = F.unit
@@ -118,20 +116,20 @@ object Compiler { outer =>
       implicit val s = schema.statistics
       implicit val p = schema.planner
 
-      operationType match {
-        case P.OperationType.Query =>
+      ps match {
+        case PreparedQuery.PrepResult.Query(ps) =>
           Application.Query {
             queryInput.flatMap { qi =>
               Interpreter.runSync(qi, ps, schema.state).map { case (e, d) => QueryResult(e, d) }
             }
           }
-        case P.OperationType.Mutation =>
+        case PreparedQuery.PrepResult.Mutation(ps) =>
           Application.Mutation {
             mutationInput.flatMap { mi =>
               Interpreter.runSync(mi, ps, schema.state).map { case (e, d) => QueryResult(e, d) }
             }
           }
-        case P.OperationType.Subscription =>
+        case PreparedQuery.PrepResult.Subscription(ps) =>
           Application.Subscription {
             fs2.Stream.eval(subscriptionInput).flatMap { si =>
               Interpreter.runStreamed(si, ps, schema.state).map { case (e, d) => QueryResult(e, d) }
