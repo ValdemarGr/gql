@@ -391,7 +391,7 @@ object SchemaShape {
 
     final case class NamedField(
         name: String,
-        field: AbstractField[F, ?, ?]
+        field: AbstractField[F, ?]
     )
 
     def inclDeprecated = arg[Boolean]("includeDeprecated", value.scalar(false))
@@ -400,7 +400,7 @@ object SchemaShape {
       "__Field",
       "name" -> pure(_.name),
       "description" -> pure(_.field.description),
-      "args" -> pure(inclDeprecated)((x, _) => x.field.arg.entries.toList),
+      "args" -> pure(inclDeprecated)((_, x) => x.field.arg.entries.toList),
       "type" -> pure(x => TypeInfo.fromOutput(x.field.output.value)),
       "isDeprecated" -> pure(_ => false),
       "deprecationReason" -> pure(_ => Option.empty[String])
@@ -475,7 +475,7 @@ object SchemaShape {
       "name" -> pure(_.asToplevel.map(_.name)),
       "description" -> pure(_.asToplevel.flatMap(_.description)),
       "fields" -> pure(inclDeprecated) {
-        case (oi: TypeInfo.OutInfo, _) =>
+        case (_, oi: TypeInfo.OutInfo) =>
           oi.t match {
             case Type(_, fields, _, _)      => Some(fields.toList.map { case (k, v) => NamedField(k, v.asAbstract) })
             case Interface(_, fields, _, _) => Some(fields.toList.map { case (k, v) => NamedField(k, v) })
@@ -510,11 +510,11 @@ object SchemaShape {
           }
         case _ => None
       },
-      "enumValues" -> pure(inclDeprecated) { case (ti, _) =>
+      "enumValues" -> pure(inclDeprecated) { case (_, ti) =>
         ti.asToplevel.collect { case Enum(_, m, _) => m.toList.map { case (k, v) => NamedEnumValue(k, v) } }
       },
       "inputFields" -> pure(inclDeprecated) {
-        case (ii: TypeInfo.InInfo, _) =>
+        case (_, ii: TypeInfo.InInfo) =>
           ii.t match {
             case Input(_, fields, _) => Some(fields.entries.toList)
             case _                   => None
@@ -607,10 +607,10 @@ object SchemaShape {
       "directives" -> pure(_ => List.empty[PhantomDirective.type])
     )
 
-    lazy val rootFields: NonEmptyList[(String, Field[F, Unit, ?, ?])] =
+    lazy val rootFields: NonEmptyList[(String, Field[F, Unit, ?])] =
       NonEmptyList.of(
         "__schema" -> pure(_ => PhantomSchema),
-        "__type" -> pure(arg[String]("name")) { case (_, name) =>
+        "__type" -> pure(arg[String]("name")) { case (name, _) =>
           d.inputs
             .get(name)
             .map[TypeInfo](TypeInfo.InInfo(_))

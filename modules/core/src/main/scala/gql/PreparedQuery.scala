@@ -160,11 +160,11 @@ object PreparedQuery {
         Used[F].pure(PreparedStep.Batch[G, k, v](alg.id))
       case alg: Step.Alg.First[G, i, o, c] =>
         rec[i, o](alg.step, "first").map(s => PreparedStep.First(s))
-      case Step.Alg.Argument(a) =>
+      case alg: Step.Alg.Argument[G, ?, a] =>
         Used
-          .liftF(decodeFieldArgs[F, G, O](a, meta.args, meta.variables))
+          .liftF(decodeFieldArgs[F, G, a](alg.arg, meta.args, meta.variables))
           .map[PreparedStep[G, I, O]](o => PreparedStep.Pure[G, I, O](_ => o)) <*
-          WriterT.tell(a.entries.map(_.name).toList.toSet)
+          WriterT.tell(alg.arg.entries.map(_.name).toList.toSet)
     }
   }
 

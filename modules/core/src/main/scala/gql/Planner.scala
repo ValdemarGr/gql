@@ -77,6 +77,7 @@ object Planner {
           case Batch(id)         => s"batch_$id"
           case Effect(_, cursor) => cursor.asString
           case Stream(_, cursor) => cursor.asString
+          case _ => ???
         }
 
         val costF = stats

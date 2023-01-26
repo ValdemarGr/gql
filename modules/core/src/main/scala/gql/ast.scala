@@ -23,9 +23,7 @@ import gql.resolver._
 import java.util.UUID
 
 object ast extends AstImplicits.Implicits {
-  sealed trait Out[F[_], A] {
-    def mapK[G[_]: Functor](fk: F ~> G): Out[G, A]
-  }
+  sealed trait Out[F[_], A]
 
   sealed trait In[A]
 
@@ -34,9 +32,7 @@ object ast extends AstImplicits.Implicits {
     def description: Option[String]
   }
 
-  sealed trait OutToplevel[F[_], A] extends Out[F, A] with Toplevel[A] {
-    override def mapK[G[_]: Functor](fk: F ~> G): OutToplevel[G, A]
-  }
+  sealed trait OutToplevel[F[_], A] extends Out[F, A] with Toplevel[A]
 
   sealed trait InToplevel[A] extends In[A] with Toplevel[A]
 
@@ -117,7 +113,7 @@ object ast extends AstImplicits.Implicits {
 
   final case class Interface[F[_], A](
       name: String,
-      fields: NonEmptyList[(String, AbstractField[F, A])],
+      fields: NonEmptyList[(String, AbstractField[F, ?])],
       implementations: List[Eval[Interface[F, ?]]],
       description: Option[String] = None
   ) extends ObjectLike[F, A] {
@@ -141,9 +137,6 @@ object ast extends AstImplicits.Implicits {
       with InToplevel[A] {
     def document(description: String): Scalar[F, A] = copy(description = Some(description))
 
-    override def mapK[G[_]: Functor](fk: F ~> G): Scalar[G, A] =
-      Scalar(name, encoder, decoder, description)
-
     def eimap[B](f: A => Either[String, B])(g: B => A): Scalar[F, B] =
       Scalar(name, encoder.compose(g), decoder.andThen(_.flatMap(f)), description)
 
@@ -165,9 +158,6 @@ object ast extends AstImplicits.Implicits {
       with InToplevel[A] {
 
     def document(description: String): Enum[F, A] = copy(description = Some(description))
-
-    override def mapK[G[_]: Functor](fk: F ~> G): Enum[G, A] =
-      Enum(name, mappings, description)
 
     lazy val kv = mappings.map { case (k, v) => k -> v.value }
 
@@ -308,7 +298,7 @@ object AstImplicits {
     implicit def gqlInForOption[A](implicit tpe: In[A]): In[Option[A]] = InOpt(tpe)
 
     implicit def gqlOutForOption[F[_], A](implicit tpe: Out[F, A]): OutOpt[F, A, A] =
-      OutOpt(tpe, PureResolver[F, A, A](identity))
+      OutOpt(tpe, Resolver.pure[F, A, A](identity))
   }
 
   trait LowPriorityImplicits {
@@ -326,14 +316,14 @@ object AstImplicits {
       InArr[A, NonEmptyChain[A]](tpe, xs => NonEmptyChain.fromSeq(xs).toRight("empty array"))
 
     implicit def gqlOutArrForSeqLike[F[_], A, G[x] <: Seq[x]](implicit tpe: Out[F, A]): OutArr[F, A, G[A], A] =
-      OutArr(tpe, _.toList, PureResolver[F, A, A](identity))
+      OutArr(tpe, _.toList, Resolver.pure[F, A, A](identity))
     implicit def gqlOutArrForNel[F[_], A](implicit tpe: Out[F, A]): OutArr[F, A, NonEmptyList[A], A] =
-      OutArr(tpe, _.toList, PureResolver[F, A, A](identity))
+      OutArr(tpe, _.toList, Resolver.pure[F, A, A](identity))
     implicit def gqlOutArrForNev[F[_], A](implicit tpe: Out[F, A]): OutArr[F, A, NonEmptyVector[A], A] =
-      OutArr(tpe, _.toList, PureResolver[F, A, A](identity))
+      OutArr(tpe, _.toList, Resolver.pure[F, A, A](identity))
     implicit def gqlOutArrForNec[F[_], A](implicit tpe: Out[F, A]): OutArr[F, A, NonEmptyChain[A], A] =
-      OutArr(tpe, _.toList, PureResolver[F, A, A](identity))
+      OutArr(tpe, _.toList, Resolver.pure[F, A, A](identity))
     implicit def gqlOutArrForChain[F[_], A](implicit tpe: Out[F, A]): OutArr[F, A, Chain[A], A] =
-      OutArr(tpe, _.toList, PureResolver[F, A, A](identity))
+      OutArr(tpe, _.toList, Resolver.pure[F, A, A](identity))
   }
 }

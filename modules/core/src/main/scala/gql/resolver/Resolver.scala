@@ -8,7 +8,7 @@ final class Resolver[F[_], -I, O] (private [resolver] val underlying: Step[F, I,
     def andThen[O2](that: Resolver[F, O, O2]): Resolver[F, I, O2] =
         new Resolver(Step.compose(underlying, that.underlying))
 
-    def compose[I2](that: Resolver[F, I2, I]): Resolver[F, I2, O] =
+    def compose[I1 <: I, I2](that: Resolver[F, I2, I1]): Resolver[F, I2, O] =
         that andThen this
 
     def map[O2](f: O => O2): Resolver[F, I, O2] =
@@ -20,7 +20,7 @@ final class Resolver[F[_], -I, O] (private [resolver] val underlying: Step[F, I,
     def evalMap[O2](f: O => F[O2]): Resolver[F, I, O2] =
         this andThen Resolver.eval(f)
 
-    def evalContramap[I2](f: I2 => F[I]): Resolver[F, I2, O] =
+    def evalContramap[I1 <: I, I2](f: I2 => F[I1]): Resolver[F, I2, O] =
         Resolver.eval(f) andThen this
 
     def fallibleMap[O2](f: O => Ior[String, O2]): Resolver[F, I, O2] =
@@ -32,11 +32,14 @@ final class Resolver[F[_], -I, O] (private [resolver] val underlying: Step[F, I,
     def first[C]: Resolver[F, (I, C), (O, C)] =
         new Resolver(Step.first(underlying))
 
-    def tupleIn: Resolver[F, I, (O, I)] =
-        first[I].contramap[I](i => (i, i))
+    def tupleIn[I1 <: I]: Resolver[F, I1, (O, I1)] =
+        first[I1].contramap[I1](i => (i, i))
 
     def arg[A](arg: Arg[A]): Resolver[F, I, (A, O)] =
         this andThen Resolver.argument[F, O, A](arg).tupleIn
+
+    def contraArg[A, I2](arg: Arg[A])(implicit ev: (A, I2) <:< I): Resolver[F, I2, O] =
+        Resolver.id[F, I2].arg(arg) andThen this.contramap(ev.apply)
 
     def meta: Resolver[F, I, (Meta, O)] =
         this andThen Resolver.meta[F, O].tupleIn
@@ -47,16 +50,19 @@ final class Resolver[F[_], -I, O] (private [resolver] val underlying: Step[F, I,
     def skippable: Resolver[F, Either[I, O], O] =
         new Resolver(Step.skip(this.underlying))
 
-    def skipWhen[I2](verify: Resolver[F, I2, Either[I, O]]): Resolver[F, I2, O] =
+    def skipWhen[I1 <: I, I2](verify: Resolver[F, I2, Either[I1, O]]): Resolver[F, I2, O] =
         verify andThen this.skippable
     
-    def skip[O2, I2](compute: Resolver[F, I2, O2])(implicit ev: O <:< Either[I2, O2]): Resolver[F, I, O2] =
-        compute skipWhen[I] this.map(ev.apply)
+    def skip[I1 <: I, O2, I2](compute: Resolver[F, I2, O2])(implicit ev: O <:< Either[I2, O2]): Resolver[F, I1, O2] =
+        compute skipWhen[I2, I1] this.map(ev.apply)
 }
 
 object Resolver extends ResolverInstances {
     def pure[F[_], I, O](f: I => O): Resolver[F, I, O] =
       new Resolver(Step.pure(f))
+
+    def id[F[_], I]: Resolver[F, I, I] =
+        pure(identity)
 
     def eval[F[_], I, O](f: I => F[O]): Resolver[F, I, O] =
         new Resolver(Step.effect(f))
@@ -75,6 +81,7 @@ object Resolver extends ResolverInstances {
 
     def batch[F[_], K, V](f: Set[K] => F[Map[K, V]]): State[gql.SchemaState[F], Resolver[F, Set[K], Map[K, V]]] =
         Step.batch[F, K, V](f).map(new Resolver(_))
+        
 }
 
 trait ResolverInstances {

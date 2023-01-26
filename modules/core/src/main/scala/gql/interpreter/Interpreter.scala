@@ -417,7 +417,7 @@ class InterpreterImpl[F[_]](
           // We modify the cont for the next stream emission
           // We need to get rid of the skips since they are a part of THIS evaluation, not the next
           val ridded = StepCont.visit(cont)(new StepCont.Visitor[F] {
-            def visitAppendClosure[I, O](cont: StepCont.AppendClosure[F, I, O]): StepCont[F, I, O] =
+            override def visitAppendClosure[I, O](cont: StepCont.AppendClosure[F, I, O]): StepCont[F, I, O] =
               cont.copy(xs = Chain.empty)
           })
 
