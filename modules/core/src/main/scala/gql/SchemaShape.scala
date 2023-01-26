@@ -341,7 +341,7 @@ object SchemaShape {
     case object NON_NULL extends __TypeKind
   }
 
-  def introspect[F[_]](ss: SchemaShape[F, ?, ?, ?]): NonEmptyList[(String, Field[F, Unit, ?, ?])] = {
+  def introspect[F[_]](ss: SchemaShape[F, ?, ?, ?]): NonEmptyList[(String, Field[F, Unit, ?])] = {
     import gql.dsl._
 
     // We do a little lazy evaluation trick to include the introspection schema in itself

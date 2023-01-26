@@ -319,7 +319,7 @@ object PreparedQuery {
   }
 
   def collectFieldInfo[F[_]: Parallel, G[_]](
-      af: AbstractField[G, ?, ?],
+      af: AbstractField[G, ?],
       f: P.Field,
       caret: Caret,
       variableMap: VariableMap,
@@ -371,7 +371,7 @@ object PreparedQuery {
   ): F[NonEmptyList[SelectionInfo[G]]] = D.defer {
     val fields = ss.selections.collect { case Pos(caret, P.Selection.FieldSelection(field)) => (caret, field) }
 
-    val actualFields: Map[String, AbstractField[G, ?, ?]] =
+    val actualFields: Map[String, AbstractField[G, ?]] =
       s.abstractFieldMap + ("__typename" -> AbstractField(Applicative[Arg].unit, Eval.now(stringScalar[G]), None))
 
     val validateFieldsF: F[List[SelectionInfo[G]]] = fields
@@ -655,7 +655,7 @@ object PreparedQuery {
 
   final case class PairedFieldSelection2[G[_], A](
       info: FieldInfo[G],
-      field: Field[G, A, ?, ?]
+      field: Field[G, A, ?]
   )
   final case class MergedImplementation2[G[_], A, B](
       leaf: Type[G, B],
@@ -714,65 +714,6 @@ object PreparedQuery {
     }
   }
 
-  final case class PairedFieldSelection[G[_]](
-      info: FieldInfo[G],
-      field: Field[G, ?, ?, ?]
-  )
-  final case class MergedImplementation[G[_]](
-      leaf: Type[G, ?],
-      selections: NonEmptyList[PairedFieldSelection[G]],
-      specify: Option[? => Option[?]]
-  )
-  def mergeImplementations[F[_]: Parallel, G[_]](
-      base: Selectable[G, ?],
-      sels: NonEmptyList[SelectionInfo[G]],
-      discoveryState: SchemaShape.DiscoveryState[G]
-  )(implicit
-      F: MonadError[F, NonEmptyChain[PositionalError]],
-      S: Stateful[F, Prep]
-  ): F[NonEmptyList[MergedImplementation[G]]] = {
-    val concreteBaseMap = findImplementations(base, discoveryState).map { case x @ (t, _) => t.name -> x }.toMap
-    val concreteBase = concreteBaseMap.toList
-
-    val nestedSelections = sels.toList.flatMap { sel =>
-      val concreteIntersections = findImplementations(sel.s, discoveryState)
-        .map { case (t, _) => t.name }
-
-      concreteIntersections tupleRight sel.fields
-    }
-
-    val grouped = nestedSelections
-      .groupMap { case (k, _) => k } { case (_, vs) => vs }
-      .collect { case (k, x :: xs) => k -> NonEmptyList(x, xs).flatten.map(x => x.outputName -> x).toNem.toNonEmptyList }
-
-    val collected = concreteBase.parFlatTraverse { case (k, (t, specify)) =>
-      grouped.get(k).toList.traverse { fields =>
-        fields
-          .parTraverse { f =>
-            if (f.name === "__typename") F.pure(PairedFieldSelection(f, typenameField[G, Any](t.name)))
-            else {
-              t.fieldMap.get(f.name) match {
-                case None        => raise[F, PairedFieldSelection[G]](s"Could not find field '${f.name}' on type `${t.name}`.", None)
-                case Some(field) => F.pure(PairedFieldSelection(f, field))
-              }
-            }
-          }
-          .map(fields => MergedImplementation(t, fields, specify))
-      }
-    }
-
-    collected.flatMap { xs =>
-      xs.toNel match {
-        case Some(x) => F.pure(x)
-        case None =>
-          raise[F, NonEmptyList[MergedImplementation[G]]](
-            s"Could not find any implementations of `${base.name}` in the selection set.",
-            None
-          )
-      }
-    }
-  }
-
   def decodeFieldArgs[F[_]: Parallel, G[_], A](
       a: Arg[A],
       args: Option[P.Arguments],
@@ -799,7 +740,7 @@ object PreparedQuery {
 
   def prepareField2[F[_]: Parallel, G[_]: Applicative, I, T](
       fi: FieldInfo[G],
-      field: Field[G, I, T, ?],
+      field: Field[G, I, T],
       step: Step[G, I, T],
       currentTypename: String,
       variableMap: VariableMap,
@@ -840,9 +781,10 @@ object PreparedQuery {
             PreparedOption2(PreparedCont2(s, c))
           }
         case (s: Selectable[G, a], Some(ss)) =>
+          Used.liftF{
           prepareSelectable2[F, G, a](s, ss, variableMap, discoveryState)
             .map(Selection2(_))
-          ???
+            }
         case (e: Enum[G, a], None) =>
           Used[F].pure(PreparedLeaf2(e.name, x => Json.fromString(e.revm(x))))
         case (s: Scalar[G, a], None) =>
@@ -885,7 +827,7 @@ object PreparedQuery {
       impls.parTraverse { case impl: MergedImplementation2[G, A, b] =>
         val fa: F[NonEmptyList[PreparedDataField2[G, b]]] = impl.selections.parTraverse { sel =>
           sel.field match {
-            case field: Field[G, b2, t, ?] =>
+            case field: Field[G, b2, t] =>
               prepareField2[F, G, b, t](sel.info, field, null, impl.leaf.name, variableMap, discoveryState)
           }
         }
@@ -1361,7 +1303,7 @@ object PreparedQuery {
       ot match {
         // We sneak the introspection query in here
         case P.OperationType.Query =>
-          val i: NonEmptyList[(String, Field[G, Unit, ?, ?])] = schema.shape.introspection
+          val i: NonEmptyList[(String, Field[G, Unit, ?])] = schema.shape.introspection
           val q = schema.shape.query
           val full = q.copy(fields = i.map { case (k, v) => k -> v.contramap[Q](_ => ()) } concatNel q.fields)
           runWith[Q](full).map(PrepResult.Query(_))
