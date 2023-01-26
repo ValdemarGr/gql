@@ -1,12 +1,14 @@
 package gql.resolver
 
 import cats.data._
-import cats._
 import gql._
 
 final class Resolver[F[_], -I, +O] (private [resolver] val underlying: Step[F, I, O]) {
     def andThen[O2](that: Resolver[F, O, O2]): Resolver[F, I, O2] =
         new Resolver(Step.compose(underlying, that.underlying))
+        
+    def continue[O2, O1 >: O](f: Resolver[F, O1, O1] => Resolver[F, O1, O2]): Resolver[F, I, O2] =
+        andThen(f(Resolver.id[F, O1]))    
 
     def compose[I1 <: I, I2](that: Resolver[F, I2, I1]): Resolver[F, I2, O] =
         that andThen this
@@ -50,11 +52,17 @@ final class Resolver[F[_], -I, +O] (private [resolver] val underlying: Step[F, I
     def skippable[O1 >: O]: Resolver[F, Either[I, O1], O1] =
         new Resolver(Step.skip(this.underlying))
 
-    def skipWhen[I1 <: I, I2, O1 >: O](verify: Resolver[F, I2, Either[I1, O1]]): Resolver[F, I2, O1] =
+    def skipThis[I1 <: I, I2, O1 >: O](verify: Resolver[F, I2, Either[I1, O1]]): Resolver[F, I2, O1] =
         verify andThen this.skippable
+
+    def skipThisWith[I1 <: I, I2, O1 >: O](f: Resolver[F, I2, I2] => Resolver[F, I2, Either[I1, O1]]): Resolver[F, I2, O1] =
+        skipThis[I1, I2, O1](f(Resolver.id[F, I2]))
     
-    def skip[I1 <: I, I2, O2](compute: Resolver[F, I2, O2])(implicit ev: O <:< Either[I2, O2]): Resolver[F, I1, O2] =
-        compute skipWhen[I2, I1, O2] this.map(ev.apply)
+    def skipThat[I1 <: I, I2, O2](compute: Resolver[F, I2, O2])(implicit ev: O <:< Either[I2, O2]): Resolver[F, I1, O2] =
+        compute skipThis this.map(ev.apply)
+
+    def skipThatWith[I1 <: I, I2, O2](f: Resolver[F, I2, I2] => Resolver[F, I2, O2])(implicit ev: O <:< Either[I2, O2]): Resolver[F, I1, O2] =
+        skipThat[I1, I2, O2](f(Resolver.id[F, I2]))
 }
 
 object Resolver extends ResolverInstances {
