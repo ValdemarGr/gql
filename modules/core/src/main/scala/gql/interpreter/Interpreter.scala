@@ -276,7 +276,7 @@ object Interpreter {
     nvs.groupMap { case (c, _) => c.head } { case (c, v) => (c.tail, v) }
 }
 
-final case class IndexedData[A](
+final case class IndexedData[+A](
     index: Int,
     node: EvalNode[A]
 )
@@ -291,7 +291,7 @@ object IndexedData {
   }
 }
 
-sealed trait StepCont[F[_], I, O]
+sealed trait StepCont[F[_], -I, +O]
 object StepCont {
   final case class Done[F[_], I](prep: Prepared2[F, I]) extends StepCont[F, I, Json]
   final case class Continue[F[_], I, C, O](
@@ -392,14 +392,16 @@ class InterpreterImpl[F[_]](
 
     step match {
       case Pure(f) => runNext(inputs.map(_.map(f)))
-      case Effect(f, cursor) =>
+      case alg: Effect[F, i, c] =>
+        val f = alg.f
+        val cursor = alg.stableUniqueEdgeName
         inputs.parFlatTraverse { id =>
           val runF = attemptTimed(cursor, e => EvalFailure.EffectResolution(id.node.cursor, Left(e), id.node.value)) {
             id.traverse(f)
           }
 
           runF.map(Chain.fromOption(_))
-        } >>= runNext
+        }.flatMap(runEdgeCont(_, cont))
       case Raise(f) =>
         inputs.flatTraverse { id =>
           val ior = id.traverse(f)
@@ -408,7 +410,7 @@ class InterpreterImpl[F[_]](
           )(
             Chain.fromOption(ior.left.map(e => EvalFailure.Raised(id.node.cursor, e)))
           )
-        } >>= runNext
+        }.flatMap(runEdgeCont(_, cont))
       case alg: Compose[F, ?, a, ?] =>
         val contR: StepCont[F, a, O] = StepCont.Continue[F, a, C, O](alg.right, cont)
         runStep[I, a, O](inputs, alg.left, contR)
@@ -440,8 +442,8 @@ class InterpreterImpl[F[_]](
             }
           runF.map(Chain.fromOption(_))
         } >>= runNext
-      case alg: Skip[F, i, ?] =>
-        val (force0, skip: Chain[IndexedData[C]]) = inputs.partitionEither { in =>
+      case alg: Skip[F, i, c] =>
+        val (force0, skip) = inputs.partitionEither { in =>
           in.node.value match {
             case Left(i2) => Left(in as i2)
             case Right(c) => Right(in as c)
@@ -449,7 +451,7 @@ class InterpreterImpl[F[_]](
         }
         val force: Chain[IndexedData[i]] = force0
         val contR = StepCont.AppendClosure(skip, cont)
-        runStep[i, C, O](force, alg.compute, contR)
+        runStep[i, c, O](force, alg.compute, contR)
       case GetMeta(pm) =>
         runNext(inputs.map(in => in as Meta(in.node.cursor, pm.alias, pm.args, pm.variables)))
       case alg: First[F, i2, o2, c2] =>
@@ -477,7 +479,7 @@ class InterpreterImpl[F[_]](
                 }
               }
           }
-        } >>= runNext
+        }.flatMap(runEdgeCont(_, cont))
     }
   }
 

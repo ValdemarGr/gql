@@ -60,7 +60,7 @@ object PreparedQuery {
       selection: NonEmptyList[PreparedDataField2[F, A]]
   ) extends PreparedField2[F, I]
 
-  sealed trait PreparedStep[F[_], -I, O]
+  sealed trait PreparedStep[F[_], -I, +O]
 
   final case class PreparedMeta(
       variables: VariableMap,

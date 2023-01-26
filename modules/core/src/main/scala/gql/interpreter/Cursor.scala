@@ -54,7 +54,7 @@ object Cursor {
   }
 }
 
-final case class EvalNode[A](cursor: Cursor, value: A) {
+final case class EvalNode[+A](cursor: Cursor, value: A) {
   def setValue[B](value: B): EvalNode[B] = copy(value = value)
 
   def modify(f: Cursor => Cursor): EvalNode[A] = copy(cursor = f(cursor))

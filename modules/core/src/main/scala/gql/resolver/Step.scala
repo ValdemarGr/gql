@@ -4,7 +4,7 @@ import gql._
 import cats.data._
 import cats._
 
-sealed trait Step[F[_], -I, O]
+sealed trait Step[F[_], -I, +O]
 
 object Step {
   object Alg {
