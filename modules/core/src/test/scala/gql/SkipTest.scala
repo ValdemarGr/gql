@@ -10,18 +10,28 @@ import gql.resolver.Resolver
 class SkipTest extends CatsEffectSuite {
   val effectState = IO.ref(Option.empty[Int]).unsafeRunSync()
 
+  //val b = 
   lazy val schemaShape = SchemaShape.make[IO](
-    tpe[IO, Unit](
-      "Query",
-      "num" -> field[Unit][IO, Int](Resolver.pure(_ => 5))
-       /* _.evalMap{ _ =>
-          effectState.get.flatMap {
-            case None    => IO(Left(10))
-            case Some(i) => IO.pure(Right(i))
-          }
-        }.skipThatWith[Unit, Int, Int](res => res.evalMap(i => effectState.modify(_ => (Some(i), i))))
-      }*/
-    )
+    builder[IO, Unit]{ b =>
+      tpe(
+        "Query",
+        //"num" -> (_.pure(_ => 5)),
+        //"num" -> pure(_ => 5),
+        //"num" -> field[Unit][IO, Int](Resolver.pure(_ => 5))
+        //"num" -> field(Resolver.pure(_ => 5))
+        "num" -> b.pure(_ => 5)
+        //"num" -> b.eff(_ => IO(5))
+        //"num" -> b.field(_.map(_ => 5))
+        //"num" -> b.from(Resolver.pure(_ => 5))
+        /* _.evalMap{ _ =>
+            effectState.get.flatMap {
+              case None    => IO(Left(10))
+              case Some(i) => IO.pure(Right(i))
+            }
+          }.skipThatWith[Unit, Int, Int](res => res.evalMap(i => effectState.modify(_ => (Some(i), i))))
+        }*/
+      )
+    }
   )
 
   lazy val schema = Schema.simple(schemaShape).unsafeRunSync()
