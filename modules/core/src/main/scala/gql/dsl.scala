@@ -105,15 +105,15 @@ object dsl {
 
   def eff[I] = new PartiallyAppliedEff[I]
 
-  final class PartiallyAppliedPure[F[_], I](private val dummy: Boolean = false) extends AnyVal {
+  final class PartiallyAppliedLift[F[_], I](private val dummy: Boolean = false) extends AnyVal {
     def apply[T, A](arg: Arg[A])(resolver: (A, I) => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field(Resolver.pure[F, (A, I), T]{ case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
+      Field(Resolver.lift[F, (A, I), T]{ case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
 
     def apply[T](resolver: I => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field(Resolver.pure[F, I, T](resolver), Eval.later(tpe))
+      Field(Resolver.lift[F, I, T](resolver), Eval.later(tpe))
   }
 
-  def pure[F[_], I] = new PartiallyAppliedPure[F, I]
+  def lift[F[_], I] = new PartiallyAppliedLift[F, I]
 
   final class FieldBuilder[F[_], I](private val dummy: Boolean = false) extends AnyVal {
     def from[T](resolver: Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
@@ -122,7 +122,7 @@ object dsl {
     def apply[T](f: Resolver[F, I, I] => Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
       Field[F, I, T](f(Resolver.id[F, I]), Eval.later(tpe))
 
-    def pure = new PartiallyAppliedPure[F, I]
+    def lift = new PartiallyAppliedLift[F, I]
 
     def eff[T, A](arg: Arg[A])(resolver: (A, I) => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
       Field(Resolver.eval[F, (A, I), T]{ case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))

@@ -68,7 +68,7 @@ object Planner {
   ): F[List[Node2]] = {
     import PreparedStep._
     step match {
-      case Pure(_) | Raise(_) | GetMeta(_) => right
+      case Lift(_) | Raise(_) | GetMeta(_) => right
       case Compose(l, r)                   => costForStep[F, G](l, costForStep[F, G](r, right))
       case alg: Skip[G, ?, ?]              => costForStep[F, G](alg.compute, right)
       case alg: First[G, ?, ?, ?]          => costForStep[F, G](alg.step, right)

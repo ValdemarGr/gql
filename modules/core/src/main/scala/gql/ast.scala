@@ -298,7 +298,7 @@ object AstImplicits {
     implicit def gqlInForOption[A](implicit tpe: In[A]): In[Option[A]] = InOpt(tpe)
 
     implicit def gqlOutForOption[F[_], A](implicit tpe: Out[F, A]): OutOpt[F, A, A] =
-      OutOpt(tpe, Resolver.pure[F, A, A](identity))
+      OutOpt(tpe, Resolver.lift[F, A, A](identity))
   }
 
   trait LowPriorityImplicits {
@@ -316,14 +316,14 @@ object AstImplicits {
       InArr[A, NonEmptyChain[A]](tpe, xs => NonEmptyChain.fromSeq(xs).toRight("empty array"))
 
     implicit def gqlOutArrForSeqLike[F[_], A, G[x] <: Seq[x]](implicit tpe: Out[F, A]): OutArr[F, A, G[A], A] =
-      OutArr(tpe, _.toList, Resolver.pure[F, A, A](identity))
+      OutArr(tpe, _.toList, Resolver.lift[F, A, A](identity))
     implicit def gqlOutArrForNel[F[_], A](implicit tpe: Out[F, A]): OutArr[F, A, NonEmptyList[A], A] =
-      OutArr(tpe, _.toList, Resolver.pure[F, A, A](identity))
+      OutArr(tpe, _.toList, Resolver.lift[F, A, A](identity))
     implicit def gqlOutArrForNev[F[_], A](implicit tpe: Out[F, A]): OutArr[F, A, NonEmptyVector[A], A] =
-      OutArr(tpe, _.toList, Resolver.pure[F, A, A](identity))
+      OutArr(tpe, _.toList, Resolver.lift[F, A, A](identity))
     implicit def gqlOutArrForNec[F[_], A](implicit tpe: Out[F, A]): OutArr[F, A, NonEmptyChain[A], A] =
-      OutArr(tpe, _.toList, Resolver.pure[F, A, A](identity))
+      OutArr(tpe, _.toList, Resolver.lift[F, A, A](identity))
     implicit def gqlOutArrForChain[F[_], A](implicit tpe: Out[F, A]): OutArr[F, A, Chain[A], A] =
-      OutArr(tpe, _.toList, Resolver.pure[F, A, A](identity))
+      OutArr(tpe, _.toList, Resolver.lift[F, A, A](identity))
   }
 }

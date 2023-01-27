@@ -14,10 +14,10 @@ final class Resolver[F[_], -I, +O] (private [resolver] val underlying: Step[F, I
         that andThen this
 
     def map[O2](f: O => O2): Resolver[F, I, O2] =
-        this andThen Resolver.pure(f)
+        this andThen Resolver.lift(f)
 
     def contramap[I2](f: I2 => I): Resolver[F, I2, O] =
-        Resolver.pure(f) andThen this
+        Resolver.lift(f) andThen this
 
     def evalMap[O2](f: O => F[O2]): Resolver[F, I, O2] =
         this andThen Resolver.eval(f)
@@ -66,11 +66,11 @@ final class Resolver[F[_], -I, +O] (private [resolver] val underlying: Step[F, I
 }
 
 object Resolver extends ResolverInstances {
-    def pure[F[_], I, O](f: I => O): Resolver[F, I, O] =
-      new Resolver(Step.pure(f))
+    def lift[F[_], I, O](f: I => O): Resolver[F, I, O] =
+      new Resolver(Step.lift(f))
 
     def id[F[_], I]: Resolver[F, I, I] =
-        pure(identity)
+        lift(identity)
 
     def eval[F[_], I, O](f: I => F[O]): Resolver[F, I, O] =
         new Resolver(Step.effect(f))
@@ -101,7 +101,7 @@ trait ResolverInstances {
         override def first[A, B, C](fa: Resolver[F, A, B]): Resolver[F, (A, C), (B, C)] = 
             new Resolver(Step.first[F, A, B, C](fa.underlying))
 
-        override def lift[A, B](f: A => B): Resolver[F, A, B] = Resolver.pure(f)
+        override def lift[A, B](f: A => B): Resolver[F, A, B] = Resolver.lift(f)
     }
 /*
     implicit def applicativeForResolver[F[_], I] = new Applicative[Resolver[F, I, *]] {

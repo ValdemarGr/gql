@@ -69,7 +69,7 @@ object PreparedQuery {
   )
 
   object PreparedStep {
-    final case class Pure[F[_], I, O](f: I => O) extends AnyRef with PreparedStep[F, I, O]
+    final case class Lift[F[_], I, O](f: I => O) extends AnyRef with PreparedStep[F, I, O]
     final case class Effect[F[_], I, O](
       f: I => F[O],
       stableUniqueEdgeName: UniqueEdgeCursor
@@ -145,7 +145,7 @@ object PreparedQuery {
       compileStep[F, G, I2, O2](step, cursor append edge, meta)
 
     step match {
-      case Step.Alg.Pure(f)   => Used[F].pure(PreparedStep.Pure(f))
+      case Step.Alg.Lift(f)   => Used[F].pure(PreparedStep.Lift(f))
       case Step.Alg.Raise(f)  => Used[F].pure(PreparedStep.Raise(f))
       case alg: Step.Alg.Compose[G, i, a, o] =>
         val left = rec[i, a](alg.left, "left")
@@ -163,7 +163,7 @@ object PreparedQuery {
       case alg: Step.Alg.Argument[G, ?, a] =>
         Used
           .liftF(decodeFieldArgs[F, G, a](alg.arg, meta.args, meta.variables))
-          .map[PreparedStep[G, I, O]](o => PreparedStep.Pure[G, I, O](_ => o)) <*
+          .map[PreparedStep[G, I, O]](o => PreparedStep.Lift[G, I, O](_ => o)) <*
           WriterT.tell(alg.arg.entries.map(_.name).toList.toSet)
     }
   }
@@ -247,7 +247,7 @@ object PreparedQuery {
 
   def typenameField[G[_], A](typename: String) = {
     import gql.dsl._
-    pure[G, A](_ => typename)
+    lift[G, A](_ => typename)
   }
 
   def inFragment[F[_], A](

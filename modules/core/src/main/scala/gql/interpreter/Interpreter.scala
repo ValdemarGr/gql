@@ -391,7 +391,7 @@ class InterpreterImpl[F[_]](
       }
 
     step match {
-      case Pure(f) => runNext(inputs.map(_.map(f)))
+      case Lift(f) => runNext(inputs.map(_.map(f)))
       case alg: Effect[F, i, c] =>
         val f = alg.f
         val cursor = alg.stableUniqueEdgeName

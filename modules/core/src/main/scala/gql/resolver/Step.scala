@@ -7,7 +7,7 @@ sealed trait Step[F[_], -I, +O]
 
 object Step {
   object Alg {
-    final case class Pure[F[_], I, O](f: I => O) extends AnyRef with Step[F, I, O]
+    final case class Lift[F[_], I, O](f: I => O) extends AnyRef with Step[F, I, O]
 
     final case class Effect[F[_], I, O](f: I => F[O]) extends AnyRef with Step[F, I, O]
 
@@ -28,8 +28,8 @@ object Step {
     final case class Batch[F[_], K, V](id: Int) extends Step[F, Set[K], Map[K, V]]
   }
 
-  def pure[F[_], I, O](f: I => O): Step[F, I, O] =
-    Alg.Pure(f)
+  def lift[F[_], I, O](f: I => O): Step[F, I, O] =
+    Alg.Lift(f)
 
   def effect[F[_], I, O](f: I => F[O]): Step[F, I, O] =
     Alg.Effect(f)
@@ -67,6 +67,6 @@ object Step {
 
     override def first[A, B, C](fa: Step[F, A, B]): Step[F, (A, C), (B, C)] = first(fa)
 
-    override def lift[A, B](f: A => B): Step[F, A, B] = pure(f)
+    override def lift[A, B](f: A => B): Step[F, A, B] = lift(f)
   }
 }
