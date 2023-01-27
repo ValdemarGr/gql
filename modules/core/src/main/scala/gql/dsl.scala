@@ -34,13 +34,13 @@ object dsl {
       tl: (String, Field[F, A, ?])*
   ) = Type[F, A](name, NonEmptyList(hd, tl.toList), Nil)
 
-  def fieldGroup[F[_], A, B](f: B => A)(
+  def fields[F[_], A, B](f: B => A)(
       hd: (String, Field[F, A, ?]),
       tl: (String, Field[F, A, ?])*
   ): NonEmptyList[(String, Field[F, B, ?])] =
     NonEmptyList[(String, Field[F, A, ?])](hd, tl.toList).map { case (k, v) => (k, v.contramap(f)) }
 
-  def fieldGroup[F[_], A](
+  def fields[F[_], A](
       hd: (String, Field[F, A, ?]),
       tl: (String, Field[F, A, ?])*
   ): NonEmptyList[(String, Field[F, A, ?])] =
@@ -62,7 +62,7 @@ object dsl {
 
   def arg[A](name: String, default: Value, description: String)(implicit tpe: => In[A]): Arg[A] =
     Arg.make[A](ArgValue(name, Eval.later(tpe), Some(default), Some(description)))
-/*
+  /*
   final case class PartiallyAppliedArgFull[A](private val dummy: Boolean = false) extends AnyVal {
     def apply[B](name: String, default: Option[Value], description: Option[String])(
         f: ArgParam[A] => Either[String, B]
@@ -97,7 +97,7 @@ object dsl {
 
   final class PartiallyAppliedEff[I](private val dummy: Boolean = false) extends AnyVal {
     def apply[F[_], T, A](arg: Arg[A])(resolver: (A, I) => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field(Resolver.eval[F, (A, I), T]{ case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
+      Field(Resolver.eval[F, (A, I), T] { case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
 
     def apply[F[_], T](resolver: I => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
       Field(Resolver.eval(resolver), Eval.later(tpe))
@@ -107,7 +107,7 @@ object dsl {
 
   final class PartiallyAppliedLift[F[_], I](private val dummy: Boolean = false) extends AnyVal {
     def apply[T, A](arg: Arg[A])(resolver: (A, I) => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field(Resolver.lift[F, (A, I), T]{ case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
+      Field(Resolver.lift[F, (A, I), T] { case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
 
     def apply[T](resolver: I => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
       Field(Resolver.lift[F, I, T](resolver), Eval.later(tpe))
@@ -118,32 +118,42 @@ object dsl {
   final class FieldBuilder[F[_], I](private val dummy: Boolean = false) extends AnyVal {
     def from[T](resolver: Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
       Field[F, I, T](resolver, Eval.later(tpe))
-    
+
     def apply[T](f: Resolver[F, I, I] => Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
       Field[F, I, T](f(Resolver.id[F, I]), Eval.later(tpe))
 
     def lift = new PartiallyAppliedLift[F, I]
 
     def eff[T, A](arg: Arg[A])(resolver: (A, I) => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field(Resolver.eval[F, (A, I), T]{ case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
+      Field(Resolver.eval[F, (A, I), T] { case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
 
     def eff[T](resolver: I => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
       Field(Resolver.eval(resolver), Eval.later(tpe))
   }
 
   final class PartiallyAppliedFieldBuilder[F[_], I](private val dummy: Boolean = false) extends AnyVal {
+    def fields3(
+        f: (String, FieldBuilder[F, I] => Field[F, I, ?]),
+        fs: (String, FieldBuilder[F, I] => Field[F, I, ?])*
+    ): NonEmptyList[(String, Field[F, I, ?])] =
+      NonEmptyList(f, fs.toList).map { case (k, v) => k -> v(new FieldBuilder[F, I]) }
+
+    def fields2(
+        f: FieldBuilder[F, I] => (String, Field[F, I, ?]),
+        fs: FieldBuilder[F, I] => (String, Field[F, I, ?])*
+    ): NonEmptyList[(String, Field[F, I, ?])] =
+      NonEmptyList(f, fs.toList).map(g => g(new FieldBuilder[F, I]))
+
+    def fields1(f: FieldBuilder[F, I] => NonEmptyList[(String, Field[F, I, ?])]): NonEmptyList[(String, Field[F, I, ?])] =
+      f(new FieldBuilder[F, I])
+
+    def tpe(name: String)(f: FieldBuilder[F, I] => NonEmptyList[(String, Field[F, I, ?])]): Type[F, I] =
+      Type(name, f(new FieldBuilder[F, I]), Nil, None)
+
     def apply(f: FieldBuilder[F, I] => Type[F, I]): Type[F, I] = f(new FieldBuilder[F, I])
   }
 
-  def builder[F[_], I] =/* new FieldBuilder[F, I] */ new PartiallyAppliedFieldBuilder[F, I]
-  
-  def tpe2[F[_], A](
-      name: String,
-      hd: (String, FieldBuilder[F, A] => Field[F, A, ?]),
-      tl: (String, FieldBuilder[F, A] => Field[F, A, ?])*
-  ) = {
-    Type[F, A](name, NonEmptyList(hd, tl.toList).map{case (k, f) => k -> f(new FieldBuilder[F, A])}, Nil)
-  }
+  def builder[F[_], I] = /* new FieldBuilder[F, I] */ new PartiallyAppliedFieldBuilder[F, I]
 
   def abst[F[_], T](implicit tpe: => Out[F, T]): AbstractField[F, T] =
     AbstractField[F, T](Applicative[Arg].unit, Eval.later(tpe))

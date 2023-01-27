@@ -10,6 +10,63 @@ import gql.resolver.Resolver
 class SkipTest extends CatsEffectSuite {
   val effectState = IO.ref(Option.empty[Int]).unsafeRunSync()
 
+  tpeNel(
+    "Query",
+    builder[IO, Unit].fields3(
+      "num" -> (_.lift(_ => 5)),
+      "num2" -> (_.lift(_ => 5))
+    )
+  )
+
+  tpeNel(
+    "Query",
+    builder[IO, Unit].fields3(
+      "num" -> (b => b(_.map(_ => 5))),
+      "num2" -> (b => b(_.map(_ => 5)))
+    )
+  )
+
+  tpeNel(
+    "Query",
+    builder[IO, Unit].fields3(
+      "num" -> (_(_.map(_ => 5))),
+      "num2" -> (_(_.map(_ => 5)))
+    )
+  )
+
+  tpeNel(
+    "Query",
+    builder[IO, Unit].fields2(
+      b => "num" -> b(_.map(_ => 5)),
+      b => "num2" -> b(_.map(_ => 5))
+    )
+  )
+
+  tpeNel(
+    "Query",
+    builder[IO, Unit].fields1 { b =>
+      fields(
+        "num" -> b(_.map(_ => 5)),
+        "num2" -> b(_.map(_ => 5))
+      )
+    }
+  )
+
+  builder[IO, Unit].tpe("Query") { b =>
+    fields(
+      "num" -> b(_.map(_ => 5)),
+      "num2" -> b(_.map(_ => 5))
+    )
+  }
+
+  builder[IO, Unit] { b =>
+    tpe(
+      "Query",
+      "num" -> b(_.map(_ => 5)),
+      "num2" -> b(_.map(_ => 5))
+    )
+  }
+
   lazy val schemaShape = SchemaShape.make[IO](
     builder[IO, Unit] { b =>
       tpe(
@@ -22,15 +79,15 @@ class SkipTest extends CatsEffectSuite {
         // "num" -> b.eff(_ => IO(5))
         //"num" -> b(_.map(_ => 5))
         //"num" -> b.from(Resolver.pure(_ => 5))
-        "num" -> b(_.map(_ => 5).evalMap(x => IO(x * 2)).evalMap(x => IO(x / 2)))
-        // "num" -> b(
-        //   _.evalMap{ _ =>
-        //     effectState.get.flatMap {
-        //       case None    => IO(Left(10))
-        //       case Some(i) => IO.pure(Right(i))
-        //     }
-        //   }.skipThatWith(r => r.evalMap(i => effectState.modify(_ => (Some(i), i))))
-        // )
+        // "num" -> b(_.map(_ => 5).evalMap(x => IO(x * 2)).evalMap(x => IO(x / 2)))
+        "num" -> b(
+          _.evalMap { _ =>
+            effectState.get.flatMap {
+              case None    => IO(Left(10))
+              case Some(i) => IO.pure(Right(i))
+            }
+          }.skipThatWith(_.evalMap(i => effectState.modify(_ => (Some(i), i))))
+        )
         /* _.evalMap{ _ =>
             effectState.get.flatMap {
               case None    => IO(Left(10))

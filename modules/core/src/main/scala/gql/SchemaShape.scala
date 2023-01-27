@@ -381,12 +381,12 @@ object SchemaShape {
 
     implicit lazy val __inputValue: Type[F, ArgValue[?]] = tpe[F, ArgValue[?]](
       "__InputValue",
-      "name" -> pure(_.name),
-      "description" -> pure(_.description),
-      "type" -> pure(x => TypeInfo.fromInput(x.input.value)),
-      "defaultValue" -> pure(x => x.defaultValue.map(renderValueDoc(_).render(80))),
-      "isDeprecated" -> pure(_ => false),
-      "deprecationReason" -> pure(_ => Option.empty[String])
+      "name" -> lift(_.name),
+      "description" -> lift(_.description),
+      "type" -> lift(x => TypeInfo.fromInput(x.input.value)),
+      "defaultValue" -> lift(x => x.defaultValue.map(renderValueDoc(_).render(80))),
+      "isDeprecated" -> lift(_ => false),
+      "deprecationReason" -> lift(_ => Option.empty[String])
     )
 
     final case class NamedField(
@@ -398,12 +398,12 @@ object SchemaShape {
 
     implicit lazy val namedField: Type[F, NamedField] = tpe[F, NamedField](
       "__Field",
-      "name" -> pure(_.name),
-      "description" -> pure(_.field.description),
-      "args" -> pure(inclDeprecated)((_, x) => x.field.arg.entries.toList),
-      "type" -> pure(x => TypeInfo.fromOutput(x.field.output.value)),
-      "isDeprecated" -> pure(_ => false),
-      "deprecationReason" -> pure(_ => Option.empty[String])
+      "name" -> lift(_.name),
+      "description" -> lift(_.field.description),
+      "args" -> lift(inclDeprecated)((_, x) => x.field.arg.entries.toList),
+      "type" -> lift(x => TypeInfo.fromOutput(x.field.output.value)),
+      "isDeprecated" -> lift(_ => false),
+      "deprecationReason" -> lift(_ => Option.empty[String])
     )
 
     sealed trait TypeInfo extends Product with Serializable {
@@ -451,7 +451,7 @@ object SchemaShape {
 
     implicit lazy val __type: Type[F, TypeInfo] = tpe[F, TypeInfo](
       "__Type",
-      "kind" -> pure {
+      "kind" -> lift {
         case m: TypeInfo.ModifierStack =>
           m.head match {
             case Modifier.List    => __TypeKind.LIST
@@ -472,9 +472,9 @@ object SchemaShape {
             case _: Input[?]        => __TypeKind.INPUT_OBJECT
           }
       },
-      "name" -> pure(_.asToplevel.map(_.name)),
-      "description" -> pure(_.asToplevel.flatMap(_.description)),
-      "fields" -> pure(inclDeprecated) {
+      "name" -> lift(_.asToplevel.map(_.name)),
+      "description" -> lift(_.asToplevel.flatMap(_.description)),
+      "fields" -> lift(inclDeprecated) {
         case (_, oi: TypeInfo.OutInfo) =>
           oi.t match {
             case Type(_, fields, _, _)      => Some(fields.toList.map { case (k, v) => NamedField(k, v.asAbstract) })
@@ -483,7 +483,7 @@ object SchemaShape {
           }
         case _ => None
       },
-      "interfaces" -> pure {
+      "interfaces" -> lift {
         case oi: TypeInfo.OutInfo =>
           oi.t match {
             case Type(_, _, impls, _)      => impls.map[TypeInfo](impl => TypeInfo.OutInfo(impl.implementation.value)).some
@@ -492,7 +492,7 @@ object SchemaShape {
           }
         case _ => None
       },
-      "possibleTypes" -> pure {
+      "possibleTypes" -> lift {
         case oi: TypeInfo.OutInfo =>
           oi.t match {
             case Interface(name, _, _, _) =>
@@ -510,10 +510,10 @@ object SchemaShape {
           }
         case _ => None
       },
-      "enumValues" -> pure(inclDeprecated) { case (_, ti) =>
+      "enumValues" -> lift(inclDeprecated) { case (_, ti) =>
         ti.asToplevel.collect { case Enum(_, m, _) => m.toList.map { case (k, v) => NamedEnumValue(k, v) } }
       },
-      "inputFields" -> pure(inclDeprecated) {
+      "inputFields" -> lift(inclDeprecated) {
         case (_, ii: TypeInfo.InInfo) =>
           ii.t match {
             case Input(_, fields, _) => Some(fields.entries.toList)
@@ -521,7 +521,7 @@ object SchemaShape {
           }
         case _ => None
       },
-      "ofType" -> pure(_.next)
+      "ofType" -> lift(_.next)
     )
 
     final case class NamedEnumValue(
@@ -530,10 +530,10 @@ object SchemaShape {
     )
     implicit lazy val enumValue: Type[F, NamedEnumValue] = tpe[F, NamedEnumValue](
       "__EnumValue",
-      "name" -> pure(_.name),
-      "description" -> pure(_.value.description),
-      "isDeprecated" -> pure(_ => false),
-      "deprecationReason" -> pure(_ => Option.empty[String])
+      "name" -> lift(_.name),
+      "description" -> lift(_.value.description),
+      "isDeprecated" -> lift(_ => false),
+      "deprecationReason" -> lift(_ => Option.empty[String])
     )
 
     sealed trait DirectiveLocation
@@ -585,32 +585,32 @@ object SchemaShape {
     case object PhantomDirective
     implicit lazy val directive: Type[F, PhantomDirective.type] = tpe[F, PhantomDirective.type](
       "__Directive",
-      "name" -> pure(_ => ""),
-      "description" -> pure(_ => Option.empty[String]),
-      "locations" -> pure(_ => List.empty[DirectiveLocation]),
-      "args" -> pure(inclDeprecated)((_, _) => List.empty[ArgValue[?]]),
-      "isRepeatable" -> pure(_ => false)
+      "name" -> lift(_ => ""),
+      "description" -> lift(_ => Option.empty[String]),
+      "locations" -> lift(_ => List.empty[DirectiveLocation]),
+      "args" -> lift(inclDeprecated)((_, _) => List.empty[ArgValue[?]]),
+      "isRepeatable" -> lift(_ => false)
     )
 
     case object PhantomSchema
     implicit lazy val schema: Type[F, PhantomSchema.type] = tpe[F, PhantomSchema.type](
       "__Schema",
-      "description" -> pure(_ => Option.empty[String]),
-      "types" -> pure { _ =>
+      "description" -> lift(_ => Option.empty[String]),
+      "types" -> lift { _ =>
         val outs = d.outputs.values.toList.map(TypeInfo.OutInfo(_))
         val ins = d.inputs.values.toList.map(TypeInfo.InInfo(_))
         (outs ++ ins): List[TypeInfo]
       },
-      "queryType" -> pure(_ => TypeInfo.OutInfo(ss.query): TypeInfo),
-      "mutationType" -> pure(_ => ss.mutation.map[TypeInfo](TypeInfo.OutInfo(_))),
-      "subscriptionType" -> pure(_ => ss.subscription.map[TypeInfo](TypeInfo.OutInfo(_))),
-      "directives" -> pure(_ => List.empty[PhantomDirective.type])
+      "queryType" -> lift(_ => TypeInfo.OutInfo(ss.query): TypeInfo),
+      "mutationType" -> lift(_ => ss.mutation.map[TypeInfo](TypeInfo.OutInfo(_))),
+      "subscriptionType" -> lift(_ => ss.subscription.map[TypeInfo](TypeInfo.OutInfo(_))),
+      "directives" -> lift(_ => List.empty[PhantomDirective.type])
     )
 
     lazy val rootFields: NonEmptyList[(String, Field[F, Unit, ?])] =
       NonEmptyList.of(
-        "__schema" -> pure(_ => PhantomSchema),
-        "__type" -> pure(arg[String]("name")) { case (name, _) =>
+        "__schema" -> lift(_ => PhantomSchema),
+        "__type" -> lift(arg[String]("name")) { case (name, _) =>
           d.inputs
             .get(name)
             .map[TypeInfo](TypeInfo.InInfo(_))
