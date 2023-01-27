@@ -59,6 +59,15 @@ class SkipTest extends CatsEffectSuite {
     )
   }
 
+  {
+    val b = new FieldBuilder[IO, Unit]
+    tpe[IO, Unit](
+      "Query",
+      "num" -> b(_.map(_ => 5)),
+      "num2" -> b(_.map(_ => 5))
+    )
+  }
+
   builder[IO, Unit] { b =>
     tpe(
       "Query",
