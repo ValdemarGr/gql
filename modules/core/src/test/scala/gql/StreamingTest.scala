@@ -24,6 +24,7 @@ import gql.ast._
 import gql.dsl._
 import cats.effect._
 import fs2.Pull
+import gql.resolver._
 
 final case class Level1(value: Int)
 final case class Level2(value: Int)
@@ -40,29 +41,29 @@ class StreamingTest extends CatsEffectSuite {
   implicit lazy val level1: Type[IO, Level1] =
     tpe[IO, Level1](
       "Level1",
-      "value" -> pure(_.value),
-      "level2" -> field {
-        stream(_ => Stream.iterate(0)(_ + 1).lift[IO].flatMap(x => fs2.Stream.resource(level1Resource) as Level2(x)))
+      "value" -> lift(_.value),
+      "level2" -> field[Level1] {
+        Resolver.stream(_ => Stream.iterate(0)(_ + 1).lift[IO].flatMap(x => fs2.Stream.resource(level1Resource) as Level2(x)))
       }
     )
 
   implicit lazy val level2: Type[IO, Level2] = tpe[IO, Level2](
     "Level2",
-    "value" -> pure(_.value),
-    "level1" -> field {
-      stream(_ => Stream.iterate(0)(_ + 1).lift[IO].flatMap(x => fs2.Stream.resource(level2Resource) as Level1(x)))
+    "value" -> lift(_.value),
+    "level1" -> field[Level2] {
+      Resolver.stream(_ => Stream.iterate(0)(_ + 1).lift[IO].flatMap(x => fs2.Stream.resource(level2Resource) as Level1(x)))
     }
   )
 
   lazy val schemaShape = SchemaShape[IO, Unit, Unit, Unit](
     tpe[IO, Unit](
       "Query",
-      "level1" -> pure(_ => Level1(0))
+      "level1" -> lift(_ => Level1(0))
     ),
     subscription = Some(
       tpe[IO, Unit](
         "Subscription",
-        "level1" -> pure(_ => Level1(0))
+        "level1" -> lift(_ => Level1(0))
       )
     )
   )

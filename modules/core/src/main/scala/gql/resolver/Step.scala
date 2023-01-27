@@ -11,7 +11,7 @@ object Step {
 
     final case class Effect[F[_], I, O](f: I => F[O]) extends AnyRef with Step[F, I, O]
 
-    final case class Raise[F[_], I, O](f: I => Ior[String, O]) extends AnyRef with Step[F, I, O]
+    final case class Rethrow[F[_], I]() extends AnyRef with Step[F, Ior[String, I], I]
 
     final case class Argument[F[_], I, A](arg: Arg[A]) extends Step[F, I, A]
 
@@ -34,8 +34,8 @@ object Step {
   def effect[F[_], I, O](f: I => F[O]): Step[F, I, O] =
     Alg.Effect(f)
 
-  def raise[F[_], I, O](f: I => Ior[String, O]): Step[F, I, O] =
-    Alg.Raise(f)
+  def rethrow[F[_], I]: Step[F, Ior[String, I], I] =
+    Alg.Rethrow()
 
   def argument[F[_], A](arg: Arg[A]): Step[F, Any, A] =
     Alg.Argument(arg)

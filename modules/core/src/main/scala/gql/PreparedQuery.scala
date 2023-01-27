@@ -74,7 +74,7 @@ object PreparedQuery {
       f: I => F[O],
       stableUniqueEdgeName: UniqueEdgeCursor
     ) extends AnyRef with PreparedStep[F, I, O]
-    final case class Raise[F[_], I, O](f: I => Ior[String, O]) extends AnyRef with PreparedStep[F, I, O]
+    final case class Rethrow[F[_], I]() extends AnyRef with PreparedStep[F, Ior[String, I], I]
     final case class Compose[F[_], I, A, O](left: PreparedStep[F, I, A], right: PreparedStep[F, A, O])
         extends AnyRef
         with PreparedStep[F, I, O]
@@ -146,7 +146,7 @@ object PreparedQuery {
 
     step match {
       case Step.Alg.Lift(f)   => Used[F].pure(PreparedStep.Lift(f))
-      case Step.Alg.Raise(f)  => Used[F].pure(PreparedStep.Raise(f))
+      case Step.Alg.Rethrow()  => Used[F].pure(PreparedStep.Rethrow())
       case alg: Step.Alg.Compose[G, i, a, o] =>
         val left = rec[i, a](alg.left, "left")
         val right = rec[a, o](alg.right, "right")

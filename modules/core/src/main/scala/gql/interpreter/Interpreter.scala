@@ -402,9 +402,9 @@ class InterpreterImpl[F[_]](
 
           runF.map(Chain.fromOption(_))
         }.flatMap(runEdgeCont(_, cont))
-      case Raise(f) =>
-        inputs.flatTraverse { id =>
-          val ior = id.traverse(f)
+      case Rethrow() =>
+        (inputs: Chain[IndexedData[Ior[String, C]]]).flatTraverse { id =>
+          val ior = id.sequence
           WriterT.put[F, Chain[EvalFailure], Chain[IndexedData[C]]](
             Chain.fromOption(ior.right)
           )(

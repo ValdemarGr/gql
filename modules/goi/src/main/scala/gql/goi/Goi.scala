@@ -91,24 +91,29 @@ object Goi {
     val lookup = xs.map(x => x.typename -> x).toMap
     shape.copy(query =
       shape.query.copy(
-        fields = shape.query.fields.append[(String, Field[F, Q, ?, ?])](
-          "node" -> fallible[Q](arg[ID[String]]("id")) { case (_, id) =>
-            F.delay(new String(Base64.getDecoder().decode(id.value), StandardCharsets.UTF_8))
-              .flatMap[Ior[String, Option[Node]]] { fullId =>
-                fullId.split(":").toList match {
-                  case typename :: xs =>
-                    lookup.get(typename) match {
-                      case None => F.pure(s"Typename `$typename` with id '$id' does not have a getter.".leftIor)
-                      case Some(gid) =>
-                        decodeInput(gid.codec, xs.toArray).toEither
-                          .leftMap(_.mkString_("\n"))
-                          .toIor
-                          .traverse(gid.fromId)
-                          .map(_.map(_.map(x => Node(x, fullId))))
+        fields = shape.query.fields.append[(String, Field[F, Q, ?])](
+          "node" -> field{
+            Resolver
+              .argument(arg[ID[String]]("id"))
+              .evalMap { id =>
+                F.delay(new String(Base64.getDecoder().decode(id.value), StandardCharsets.UTF_8))
+                  .flatMap[Ior[String, Option[Node]]] { fullId =>
+                    fullId.split(":").toList match {
+                      case typename :: xs =>
+                        lookup.get(typename) match {
+                          case None => F.pure(s"Typename `$typename` with id '$id' does not have a getter.".leftIor)
+                          case Some(gid) =>
+                            decodeInput(gid.codec, xs.toArray).toEither
+                              .leftMap(_.mkString_("\n"))
+                              .toIor
+                              .traverse(gid.fromId)
+                              .map(_.map(_.map(x => Node(x, fullId))))
+                        }
+                      case xs => F.pure(s"Invalid id parts ${xs.map(s => s"'$s'").mkString(", ")}".leftIor)
                     }
-                  case xs => F.pure(s"Invalid id parts ${xs.map(s => s"'$s'").mkString(", ")}".leftIor)
-                }
+                  }
               }
+              .rethrow
           }
         )
       )

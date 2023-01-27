@@ -11,8 +11,8 @@ object dsl {
 
   implicit class GlobalIDOps[F[_], A, K](val gid: GlobalID[F, A, K]) extends AnyVal {
     def tpe(
-        hd: (String, Field[F, A, ?, ?]),
-        tl: (String, Field[F, A, ?, ?])*
+        hd: (String, Field[F, A, ?]),
+        tl: (String, Field[F, A, ?])*
     )(implicit F: Sync[F]) = {
       implicit val codec = gid.codec
       Goi.addId[F, A, K](gid.toId, gql.dsl.tpe[F, A](gid.typename, hd, tl: _*))
@@ -20,7 +20,7 @@ object dsl {
   }
 
   def gid[F[_], T, A](typename: String, toId: T => A, fromId: A => F[Option[T]])(implicit codec: IDCodec[A]): GlobalID[F, T, A] =
-    GlobalID(typename, PureResolver(toId), fromId)
+    GlobalID(typename, Resolver.lift(toId), fromId)
 
   def gidFrom[F[_], T, A](typename: String, toId: Resolver[F, T, A], fromId: A => F[Option[T]])(implicit
       codec: IDCodec[A]

@@ -24,10 +24,10 @@ final class Resolver[F[_], -I, +O](private[resolver] val underlying: Step[F, I, 
     Resolver.eval(f) andThen this
 
   def fallibleMap[O2](f: O => Ior[String, O2]): Resolver[F, I, O2] =
-    this andThen Resolver.raise(f)
+    this.map(f) andThen Resolver.rethrow
 
   def fallibleContraMap[I2](f: I2 => Ior[String, I]): Resolver[F, I2, O] =
-    Resolver.raise(f) andThen this
+    Resolver.rethrow.contramap[I2](f) andThen this
 
   def first[C]: Resolver[F, (I, C), (O, C)] =
     new Resolver(Step.first(underlying))
@@ -61,8 +61,8 @@ object Resolver extends ResolverInstances {
   def eval[F[_], I, O](f: I => F[O]): Resolver[F, I, O] =
     new Resolver(Step.effect(f))
 
-  def raise[F[_], I, O](f: I => Ior[String, O]): Resolver[F, I, O] =
-    new Resolver(Step.raise(f))
+  def rethrow[F[_], I]: Resolver[F, Ior[String, I], I] =
+    new Resolver(Step.rethrow[F, I])
 
   def argument[F[_], I <: Any, A](arg: Arg[A]): Resolver[F, I, A] =
     new Resolver(Step.argument(arg))
@@ -75,6 +75,11 @@ object Resolver extends ResolverInstances {
 
   def batch[F[_], K, V](f: Set[K] => F[Map[K, V]]): State[gql.SchemaState[F], Resolver[F, Set[K], Map[K, V]]] =
     Step.batch[F, K, V](f).map(new Resolver(_))
+
+  implicit class RethrowOps[F[_], I, O](private val self: Resolver[F, I, Ior[String, O]]) extends AnyVal {
+    def rethrow: Resolver[F, I, O] =
+      self andThen Resolver.rethrow
+  }
 
   implicit class ContinueInvariantOps[F[_], I, O](private val self: Resolver[F, I, O]) extends AnyVal {
     def continue[O2](f: Resolver[F, O, O] => Resolver[F, O, O2]): Resolver[F, I, O2] =

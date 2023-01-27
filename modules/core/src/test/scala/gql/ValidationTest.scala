@@ -34,9 +34,9 @@ class ValidationTest extends CatsEffectSuite {
       ).mapN(CyclicInput.apply)
     )
 
-  val duplicateFields = fieldGroup[IO, MutRecInterface](
-    "value" -> pure(_.value),
-    "missing" -> pure(_ => 42)
+  val duplicateFields = fields[IO, MutRecInterface](
+    "value" -> lift(_.value),
+    "missing" -> lift(_ => 42)
   )
 
   implicit lazy val duplicateInterface: Interface[IO, MutRecInterface] =
@@ -45,8 +45,8 @@ class ValidationTest extends CatsEffectSuite {
   implicit def mr1: Type[IO, MutuallyRecursive1] =
     tpe[IO, MutuallyRecursive1](
       "MutuallyRecursive1",
-      "value" -> pure(_.value),
-      "two" -> pure(x => MutuallyRecursive2(x.value * 2))
+      "value" -> lift(_.value),
+      "two" -> lift(x => MutuallyRecursive2(x.value * 2))
     )
       .subtypeOf[MutRecInterface]
       .subtypeOf[MutRecInterface]
@@ -54,18 +54,18 @@ class ValidationTest extends CatsEffectSuite {
   implicit lazy val mr2: Type[IO, MutuallyRecursive2] =
     tpe[IO, MutuallyRecursive2](
       "MutuallyRecursive2",
-      "value" -> pure(_.value),
-      "one" -> pure(x => MutuallyRecursive1(x.value * 2))
+      "value" -> lift(_.value),
+      "one" -> lift(x => MutuallyRecursive1(x.value * 2))
     )
       .subtypeOf[MutRecInterface]
 
   implicit lazy val badStructure: Type[IO, BadStructure] =
     tpe[IO, BadStructure](
       "BadStructure",
-      "0value" -> pure(arg[String]("@value")) { case _ => 42 },
-      "real" -> pure(_ => 24),
-      "real" -> pure((arg[String]("x"), arg[String]("x")).tupled) { case _ => 24 },
-      "ci" -> pure(
+      "0value" -> lift(arg[String]("@value")) { case _ => 42 },
+      "real" -> lift(_ => 24),
+      "real" -> lift((arg[String]("x"), arg[String]("x")).tupled) { case _ => 24 },
+      "ci" -> lift(
         arg[CyclicInput](
           "ci",
           value.obj(
@@ -82,11 +82,11 @@ class ValidationTest extends CatsEffectSuite {
     .variant { case x: MutuallyRecursive1 => x }
     .variant { case x: MutuallyRecursive2 => x }
 
-  def sharedFields[A] = fieldGroup[IO, A](
-    "one" -> pure(_ => "heya"),
-    "two" -> pure(arg[String]("x")) { case _ => "heya" },
-    "three" -> pure(arg[Int]("x", value.scalar(42))) { case _ => "heya" },
-    "four" -> pure((arg[Int]("x"), arg[String]("h")).tupled) { case _ => "heya" }
+  def sharedFields[A] = fields[IO, A](
+    "one" -> lift(_ => "heya"),
+    "two" -> lift(arg[String]("x")) { case _ => "heya" },
+    "three" -> lift(arg[Int]("x", value.scalar(42))) { case _ => "heya" },
+    "four" -> lift((arg[Int]("x"), arg[String]("h")).tupled) { case _ => "heya" }
   )
 
   trait Catch
@@ -98,19 +98,19 @@ class ValidationTest extends CatsEffectSuite {
   case object CatchSub extends Catch
   implicit lazy val subtpe = tpe[IO, CatchSub.type](
     "Subtype",
-    "one" -> pure(arg[String]("x")){ case _ => "heya" },
-    "two" -> pure { case _ => "heya" },
-    "three" -> pure(arg[Int]("x", value.scalar(43))) { case _ => "heya" },
-    "four" -> pure(arg[Int]("x")) { case _ => "heya" }
+    "one" -> lift(arg[String]("x")){ case _ => "heya" },
+    "two" -> lift { case _ => "heya" },
+    "three" -> lift(arg[Int]("x", value.scalar(43))) { case _ => "heya" },
+    "four" -> lift(arg[Int]("x")) { case _ => "heya" }
   ).subtypeOf[Catch]
 
   lazy val schemaShape: SchemaShape[IO, Unit, Unit, Unit] = SchemaShape.make[IO](
     tpe[IO, Unit](
       "Query",
-      "badStructure" -> pure(_ => BadStructure()),
-      "duplicateUnion" -> pure(_ => (MutuallyRecursive1(42): MutRecUnion)),
-      "duplicateInterface" -> pure(_ => (MutuallyRecursive1(42): MutRecInterface)),
-      "sub" -> pure(_ => CatchSub),
+      "badStructure" -> lift(_ => BadStructure()),
+      "duplicateUnion" -> lift(_ => (MutuallyRecursive1(42): MutRecUnion)),
+      "duplicateInterface" -> lift(_ => (MutuallyRecursive1(42): MutRecInterface)),
+      "sub" -> lift(_ => CatchSub),
     )
   )
 
