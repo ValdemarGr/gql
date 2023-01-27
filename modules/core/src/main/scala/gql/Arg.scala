@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Valdemar Grange
+ * Copyright 2023 Valdemar Grange
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ object Arg {
     makeFrom(av)(_.value.asRight)
 
   implicit lazy val applyForArg: Apply[Arg] = new Apply[Arg] {
-    override def map[A, B](fa: Arg[A])(f: A => B): Arg[B] = 
+    override def map[A, B](fa: Arg[A])(f: A => B): Arg[B] =
       Arg(fa.entries, fa.decode.andThen(_.map(f)))
 
     override def ap[A, B](ff: Arg[A => B])(fa: Arg[A]): Arg[B] =

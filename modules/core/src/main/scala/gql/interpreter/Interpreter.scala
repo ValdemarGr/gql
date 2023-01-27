@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Valdemar Grange
+ * Copyright 2023 Valdemar Grange
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -380,22 +380,26 @@ class InterpreterImpl[F[_]](
       case alg: Effect[F, i, c] =>
         val f = alg.f
         val cursor = alg.stableUniqueEdgeName
-        inputs.parFlatTraverse { id =>
-          val runF = attemptTimed(cursor, e => EvalFailure.EffectResolution(id.node.cursor, Left(e), id.node.value)) {
-            id.traverse(f)
-          }
+        inputs
+          .parFlatTraverse { id =>
+            val runF = attemptTimed(cursor, e => EvalFailure.EffectResolution(id.node.cursor, Left(e), id.node.value)) {
+              id.traverse(f)
+            }
 
-          runF.map(Chain.fromOption(_))
-        }.flatMap(runEdgeCont(_, cont))
+            runF.map(Chain.fromOption(_))
+          }
+          .flatMap(runEdgeCont(_, cont))
       case Rethrow() =>
-        (inputs: Chain[IndexedData[Ior[String, C]]]).flatTraverse { id =>
-          val ior = id.sequence
-          WriterT.put[F, Chain[EvalFailure], Chain[IndexedData[C]]](
-            Chain.fromOption(ior.right)
-          )(
-            Chain.fromOption(ior.left.map(e => EvalFailure.Raised(id.node.cursor, e)))
-          )
-        }.flatMap(runEdgeCont(_, cont))
+        (inputs: Chain[IndexedData[Ior[String, C]]])
+          .flatTraverse { id =>
+            val ior = id.sequence
+            WriterT.put[F, Chain[EvalFailure], Chain[IndexedData[C]]](
+              Chain.fromOption(ior.right)
+            )(
+              Chain.fromOption(ior.left.map(e => EvalFailure.Raised(id.node.cursor, e)))
+            )
+          }
+          .flatMap(runEdgeCont(_, cont))
       case alg: Compose[F, ?, a, ?] =>
         val contR: StepCont[F, a, O] = StepCont.Continue[F, a, C, O](alg.right, cont)
         runStep[I, a, O](inputs, alg.left, contR)

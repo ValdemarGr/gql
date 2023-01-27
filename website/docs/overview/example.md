@@ -9,21 +9,21 @@ But also some unique features such as, herustic query planning and signals.
 The most important goals of gql is to be simple, predictable and composable.
 
 For this showcase, Star Wars will be our domain of choice:
-```scala
-sealed trait Episode
+```scala mdoc
+sealed trait Episode
 
 object Episode {
   case object NEWHOPE extends Episode
   case object EMPIRE extends Episode
   case object JEDI extends Episode
-}
+}
 
 trait Character {
   def id: String
   def name: Option[String]
   def friends: List[String]
   def appearsIn: List[Episode]
-}
+}
 
 final case class Human(
     id: String,
@@ -31,7 +31,7 @@ final case class Human(
     friends: List[String],
     appearsIn: List[Episode],
     homePlanet: Option[String]
-) extends Character
+) extends Character
 
 final case class Droid(
     id: String,
@@ -43,7 +43,7 @@ final case class Droid(
 ```
 
 Lets define where our data comes from:
-```scala
+```scala mdoc
 trait Repository[F[_]] {
   def getHero(episode: Option[Episode]): F[Character]
 
@@ -56,16 +56,16 @@ trait Repository[F[_]] {
 ```
 
 To construct the schema, we need some imports.
-```scala
-import gql._
-import gql.dsl._
-import gql.ast._
-import cats.effect._
+```scala mdoc
+import gql._
+import gql.dsl._
+import gql.ast._
+import cats.effect._
 import cats.implicits._
 ```
 
 Now we can define our schema:
-```scala
+```scala mdoc
 def schema[F[_]](implicit repo: Repository[F], F: Async[F]) = {
   implicit lazy val episode: Enum[F, Episode] = enumType[F, Episode](
     "Episode",
@@ -109,7 +109,7 @@ def schema[F[_]](implicit repo: Repository[F], F: Async[F]) = {
 ```
 
 Lets construct a simple in-memory repository:
-```scala
+```scala mdoc:silent
 val luke = Human(
   "1000",
   "Luke Skywalker".some,
@@ -193,7 +193,7 @@ implicit def repo: Repository[IO] = new Repository[IO] {
 ```
 
 Lets construct a query:
-```scala
+```scala mdoc
 def query = """
  query ExampleQuery {
    hero(episode: NEWHOPE) {
@@ -223,48 +223,14 @@ def query = """
 
 Now we can parse, plan and evaluate the query:
 
-```scala
+```scala mdoc:passthrough
+mdoc.IORunPrint(
 schema[IO]
   .map(Compiler[IO].compile(_, query))
-  .flatMap { case Right(Application.Query(run)) => run.map(_.asGraphQL) }
-// object[data -> {
-//   "c3po" : {
-//     "name" : "C-3PO"
-//   },
-//   "hero" : {
-//     "name" : "R2-D2",
-//     "__typename" : "Droid",
-//     "primaryFunction" : "Astromech",
-//     "id" : "2001",
-//     "friends" : [
-//       {
-//         "__typename" : "Human",
-//         "appearsIn" : [
-//           "NEWHOPE",
-//           "EMPIRE",
-//           "JEDI"
-//         ],
-//         "name" : "Luke Skywalker"
-//       },
-//       {
-//         "__typename" : "Human",
-//         "appearsIn" : [
-//           "NEWHOPE",
-//           "EMPIRE",
-//           "JEDI"
-//         ],
-//         "name" : "Han Solo"
-//       },
-//       {
-//         "__typename" : "Human",
-//         "appearsIn" : [
-//           "NEWHOPE",
-//           "EMPIRE",
-//           "JEDI"
-//         ],
-//         "name" : "Leia Organa"
-//       }
-//     ]
-//   }
-// }]
+  .flatMap { case Right(Application.Query(run)) => run.map(_.asGraphQL) }
+)("""
+schema[IO]
+  .map(Compiler[IO].compile(_, query))
+  .flatMap { case Right(Application.Query(run)) => run.map(_.asGraphQL) }
+""")
 ```

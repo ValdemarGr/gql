@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Valdemar Grange
+ * Copyright 2023 Valdemar Grange
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -113,7 +113,7 @@ object StarWarsSchema {
         "JEDI" -> enumVal(Episode.JEDI)
       )
 
-    lazy val characterFields = build[IO, Character]{ b => 
+    lazy val characterFields = build[IO, Character] { b =>
       b.fields(
         "id" -> lift(_.id),
         "name" -> lift(_.name),

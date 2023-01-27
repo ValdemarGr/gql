@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Valdemar Grange
+ * Copyright 2023 Valdemar Grange
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -173,7 +173,7 @@ object ast extends AstImplicits.Implicits {
   ) {
     def document(description: String): Field[F, I, T] = copy(description = Some(description))
 
-    def asAbstract: AbstractField[F, T] = 
+    def asAbstract: AbstractField[F, T] =
       AbstractField(NonEmptyChain.fromChain(PreparedQuery.collectFields(resolve.underlying)).map(_.nonEmptySequence), output, description)
 
     def contramap[I2](f: I2 => I): Field[F, I2, T] =

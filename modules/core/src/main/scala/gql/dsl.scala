@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Valdemar Grange
+ * Copyright 2023 Valdemar Grange
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ import gql.resolver._
 import cats.data._
 import scala.reflect.ClassTag
 
-object dsl { 
+object dsl {
   def tpeNel[F[_], A](
       name: String,
       entries: NonEmptyList[(String, Field[F, A, ?])]
@@ -62,15 +62,15 @@ object dsl {
 
   def arg[A](name: String, default: Value, description: String)(implicit tpe: => In[A]): Arg[A] =
     Arg.make[A](ArgValue(name, Eval.later(tpe), Some(default), Some(description)))
-  /*
+
   final case class PartiallyAppliedArgFull[A](private val dummy: Boolean = false) extends AnyVal {
     def apply[B](name: String, default: Option[Value], description: Option[String])(
         f: ArgParam[A] => Either[String, B]
     )(implicit tpe: => In[A]): Arg[B] =
       Arg.makeFrom[A, B](ArgValue(name, Eval.later(tpe), default, description))(f)
-  }*/
+  }
 
-  //def argFull[A] = new PartiallyAppliedArgFull[A]
+  def argFull[A] = new PartiallyAppliedArgFull[A]
 
   object value {
     def scalar[F[_], A](value: A)(implicit tpe: => Scalar[F, A]) =
@@ -117,14 +117,14 @@ object dsl {
 
   final class FieldBuilder[F[_], I](private val dummy: Boolean = false) extends AnyVal {
     def tpe(
-      name: String,
-      hd: (String, Field[F, I, ?]),
-      tl: (String, Field[F, I, ?])*
+        name: String,
+        hd: (String, Field[F, I, ?]),
+        tl: (String, Field[F, I, ?])*
     ): Type[F, I] = gql.dsl.tpe[F, I](name, hd, tl: _*)
 
     def fields(
-      hd: (String, Field[F, I, ?]),
-      tl: (String, Field[F, I, ?])*
+        hd: (String, Field[F, I, ?]),
+        tl: (String, Field[F, I, ?])*
     ): NonEmptyList[(String, Field[F, I, ?])] = gql.dsl.fields[F, I](hd, tl: _*)
 
     def from[T](resolver: Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
@@ -141,7 +141,7 @@ object dsl {
     def eff[T](resolver: I => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
       Field(Resolver.eval(resolver), Eval.later(tpe))
   }
-  
+
   def builder[F[_], I] = new FieldBuilder[F, I]
 
   final class PartiallyAppliedFieldBuilder[F[_], I](private val dummy: Boolean = false) extends AnyVal {

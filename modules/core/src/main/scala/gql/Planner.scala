@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Valdemar Grange
+ * Copyright 2023 Valdemar Grange
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -69,15 +69,15 @@ object Planner {
     import PreparedStep._
     step match {
       case Lift(_) | Rethrow() | GetMeta(_) => right
-      case Compose(l, r)                   => costForStep[F, G](l, costForStep[F, G](r, right))
-      case alg: Skip[G, ?, ?]              => costForStep[F, G](alg.compute, right)
-      case alg: First[G, ?, ?, ?]          => costForStep[F, G](alg.step, right)
+      case Compose(l, r)                    => costForStep[F, G](l, costForStep[F, G](r, right))
+      case alg: Skip[G, ?, ?]               => costForStep[F, G](alg.compute, right)
+      case alg: First[G, ?, ?, ?]           => costForStep[F, G](alg.step, right)
       case Batch(_) | Effect(_, _) | Stream(_, _) =>
         val name = step match {
           case Batch(id)         => s"batch_$id"
           case Effect(_, cursor) => cursor.asString
           case Stream(_, cursor) => cursor.asString
-          case _ => ???
+          case _                 => ???
         }
 
         val costF = stats

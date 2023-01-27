@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Valdemar Grange
+ * Copyright 2023 Valdemar Grange
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -145,7 +145,7 @@ object PreparedQuery {
       compileStep[F, G, I2, O2](step, cursor append edge, meta)
 
     step match {
-      case Step.Alg.Lift(f)   => Used[F].pure(PreparedStep.Lift(f))
+      case Step.Alg.Lift(f)          => Used[F].pure(PreparedStep.Lift(f))
       case _: Step.Alg.Rethrow[G, i] => Used[F].pure(PreparedStep.Rethrow[G, i]())
       case alg: Step.Alg.Compose[G, i, a, o] =>
         val left = rec[i, a](alg.left, "left")
@@ -159,7 +159,7 @@ object PreparedQuery {
       case alg: Step.Alg.Batch[G, k, v] =>
         Used[F].pure(PreparedStep.Batch[G, k, v](alg.id))
       case alg: Step.Alg.First[G, i, o, c] =>
-        rec[i, o](alg.step, "first").map(s => PreparedStep.First[G,i,o,c](s))
+        rec[i, o](alg.step, "first").map(s => PreparedStep.First[G, i, o, c](s))
       case alg: Step.Alg.Argument[G, ?, a] =>
         Used
           .liftF(decodeFieldArgs[F, G, a](alg.arg, meta.args, meta.variables))

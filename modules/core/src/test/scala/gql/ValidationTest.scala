@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Valdemar Grange
+ * Copyright 2023 Valdemar Grange
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -98,7 +98,7 @@ class ValidationTest extends CatsEffectSuite {
   case object CatchSub extends Catch
   implicit lazy val subtpe: Type[IO, CatchSub.type] = tpe[IO, CatchSub.type](
     "Subtype",
-    "one" -> lift(arg[String]("x")){ case _ => "heya" },
+    "one" -> lift(arg[String]("x")) { case _ => "heya" },
     "two" -> lift { case _ => "heya" },
     "three" -> lift(arg[Int]("x", value.scalar(43))) { case _ => "heya" },
     "four" -> lift(arg[Int]("x")) { case _ => "heya" }
@@ -110,7 +110,7 @@ class ValidationTest extends CatsEffectSuite {
       "badStructure" -> lift(_ => BadStructure()),
       "duplicateUnion" -> lift(_ => (MutuallyRecursive1(42): MutRecUnion)),
       "duplicateInterface" -> lift(_ => (MutuallyRecursive1(42): MutRecInterface)),
-      "sub" -> lift(_ => CatchSub),
+      "sub" -> lift(_ => CatchSub)
     )
   )
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Valdemar Grange
+ * Copyright 2023 Valdemar Grange
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -92,7 +92,7 @@ object Goi {
     shape.copy(query =
       shape.query.copy(
         fields = shape.query.fields.append[(String, Field[F, Q, ?])](
-          "node" -> field{
+          "node" -> field {
             Resolver
               .argument(arg[ID[String]]("id"))
               .evalMap { id =>

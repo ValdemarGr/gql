@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Valdemar Grange
+ * Copyright 2023 Valdemar Grange
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -77,7 +77,7 @@ object BatchAccumulator {
                     } else {
                       // Garbage collect
                       val m2 = m -- batchIds.toIterable
-                      val allElems: Chain[Batch[K ,V]] =
+                      val allElems: Chain[Batch[K, V]] =
                         batchIds.collect { case bid if bid != id => m(bid) } append Batch(complete, values)
                       (m2, Some(allElems))
                     }
@@ -96,7 +96,10 @@ object BatchAccumulator {
 
                     val allKeysSet: Set[K] = Set.from(allKeys.iterator)
 
-                    resolver.f(allKeysSet).timed.attempt
+                    resolver
+                      .f(allKeysSet)
+                      .timed
+                      .attempt
                       .flatMap[Option[Map[K, V]]] {
                         case Left(err) =>
                           val allCursors: Chain[Cursor] =
