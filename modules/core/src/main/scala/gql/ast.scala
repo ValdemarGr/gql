@@ -173,7 +173,8 @@ object ast extends AstImplicits.Implicits {
   ) {
     def document(description: String): Field[F, I, T] = copy(description = Some(description))
 
-    def asAbstract: AbstractField[F, T] = AbstractField(null, output, description)
+    def asAbstract: AbstractField[F, T] = 
+      AbstractField(PreparedQuery.collectFields(resolve.underlying).sequence, output, description)
 
     def contramap[I2](f: I2 => I): Field[F, I2, T] =
       Field(resolve.contramap(f), output, description)

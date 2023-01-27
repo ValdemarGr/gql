@@ -4,7 +4,7 @@ import cats.data._
 import cats._
 import gql._
 
-final class Resolver[F[_], -I, +O](private[resolver] val underlying: Step[F, I, O]) {
+final class Resolver[F[_], -I, +O](private[gql] val underlying: Step[F, I, O]) {
   def andThen[O2](that: Resolver[F, O, O2]): Resolver[F, I, O2] =
     new Resolver(Step.compose(underlying, that.underlying))
 

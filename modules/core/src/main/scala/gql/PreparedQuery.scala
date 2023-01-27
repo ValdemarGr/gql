@@ -71,20 +71,20 @@ object PreparedQuery {
   object PreparedStep {
     final case class Lift[F[_], I, O](f: I => O) extends AnyRef with PreparedStep[F, I, O]
     final case class Effect[F[_], I, O](
-      f: I => F[O],
-      stableUniqueEdgeName: UniqueEdgeCursor
-    ) extends AnyRef with PreparedStep[F, I, O]
+        f: I => F[O],
+        stableUniqueEdgeName: UniqueEdgeCursor
+    ) extends AnyRef
+        with PreparedStep[F, I, O]
     final case class Rethrow[F[_], I]() extends AnyRef with PreparedStep[F, Ior[String, I], I]
     final case class Compose[F[_], I, A, O](left: PreparedStep[F, I, A], right: PreparedStep[F, A, O])
         extends AnyRef
         with PreparedStep[F, I, O]
     final case class Stream[F[_], I, O](
-      f: I => fs2.Stream[F, O],
-      stableUniqueEdgeName: UniqueEdgeCursor
-    ) extends AnyRef with PreparedStep[F, I, O]
-    final case class Skip[F[_], I, O](compute: PreparedStep[F, I, O])
-        extends AnyRef
-        with PreparedStep[F, Either[I, O], O]
+        f: I => fs2.Stream[F, O],
+        stableUniqueEdgeName: UniqueEdgeCursor
+    ) extends AnyRef
+        with PreparedStep[F, I, O]
+    final case class Skip[F[_], I, O](compute: PreparedStep[F, I, O]) extends AnyRef with PreparedStep[F, Either[I, O], O]
     final case class GetMeta[F[_], I](meta: PreparedMeta) extends AnyRef with PreparedStep[F, I, Meta]
     final case class First[F[_], I, O, C](step: PreparedStep[F, I, O]) extends AnyRef with PreparedStep[F, (I, C), (O, C)]
     final case class Batch[F[_], K, V](id: Int) extends AnyRef with PreparedStep[F, Set[K], Map[K, V]]
@@ -146,13 +146,13 @@ object PreparedQuery {
 
     step match {
       case Step.Alg.Lift(f)   => Used[F].pure(PreparedStep.Lift(f))
-      case Step.Alg.Rethrow()  => Used[F].pure(PreparedStep.Rethrow())
+      case Step.Alg.Rethrow() => Used[F].pure(PreparedStep.Rethrow())
       case alg: Step.Alg.Compose[G, i, a, o] =>
         val left = rec[i, a](alg.left, "left")
         val right = rec[a, o](alg.right, "right")
         (left, right).parTupled.map { case (l, r) => PreparedStep.Compose(l, r) }
-      case Step.Alg.Effect(f) =>  Used[F].pure(PreparedStep.Effect(f, cursor))
-      case Step.Alg.Stream(f) =>  Used[F].pure(PreparedStep.Stream(f, cursor))
+      case Step.Alg.Effect(f) => Used[F].pure(PreparedStep.Effect(f, cursor))
+      case Step.Alg.Stream(f) => Used[F].pure(PreparedStep.Stream(f, cursor))
       case alg: Step.Alg.Skip[G, i, o] =>
         rec[i, o](alg.compute, "skip").map(s => PreparedStep.Skip(s))
       case Step.Alg.GetMeta() => Used[F].pure(PreparedStep.GetMeta(meta))
@@ -167,6 +167,15 @@ object PreparedQuery {
           WriterT.tell(alg.arg.entries.map(_.name).toList.toSet)
     }
   }
+
+  def collectFields[G[_]](step: Step[G, ?, ?]): Chain[Arg[Any]] =
+    step match {
+      case Step.Alg.Argument(a)   => Chain.one(a)
+      case Step.Alg.First(s)      => collectFields(s)
+      case Step.Alg.Skip(s)       => collectFields(s)
+      case Step.Alg.Compose(l, r) => collectFields(l) ++ collectFields(r)
+      case _                      => Chain.empty
+    }
 
   def underlyingOutputTypename[G[_]](ot: Out[G, ?]): String = (ot: @unchecked) match {
     case Enum(name, _, _)         => name
@@ -741,7 +750,6 @@ object PreparedQuery {
   def prepareField2[F[_]: Parallel, G[_]: Applicative, I, T](
       fi: FieldInfo[G],
       field: Field[G, I, T],
-      step: Step[G, I, T],
       currentTypename: String,
       variableMap: VariableMap,
       discoveryState: SchemaShape.DiscoveryState[G]
@@ -753,6 +761,7 @@ object PreparedQuery {
     val tpe = field.output.value
     val selCaret = fi.caret
     val name = fi.name
+    val step = field.resolve.underlying
 
     val rootUniqueName = UniqueEdgeCursor(s"${currentTypename}_$name")
 
@@ -765,7 +774,7 @@ object PreparedQuery {
     def compileCont[A](t: Out[G, A], cursor: UniqueEdgeCursor): Used[F, Prepared2[G, A]] =
       (t, fi.tpe.selections.toNel) match {
         case (out: gql.ast.OutArr[G, a, c, b], _) =>
-          val innerStep: Step[G, a, b] = null
+          val innerStep: Step[G, a, b] = out.resolver.underlying
           val nc = cursor append "array"
           val compiledStep = compileStep[F, G, a, b](innerStep, nc, meta)
           val compiledCont = compileCont[b](out.of, nc)
@@ -773,7 +782,7 @@ object PreparedQuery {
             PreparedList2(PreparedCont2(s, c), out.toSeq)
           }
         case (out: gql.ast.OutOpt[G, a, b], _) =>
-          val innerStep: Step[G, a, b] = null
+          val innerStep: Step[G, a, b] = out.resolver.underlying
           val nc = cursor append "option"
           val compiledStep = compileStep[F, G, a, b](innerStep, nc, meta)
           val compiledCont = compileCont[b](out.of, nc)
@@ -781,10 +790,10 @@ object PreparedQuery {
             PreparedOption2(PreparedCont2(s, c))
           }
         case (s: Selectable[G, a], Some(ss)) =>
-          Used.liftF{
-          prepareSelectable2[F, G, a](s, ss, variableMap, discoveryState)
-            .map(Selection2(_))
-            }
+          Used.liftF {
+            prepareSelectable2[F, G, a](s, ss, variableMap, discoveryState)
+              .map(Selection2(_))
+          }
         case (e: Enum[G, a], None) =>
           Used[F].pure(PreparedLeaf2(e.name, x => Json.fromString(e.revm(x))))
         case (s: Scalar[G, a], None) =>
@@ -828,7 +837,7 @@ object PreparedQuery {
         val fa: F[NonEmptyList[PreparedDataField2[G, b]]] = impl.selections.parTraverse { sel =>
           sel.field match {
             case field: Field[G, b2, t] =>
-              prepareField2[F, G, b, t](sel.info, field, null, impl.leaf.name, variableMap, discoveryState)
+              prepareField2[F, G, b, t](sel.info, field, impl.leaf.name, variableMap, discoveryState)
           }
         }
 

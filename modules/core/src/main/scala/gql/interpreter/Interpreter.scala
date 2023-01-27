@@ -78,7 +78,7 @@ object Interpreter {
       schemaState: SchemaState[F],
       openTails: Boolean
   )(implicit F: Async[F], planner: Planner[F]): fs2.Stream[F, (Chain[EvalFailure], JsonObject)] =
-    StreamSupervisor[F, Any](openTails).flatMap { implicit streamSup =>
+    StreamSupervisor[F](openTails).flatMap { implicit streamSup =>
       fs2.Stream.resource(Supervisor[F]).flatMap { sup =>
         val changeStream = streamSup.changes
           .map(_.toList.reverse.distinctBy { case (tok, _, _) => tok }.toNel)
@@ -111,7 +111,7 @@ object Interpreter {
             accumulator <- BatchAccumulator[F](schemaState, planned)
             res <-
               metas.parTraverse { case ri: RunInput[a, b] =>
-                StreamMetadataAccumulator[F, StreamMetadata[F, ?, ?], Any].flatMap { sma =>
+                StreamMetadataAccumulator[F, StreamMetadata[F, ?, ?]].flatMap { sma =>
                   val interpreter = new InterpreterImpl[F](sma, accumulator, sup)
                   interpreter
                     .runEdgeCont(Chain(ri.data), ri.cps)
@@ -121,7 +121,6 @@ object Interpreter {
                       (fail, j)
                     }
                     .flatMap { case (fail, j) =>
-                      // All the cursors in sma should be prefixed with the start position
                       sma.getState.map((fail, j, _))
                     }
                 }
@@ -323,29 +322,15 @@ object StepCont {
 }
 
 class InterpreterImpl[F[_]](
-    streamAccumulator: StreamMetadataAccumulator[F, Interpreter.StreamMetadata[F, ?, ?], Any],
+    streamAccumulator: StreamMetadataAccumulator[F, Interpreter.StreamMetadata[F, ?, ?]],
     batchAccumulator: BatchAccumulator[F],
     sup: Supervisor[F]
 )(implicit F: Async[F], stats: Statistics[F])
     extends Interpreter[F] {
   val W = Async[W]
-  type E = Chain[EvalNode[Any]]
   val lift: F ~> W = WriterT.liftK[F, Chain[EvalFailure]]
 
   def failM[A](e: EvalFailure)(implicit M: Monoid[A]): W[A] = WriterT.put(M.empty)(Chain.one(e))
-
-  def attemptUser[A](fa: F[IorNec[String, A]], constructor: Either[Throwable, String] => EvalFailure)(implicit
-      M: Monoid[A]
-  ): W[A] =
-    lift(fa).attempt.flatMap {
-      case Left(ex)              => WriterT.put(M.empty)(Chain(constructor(Left(ex))))
-      case Right(Ior.Both(l, r)) => WriterT.put(r)(l.toChain.map(x => constructor(Right(x))))
-      case Right(Ior.Left(l))    => WriterT.put(M.empty)(l.toChain.map(x => constructor(Right(x))))
-      case Right(Ior.Right(r))   => WriterT.put(r)(Chain.empty)
-    }
-
-  def attemptUserE(fa: F[IorNec[String, E]], constructor: Either[Throwable, String] => EvalFailure): W[E] =
-    attemptUser[E](fa, constructor)
 
   def submit(name: String, duration: FiniteDuration, size: Int): F[Unit] =
     sup.supervise(stats.updateStats(name, duration, size)).void

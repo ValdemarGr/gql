@@ -14,13 +14,12 @@
  * limitations under the License.
  */
 package gql
-
 import cats.data._
 import cats._
 import cats.implicits._
 import gql.ast._
 
-final case class Arg[A](
+final case class Arg[+A](
     entries: Chain[ArgValue[?]],
     decode: Map[String, ArgParam[?]] => Either[String, A]
 ) {

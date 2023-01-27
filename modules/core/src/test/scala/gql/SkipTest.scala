@@ -16,7 +16,7 @@ class SkipTest extends CatsEffectSuite {
         "num" -> b(
           _.evalMap { _ =>
             effectState.get.flatMap {
-              case None    => IO(Left(10))
+              case None    => IO(Left(20))
               case Some(i) => IO.pure(Right(i))
             }
           }.skipThatWith(_.evalMap(i => effectState.modify(_ => (Some(i), i))))

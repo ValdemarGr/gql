@@ -19,10 +19,8 @@ import cats._
 import cats.implicits._
 import io.circe._
 import cats.effect._
-import gql.parser.{QueryParser => P}
 import gql.interpreter.Interpreter
 import cats.data._
-import gql.parser.QueryParser
 
 sealed trait CompilationError {
   def asGraphQL: JsonObject
