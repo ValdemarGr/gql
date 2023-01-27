@@ -151,10 +151,10 @@ object dsl {
   def build[F[_], I] = new PartiallyAppliedFieldBuilder[F, I]
 
   def abst[F[_], T](implicit tpe: => Out[F, T]): AbstractField[F, T] =
-    AbstractField[F, T](Applicative[Arg].unit, Eval.later(tpe))
+    AbstractField[F, T](None, Eval.later(tpe))
 
   def abstWith[F[_], T, A](arg: Arg[A])(implicit tpe: => Out[F, T]): AbstractField[F, T] =
-    AbstractField[F, T](arg, Eval.later(tpe))
+    AbstractField[F, T](Some(arg), Eval.later(tpe))
 
   def abstGroup[F[_]](
       hd: (String, AbstractField[F, ?]),

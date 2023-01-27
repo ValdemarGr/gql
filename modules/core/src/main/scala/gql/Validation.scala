@@ -334,7 +334,7 @@ object Validation {
       fields.traverse_ { case (name, field) =>
         useEdge(Edge.Field(name)) {
           validateFieldName[F, G](name) >>
-            validateArg[F, G](field.arg, discovery) >>
+            field.arg.traverse_(validateArg[F, G](_, discovery)) >>
             validateOutput[F, G](field.output.value, discovery)
         }
       }
@@ -375,8 +375,8 @@ object Validation {
                       raise[F, G](Error.WrongInterfaceFieldType(tl.name, i.value.name, k, expectedStr, actualStr))
                     else G.unit
 
-                  val actualArg: Chain[ArgValue[?]] = f.arg.entries
-                  val expectedArg: Chain[ArgValue[?]] = v.arg.entries
+                  val actualArg: Chain[ArgValue[?]] = Chain.fromOption(f.arg).flatMap(_.entries.toChain)
+                  val expectedArg: Chain[ArgValue[?]] = Chain.fromOption(v.arg).flatMap(_.entries.toChain)
                   val comb = actualArg.map(x => x.name -> x) align expectedArg.map(x => x.name -> x)
                   val verifyArgsF = comb.traverse_ {
                     // Only actual; shouldn't occur

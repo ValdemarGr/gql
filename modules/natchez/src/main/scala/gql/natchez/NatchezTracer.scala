@@ -96,7 +96,7 @@ object NatchezTracer {
 
   def tracePlanner[F[_]: Trace](planner: Planner[F])(implicit F: Monad[F]): Planner[F] =
     new Planner[F] {
-      override def plan(naive: Planner.NodeTree2): F[Planner.NodeTree2] =
+      override def plan(naive: Planner.NodeTree): F[Planner.NodeTree] =
         Trace[F].span("graphql.planner") {
           Trace[F].put("graphql.planner.naive.totalcost" -> naive.totalCost.toString()) >> {
             val optimizedF = Trace[F].span("graphql.planner.planning") {

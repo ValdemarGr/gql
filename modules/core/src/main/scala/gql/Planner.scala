@@ -24,11 +24,11 @@ import scala.io.AnsiColor
 import cats.mtl.Stateful
 
 trait Planner[F[_]] { self =>
-  def plan(naive: Planner.NodeTree2): F[Planner.NodeTree2]
+  def plan(naive: Planner.NodeTree): F[Planner.NodeTree]
 
   def mapK[G[_]](fk: F ~> G): Planner[G] =
     new Planner[G] {
-      def plan(naive: Planner.NodeTree2): G[Planner.NodeTree2] = fk(self.plan(naive))
+      def plan(naive: Planner.NodeTree): G[Planner.NodeTree] = fk(self.plan(naive))
     }
 }
 
@@ -112,7 +112,7 @@ object Planner {
     }
   }
 
-  def costForFields2[F[_], G[_]](prepared: NonEmptyList[PreparedQuery.PreparedField2[G, ?]])(implicit
+  def costForFields2[F[_], G[_]](prepared: NonEmptyList[PreparedQuery.PreparedField[G, ?]])(implicit
       F: Monad[F],
       stats: Statistics[F],
       S: Stateful[F, TraversalState]
@@ -120,29 +120,29 @@ object Planner {
     prepared.toList.flatTraverse { pf =>
       scopeCost {
         pf match {
-          case PreparedDataField2(_, _, cont)          => costForCont2[F, G](cont.edges, cont.cont)
-          case PreparedSpecification2(_, _, selection) => costForFields2[F, G](selection)
+          case PreparedDataField(_, _, cont)          => costForCont2[F, G](cont.edges, cont.cont)
+          case PreparedSpecification(_, _, selection) => costForFields2[F, G](selection)
         }
       }
     }
   }
 
-  def costForPrepared2[F[_]: Statistics, G[_]](p: Prepared2[G, ?])(implicit
+  def costForPrepared[F[_]: Statistics, G[_]](p: Prepared[G, ?])(implicit
       F: Monad[F],
       S: Stateful[F, TraversalState]
   ): F[List[Node2]] =
     p match {
-      case PreparedLeaf2(_, _)          => F.pure(Nil)
-      case Selection2(fields)           => costForFields2[F, G](fields).map(_.toList)
-      case l: PreparedList2[G, ?, ?, ?] => costForCont2[F, G](l.of.edges, l.of.cont)
-      case o: PreparedOption2[G, ?, ?]  => costForCont2[F, G](o.of.edges, o.of.cont)
+      case PreparedLeaf(_, _)          => F.pure(Nil)
+      case Selection(fields)           => costForFields2[F, G](fields).map(_.toList)
+      case l: PreparedList[G, ?, ?, ?] => costForCont2[F, G](l.of.edges, l.of.cont)
+      case o: PreparedOption[G, ?, ?]  => costForCont2[F, G](o.of.edges, o.of.cont)
     }
 
   def costForCont2[F[_]: Statistics: Monad, G[_]](
       edges: PreparedStep[G, ?, ?],
-      cont: Prepared2[G, ?]
+      cont: Prepared[G, ?]
   )(implicit S: Stateful[F, TraversalState]): F[List[Node2]] =
-    costForStep[F, G](edges, costForPrepared2[F, G](cont))
+    costForStep[F, G](edges, costForPrepared[F, G](cont))
 
   type H[F[_], A] = StateT[F, TraversalState, A]
   def liftStatistics[F[_]: Applicative](stats: Statistics[F]): Statistics[H[F, *]] =
@@ -151,11 +151,11 @@ object Planner {
   def runCostAnalysisFor[F[_]: Monad, A](f: Statistics[H[F, *]] => H[F, A])(implicit stats: Statistics[F]): F[A] =
     f(liftStatistics[F](stats)).runA(TraversalState(1, 0d))
 
-  def runCostAnalysis[F[_]: Monad: Statistics](f: Statistics[H[F, *]] => H[F, List[Node2]]): F[NodeTree2] =
-    runCostAnalysisFor[F, List[Node2]](f).map(NodeTree2(_))
+  def runCostAnalysis[F[_]: Monad: Statistics](f: Statistics[H[F, *]] => H[F, List[Node2]]): F[NodeTree] =
+    runCostAnalysisFor[F, List[Node2]](f).map(NodeTree(_))
 
   def apply[F[_]](implicit F: Applicative[F]) = new Planner[F] {
-    def plan(tree: NodeTree2): F[NodeTree2] = {
+    def plan(tree: NodeTree): F[NodeTree] = {
       tree.root.toNel match {
         case None => F.pure(tree.set(tree.root))
         case Some(_) =>
@@ -215,7 +215,7 @@ object Planner {
             }._2
               .toMap
 
-          val ordered = NodeTree2(movedDown).flattened.sortBy(_.end)
+          val ordered = NodeTree(movedDown).flattened.sortBy(_.end)
 
           val movedUp = moveUp(ordered)
 
@@ -229,12 +229,12 @@ object Planner {
       }
     }
   }
-  final case class NodeTree2(
+  final case class NodeTree(
       root: List[Node2],
-      source: Option[NodeTree2] = None
+      source: Option[NodeTree] = None
   ) {
-    def set(newRoot: List[Node2]): NodeTree2 =
-      NodeTree2(newRoot, Some(this))
+    def set(newRoot: List[Node2]): NodeTree =
+      NodeTree(newRoot, Some(this))
 
     lazy val flattened: List[Node2] = {
       def go(xs: List[Node2]): Eval[List[Node2]] = Eval.defer {
@@ -331,7 +331,7 @@ object Planner {
         go(default.root, displaced.map(_.root.map(x => x.id -> x).toMap).getOrElse(Map.empty))
     }
   }
-  object NodeTree2 {
-    implicit lazy val showForNodeTree: Show[NodeTree2] = Show.show[NodeTree2](_.show(showImprovement = true))
+  object NodeTree {
+    implicit lazy val showForNodeTree: Show[NodeTree] = Show.show[NodeTree](_.show(showImprovement = true))
   }
 }

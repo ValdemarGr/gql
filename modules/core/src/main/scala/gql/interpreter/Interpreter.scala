@@ -42,11 +42,11 @@ trait Interpreter[F[_]] {
       cont: StepCont[F, I, O]
   ): W[Chain[(Int, Json)]]
 
-  def runFields[I](dfs: NonEmptyList[PreparedField2[F, I]], in: Chain[EvalNode[I]]): W[Chain[Map[String, Json]]]
+  def runFields[I](dfs: NonEmptyList[PreparedField[F, I]], in: Chain[EvalNode[I]]): W[Chain[Map[String, Json]]]
 
-  def startNext[I](s: Prepared2[F, I], in: Chain[EvalNode[I]]): W[Chain[Json]]
+  def startNext[I](s: Prepared[F, I], in: Chain[EvalNode[I]]): W[Chain[Json]]
 
-  def runDataField[I](df: PreparedDataField2[F, I], input: Chain[EvalNode[I]]): W[Chain[Json]]
+  def runDataField[I](df: PreparedDataField[F, I], input: Chain[EvalNode[I]]): W[Chain[Json]]
 }
 
 object Interpreter {
@@ -74,7 +74,7 @@ object Interpreter {
 
   def constructStream[F[_]: Statistics, A](
       rootInput: A,
-      rootSel: NonEmptyList[PreparedField2[F, A]],
+      rootSel: NonEmptyList[PreparedField[F, A]],
       schemaState: SchemaState[F],
       openTails: Boolean
   )(implicit F: Async[F], planner: Planner[F]): fs2.Stream[F, (Chain[EvalFailure], JsonObject)] =
@@ -98,7 +98,7 @@ object Interpreter {
                 Planner.runCostAnalysisFor[F, List[Planner.Node2]] { implicit stats2 =>
                   def contCost(step: StepCont[F, ?, ?]): Planner.H[F, List[Planner.Node2]] =
                     step match {
-                      case d: StepCont.Done[F, ?]           => Planner.costForPrepared2[Planner.H[F, *], F](d.prep)
+                      case d: StepCont.Done[F, i]           => Planner.costForPrepared[Planner.H[F, *], F](d.prep)
                       case c: StepCont.Continue[F, ?, ?, ?] => Planner.costForStep[Planner.H[F, *], F](c.step, contCost(c.next))
                       case StepCont.AppendClosure(_, next)  => contCost(next)
                       case StepCont.TupleWith(_, next)      => contCost(next)
@@ -106,7 +106,7 @@ object Interpreter {
                   contCost(ri.cps)
                 }
               }
-              .map(Planner.NodeTree2(_))
+              .map(Planner.NodeTree(_))
             planned <- planner.plan(costTree)
             accumulator <- BatchAccumulator[F](schemaState, planned)
             res <-
@@ -130,7 +130,7 @@ object Interpreter {
             allErrors = Chain.fromSeq(res.toList).flatMap { case (errs, _, _) => errs } ++ Chain.fromSeq(bes)
           } yield (allErrors, res.map { case (_, j, _) => j }, smas)
 
-        val inital = RunInput(IndexedData(0, EvalNode.empty(rootInput)), StepCont.Done(PreparedQuery.Selection2(rootSel)))
+        val inital = RunInput(IndexedData(0, EvalNode.empty(rootInput)), StepCont.Done(PreparedQuery.Selection(rootSel)))
 
         fs2.Stream
           .eval(evaluate(NonEmptyList.one(inital)))
@@ -231,14 +231,14 @@ object Interpreter {
 
   def runStreamed[F[_]: Statistics: Planner, A](
       rootInput: A,
-      rootSel: NonEmptyList[PreparedField2[F, A]],
+      rootSel: NonEmptyList[PreparedField[F, A]],
       schemaState: SchemaState[F]
   )(implicit F: Async[F]): fs2.Stream[F, (Chain[EvalFailure], JsonObject)] =
     constructStream[F, A](rootInput, rootSel, schemaState, true)
 
   def runSync[F[_]: Async: Statistics: Planner, A](
       rootInput: A,
-      rootSel: NonEmptyList[PreparedField2[F, A]],
+      rootSel: NonEmptyList[PreparedField[F, A]],
       schemaState: SchemaState[F]
   ): F[(Chain[EvalFailure], JsonObject)] =
     constructStream[F, A](rootInput, rootSel, schemaState, false).take(1).compile.lastOrError
@@ -292,7 +292,7 @@ object IndexedData {
 
 sealed trait StepCont[F[_], -I, +O]
 object StepCont {
-  final case class Done[F[_], I](prep: Prepared2[F, I]) extends StepCont[F, I, Json]
+  final case class Done[F[_], I](prep: Prepared[F, I]) extends StepCont[F, I, Json]
   final case class Continue[F[_], I, C, O](
       step: PreparedStep[F, I, C],
       next: StepCont[F, C, O]
@@ -314,10 +314,10 @@ object StepCont {
 
   def visit[F[_], I, O](cont: StepCont[F, I, O])(visitor: Visitor[F]): StepCont[F, I, O] =
     cont match {
-      case x: Continue[F, I, c, O]   => visitor.visitContinue(x.copy(next = visit(x.next)(visitor)))
-      case x: AppendClosure[F, I, O] => visitor.visitAppendClosure(x.copy(next = visit(x.next)(visitor)))
-      case x: TupleWith[F, I, c, O]  => visitor.visitTupleWith(x.copy(next = visit(x.next)(visitor)))
-      case x: Done[F, I]             => x
+      case x: Continue[F, i, c, o]   => visitor.visitContinue(x.copy(next = visit(x.next)(visitor)))
+      case x: AppendClosure[F, i, o] => visitor.visitAppendClosure(x.copy(next = visit(x.next)(visitor)))
+      case x: TupleWith[F, i, c, o]  => visitor.visitTupleWith(x.copy(next = visit(x.next)(visitor)))
+      case _: Done[?, ?]             => cont
     }
 }
 
@@ -344,8 +344,8 @@ class InterpreterImpl[F[_]](
       case StepCont.AppendClosure(xs, next) => runEdgeCont(cs ++ xs, next)
       case t: StepCont.TupleWith[F, i, c, ?] =>
         runEdgeCont[(i, c), O](cs.map(id => id.map(i => (i, t.m(id.index)))), t.next)
-      case d: StepCont.Done[F, ?] =>
-        startNext(d.prep, cs.map(_.node))
+      case StepCont.Done(prep) =>
+        startNext(prep, cs.map(_.node))
           .map(_.zipWith(cs) { case (j, IndexedData(i, _)) => (i, j) })
     }
 
@@ -435,7 +435,7 @@ class InterpreterImpl[F[_]](
           }
         }
         val force: Chain[IndexedData[i]] = force0
-        val contR = StepCont.AppendClosure(skip, cont)
+        val contR = StepCont.AppendClosure[F, c, O](skip, cont)
         runStep[i, c, O](force, alg.compute, contR)
       case GetMeta(pm) =>
         runNext(inputs.map(in => in as Meta(in.node.cursor, pm.alias, pm.args, pm.variables)))
@@ -445,7 +445,7 @@ class InterpreterImpl[F[_]](
         val inputMap: Map[Int, c2] =
           inputs.map(in => in.index -> (in.map { case (_, c2) => c2 }.node.value)).toIterable.toMap
 
-        val base: StepCont[F, (o2, c2), O] = cont
+        val base: StepCont[F, C, O] = cont
         val contR = StepCont.TupleWith[F, o2, c2, O](
           inputMap,
           base
@@ -460,7 +460,7 @@ class InterpreterImpl[F[_]](
             case Some(m) =>
               inputs.map { id =>
                 id.map { keys =>
-                  Chain.fromIterableOnce(keys).mapFilter(k => m.get(k) tupleLeft k).iterator.toMap
+                  Chain.fromIterableOnce[k](keys).mapFilter(k => m.get(k) tupleLeft k).iterator.toMap
                 }
               }
           }
@@ -471,7 +471,7 @@ class InterpreterImpl[F[_]](
   def runEdge[I, O](
       inputs: Chain[EvalNode[I]],
       edges: PreparedStep[F, I, O],
-      cont: Prepared2[F, O]
+      cont: Prepared[F, O]
   ): W[Chain[Json]] = {
     val indexed = inputs.zipWithIndex.map { case (en, i) => IndexedData(i, en) }
     runStep(indexed, edges, StepCont.Done(cont))
@@ -481,9 +481,9 @@ class InterpreterImpl[F[_]](
       }
   }
 
-  def runDataField[I](df: PreparedDataField2[F, I], in: Chain[EvalNode[I]]): W[Chain[Json]] =
+  def runDataField[I](df: PreparedDataField[F, I], in: Chain[EvalNode[I]]): W[Chain[Json]] =
     df.cont match {
-      case cont: PreparedCont2[F, i, a] =>
+      case cont: PreparedCont[F, i, a] =>
         runEdge[i, a](
           in.map(_.modify(_.field(df.outputName))),
           cont.edges,
@@ -496,11 +496,11 @@ class InterpreterImpl[F[_]](
   def unflatten[A](ns: Vector[Int], dat: Vector[A]): Vector[Vector[A]] =
     ns.mapAccumulate(dat)((ds, n) => ds.splitAt(n).swap)._2
 
-  def runFields[I](dfs: NonEmptyList[PreparedField2[F, I]], in: Chain[EvalNode[I]]): W[Chain[Map[String, Json]]] =
+  def runFields[I](dfs: NonEmptyList[PreparedField[F, I]], in: Chain[EvalNode[I]]): W[Chain[Map[String, Json]]] =
     Chain
       .fromSeq(dfs.toList)
       .parFlatTraverse {
-        case PreparedSpecification2(_, specify, selection) =>
+        case PreparedSpecification(_, specify, selection) =>
           // Partition into what inputs satisfy the fragment and what don't
           // Run the ones that do
           // Then re-build an output, padding every empty output
@@ -515,7 +515,7 @@ class InterpreterImpl[F[_]](
                 .map(_.foldLeft(Map.empty[String, Json])(_ ++ _))
             }
           }).map(Chain.fromSeq)
-        case df @ PreparedDataField2(_, _, _) =>
+        case df @ PreparedDataField(_, _, _) =>
           runDataField(df, in)
             .map(_.map(j => Map(df.outputName -> j)))
             .map(Chain(_))
@@ -529,11 +529,11 @@ class InterpreterImpl[F[_]](
       .map(_.toIterable.map(_.toIterable).transpose.map(_.foldLeft(Map.empty[String, Json])(_ ++ _)))
       .map(Chain.fromIterableOnce)
 
-  def startNext[I](s: Prepared2[F, I], in: Chain[EvalNode[I]]): W[Chain[Json]] = W.defer {
+  def startNext[I](s: Prepared[F, I], in: Chain[EvalNode[I]]): W[Chain[Json]] = W.defer {
     s match {
-      case PreparedLeaf2(_, enc) => W.pure(in.map(x => enc(x.value)))
-      case Selection2(fields)    => runFields(fields, in).map(_.map(JsonObject.fromMap(_).asJson))
-      case s: PreparedList2[F, a, ?, b] =>
+      case PreparedLeaf(_, enc) => W.pure(in.map(x => enc(x.value)))
+      case Selection(fields)    => runFields(fields, in).map(_.map(JsonObject.fromMap(_).asJson))
+      case s: PreparedList[F, a, ?, b] =>
         val of = s.of
         val toSeq = s.toSeq
         val partedInput = in.map(x => Chain.fromSeq(toSeq(x.value)).mapWithIndex((y, i) => x.succeed(y, _.index(i))))
@@ -542,9 +542,9 @@ class InterpreterImpl[F[_]](
           val out = unflatten(partedInput.map(_.size.toInt).toVector, result.toVector)
           Chain.fromSeq(out.map(Json.fromValues))
         }
-      case s: PreparedOption2[F, i, o] =>
+      case s: PreparedOption[F, i, ?] =>
         val of = s.of
-        val partedInput = in.map(nv => nv.setValue(nv.value))
+        val partedInput: Chain[EvalNode[Option[i]]] = in.map(nv => nv.setValue(nv.value))
         runEdge(partedInput.collect { case EvalNode(c, Some(x)) => EvalNode(c, x) }, of.edges, of.cont)
           .map { result =>
             Chain.fromSeq {

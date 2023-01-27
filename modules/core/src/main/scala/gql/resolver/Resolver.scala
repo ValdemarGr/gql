@@ -105,7 +105,7 @@ object Resolver extends ResolverInstances {
 
 trait ResolverInstances {
   import cats.arrow._
-  implicit def arrowForResolver[F[_]] = new Arrow[Resolver[F, *, *]] {
+  implicit def arrowForResolver[F[_]]: Arrow[Resolver[F, *, *]] = new Arrow[Resolver[F, *, *]] {
     override def compose[A, B, C](f: Resolver[F, B, C], g: Resolver[F, A, B]): Resolver[F, A, C] =
       f.compose(g)
 
@@ -115,7 +115,7 @@ trait ResolverInstances {
     override def lift[A, B](f: A => B): Resolver[F, A, B] = Resolver.lift(f)
   }
 
-  implicit def applicativeForResolver[F[_], I] = new Applicative[Resolver[F, I, *]] {
+  implicit def applicativeForResolver[F[_], I]: Applicative[Resolver[F, I, *]] = new Applicative[Resolver[F, I, *]] {
     override def ap[A, B](ff: Resolver[F, I, A => B])(fa: Resolver[F, I, A]): Resolver[F, I, B] =
       ff.tupleIn[I] andThen
         fa

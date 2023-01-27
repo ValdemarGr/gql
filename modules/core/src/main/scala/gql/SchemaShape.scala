@@ -125,7 +125,7 @@ object SchemaShape {
             def handleFields(o: ObjectLike[F, ?]): G[Unit] =
               o.abstractFields.traverse_ { case (_, x) =>
                 goOutput[G](x.output.value) >>
-                  x.arg.entries.traverse_(x => goInput[G](x.input.value.asInstanceOf[In[Any]]))
+                  x.arg.traverse_(_.entries.traverse_(x => goInput[G](x.input.value.asInstanceOf[In[Any]])))
               }
 
             t match {
@@ -247,8 +247,7 @@ object SchemaShape {
     }
 
     def renderFieldDoc[G[_]](name: String, field: AbstractField[G, ?]): Doc = {
-      val args = NonEmptyChain
-        .fromChain(field.arg.entries)
+      val args = field.arg.map(_.entries)
         .map(nec =>
           Doc.intercalate(Doc.comma + Doc.lineOrSpace, nec.toList.map(renderArgValueDoc)).tightBracketBy(Doc.char('('), Doc.char(')'))
         )
@@ -400,7 +399,7 @@ object SchemaShape {
       "__Field",
       "name" -> lift(_.name),
       "description" -> lift(_.field.description),
-      "args" -> lift(inclDeprecated)((_, x) => x.field.arg.entries.toList),
+      "args" -> lift(inclDeprecated)((_, x) => x.field.arg.toList.flatMap(_.entries.toList)),
       "type" -> lift(x => TypeInfo.fromOutput(x.field.output.value)),
       "isDeprecated" -> lift(_ => false),
       "deprecationReason" -> lift(_ => Option.empty[String])

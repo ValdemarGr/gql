@@ -90,13 +90,13 @@ class ValidationTest extends CatsEffectSuite {
   )
 
   trait Catch
-  implicit lazy val baseInterface = interfaceFromNel[IO, Catch](
+  implicit lazy val baseInterface: Interface[IO, Catch] = interfaceFromNel[IO, Catch](
     "BaseInterface",
     sharedFields
   )
 
   case object CatchSub extends Catch
-  implicit lazy val subtpe = tpe[IO, CatchSub.type](
+  implicit lazy val subtpe: Type[IO, CatchSub.type] = tpe[IO, CatchSub.type](
     "Subtype",
     "one" -> lift(arg[String]("x")){ case _ => "heya" },
     "two" -> lift { case _ => "heya" },

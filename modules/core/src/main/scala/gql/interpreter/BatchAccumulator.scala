@@ -21,7 +21,6 @@ import cats.effect._
 import gql.Planner
 import cats.data._
 import gql.SchemaState
-import gql.PreparedQuery
 import gql.Statistics
 
 trait BatchAccumulator[F[_]] {
@@ -35,7 +34,7 @@ trait BatchAccumulator[F[_]] {
 }
 
 object BatchAccumulator {
-  def apply[F[_]](schemaState: SchemaState[F], plan: Planner.NodeTree2)(implicit
+  def apply[F[_]](schemaState: SchemaState[F], plan: Planner.NodeTree)(implicit
       F: Async[F],
       stats: Statistics[F]
   ): F[BatchAccumulator[F]] = {
@@ -48,7 +47,6 @@ object BatchAccumulator {
         complete: Option[Map[K, V]] => F[Unit],
         keys: Chain[(Cursor, Set[K])]
     )
-    type InputType = Chain[(Cursor, Set[BatchKey])]
     F.ref(List.empty[EvalFailure.BatchResolution]).flatMap { errState =>
       batches
         .flatTraverse { case (batcherKey, batch) =>
