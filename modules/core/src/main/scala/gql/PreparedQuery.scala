@@ -145,22 +145,22 @@ object PreparedQuery {
       compileStep[F, G, I2, O2](step, cursor append edge, meta)
 
     step match {
-      case Step.Alg.Lift(f)          => Used[F].pure(PreparedStep.Lift(f))
-      case _: Step.Alg.Rethrow[G, i] => Used[F].pure(PreparedStep.Rethrow[G, i]())
+      case Step.Alg.Lift(f)   => Used[F].pure(PreparedStep.Lift(f))
+      case Step.Alg.Rethrow() => Used[F].pure(PreparedStep.Rethrow[G, O]())
       case alg: Step.Alg.Compose[G, i, a, o] =>
         val left = rec[i, a](alg.left, "left")
         val right = rec[a, o](alg.right, "right")
         (left, right).parTupled.map { case (l, r) => PreparedStep.Compose(l, r) }
       case Step.Alg.Effect(f) => Used[F].pure(PreparedStep.Effect(f, cursor))
       case Step.Alg.Stream(f) => Used[F].pure(PreparedStep.Stream(f, cursor))
-      case alg: Step.Alg.Skip[G, i, o] =>
-        rec[i, o](alg.compute, "skip").map(s => PreparedStep.Skip(s))
+      case alg: Step.Alg.Skip[g, i, ?] =>
+        rec[i, O](alg.compute, "skip").map(s => PreparedStep.Skip(s))
       case Step.Alg.GetMeta() => Used[F].pure(PreparedStep.GetMeta(meta))
-      case alg: Step.Alg.Batch[G, k, v] =>
-        Used[F].pure(PreparedStep.Batch[G, k, v](alg.id))
-      case alg: Step.Alg.First[G, i, o, c] =>
+      case alg: Step.Alg.Batch[g, k, v] =>
+        Used[F].pure(PreparedStep.Batch[g, k, v](alg.id))
+      case alg: Step.Alg.First[g, i, o, c] =>
         rec[i, o](alg.step, "first").map(s => PreparedStep.First[G, i, o, c](s))
-      case alg: Step.Alg.Argument[G, ?, a] =>
+      case alg: Step.Alg.Argument[g, ?, a] =>
         Used
           .liftF(decodeFieldArgs[F, G, a](alg.arg, meta.args, meta.variables))
           .map[PreparedStep[G, I, O]](o => PreparedStep.Lift[G, I, O](_ => o)) <*
@@ -773,7 +773,7 @@ object PreparedQuery {
 
     def compileCont[A](t: Out[G, A], cursor: UniqueEdgeCursor): Used[F, Prepared[G, A]] =
       (t, fi.tpe.selections.toNel) match {
-        case (out: gql.ast.OutArr[G, a, c, b], _) =>
+        case (out: gql.ast.OutArr[g, a, c, b], _) =>
           val innerStep: Step[G, a, b] = out.resolver.underlying
           val nc = cursor append "array"
           val compiledStep = compileStep[F, G, a, b](innerStep, nc, meta)
@@ -781,7 +781,7 @@ object PreparedQuery {
           (compiledStep, compiledCont).parMapN { case (s, c) =>
             PreparedList(PreparedCont(s, c), out.toSeq)
           }
-        case (out: gql.ast.OutOpt[G, a, b], _) =>
+        case (out: gql.ast.OutOpt[g, a, b], _) =>
           val innerStep: Step[G, a, b] = out.resolver.underlying
           val nc = cursor append "option"
           val compiledStep = compileStep[F, G, a, b](innerStep, nc, meta)

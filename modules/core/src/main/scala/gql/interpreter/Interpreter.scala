@@ -431,19 +431,19 @@ class InterpreterImpl[F[_]](
             }
           runF.map(Chain.fromOption(_))
         } >>= runNext
-      case alg: Skip[F, i, c] =>
-        val (force0, skip) = inputs.partitionEither { in =>
+      case alg: Skip[F @unchecked, i, ?] => // scala 2 unused type variable bug?
+        val (force0, skip) = (inputs: Chain[IndexedData[Either[i, C]]]).partitionEither { in =>
           in.node.value match {
             case Left(i2) => Left(in as i2)
             case Right(c) => Right(in as c)
           }
         }
         val force: Chain[IndexedData[i]] = force0
-        val contR = StepCont.AppendClosure[F, c, O](skip, cont)
-        runStep[i, c, O](force, alg.compute, contR)
+        val contR = StepCont.AppendClosure[F, C, O](skip, cont)
+        runStep[i, C, O](force, alg.compute, contR)
       case GetMeta(pm) =>
         runNext(inputs.map(in => in as Meta(in.node.cursor, pm.alias, pm.args, pm.variables)))
-      case alg: First[F, i2, o2, c2] =>
+      case alg: First[F @unchecked, i2, o2, c2] =>
         // (o2, c2) <:< C
         // (i2, c2) <:< I
         val inputMap: Map[Int, c2] =
@@ -455,7 +455,7 @@ class InterpreterImpl[F[_]](
           base
         )
         runStep[i2, o2, O](inputs.map(_.map { case (i2, _) => i2 }), alg.step, contR)
-      case alg: Batch[F, k, v] =>
+      case alg: Batch[F @unchecked, k, v] =>
         val keys: Chain[(Cursor, Set[k])] = inputs.map(id => id.node.cursor -> id.node.value)
 
         lift {
@@ -546,7 +546,7 @@ class InterpreterImpl[F[_]](
           val out = unflatten(partedInput.map(_.size.toInt).toVector, result.toVector)
           Chain.fromSeq(out.map(Json.fromValues))
         }
-      case s: PreparedOption[F, i, ?] =>
+      case s: PreparedOption[F @unchecked, i, ?] =>
         val of = s.of
         val partedInput: Chain[EvalNode[Option[i]]] = in.map(nv => nv.setValue(nv.value))
         runEdge(partedInput.collect { case EvalNode(c, Some(x)) => EvalNode(c, x) }, of.edges, of.cont)

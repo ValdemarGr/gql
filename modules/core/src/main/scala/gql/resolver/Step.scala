@@ -78,10 +78,10 @@ object Step {
 
   import cats.arrow._
   implicit def arrowForStep[F[_]]: Arrow[Step[F, *, *]] = new Arrow[Step[F, *, *]] {
-    override def compose[A, B, C](f: Step[F, B, C], g: Step[F, A, B]): Step[F, A, C] = compose(f, g)
+    override def compose[A, B, C](f: Step[F, B, C], g: Step[F, A, B]): Step[F, A, C] = Step.compose(g, f)
 
-    override def first[A, B, C](fa: Step[F, A, B]): Step[F, (A, C), (B, C)] = first(fa)
+    override def first[A, B, C](fa: Step[F, A, B]): Step[F, (A, C), (B, C)] = Step.first(fa)
 
-    override def lift[A, B](f: A => B): Step[F, A, B] = lift(f)
+    override def lift[A, B](f: A => B): Step[F, A, B] = Step.lift(f)
   }
 }
