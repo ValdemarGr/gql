@@ -92,7 +92,7 @@ object Goi {
     shape.copy(query =
       shape.query.copy(
         fields = shape.query.fields.append[(String, Field[F, Q, ?])](
-          "node" -> field[Q].from {
+          "node" -> field.from {
             Resolver
               .argument(arg[ID[String]]("id"))
               .evalMap { id =>
