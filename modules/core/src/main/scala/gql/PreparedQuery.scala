@@ -219,9 +219,6 @@ object PreparedQuery {
   def ambientField[F[_], A](name: String)(fa: F[A])(implicit L: Local[F, Prep]): F[A] =
     ambientEdge[F, A](Validation.Edge.Field(name))(fa)
 
-  def ambientOutputType[F[_], A](name: String)(fa: F[A])(implicit L: Local[F, Prep]): F[A] =
-    ambientEdge[F, A](Validation.Edge.OutputType(name))(fa)
-
   def ambientArg[F[_], A](name: String)(fa: F[A])(implicit L: Local[F, Prep]): F[A] =
     ambientEdge[F, A](Validation.Edge.Arg(name))(fa)
 
@@ -259,8 +256,8 @@ object PreparedQuery {
           raise(s"Fragment by '$fragmentName' is cyclic. Hint: graphql queries must be finite.", caret)
         case _ =>
           fragments.get(fragmentName) match {
-            case None => raise(s"Unknown fragment name '$fragmentName'.", caret)
-            case Some(f) =>              L.local(faf(f))(_ addCycle fragmentName)
+            case None    => raise(s"Unknown fragment name '$fragmentName'.", caret)
+            case Some(f) => L.local(faf(f))(_ addCycle fragmentName)
           }
       }
     }
