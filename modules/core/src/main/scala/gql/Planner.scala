@@ -33,13 +33,13 @@ trait Planner[F[_]] { self =>
 }
 
 object Planner {
-  final case class Node2(
+  final case class Node(
       id: Int,
       name: String,
       end: Double,
       cost: Double,
       elemCost: Double,
-      children: List[Node2],
+      children: List[Node],
       batchId: Option[Int]
   ) {
     lazy val start = end - cost
@@ -61,11 +61,11 @@ object Planner {
   def nextId[F[_]: Applicative](implicit S: Stateful[F, Int]): F[Int] =
     S.get <* S.modify(_ + 1)
 
-  def costForStep[F[_], G[_]](step: PreparedStep[G, ?, ?], right: F[List[Node2]])(implicit
+  def costForStep[F[_], G[_]](step: PreparedStep[G, ?, ?], right: F[List[Node]])(implicit
       stats: Statistics[F],
       F: Monad[F],
       S: Stateful[F, TraversalState]
-  ): F[List[Node2]] = {
+  ): F[List[Node]] = {
     import PreparedStep._
     step match {
       case Lift(_) | Rethrow() | GetMeta(_) => right
@@ -91,7 +91,7 @@ object Planner {
               right.flatMap { children =>
                 getId[F].map { id =>
                   List(
-                    Node2(
+                    Node(
                       id,
                       name,
                       end,
@@ -112,16 +112,16 @@ object Planner {
     }
   }
 
-  def costForFields2[F[_], G[_]](prepared: NonEmptyList[PreparedQuery.PreparedField[G, ?]])(implicit
+  def costForFields[F[_], G[_]](prepared: NonEmptyList[PreparedQuery.PreparedField[G, ?]])(implicit
       F: Monad[F],
       stats: Statistics[F],
       S: Stateful[F, TraversalState]
-  ): F[List[Node2]] = {
+  ): F[List[Node]] = {
     prepared.toList.flatTraverse { pf =>
       scopeCost {
         pf match {
-          case PreparedDataField(_, _, cont)          => costForCont2[F, G](cont.edges, cont.cont)
-          case PreparedSpecification(_, _, selection) => costForFields2[F, G](selection)
+          case PreparedDataField(_, _, cont)          => costForCont[F, G](cont.edges, cont.cont)
+          case PreparedSpecification(_, _, selection) => costForFields[F, G](selection)
         }
       }
     }
@@ -130,18 +130,18 @@ object Planner {
   def costForPrepared[F[_]: Statistics, G[_]](p: Prepared[G, ?])(implicit
       F: Monad[F],
       S: Stateful[F, TraversalState]
-  ): F[List[Node2]] =
+  ): F[List[Node]] =
     p match {
       case PreparedLeaf(_, _)          => F.pure(Nil)
-      case Selection(fields)           => costForFields2[F, G](fields).map(_.toList)
-      case l: PreparedList[G, ?, ?, ?] => costForCont2[F, G](l.of.edges, l.of.cont)
-      case o: PreparedOption[G, ?, ?]  => costForCont2[F, G](o.of.edges, o.of.cont)
+      case Selection(fields)           => costForFields[F, G](fields).map(_.toList)
+      case l: PreparedList[G, ?, ?, ?] => costForCont[F, G](l.of.edges, l.of.cont)
+      case o: PreparedOption[G, ?, ?]  => costForCont[F, G](o.of.edges, o.of.cont)
     }
 
-  def costForCont2[F[_]: Statistics: Monad, G[_]](
+  def costForCont[F[_]: Statistics: Monad, G[_]](
       edges: PreparedStep[G, ?, ?],
       cont: Prepared[G, ?]
-  )(implicit S: Stateful[F, TraversalState]): F[List[Node2]] =
+  )(implicit S: Stateful[F, TraversalState]): F[List[Node]] =
     costForStep[F, G](edges, costForPrepared[F, G](cont))
 
   type H[F[_], A] = StateT[F, TraversalState, A]
@@ -151,15 +151,15 @@ object Planner {
   def runCostAnalysisFor[F[_]: Monad, A](f: Statistics[H[F, *]] => H[F, A])(implicit stats: Statistics[F]): F[A] =
     f(liftStatistics[F](stats)).runA(TraversalState(1, 0d))
 
-  def runCostAnalysis[F[_]: Monad: Statistics](f: Statistics[H[F, *]] => H[F, List[Node2]]): F[NodeTree] =
-    runCostAnalysisFor[F, List[Node2]](f).map(NodeTree(_))
+  def runCostAnalysis[F[_]: Monad: Statistics](f: Statistics[H[F, *]] => H[F, List[Node]]): F[NodeTree] =
+    runCostAnalysisFor[F, List[Node]](f).map(NodeTree(_))
 
   def apply[F[_]](implicit F: Applicative[F]) = new Planner[F] {
     def plan(tree: NodeTree): F[NodeTree] = {
       tree.root.toNel match {
         case None => F.pure(tree.set(tree.root))
         case Some(_) =>
-          def findMax(ns: List[Node2], current: Double): Eval[Double] = Eval.defer {
+          def findMax(ns: List[Node], current: Double): Eval[Double] = Eval.defer {
             ns.foldLeftM(current) { case (cur, n) =>
               findMax(n.children, cur max n.end)
             }
@@ -167,7 +167,7 @@ object Planner {
           val maxEnd = findMax(tree.root, 0d).value
 
           // Move as far down as we can
-          def moveDown(n: Node2): Eval[Node2] = Eval.defer {
+          def moveDown(n: Node): Eval[Node] = Eval.defer {
             n.children
               .traverse(moveDown)
               .map { movedChildren =>
@@ -182,7 +182,7 @@ object Planner {
           // Run though orderd by end time (smallest first)
           // Then move up to furthest batchable neighbour
           // If no such neighbour, move up as far as possible
-          def moveUp(ns: List[Node2]): Map[Int, Double] =
+          def moveUp(ns: List[Node]): Map[Int, Double] =
             ns.mapAccumulate(
               (
                 // When a parent has been moved, it adds a reference for every children to their parent's end time
@@ -219,7 +219,7 @@ object Planner {
 
           val movedUp = moveUp(ordered)
 
-          def reConstruct(ns: List[Node2]): Eval[List[Node2]] = Eval.defer {
+          def reConstruct(ns: List[Node]): Eval[List[Node]] = Eval.defer {
             ns.traverse { n =>
               reConstruct(n.children).map(cs => n.copy(end = movedUp(n.id), children = cs))
             }
@@ -230,17 +230,17 @@ object Planner {
     }
   }
   final case class NodeTree(
-      root: List[Node2],
+      root: List[Node],
       source: Option[NodeTree] = None
   ) {
-    def set(newRoot: List[Node2]): NodeTree =
+    def set(newRoot: List[Node]): NodeTree =
       NodeTree(newRoot, Some(this))
 
-    lazy val flattened: List[Node2] = {
-      def go(xs: List[Node2]): Eval[List[Node2]] = Eval.defer {
+    lazy val flattened: List[Node] = {
+      def go(xs: List[Node]): Eval[List[Node]] = Eval.defer {
         xs.flatTraverse {
-          case n @ Node2(_, _, _, _, _, Nil, _) => Eval.now(List(n))
-          case n @ Node2(_, _, _, _, _, xs, _)  => go(xs).map(n :: _)
+          case n @ Node(_, _, _, _, _, Nil, _) => Eval.now(List(n))
+          case n @ Node(_, _, _, _, _, xs, _)  => go(xs).map(n :: _)
         }
       }
 
@@ -305,7 +305,7 @@ object Planner {
 
       val per = math.max((maxEnd / 40d), 1)
 
-      def go(default: List[Node2], displacement: Map[Int, Node2]): String = {
+      def go(default: List[Node], displacement: Map[Int, Node]): String = {
         default
           .sortBy(_.id)
           .map { n =>

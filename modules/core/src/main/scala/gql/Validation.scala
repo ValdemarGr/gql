@@ -320,7 +320,7 @@ object Validation {
           .traverse { case (a, pv) =>
             PreparedQuery
               .parseInput[PreparedQuery.H, Any](pv, a.input.value.asInstanceOf[In[Any]], None, ambigiousEnum = false)
-              .runA(PreparedQuery.Prep.empty)
+              .run(PreparedQuery.Prep.empty)
               .value
               .value match {
               case Left(errs) =>
@@ -425,7 +425,7 @@ object Validation {
                               PreparedQuery.valueToParserValue(rd),
                               None
                             )
-                            .runA(PreparedQuery.Prep.empty)
+                            .run(PreparedQuery.Prep.empty)
                             .value
                             .value
                             .swap

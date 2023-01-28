@@ -95,8 +95,8 @@ object Interpreter {
           for {
             costTree <- metas.toList
               .flatTraverse { ri =>
-                Planner.runCostAnalysisFor[F, List[Planner.Node2]] { implicit stats2 =>
-                  def contCost(step: StepCont[F, ?, ?]): Planner.H[F, List[Planner.Node2]] =
+                Planner.runCostAnalysisFor[F, List[Planner.Node]] { implicit stats2 =>
+                  def contCost(step: StepCont[F, ?, ?]): Planner.H[F, List[Planner.Node]] =
                     step match {
                       case d: StepCont.Done[F, i]           => Planner.costForPrepared[Planner.H[F, *], F](d.prep)
                       case c: StepCont.Continue[F, ?, ?, ?] => Planner.costForStep[Planner.H[F, *], F](c.step, contCost(c.next))
