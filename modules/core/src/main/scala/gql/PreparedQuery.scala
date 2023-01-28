@@ -341,7 +341,7 @@ object PreparedQuery {
       D: Defer[F]
   ): F[FieldInfo[G]] = ambientField(f.name) {
     // Verify arguments by decoding them
-    val decF = decodeFieldArgs[F, G, Any](af.arg.asInstanceOf[Arg[Any]], f.arguments, variableMap).void
+    val decF = af.arg.traverse_(a => decodeFieldArgs[F, G, Any](a.asInstanceOf[Arg[Any]], f.arguments, variableMap))
 
     // Verify subselection
     val c = f.selectionSet.caret
