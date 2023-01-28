@@ -613,7 +613,7 @@ object PreparedQuery {
       tpe: Type[G, B],
       specify: A => Option[B]
   )
-  def findImplementations2[G[_], A](
+  def findImplementations[G[_], A](
       s: Selectable[G, A],
       discoveryState: SchemaShape.DiscoveryState[G]
   ): List[FoundImplementation[G, A, ?]] = s match {
@@ -633,47 +633,29 @@ object PreparedQuery {
         .collect { case ti: SchemaShape.InterfaceImpl.TypeImpl[G, A, b] => FoundImplementation(ti.t, ti.specify) }
   }
 
-  def findImplementations[G[_]](
-      s: Selectable[G, ?],
-      discoveryState: SchemaShape.DiscoveryState[G]
-  ): List[(Type[G, ?], Option[? => Option[?]])] = s match {
-    case t @ Type(_, _, _, _) => List((t, None))
-    case u @ Union(_, _, _)   => u.types.toList.map(x => (x.tpe.value, Some(x.specify)))
-    case it @ Interface(_, _, _, _) =>
-      type Specify = ? => Option[?]
-
-      val impls: Map[String, (ObjectLike[G, ?], Specify)] =
-        discoveryState.implementations
-          .get(it.name)
-          .getOrElse(Map.empty)
-          .collect { case (k, SchemaShape.InterfaceImpl.TypeImpl(t, s)) => k -> (t, s) }
-
-      impls.toList.collect { case (_, (t @ Type(_, _, _, _), specify)) => (t, Some(specify)) }
-  }
-
   final case class PairedFieldSelection[G[_], A](
       info: FieldInfo[G],
       field: Field[G, A, ?]
   )
-  final case class MergedImplementation2[G[_], A, B](
+  final case class MergedImplementation[G[_], A, B](
       leaf: Type[G, B],
       selections: NonEmptyList[PairedFieldSelection[G, B]],
       specify: A => Option[B]
   )
-  def mergeImplementations2[F[_]: Parallel, G[_], A](
+  def mergeImplementations[F[_]: Parallel, G[_], A](
       base: Selectable[G, A],
       sels: NonEmptyList[SelectionInfo[G]],
       discoveryState: SchemaShape.DiscoveryState[G]
   )(implicit
       F: MonadError[F, NonEmptyChain[PositionalError]],
       L: Local[F, Prep]
-  ): F[NonEmptyList[MergedImplementation2[G, A, ?]]] = {
-    val concreteBaseMap = findImplementations2[G, A](base, discoveryState).map(x => x.tpe.name -> x).toMap
+  ): F[NonEmptyList[MergedImplementation[G, A, ?]]] = {
+    val concreteBaseMap = findImplementations[G, A](base, discoveryState).map(x => x.tpe.name -> x).toMap
     val concreteBase = concreteBaseMap.toList
 
     val nestedSelections = sels.toList.flatMap { sel =>
       val concreteIntersections = findImplementations(sel.s, discoveryState)
-        .map { case (t, _) => t.name }
+        .map { case FoundImplementation(t, _) => t.name }
 
       concreteIntersections tupleRight sel.fields
     }
@@ -682,7 +664,7 @@ object PreparedQuery {
       .groupMap { case (k, _) => k } { case (_, vs) => vs }
       .collect { case (k, x :: xs) => k -> NonEmptyList(x, xs).flatten.map(x => x.outputName -> x).toNem.toNonEmptyList }
 
-    val collected: F[List[MergedImplementation2[G, A, ?]]] = concreteBase.parFlatTraverse { case (k, (fi: FoundImplementation[G, A, b])) =>
+    val collected: F[List[MergedImplementation[G, A, ?]]] = concreteBase.parFlatTraverse { case (k, (fi: FoundImplementation[G, A, b])) =>
       val t = fi.tpe
       val specify = fi.specify
       grouped.get(k).toList.traverse { fields =>
@@ -696,7 +678,7 @@ object PreparedQuery {
               }
             }
           }
-          .map(fields => MergedImplementation2[G, A, b](t, fields, specify))
+          .map(fields => MergedImplementation[G, A, b](t, fields, specify))
       }
     }
 
@@ -704,7 +686,7 @@ object PreparedQuery {
       xs.toNel match {
         case Some(x) => F.pure(x)
         case None =>
-          raise[F, NonEmptyList[MergedImplementation2[G, A, ?]]](
+          raise[F, NonEmptyList[MergedImplementation[G, A, ?]]](
             s"Could not find any implementations of `${base.name}` in the selection set.",
             None
           )
@@ -736,7 +718,7 @@ object PreparedQuery {
     // }
   }
 
-  def prepareField2[F[_]: Parallel, G[_]: Applicative, I, T](
+  def prepareField[F[_]: Parallel, G[_]: Applicative, I, T](
       fi: FieldInfo[G],
       field: Field[G, I, T],
       currentTypename: String,
@@ -780,7 +762,7 @@ object PreparedQuery {
           }
         case (s: Selectable[G, a], Some(ss)) =>
           Used.liftF {
-            prepareSelectable2[F, G, a](s, ss, variableMap, discoveryState)
+            prepareSelectable[F, G, a](s, ss, variableMap, discoveryState)
               .map(Selection(_))
           }
         case (e: Enum[G, a], None) =>
@@ -810,7 +792,7 @@ object PreparedQuery {
       }
   }
 
-  def prepareSelectable2[F[_]: Parallel, G[_], A](
+  def prepareSelectable[F[_]: Parallel, G[_], A](
       s: Selectable[G, A],
       sis: NonEmptyList[SelectionInfo[G]],
       variableMap: VariableMap,
@@ -821,12 +803,12 @@ object PreparedQuery {
       F: MonadError[F, NonEmptyChain[PositionalError]],
       D: Defer[F]
   ): F[NonEmptyList[PreparedSpecification[G, A, ?]]] = {
-    mergeImplementations2[F, G, A](s, sis, discoveryState).flatMap { impls =>
-      impls.parTraverse { case impl: MergedImplementation2[G, A, b] =>
+    mergeImplementations[F, G, A](s, sis, discoveryState).flatMap { impls =>
+      impls.parTraverse { case impl: MergedImplementation[G, A, b] =>
         val fa: F[NonEmptyList[PreparedDataField[G, b]]] = impl.selections.parTraverse { sel =>
           sel.field match {
             case field: Field[G, b2, t] =>
-              prepareField2[F, G, b, t](sel.info, field, impl.leaf.name, variableMap, discoveryState)
+              prepareField[F, G, b, t](sel.info, field, impl.leaf.name, variableMap, discoveryState)
           }
         }
 
@@ -848,7 +830,7 @@ object PreparedQuery {
       D: Defer[F]
   ): F[NonEmptyList[PreparedSpecification[G, A, ?]]] = {
     collectSelectionInfo[F, G](s, ss, variableMap, fragments, discoveryState).flatMap { root =>
-      checkSelectionsMerge[F, G](root) >> prepareSelectable2[F, G, A](s, root, variableMap, discoveryState)
+      checkSelectionsMerge[F, G](root) >> prepareSelectable[F, G, A](s, root, variableMap, discoveryState)
     }
   }
 
