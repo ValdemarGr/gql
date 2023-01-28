@@ -1,3 +1,18 @@
+/*
+ * Copyright 2023 Valdemar Grange
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package gql
 
 import cats.data._
@@ -325,14 +340,14 @@ object Validation {
         }
     }
 
-  def validateFields[F[_], G[_]: Monad](fields: NonEmptyList[(String, AbstractField[F, ?, ?])], discovery: SchemaShape.DiscoveryState[F])(
+  def validateFields[F[_], G[_]: Monad](fields: NonEmptyList[(String, AbstractField[F, ?])], discovery: SchemaShape.DiscoveryState[F])(
       implicit S: Stateful[G, ValidationState[F]]
   ): G[Unit] =
     allUnique[F, G](DuplicateField.apply, fields.toList.map { case (name, _) => name }) >>
       fields.traverse_ { case (name, field) =>
         useEdge(Edge.Field(name)) {
           validateFieldName[F, G](name) >>
-            validateArg[F, G](field.arg, discovery) >>
+            field.arg.traverse_(validateArg[F, G](_, discovery)) >>
             validateOutput[F, G](field.output.value, discovery)
         }
       }
@@ -377,8 +392,8 @@ object Validation {
                       raise[F, G](Error.WrongInterfaceFieldType(sel.name, i.value.name, k, expectedStr, actualStr))
                     else G.unit
 
-                  val actualArg: Chain[ArgValue[?]] = f.arg.entries
-                  val expectedArg: Chain[ArgValue[?]] = v.arg.entries
+                  val actualArg: Chain[ArgValue[?]] = Chain.fromOption(f.arg).flatMap(_.entries.toChain)
+                  val expectedArg: Chain[ArgValue[?]] = Chain.fromOption(v.arg).flatMap(_.entries.toChain)
                   val comb = actualArg.map(x => x.name -> x) align expectedArg.map(x => x.name -> x)
                   val verifyArgsF = comb.traverse_ {
                     // Only actual; shouldn't occur

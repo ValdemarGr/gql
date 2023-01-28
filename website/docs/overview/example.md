@@ -9,7 +9,7 @@ But also some unique features such as, herustic query planning and signals.
 The most important goals of gql is to be simple, predictable and composable.
 
 For this showcase, Star Wars will be our domain of choice:
-```scala
+```scala mdoc
 sealed trait Episode
 
 object Episode {
@@ -43,7 +43,7 @@ final case class Droid(
 ```
 
 Lets define where our data comes from:
-```scala
+```scala mdoc
 trait Repository[F[_]] {
   def getHero(episode: Option[Episode]): F[Character]
 
@@ -56,7 +56,7 @@ trait Repository[F[_]] {
 ```
 
 To construct the schema, we need some imports.
-```scala
+```scala mdoc
 import gql._
 import gql.dsl._
 import gql.ast._
@@ -65,7 +65,7 @@ import cats.implicits._
 ```
 
 Now we can define our schema:
-```scala
+```scala mdoc
 def schema[F[_]](implicit repo: Repository[F], F: Async[F]) = {
   implicit lazy val episode: Enum[F, Episode] = enumType[F, Episode](
     "Episode",
@@ -74,8 +74,7 @@ def schema[F[_]](implicit repo: Repository[F], F: Async[F]) = {
     "JEDI" -> enumVal(Episode.JEDI)
   )
 
-  implicit lazy val character: Interface[F, Character] = interface[F, Character](
-    "Character",
+  lazy val characterFields = fieldGroup[F, Character](
     "id" -> pure(_.id),
     "name" -> pure(_.name),
     "friends" -> eff(_.friends.traverse(repo.getCharacter)),
@@ -83,15 +82,20 @@ def schema[F[_]](implicit repo: Repository[F], F: Async[F]) = {
     "secretBackstory" -> fallible(_ => F.pure("secretBackstory is secret.".leftIor[String]))
   )
 
+  implicit lazy val character: Interface[F, Character] = interfaceFromNel[F, Character](
+    "Character",
+    characterFields
+  )
+
   implicit lazy val human: Type[F, Human] = tpe[F, Human](
     "Human",
     "homePlanet" -> pure(_.homePlanet)
-  ).subtypeOf[Character].addFields(character.fields.toList: _*)
+  ).subtypeOf[Character].addFields(characterFields.toList: _*)
 
   implicit lazy val droid: Type[F, Droid] = tpe[F, Droid](
     "Droid",
     "primaryFunction" -> pure(_.primaryFunction)
-  ).subtypeOf[Character] .addFields(character.fields.toList: _*)
+  ).subtypeOf[Character].addFields(characterFields.toList: _*)
 
   Schema.query(
     tpe[F, Unit](
@@ -105,7 +109,7 @@ def schema[F[_]](implicit repo: Repository[F], F: Async[F]) = {
 ```
 
 Lets construct a simple in-memory repository:
-```scala
+```scala mdoc:silent
 val luke = Human(
   "1000",
   "Luke Skywalker".some,
@@ -189,7 +193,7 @@ implicit def repo: Repository[IO] = new Repository[IO] {
 ```
 
 Lets construct a query:
-```scala
+```scala mdoc
 def query = """
  query ExampleQuery {
    hero(episode: NEWHOPE) {
@@ -219,55 +223,14 @@ def query = """
 
 Now we can parse, plan and evaluate the query:
 
-```scala
+```scala mdoc:passthrough
+mdoc.IORunPrint(
 schema[IO]
   .map(Compiler[IO].compile(_, query))
   .flatMap { case Right(Application.Query(run)) => run.map(_.asGraphQL) }
-// object[data -> {
-//   "c3po" : {
-//     "name" : "C-3PO"
-//   },
-//   "hero" : {
-//     "friends" : [
-//       {
-//         "appearsIn" : [
-//           "NEWHOPE",
-//           "EMPIRE",
-//           "JEDI"
-//         ],
-//         "__typename" : "Human",
-//         "name" : "Luke Skywalker"
-//       },
-//       {
-//         "appearsIn" : [
-//           "NEWHOPE",
-//           "EMPIRE",
-//           "JEDI"
-//         ],
-//         "__typename" : "Human",
-//         "name" : "Han Solo"
-//       },
-//       {
-//         "appearsIn" : [
-//           "NEWHOPE",
-//           "EMPIRE",
-//           "JEDI"
-//         ],
-//         "__typename" : "Human",
-//         "name" : "Leia Organa"
-//       }
-//     ],
-//     "primaryFunction" : "Astromech",
-//     "__typename" : "Droid",
-//     "name" : "R2-D2",
-//     "id" : "2001"
-//   }
-// }]
+)("""
+schema[IO]
+  .map(Compiler[IO].compile(_, query))
+  .flatMap { case Right(Application.Query(run)) => run.map(_.asGraphQL) }
+""")
 ```
-
-<!-- <details> 
-<summary>Output</summary>
-
-lol
-
-</details> --->

@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Valdemar Grange
+ * Copyright 2023 Valdemar Grange
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,16 +16,19 @@
 package gql
 
 import cats._
-import gql.resolver.BatchResolver
 
 final case class SchemaState[F[_]](
     nextId: Int,
-    batchers: Map[BatchResolver.ResolverKey, Set[Any] => F[Map[Any, Any]]]
+    batchFunctions: Map[Int, SchemaState.BatchFunction[F, ?, ?]]
 ) {
   def mapK[G[_]](fk: F ~> G): SchemaState[G] =
-    SchemaState(nextId, batchers.map { case (k, v) => k -> (v andThen fk.apply) })
+    SchemaState(
+      nextId,
+      batchFunctions.map { case (k, v) => k -> SchemaState.BatchFunction(v.f.andThen(fk.apply)) }
+    )
 }
 
 object SchemaState {
-  def empty[F[_]] = SchemaState[F](nextId = 0, batchers = Map.empty)
+  final case class BatchFunction[F[_], K, V](f: Set[K] => F[Map[K, V]])
+  def empty[F[_]] = SchemaState[F](nextId = 0, batchFunctions = Map.empty)
 }

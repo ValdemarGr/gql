@@ -74,8 +74,7 @@ def schema[F[_]](implicit repo: Repository[F], F: Async[F]) = {
     "JEDI" -> enumVal(Episode.JEDI)
   )
 
-  implicit lazy val character: Interface[F, Character] = interface[F, Character](
-    "Character",
+  lazy val characterFields = fieldGroup[F, Character](
     "id" -> pure(_.id),
     "name" -> pure(_.name),
     "friends" -> eff(_.friends.traverse(repo.getCharacter)),
@@ -83,15 +82,20 @@ def schema[F[_]](implicit repo: Repository[F], F: Async[F]) = {
     "secretBackstory" -> fallible(_ => F.pure("secretBackstory is secret.".leftIor[String]))
   )
 
+  implicit lazy val character: Interface[F, Character] = interfaceFromNel[F, Character](
+    "Character",
+    characterFields
+  )
+
   implicit lazy val human: Type[F, Human] = tpe[F, Human](
     "Human",
     "homePlanet" -> pure(_.homePlanet)
-  ).subtypeOf[Character].addFields(character.fields.toList: _*)
+  ).subtypeOf[Character].addFields(characterFields.toList: _*)
 
   implicit lazy val droid: Type[F, Droid] = tpe[F, Droid](
     "Droid",
     "primaryFunction" -> pure(_.primaryFunction)
-  ).subtypeOf[Character] .addFields(character.fields.toList: _*)
+  ).subtypeOf[Character].addFields(characterFields.toList: _*)
 
   Schema.query(
     tpe[F, Unit](
@@ -230,10 +234,3 @@ schema[IO]
   .flatMap { case Right(Application.Query(run)) => run.map(_.asGraphQL) }
 """)
 ```
-
-<!-- <details> 
-<summary>Output</summary>
-
-lol
-
-</details> --->

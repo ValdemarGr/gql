@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Valdemar Grange
+ * Copyright 2023 Valdemar Grange
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -113,13 +113,15 @@ object StarWarsSchema {
         "JEDI" -> enumVal(Episode.JEDI)
       )
 
-    lazy val characterFields = fieldGroup[IO, Character](
-      "id" -> pure(_.id),
-      "name" -> pure(_.name),
-      "friends" -> eff(getFriends),
-      "appearsIn" -> pure(_.appearsIn),
-      "secretBackstory" -> fallible(_ => IO("secretBackstory is secret.".leftIor[String]))
-    )
+    lazy val characterFields = build[IO, Character] { b =>
+      b.fields(
+        "id" -> lift(_.id),
+        "name" -> lift(_.name),
+        "friends" -> eff(getFriends),
+        "appearsIn" -> lift(_.appearsIn),
+        "secretBackstory" -> b(_.map(_ => "secretBackstory is secret.".leftIor[String]).rethrow)
+      )
+    }
 
     implicit lazy val character: Interface[IO, Character] =
       interfaceFromNel[IO, Character]("Character", characterFields)
@@ -127,24 +129,24 @@ object StarWarsSchema {
     implicit lazy val human: Type[IO, Human] =
       tpe[IO, Human](
         "Human",
-        "homePlanet" -> pure(_.homePlanet)
+        "homePlanet" -> lift(_.homePlanet)
       ).subtypeOf[Character]
         .addFields(characterFields.toList: _*)
 
     implicit lazy val droid: Type[IO, Droid] =
       tpe[IO, Droid](
         "Droid",
-        "primaryFunction" -> pure(_.primaryFunction)
+        "primaryFunction" -> lift(_.primaryFunction)
       ).subtypeOf[Character]
         .addFields(characterFields.toList: _*)
 
     SchemaShape[IO, Unit, Unit, Unit](
       tpe[IO, Unit](
         "Query",
-        "hero" -> eff(arg[Option[Episode]]("episode")) { case (_, ep) => getHero(ep) },
-        "human" -> eff(arg[String]("id")) { case (_, id) => getHuman(id) },
-        "droid" -> eff(arg[String]("id")) { case (_, id) => getDroid(id) },
-        "numeric" -> pure((arg[Int]("one"), arg[Float]("two")).tupled) { (_, _) =>
+        "hero" -> eff(arg[Option[Episode]]("episode")) { case (ep, _) => getHero(ep) },
+        "human" -> eff(arg[String]("id")) { case (id, _) => getHuman(id) },
+        "droid" -> eff(arg[String]("id")) { case (id, _) => getDroid(id) },
+        "numeric" -> lift((arg[Int]("one"), arg[Float]("two")).tupled) { (_, _) =>
           ""
         }
       )

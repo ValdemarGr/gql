@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Valdemar Grange
+ * Copyright 2023 Valdemar Grange
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ final case class Cursor(path: Chain[GraphArc]) {
   def add(next: GraphArc): Cursor = Cursor(path :+ next)
 
   def index(idx: Int) = add(GraphArc.Index(idx))
-  def field(name: String) = add(GraphArc.Field( name))
+  def field(name: String) = add(GraphArc.Field(name))
 
   def headOption = path.headOption
 
@@ -54,7 +54,7 @@ object Cursor {
   }
 }
 
-final case class EvalNode[A](cursor: Cursor, value: A) {
+final case class EvalNode[+A](cursor: Cursor, value: A) {
   def setValue[B](value: B): EvalNode[B] = copy(value = value)
 
   def modify(f: Cursor => Cursor): EvalNode[A] = copy(cursor = f(cursor))

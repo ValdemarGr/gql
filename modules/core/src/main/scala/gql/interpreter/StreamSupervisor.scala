@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Valdemar Grange
+ * Copyright 2023 Valdemar Grange
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,14 +21,14 @@ import cats.implicits._
 import cats.effect.std._
 import fs2.{Chunk, Stream}
 
-trait StreamSupervisor[F[_], A] {
-  def acquireAwait(stream: Stream[F, A]): F[(StreamToken, Either[Throwable, A])]
+trait StreamSupervisor[F[_]] {
+  def acquireAwait[A](stream: Stream[F, A]): F[(StreamToken, Either[Throwable, A])]
 
   def release(token: Set[StreamToken]): F[Unit]
 
   def freeUnused(token: StreamToken, resource: ResourceToken): F[Unit]
 
-  def changes: Stream[F, NonEmptyList[(StreamToken, ResourceToken, Either[Throwable, A])]]
+  def changes: Stream[F, NonEmptyList[(StreamToken, ResourceToken, Either[Throwable, ?])]]
 }
 
 object StreamSupervisor {
@@ -37,7 +37,7 @@ object StreamSupervisor {
       allocatedResources: Vector[(ResourceToken, F[Unit])]
   )
 
-  def apply[F[_], A](openTail: Boolean)(implicit F: Async[F]): Stream[F, StreamSupervisor[F, A]] = {
+  def apply[F[_]](openTail: Boolean)(implicit F: Async[F]): Stream[F, StreamSupervisor[F]] = {
     def removeStates(xs: List[State[F]]) = {
       xs.traverse_(_.unsubscribe) >>
         xs.traverse_(_.allocatedResources.toList.traverse_ { case (_, fa) => fa })
@@ -48,9 +48,9 @@ object StreamSupervisor {
       fs2.Stream
         .bracket(F.ref(Map.empty[StreamToken, State[F]]))(_.get.flatMap(xs => removeStates(xs.values.toList)))
         .flatMap { (state: Ref[F, StateMap]) =>
-          fs2.Stream.eval(Queue.bounded[F, Chunk[(StreamToken, ResourceToken, Either[Throwable, A])]](1024)).map { q =>
-            new StreamSupervisor[F, A] {
-              override def acquireAwait(stream: Stream[F, A]): F[(Unique.Token, Either[Throwable, A])] =
+          fs2.Stream.eval(Queue.bounded[F, Chunk[(StreamToken, ResourceToken, Either[Throwable, ?])]](1024)).map { q =>
+            new StreamSupervisor[F] {
+              override def acquireAwait[A](stream: Stream[F, A]): F[(Unique.Token, Either[Throwable, A])] =
                 F.uncancelable { _ =>
                   for {
                     token <- F.unique
@@ -165,7 +165,7 @@ object StreamSupervisor {
                   }.flatten
                 }
 
-              override def changes: Stream[F, NonEmptyList[(StreamToken, ResourceToken, Either[Throwable, A])]] =
+              override def changes: Stream[F, NonEmptyList[(StreamToken, ResourceToken, Either[Throwable, ?])]] =
                 Stream
                   .fromQueueUnterminatedChunk(q)
                   .chunks

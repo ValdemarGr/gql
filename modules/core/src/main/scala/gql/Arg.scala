@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Valdemar Grange
+ * Copyright 2023 Valdemar Grange
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,14 +14,13 @@
  * limitations under the License.
  */
 package gql
-
 import cats.data._
 import cats._
 import cats.implicits._
 import gql.ast._
 
-final case class Arg[A](
-    entries: Chain[ArgValue[?]],
+final case class Arg[+A](
+    entries: NonEmptyChain[ArgValue[?]],
     decode: Map[String, ArgParam[?]] => Either[String, A]
 ) {
   def emap[B](f: A => Either[String, B]): Arg[B] =
@@ -30,13 +29,14 @@ final case class Arg[A](
 
 object Arg {
   def makeFrom[A, B](av: ArgValue[A])(f: ArgParam[A] => Either[String, B]): Arg[B] =
-    Arg[B](Chain(av), m => f(m(av.name).asInstanceOf[ArgParam[A]]))
+    Arg[B](NonEmptyChain.one(av), m => f(m(av.name).asInstanceOf[ArgParam[A]]))
 
   def make[A](av: ArgValue[A]): Arg[A] =
     makeFrom(av)(_.value.asRight)
 
-  implicit lazy val applicativeInstanceForArg: Applicative[Arg] = new Applicative[Arg] {
-    override def pure[A](x: A): Arg[A] = Arg(Chain.empty, _ => x.asRight)
+  implicit lazy val applyForArg: Apply[Arg] = new Apply[Arg] {
+    override def map[A, B](fa: Arg[A])(f: A => B): Arg[B] =
+      Arg(fa.entries, fa.decode.andThen(_.map(f)))
 
     override def ap[A, B](ff: Arg[A => B])(fa: Arg[A]): Arg[B] =
       Arg(ff.entries ++ fa.entries, m => (ff.decode(m), fa.decode(m)).mapN((f, a) => f(a)))

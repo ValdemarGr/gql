@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Valdemar Grange
+ * Copyright 2023 Valdemar Grange
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,9 +28,6 @@ final case class Schema[F[_], Q, M, S](
     planner: Planner[F]
 ) {
   protected implicit lazy val s: Statistics[F] = statistics
-
-  def mapK[G[_]: Functor](fk: F ~> G)(implicit F: Functor[F]): Schema[G, Q, M, S] =
-    Schema(shape.mapK(fk), state.mapK(fk), statistics.mapK(fk), planner.mapK(fk))
 
   lazy val validate: Chain[Validation.Problem] = shape.validate
 

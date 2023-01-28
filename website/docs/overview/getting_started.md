@@ -4,25 +4,22 @@ title: Getting started
 
 Get it here
 ```scala
-libraryDependencies += "io.github.valdemargr" %% "gql-core" % "0.1-a6a8761-20221118T184602Z-SNAPSHOT"
-libraryDependencies += "io.github.valdemargr" %% "gql-http4s" % "0.1-a6a8761-20221118T184602Z-SNAPSHOT"
-libraryDependencies += "io.github.valdemargr" %% "gql-natchez" % "0.1-a6a8761-20221118T184602Z-SNAPSHOT"
-libraryDependencies += "io.github.valdemargr" %% "gql-graphqlws" % "0.1-a6a8761-20221118T184602Z-SNAPSHOT"
+libraryDependencies += "io.github.valdemargr" %% "gql-core" % "0.1.0-M2"
+libraryDependencies += "io.github.valdemargr" %% "gql-http4s" % "0.1.0-M2"
+libraryDependencies += "io.github.valdemargr" %% "gql-natchez" % "0.1.0-M2"
+libraryDependencies += "io.github.valdemargr" %% "gql-graphqlws" % "0.1.0-M2"
 ```
 
 heyy
 
-```scala
+```scala mdoc
 import cats.implicits._
 
 val x = 11
-// x: Int = 11
 List(x, x).map(_ + 1)
-// res0: List[Int] = List(12, 12)
 val y = (Some(5), Option(4)).mapN(_ + _)
-// y: Option[Int] = Some(value = 9)
 ```
-```scala
+```scala mdoc:silent:reset
 import cats.implicits._
 
 val x = 11

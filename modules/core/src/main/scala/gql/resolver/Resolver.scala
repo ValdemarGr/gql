@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Valdemar Grange
+ * Copyright 2023 Valdemar Grange
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,142 +15,130 @@
  */
 package gql.resolver
 
-import cats._
 import cats.data._
-import cats.implicits._
-import fs2.Stream
+import cats._
+import gql._
 
-sealed trait Resolver[F[_], -I, A] {
-  def mapK[G[_]: Functor](fk: F ~> G): Resolver[G, I, A]
+final class Resolver[F[_], -I, +O](private[gql] val underlying: Step[F, I, O]) {
+  def andThen[O2](that: Resolver[F, O, O2]): Resolver[F, I, O2] =
+    new Resolver(Step.compose(underlying, that.underlying))
 
-  def contramap[B](g: B => I): Resolver[F, B, A]
+  def compose[I1 <: I, I2](that: Resolver[F, I2, I1]): Resolver[F, I2, O] =
+    that andThen this
 
-  def mapWithInput[I2 <: I, B](f: (I2, A) => B)(implicit F: Functor[F]): Resolver[F, I2, B]
+  def map[O2](f: O => O2): Resolver[F, I, O2] =
+    this andThen Resolver.lift(f)
+
+  def contramap[I2](f: I2 => I): Resolver[F, I2, O] =
+    Resolver.lift(f) andThen this
+
+  def evalMap[O2](f: O => F[O2]): Resolver[F, I, O2] =
+    this andThen Resolver.eval(f)
+
+  def evalContramap[I1 <: I, I2](f: I2 => F[I1]): Resolver[F, I2, O] =
+    Resolver.eval(f) andThen this
+
+  def fallibleMap[O2](f: O => Ior[String, O2]): Resolver[F, I, O2] =
+    this.map(f) andThen Resolver.rethrow
+
+  def fallibleContraMap[I2](f: I2 => Ior[String, I]): Resolver[F, I2, O] =
+    Resolver.rethrow.contramap[I2](f) andThen this
+
+  def first[C]: Resolver[F, (I, C), (O, C)] =
+    new Resolver(Step.first(underlying))
+
+  def tupleIn[I1 <: I]: Resolver[F, I1, (O, I1)] =
+    first[I1].contramap[I1](i => (i, i))
+
+  def arg[A](arg: Arg[A]): Resolver[F, I, (A, O)] =
+    this andThen Resolver.argument[F, O, A](arg).tupleIn
+
+  def contraArg[A, I2](arg: Arg[A])(implicit ev: (A, I2) <:< I): Resolver[F, I2, O] =
+    Resolver.id[F, I2].arg(arg) andThen this.contramap(ev.apply)
+
+  def meta: Resolver[F, I, (Meta, O)] =
+    this andThen Resolver.meta[F, O].tupleIn
+
+  def stream[O2](f: O => fs2.Stream[F, O2]): Resolver[F, I, O2] =
+    this andThen Resolver.stream[F, O, O2](f)
+
+  def skippable[O1 >: O]: Resolver[F, Either[I, O1], O1] =
+    new Resolver(Step.skip(this.underlying))
 }
 
-final case class FallibleResolver[F[_], I, A](resolve: I => F[Ior[String, A]]) extends Resolver[F, I, A] {
-  def mapK[G[_]: Functor](fk: F ~> G): FallibleResolver[G, I, A] =
-    FallibleResolver(resolve.andThen(fk.apply))
+object Resolver extends ResolverInstances {
+  def lift[F[_], I, O](f: I => O): Resolver[F, I, O] =
+    new Resolver(Step.lift(f))
 
-  def contramap[B](g: B => I): FallibleResolver[F, B, A] =
-    FallibleResolver(g andThen resolve)
+  def id[F[_], I]: Resolver[F, I, I] =
+    lift(identity)
 
-  override def mapWithInput[I2 <: I, B](f: (I2, A) => B)(implicit F: Functor[F]): FallibleResolver[F, I2, B] =
-    FallibleResolver(i => resolve(i).map(_.map(a => f(i, a))))
-}
+  def eval[F[_], I, O](f: I => F[O]): Resolver[F, I, O] =
+    new Resolver(Step.effect(f))
 
-final case class EffectResolver[F[_], I, A](resolve: I => F[A]) extends Resolver[F, I, A] {
-  def mapK[G[_]: Functor](fk: F ~> G): EffectResolver[G, I, A] =
-    EffectResolver(resolve.andThen(fk.apply))
+  def rethrow[F[_], I]: Resolver[F, Ior[String, I], I] =
+    new Resolver(Step.rethrow[F, I])
 
-  def contramap[B](g: B => I): EffectResolver[F, B, A] =
-    EffectResolver(g andThen resolve)
+  def argument[F[_], I <: Any, A](arg: Arg[A]): Resolver[F, I, A] =
+    new Resolver(Step.argument(arg))
 
-  def mapWithInput[I2 <: I, B](f: (I2, A) => B)(implicit F: Functor[F]): EffectResolver[F, I2, B] =
-    EffectResolver(i => resolve(i).map(a => f(i, a)))
-}
+  def meta[F[_], I <: Any]: Resolver[F, I, Meta] =
+    new Resolver(Step.getMeta)
 
-final case class PureResolver[F[_], I, A](resolve: I => A) extends Resolver[F, I, A] {
-  override def mapK[G[_]: Functor](fk: F ~> G): PureResolver[G, I, A] =
-    PureResolver(resolve)
+  def stream[F[_], I, O](f: I => fs2.Stream[F, O]): Resolver[F, I, O] =
+    new Resolver(Step.stream(f))
 
-  def contramap[B](g: B => I): PureResolver[F, B, A] =
-    PureResolver(g andThen resolve)
+  def batch[F[_], K, V](f: Set[K] => F[Map[K, V]]): State[gql.SchemaState[F], Resolver[F, Set[K], Map[K, V]]] =
+    Step.batch[F, K, V](f).map(new Resolver(_))
 
-  def mapWithInput[I2 <: I, B](f: (I2, A) => B)(implicit F: Functor[F]): PureResolver[F, I2, B] =
-    PureResolver(i => f(i, resolve(i)))
-}
+  implicit class RethrowOps[F[_], I, O](private val self: Resolver[F, I, Ior[String, O]]) extends AnyVal {
+    def rethrow: Resolver[F, I, O] =
+      self andThen Resolver.rethrow
+  }
 
-final case class StreamResolver[F[_], I, A](
-    stream: I => Stream[F, IorNec[String, A]]
-) extends Resolver[F, I, A] {
-  override def mapK[G[_]: Functor](fk: F ~> G): Resolver[G, I, A] =
-    StreamResolver(stream.andThen(_.translate(fk)))
+  implicit class ContinueInvariantOps[F[_], I, O](private val self: Resolver[F, I, O]) extends AnyVal {
+    def continue[O2](f: Resolver[F, O, O] => Resolver[F, O, O2]): Resolver[F, I, O2] =
+      self andThen f(Resolver.id[F, O])
+  }
 
-  override def contramap[B](g: B => I): Resolver[F, B, A] =
-    StreamResolver[F, B, A](i => stream(g(i)))
+  implicit class SkipThisInvariantOps[F[_], I, O](private val self: Resolver[F, I, O]) extends AnyVal {
+    def skipThis[I2](verify: Resolver[F, I2, Either[I, O]]): Resolver[F, I2, O] =
+      verify andThen self.skippable
 
-  override def mapWithInput[I2 <: I, B](f: (I2, A) => B)(implicit F: Functor[F]): StreamResolver[F, I2, B] =
-    StreamResolver[F, I2, B](i => stream(i).map(_.map(a => f(i, a))))
-}
+    def skipThisWith[I2](f: Resolver[F, I2, I2] => Resolver[F, I2, Either[I, O]]): Resolver[F, I2, O] =
+      skipThis[I2](f(Resolver.id[F, I2]))
+  }
 
-final case class CompositionResolver[F[_], I, A, O](
-    left: Resolver[F, I, A],
-    right: Resolver[F, A, O]
-) extends Resolver[F, I, O] {
-  override def mapK[G[_]: Functor](fk: F ~> G): Resolver[G, I, O] =
-    CompositionResolver(left.mapK(fk), right.mapK(fk))
+  implicit class SkipThatInvariantOps[F[_], I, I2, O](private val self: Resolver[F, I, Either[I2, O]]) extends AnyVal {
+    def skipThat(compute: Resolver[F, I2, O]): Resolver[F, I, O] =
+      compute skipThis self
 
-  override def contramap[B](g: B => I): Resolver[F, B, O] =
-    CompositionResolver(left.contramap(g), right)
-
-  override def mapWithInput[I2 <: I, B](f: (I2, O) => B)(implicit F: Functor[F]): CompositionResolver[F, I2, (I2, A), B] = {
-    val l: Resolver[F, I2, (I2, A)] = left.mapWithInput[I2, (I2, A)]((i, a) => (i, a))
-    val r0: Resolver[F, (I2, A), O] = right.contramap[(I2, A)] { case (_, a) => a }
-    val r1: Resolver[F, (I2, A), B] = r0.mapWithInput[(I2, A), B] { case ((i2, _), o) => f(i2, o) }
-    CompositionResolver(l, r1)
+    def skipThatWith(f: Resolver[F, I2, I2] => Resolver[F, I2, O]): Resolver[F, I, O] =
+      skipThat(f(Resolver.id[F, I2]))
   }
 }
 
-final case class CacheResolver[F[_], I, I2, O](
-    first: I => F[Either[I2, O]],
-    fallback: Resolver[F, I2, O]
-) extends Resolver[F, I, O] {
-  override def mapK[G[_]: Functor](fk: F ~> G): Resolver[G, I, O] =
-    CacheResolver(first.andThen(fk.apply), fallback.mapK(fk))
+trait ResolverInstances {
+  import cats.arrow._
+  implicit def arrowForResolver[F[_]]: Arrow[Resolver[F, *, *]] = new Arrow[Resolver[F, *, *]] {
+    override def compose[A, B, C](f: Resolver[F, B, C], g: Resolver[F, A, B]): Resolver[F, A, C] =
+      f.compose(g)
 
-  override def contramap[B](g: B => I): Resolver[F, B, O] =
-    CacheResolver(i => first(g(i)), fallback)
+    override def first[A, B, C](fa: Resolver[F, A, B]): Resolver[F, (A, C), (B, C)] =
+      fa.first[C]
 
-  override def mapWithInput[I3 <: I, B](f: (I3, O) => B)(implicit F: Functor[F]): CacheResolver[F, I3, (I2, I3), B] =
-    CacheResolver[F, I3, (I2, I3), B](
-      i3 =>
-        first(i3).map {
-          case Left(i2) => Left((i2, i3))
-          case Right(o) => Right(f(i3, o))
-        },
-      fallback.contramap[(I2, I3)] { case (i2, _) => i2 }.mapWithInput[(I2, I3), B] { case ((_, i3), o) => f(i3, o) }
-    )
-}
-
-abstract case class BatchResolver[F[_], I, O](
-    id: BatchResolver.ResolverKey,
-    run: I => (Set[Any], Map[Any, Any] => O)
-) extends Resolver[F, I, O] {
-  override def mapK[G[_]: Functor](fk: F ~> G): BatchResolver[G, I, O] =
-    new BatchResolver[G, I, O](id, run) {}
-
-  override def contramap[B](g: B => I): BatchResolver[F, B, O] =
-    new BatchResolver[F, B, O](id, b => run(g(b))) {}
-
-  override def mapWithInput[I2 <: I, B](f: (I2, O) => B)(implicit F: Functor[F]): BatchResolver[F, I2, B] =
-    new BatchResolver[F, I2, B](
-      id,
-      { i2 =>
-        val (keys, finalize) = run(i2)
-        (keys, finalize.andThen(f(i2, _)))
-      }
-    ) {}
-}
-
-object BatchResolver {
-  final case class ResolverKey(id: Int) extends AnyVal
-
-  object ResolverKey {
-    implicit val order: Order[ResolverKey] = Order.by(_.id)
+    override def lift[A, B](f: A => B): Resolver[F, A, B] = Resolver.lift(f)
   }
 
-  def apply[F[_], K, T](
-      f: Set[K] => F[Map[K, T]]
-  ): State[gql.SchemaState[F], BatchResolver[F, Set[K], Map[K, T]]] =
-    State { s =>
-      val id = s.nextId
-      val rk = ResolverKey(id)
-      val r = new BatchResolver[F, Set[K], Map[K, T]](
-        rk,
-        k => (k.asInstanceOf[Set[Any]], (m: Map[Any, Any]) => m.asInstanceOf[Map[K, T]])
-      ) {}
-      val entry = f.asInstanceOf[Set[Any] => F[Map[Any, Any]]]
-      (s.copy(nextId = id + 1, batchers = s.batchers + (rk -> entry)), r)
-    }
+  implicit def applicativeForResolver[F[_], I]: Applicative[Resolver[F, I, *]] = new Applicative[Resolver[F, I, *]] {
+    override def ap[A, B](ff: Resolver[F, I, A => B])(fa: Resolver[F, I, A]): Resolver[F, I, B] =
+      ff.tupleIn[I] andThen
+        fa
+          .contramap[(A => B, I)] { case (_, i) => i }
+          .tupleIn[(A => B, I)]
+          .map { case (a, (f, _)) => f(a) }
+
+    override def pure[A](x: A): Resolver[F, I, A] =
+      Resolver.lift(_ => x)
+  }
 }

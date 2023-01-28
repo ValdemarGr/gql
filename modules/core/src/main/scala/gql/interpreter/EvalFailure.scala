@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Valdemar Grange
+ * Copyright 2023 Valdemar Grange
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ trait EvalFailure {
     paths.map { path =>
       val filteredPath = path.path.mapFilter {
         case GraphArc.Field(name) => Some(Json.fromString(name))
-        case GraphArc.Index(idx)     => Some(Json.fromInt(idx))
+        case GraphArc.Index(idx)  => Some(Json.fromInt(idx))
       }
       JsonObject(
         "message" -> Json.fromString(error.getOrElse("internal error")),
@@ -74,5 +74,13 @@ object EvalFailure {
       input: Any
   ) extends EvalFailure {
     lazy val paths = Chain(path)
+  }
+
+  final case class Raised(
+      path: Cursor,
+      raisedError: String
+  ) extends EvalFailure {
+    lazy val paths = Chain(path)
+    lazy val error = Right(raisedError)
   }
 }

@@ -1,27 +1,43 @@
+/*
+ * Copyright 2023 Valdemar Grange
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package gql
 
 import munit.CatsEffectSuite
 import gql.dsl._
 import gql.ast._
 import cats.effect.IO
-import gql.resolver.EffectResolver
 import io.circe._
 
 class SkipTest extends CatsEffectSuite {
   val effectState = IO.ref(Option.empty[Int]).unsafeRunSync()
 
   lazy val schemaShape = SchemaShape.make[IO](
-    tpe[IO, Unit](
-      "Query",
-      "num" -> field[Unit] {
-        cacheFull[IO, Unit, Int, Int](EffectResolver(i => effectState.modify(_ => (Some(i), i)))) { _ =>
-          effectState.get.flatMap {
-            case None    => IO(Left(10))
-            case Some(i) => IO.pure(Right(i))
-          }
-        }.evalMap(i => IO(i * 2))
-      }
-    )
+    build[IO, Unit] { b =>
+      tpe(
+        "Query",
+        "num" -> b(
+          _.evalMap { _ =>
+            effectState.get.flatMap {
+              case None    => IO(Left(20))
+              case Some(i) => IO.pure(Right(i))
+            }
+          }.skipThatWith(_.evalMap(i => effectState.modify(_ => (Some(i), i))))
+        )
+      )
+    }
   )
 
   lazy val schema = Schema.simple(schemaShape).unsafeRunSync()

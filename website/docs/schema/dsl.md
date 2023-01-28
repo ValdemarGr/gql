@@ -10,7 +10,7 @@ The source code for the DSL is very easy to follow and as such, the best documen
 ## Fields
 The simplest form of field construction comes from the `field` smart constructor.
 It simply lifts a resolver (and optionally an argument) into a field.
-```scala
+```scala mdoc
 import cats.data._
 import cats.effect._
 import cats.implicits._
@@ -24,22 +24,6 @@ def intArg = arg[Int]("intArg")
 field(intArg)(FallibleResolver[IO, (String, Int), String]{ case (s, i) => 
   IO.pure((s + i.toString()).rightIor)
 })
-// res0: Field[[A]IO[A], String, String, Int] = Field(
-//   args = NonEmptyArg(
-//     nec = Singleton(
-//       a = ArgValue(
-//         name = "intArg",
-//         input = cats.Later@2fe63ee9,
-//         defaultValue = None,
-//         description = None
-//       )
-//     ),
-//     decode = gql.NonEmptyArg$$$Lambda$47612/0x0000000109cb5840@71f26c5a
-//   ),
-//   resolve = FallibleResolver(resolve = <function1>),
-//   output = cats.Later@7897d703,
-//   description = None
-// )
 ```
 
 ### Value resolution
@@ -88,7 +72,7 @@ The `BatchResolver` can be lifted into a `Field` via the `field` smart construct
 ## Resolver composition
 `Resolver`s can be composed by using the `andThen` method.
 There are also several `map` variants that combine `andThen` with different types of resolvers:
-```scala
+```scala mdoc:silent
 val r: Resolver[IO, Int, Int] = PureResolver[IO, Int, Int](x => x)
 
 r.andThen(PureResolver(_ + 1))
@@ -109,7 +93,7 @@ r.streamMap(x => fs2.Stream.iterate(x)(_ + 1).map(_.rightIor))
 However, `Interface` implementations are declared on the types that implement the interface.
 
 Before continuing, lets setup the environment.
-```scala
+```scala mdoc:silent
 trait Vehicle { 
   def name: String
 }
@@ -120,7 +104,7 @@ final case class Truck(name: String) extends Vehicle
 ```
 
 For the `Union`, variants can be declared using the `variant` function, which takes a `PartialFunction` from the unifying type to the implementation.
-```scala
+```scala mdoc:silent
 implicit def car: Type[IO, Car] = ???
 implicit def boat: Type[IO, Boat] = ???
 implicit def truck: Type[IO, Truck] = ???
@@ -131,7 +115,7 @@ union[IO, Vehicle]("Vehicle")
   .variant[Truck] { case t: Truck => t }
 ```
 A shorthand function exists, if the type of the variant is a subtype of the unifying type.
-```scala
+```scala mdoc:silent
 union[IO, Vehicle]("Vehicle")
   .subtype[Car] 
   .subtype[Boat] 
@@ -139,7 +123,7 @@ union[IO, Vehicle]("Vehicle")
 ```
 
 For an `Interface` the same dsl exists, but is placed on the types that can implement the interface (a `Type` or another `Interface`).
-```scala
+```scala mdoc:silent
 implicit lazy val vehicle: Interface[IO, Vehicle] = interface[IO, Vehicle](
   "Vehicle",
   "name" -> pure(_.name)

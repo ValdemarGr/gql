@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Valdemar Grange
+ * Copyright 2023 Valdemar Grange
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,13 +21,14 @@ import cats.effect._
 import gql.Planner
 import cats.data._
 import gql.SchemaState
-import gql.resolver.BatchResolver
-import gql.PreparedQuery
 import gql.Statistics
 
 trait BatchAccumulator[F[_]] {
   // Emits the whole result of the batch, so the calle must filter
-  def submit(id: PreparedQuery.EdgeId, values: Chain[(Cursor, Set[BatchKey])]): F[Option[Map[BatchKey, BatchValue]]]
+  def submit[K, V](id: Int, values: Chain[(Cursor, Set[K])]): F[Option[Map[K, V]]]
+
+  // Emits the whole result of the batch, so the calle must filter
+  def submit2[K, V](id: Int, values: Chain[(Cursor, Set[K])]): F[Option[Map[K, V]]] = ???
 
   def getErrors: F[List[EvalFailure.BatchResolution]]
 }
@@ -37,71 +38,80 @@ object BatchAccumulator {
       F: Async[F],
       stats: Statistics[F]
   ): F[BatchAccumulator[F]] = {
-    val batches: Chain[(BatchResolver.ResolverKey, NonEmptyChain[PreparedQuery.EdgeId])] =
+    val batches: Chain[(Int, NonEmptyChain[Int])] =
       Chain.fromSeq(plan.batches)
 
     // Now we allocate a deferred for each id in each batch
-    type BatchPromise = Option[Map[BatchKey, BatchValue]] => F[Unit]
-    type InputType = Chain[(Cursor, Set[BatchKey])]
+    //type BatchPromise = Option[Map[BatchKey, BatchValue]] => F[Unit]
+    final case class Batch[K, V](
+        complete: Option[Map[K, V]] => F[Unit],
+        keys: Chain[(Cursor, Set[K])]
+    )
     F.ref(List.empty[EvalFailure.BatchResolution]).flatMap { errState =>
       batches
         .flatTraverse { case (batcherKey, batch) =>
-          F.ref(Map.empty[PreparedQuery.EdgeId, (InputType, BatchPromise)]).map { inputAccum =>
+          F.ref(Map.empty[Int, Batch[?, ?]]).map { inputAccum =>
             batch.map(id => id -> (inputAccum, batch, batcherKey)).toChain
           }
         }
         .map(_.toList.toMap)
         .map { accumLookup =>
           new BatchAccumulator[F] {
-            def submit(id: PreparedQuery.EdgeId, values: InputType): F[Option[Map[BatchKey, BatchValue]]] = {
-              F.deferred[Option[Map[BatchKey, BatchValue]]].flatMap { ret =>
-                val (state, batchIds, batcherKey) = accumLookup(id)
+            def submit[K, V](id: Int, values: Chain[(Cursor, Set[K])]): F[Option[Map[K, V]]] = {
+              F.deferred[Option[Map[K, V]]].flatMap { ret =>
+                val (state0, batchIds, batcherKey) = accumLookup(id)
+                val state1: Ref[F, Map[Int, Batch[?, ?]]] = state0
+                val state = state1.asInstanceOf[Ref[F, Map[Int, Batch[K, V]]]]
 
-                val resolver = schemaState.batchers(batcherKey)
+                val resolver0: SchemaState.BatchFunction[F, ?, ?] = schemaState.batchFunctions(batcherKey)
+                val resolver = resolver0.asInstanceOf[SchemaState.BatchFunction[F, K, V]]
 
-                val modState: F[Option[Chain[(InputType, BatchPromise)]]] = {
-                  val complete: BatchPromise = ret.complete(_).void
+                val modState: F[Option[Chain[Batch[K, V]]]] = {
+                  val complete: Option[Map[K, V]] => F[Unit] = ret.complete(_).void
 
                   state.modify { m =>
                     // We are not the last submitter
                     if (m.size != (batchIds.size - 1)) {
-                      val m2 = m + (id -> ((values, complete)))
+                      val m2 = m + (id -> Batch(complete, values))
                       (m2, None)
                     } else {
                       // Garbage collect
                       val m2 = m -- batchIds.toIterable
-                      val allElems: Chain[(InputType, BatchPromise)] =
-                        batchIds.collect { case bid if bid != id => m(bid) } append (values, complete)
+                      val allElems: Chain[Batch[K, V]] =
+                        batchIds.collect { case bid if bid != id => m(bid) } append Batch(complete, values)
                       (m2, Some(allElems))
                     }
                   }
                 }
 
-                modState.flatMap {
+                modState.flatMap[Unit] {
                   // Not last submitter, just await
                   case None => F.unit
                   case Some(xs) =>
-                    val allKeys: Chain[BatchKey] = xs.flatMap { case (input, _) =>
+                    val allKeys: Chain[K] = xs.flatMap { case Batch(_, input) =>
                       input.flatMap { case (_, keys) =>
                         Chain.fromIterableOnce(keys)
                       }
                     }
 
-                    val allKeysSet: Set[BatchKey] = Set.from(allKeys.iterator)
+                    val allKeysSet: Set[K] = Set.from(allKeys.iterator)
 
-                    resolver(allKeysSet).timed.attempt
-                      .flatMap[Option[Map[BatchKey, BatchValue]]] {
+                    resolver
+                      .f(allKeysSet)
+                      .timed
+                      .attempt
+                      .flatMap[Option[Map[K, V]]] {
                         case Left(err) =>
                           val allCursors: Chain[Cursor] =
-                            xs.flatMap { case (input, _) => input.map { case (cg, _) => cg } }
+                            xs.flatMap { case Batch(_, input) => input.map { case (cg, _) => cg } }
 
                           errState
-                            .update(EvalFailure.BatchResolution(allCursors, err, allKeysSet) :: _)
+                            .update(EvalFailure.BatchResolution(allCursors, err, allKeysSet.map(x => x)) :: _)
                             .as(None)
                         case Right((dur, res)) =>
-                          stats.updateStats(s"batch_${batcherKey.id}", dur, allKeysSet.size) as Some(res)
+                          stats.updateStats(s"batch_${id}", dur, allKeysSet.size) as Some(res)
                       }
-                      .flatMap(res => xs.parTraverse_ { case (_, complete) => complete(res) })
+                      .flatMap(res => xs.parTraverse_ { case Batch(complete, _) => complete(res) })
                 } >> ret.get
               }
             }

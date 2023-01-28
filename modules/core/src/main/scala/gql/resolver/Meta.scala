@@ -13,17 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package mdoc
+package gql.resolver
 
-import cats.effect._
+import gql._
+import gql.parser.{QueryParser => P}
+import gql.interpreter.Cursor
 
-object IORunPrint {
-  def apply[A](ioa: IO[A])(stringRepr: String): Unit = {
-    println("```scala")
-    println(stringRepr.split("\n").drop(1).mkString("\n"))
-    import cats.effect.unsafe.implicits.global
-    val a = ioa.unsafeRunSync()
-    println(a.toString().split("\n").map(x => s"// $x").mkString("\n"))
-    println("```")
-  }
-}
+final case class Meta(
+    cursor: Cursor,
+    alias: Option[String],
+    args: Option[P.Arguments],
+    variables: PreparedQuery.VariableMap
+)

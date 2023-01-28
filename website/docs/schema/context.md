@@ -8,7 +8,7 @@ gql has no such concept, it is rather a by-product of being written in tagless s
 ## MTL
 We can emulate context by using a `ReaderT`/`Kleisli` monad transformer from `cats`.
 Writing `ReaderT`/`Kleisli` everywhere is tedious, instead consider opting for `cats.mtl.Ask`:
-```scala
+```scala mdoc
 import gql._
 import gql.dsl._
 import gql.ast._
@@ -49,9 +49,6 @@ Statistics[IO].flatMap{ stats =>
         .map(_.asGraphQL)
   }
 }.unsafeRunSync()
-// res0: JsonObject = object[data -> {
-//   "me" : "john_doe"
-// }]
 ```
 
 ## Working in a specific effect
@@ -59,7 +56,7 @@ If you are working in a specific effect, you most likely have more tools to work
 For instance, if you are using `IO`, you can use `IOLocal` to wire context through your application.
 :::note
 For the case of `IOLocal`, I don't think it is possible to provide a context implementation without a bit of unsafe code or other compromises, since `IOLocal` must have a default value.
-```scala
+```scala mdoc:silent
 sealed trait ContextLocal {
   def get: IO[Context]
   

@@ -4,14 +4,14 @@ title: Planning
 ## Planner algorithm
 Initially there must be a schema and query:
 ```scala
-type B = String
-type D = String
-type E = String
-type F = String
+type B = String
+type D = String
+type E = String
+type F = String
 
-case class A(d: D, e: E)
-case class C(f: F)
-case class Query(a: A, b: B, c: C)
+case class A(d: D, e: E)
+case class C(f: F)
+case class Query(a: A, b: B, c: C)
 
 def q = """
   query {
@@ -108,10 +108,10 @@ For instance, maybe you have more information about an edge that would improve t
 We can print the query plan and show the improvement in comparison to the naive plan.
 Let's pull out the Star Wars schema:
 ```scala
-import cats.effect.unsafe.implicits.global
-import cats.effect._
-import cats.implicits._
-import gql._
+import cats.effect.unsafe.implicits.global
+import cats.effect._
+import cats.implicits._
+import gql._
 
 def schemaF = gql.StarWarsSchema.schema
 ```
@@ -127,7 +127,7 @@ def loggedSchema = schemaF.map{ schema =>
         output
       }
   })
-}
+}
 
 def query = """
   query NestedQuery {
@@ -142,34 +142,64 @@ def query = """
       }
     }
   }
-"""
+"""
 
 loggedSchema.flatMap{ schema =>
   Compiler[IO].compile(schema, query)
     .traverse_{ case Application.Query(fa) => fa }
 }.unsafeRunSync()
-// name: Query_hero_effect, cost: 100.0, end: 100.0
-//      name: Character_name_pure, cost: 100.0, end: 200.0
-//      >>>>>>>>>>>>>>>>>>>>>>name: Character_name_pure, cost: 100.0, end: 600.0
-//            name: Character_name_pure_pure, cost: 100.0, end: 300.0
-//            >>>>>>>>>>>>>>>>>>>>>>name: Character_name_pure_pure, cost: 100.0, end: 700.0
-//      name: Character_friends_effect, cost: 100.0, end: 200.0
-//            name: Character_friends_effect_pure, cost: 100.0, end: 300.0
-//                  name: Character_name_pure, cost: 100.0, end: 400.0
-//                  >>>>>>>>>>>name: Character_name_pure, cost: 100.0, end: 600.0
-//                       name: Character_name_pure_pure, cost: 100.0, end: 500.0
-//                       >>>>>>>>>>>name: Character_name_pure_pure, cost: 100.0, end: 700.0
-//                  name: Character_appearsIn_pure, cost: 100.0, end: 400.0
-//                  >>>>>>>>>>>name: Character_appearsIn_pure, cost: 100.0, end: 600.0
-//                       name: Character_appearsIn_pure_pure, cost: 100.0, end: 500.0
-//                       >>>>>>>>>>>name: Character_appearsIn_pure_pure, cost: 100.0, end: 700.0
-//                  name: Character_friends_effect, cost: 100.0, end: 400.0
-//                       name: Character_friends_effect_pure, cost: 100.0, end: 500.0
-//                             name: Character_name_pure, cost: 100.0, end: 600.0
-//                                   name: Character_name_pure_pure, cost: 100.0, end: 700.0
+// name: Query_hero.effect, cost: 100.0, end: 100.0
+//      name: Human_friends.effect, cost: 100.0, end: 200.0
+//            name: Human_friends.array.pure, cost: 100.0, end: 300.0
+//                  name: Human_appearsIn.pure, cost: 100.0, end: 400.0
+//                       name: Human_appearsIn.array.pure, cost: 100.0, end: 500.0
+//                  name: Human_friends.effect, cost: 100.0, end: 400.0
+//                       name: Human_friends.array.pure, cost: 100.0, end: 500.0
+//                             name: Human_name.pure, cost: 100.0, end: 600.0
+//                                   name: Human_name.option.pure, cost: 100.0, end: 700.0
+//                             name: Droid_name.pure, cost: 100.0, end: 600.0
+//                                   name: Droid_name.option.pure, cost: 100.0, end: 700.0
+//                  name: Human_name.pure, cost: 100.0, end: 400.0
+//                       name: Human_name.option.pure, cost: 100.0, end: 500.0
+//                  name: Droid_appearsIn.pure, cost: 100.0, end: 400.0
+//                       name: Droid_appearsIn.array.pure, cost: 100.0, end: 500.0
+//                  name: Droid_friends.effect, cost: 100.0, end: 400.0
+//                       name: Droid_friends.array.pure, cost: 100.0, end: 500.0
+//                             name: Human_name.pure, cost: 100.0, end: 600.0
+//                                   name: Human_name.option.pure, cost: 100.0, end: 700.0
+//                             name: Droid_name.pure, cost: 100.0, end: 600.0
+//                                   name: Droid_name.option.pure, cost: 100.0, end: 700.0
+//                  name: Droid_name.pure, cost: 100.0, end: 400.0
+//                       name: Droid_name.option.pure, cost: 100.0, end: 500.0
+//      name: Human_name.pure, cost: 100.0, end: 200.0
+//            name: Human_name.option.pure, cost: 100.0, end: 300.0
+//      name: Droid_friends.effect, cost: 100.0, end: 200.0
+//            name: Droid_friends.array.pure, cost: 100.0, end: 300.0
+//                  name: Human_appearsIn.pure, cost: 100.0, end: 400.0
+//                       name: Human_appearsIn.array.pure, cost: 100.0, end: 500.0
+//                  name: Human_friends.effect, cost: 100.0, end: 400.0
+//                       name: Human_friends.array.pure, cost: 100.0, end: 500.0
+//                             name: Human_name.pure, cost: 100.0, end: 600.0
+//                                   name: Human_name.option.pure, cost: 100.0, end: 700.0
+//                             name: Droid_name.pure, cost: 100.0, end: 600.0
+//                                   name: Droid_name.option.pure, cost: 100.0, end: 700.0
+//                  name: Human_name.pure, cost: 100.0, end: 400.0
+//                       name: Human_name.option.pure, cost: 100.0, end: 500.0
+//                  name: Droid_appearsIn.pure, cost: 100.0, end: 400.0
+//                       name: Droid_appearsIn.array.pure, cost: 100.0, end: 500.0
+//                  name: Droid_friends.effect, cost: 100.0, end: 400.0
+//                       name: Droid_friends.array.pure, cost: 100.0, end: 500.0
+//                             name: Human_name.pure, cost: 100.0, end: 600.0
+//                                   name: Human_name.option.pure, cost: 100.0, end: 700.0
+//                             name: Droid_name.pure, cost: 100.0, end: 600.0
+//                                   name: Droid_name.option.pure, cost: 100.0, end: 700.0
+//                  name: Droid_name.pure, cost: 100.0, end: 400.0
+//                       name: Droid_name.option.pure, cost: 100.0, end: 500.0
+//      name: Droid_name.pure, cost: 100.0, end: 200.0
+//            name: Droid_name.option.pure, cost: 100.0, end: 300.0
 // 
-// naive: 1300.0
-// optimized: 1300.0
+// naive: 4900.0
+// optimized: 4900.0
 ```
 :::note
 The Star Wars schema has no batchers, so the optimized variant will not be particularly interesting.

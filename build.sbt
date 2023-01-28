@@ -70,7 +70,7 @@ lazy val sharedSettings = Seq(
 lazy val core = project
   .in(file("modules/core"))
   .settings(sharedSettings)
-  .settings(name := "gql-core")
+  .settings(name := "gql-core"/*, tlFatalWarnings := true*/)
 
 lazy val natchez = project
   .in(file("modules/natchez"))
@@ -127,7 +127,7 @@ lazy val docs = project
     moduleName := "gql-docs",
     mdocOut := file("website/docs"),
     mdocVariables ++= Map(
-      "VERSION" -> version.value
+      "VERSION" -> tlLatestVersion.value.getOrElse(version.value)
     ),
     tlFatalWarnings := false
   )
