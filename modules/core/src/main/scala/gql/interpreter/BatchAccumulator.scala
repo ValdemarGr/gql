@@ -27,9 +27,6 @@ trait BatchAccumulator[F[_]] {
   // Emits the whole result of the batch, so the calle must filter
   def submit[K, V](id: Int, values: Chain[(Cursor, Set[K])]): F[Option[Map[K, V]]]
 
-  // Emits the whole result of the batch, so the calle must filter
-  def submit2[K, V](id: Int, values: Chain[(Cursor, Set[K])]): F[Option[Map[K, V]]] = ???
-
   def getErrors: F[List[EvalFailure.BatchResolution]]
 }
 
@@ -106,7 +103,7 @@ object BatchAccumulator {
                             xs.flatMap { case Batch(_, input) => input.map { case (cg, _) => cg } }
 
                           errState
-                            .update(EvalFailure.BatchResolution(allCursors, err, allKeysSet.map(x => x)) :: _)
+                            .update(EvalFailure.BatchResolution(allCursors, err) :: _)
                             .as(None)
                         case Right((dur, res)) =>
                           stats.updateStats(s"batch_${id}", dur, allKeysSet.size) as Some(res)

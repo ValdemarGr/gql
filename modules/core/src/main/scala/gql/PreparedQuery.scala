@@ -178,16 +178,6 @@ object PreparedQuery {
       case _                      => Chain.empty
     }
 
-  def underlyingOutputTypename[G[_]](ot: Out[G, ?]): String = (ot: @unchecked) match {
-    case Enum(name, _, _)         => name
-    case Union(name, _, _)        => name
-    case Interface(name, _, _, _) => name
-    case Type(name, _, _, _)      => name
-    case Scalar(name, _, _, _)    => name
-    case OutOpt(of, _)            => underlyingOutputTypename(of)
-    case OutArr(of, _, _)         => underlyingOutputTypename(of)
-  }
-
   def friendlyName[G[_], A](ot: Out[G, A], inOption: Boolean = false): String = {
     val suffix = if (inOption) "" else "!"
     val prefix = (ot: @unchecked) match {

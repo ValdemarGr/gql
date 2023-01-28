@@ -72,6 +72,63 @@ object Interpreter {
       edges: StepCont[F, A, B]
   )
 
+  final case class RunInput[F[_], A, B](
+      data: IndexedData[A],
+      cps: StepCont[F, A, B]
+  )
+
+  object RunInput {
+    def root[F[_], A](data: A, cont: Prepared[F, A]): RunInput[F, A, Json] =
+      RunInput(IndexedData(0, EvalNode.empty(data)), StepCont.Done(cont))
+  }
+
+  def evalOne[F[_]: Async: Statistics: StreamSupervisor, A, B](
+      input: RunInput[F, A, B],
+      background: Supervisor[F],
+      batchAccum: BatchAccumulator[F]
+  ): F[(Chain[EvalFailure], EvalNode[Json], Map[Unique.Token, StreamMetadata[F, ?, ?]])] = {
+    StreamMetadataAccumulator[F, StreamMetadata[F, ?, ?]].flatMap { sma =>
+      val interpreter = new InterpreterImpl[F](sma, batchAccum, background)
+
+      interpreter
+        .runEdgeCont(Chain(input.data), input.cps)
+        .run
+        .map { case (fail, succs) =>
+          val (_, j) = succs.headOption.get
+          (fail, j)
+        }
+        .flatMap { case (fail, j) => sma.getState.map((fail, input.data.node.setValue(j), _)) }
+    }
+  }
+
+  def evalAll[F[_]: Async: Statistics: StreamSupervisor](
+      metas: NonEmptyList[RunInput[F, ?, ?]],
+      schemaState: SchemaState[F],
+      background: Supervisor[F]
+  )(implicit planner: Planner[F]): F[(Chain[EvalFailure], NonEmptyList[EvalNode[Json]], Map[Unique.Token, StreamMetadata[F, ?, ?]])] =
+    for {
+      costTree <- metas.toList
+        .flatTraverse { ri =>
+          Planner.runCostAnalysisFor[F, List[Planner.Node]] { implicit stats2 =>
+            def contCost(step: StepCont[F, ?, ?]): Planner.H[F, List[Planner.Node]] =
+              step match {
+                case d: StepCont.Done[F, i]           => Planner.costForPrepared[Planner.H[F, *], F](d.prep)
+                case c: StepCont.Continue[F, ?, ?, ?] => Planner.costForStep[Planner.H[F, *], F](c.step, contCost(c.next))
+                case StepCont.AppendClosure(_, next)  => contCost(next)
+                case StepCont.TupleWith(_, next)      => contCost(next)
+              }
+            contCost(ri.cps)
+          }
+        }
+        .map(Planner.NodeTree(_))
+      planned <- planner.plan(costTree)
+      accumulator <- BatchAccumulator[F](schemaState, planned)
+      res <- metas.parTraverse(evalOne(_, background, accumulator))
+      smas = res.foldMapK { case (_, _, sma) => sma }
+      bes <- accumulator.getErrors
+      allErrors = Chain.fromSeq(res.toList).flatMap { case (errs, _, _) => errs } ++ Chain.fromSeq(bes)
+    } yield (allErrors, res.map { case (_, en, _) => en }, smas)
+
   def constructStream[F[_]: Statistics, A](
       rootInput: A,
       rootSel: NonEmptyList[PreparedField[F, A]],
@@ -84,58 +141,12 @@ object Interpreter {
           .map(_.toList.reverse.distinctBy { case (tok, _, _) => tok }.toNel)
           .unNone
 
-        final case class RunInput[A, B](
-            data: IndexedData[A],
-            cps: StepCont[F, A, B]
-        )
-
-        def evaluate(
-            metas: NonEmptyList[RunInput[?, ?]]
-        ): F[(Chain[EvalFailure], NonEmptyList[Json], Map[Unique.Token, StreamMetadata[F, ?, ?]])] =
-          for {
-            costTree <- metas.toList
-              .flatTraverse { ri =>
-                Planner.runCostAnalysisFor[F, List[Planner.Node]] { implicit stats2 =>
-                  def contCost(step: StepCont[F, ?, ?]): Planner.H[F, List[Planner.Node]] =
-                    step match {
-                      case d: StepCont.Done[F, i]           => Planner.costForPrepared[Planner.H[F, *], F](d.prep)
-                      case c: StepCont.Continue[F, ?, ?, ?] => Planner.costForStep[Planner.H[F, *], F](c.step, contCost(c.next))
-                      case StepCont.AppendClosure(_, next)  => contCost(next)
-                      case StepCont.TupleWith(_, next)      => contCost(next)
-                    }
-                  contCost(ri.cps)
-                }
-              }
-              .map(Planner.NodeTree(_))
-            planned <- planner.plan(costTree)
-            accumulator <- BatchAccumulator[F](schemaState, planned)
-            res <-
-              metas.parTraverse { case ri: RunInput[a, b] =>
-                StreamMetadataAccumulator[F, StreamMetadata[F, ?, ?]].flatMap { sma =>
-                  val interpreter = new InterpreterImpl[F](sma, accumulator, sup)
-                  interpreter
-                    .runEdgeCont(Chain(ri.data), ri.cps)
-                    .run
-                    .map { case (fail, succs) =>
-                      val (_, j) = succs.headOption.get
-                      (fail, j)
-                    }
-                    .flatMap { case (fail, j) =>
-                      sma.getState.map((fail, j, _))
-                    }
-                }
-              }
-            smas = res.foldMapK { case (_, _, sma) => sma }
-            bes <- accumulator.getErrors
-            allErrors = Chain.fromSeq(res.toList).flatMap { case (errs, _, _) => errs } ++ Chain.fromSeq(bes)
-          } yield (allErrors, res.map { case (_, j, _) => j }, smas)
-
-        val inital = RunInput(IndexedData(0, EvalNode.empty(rootInput)), StepCont.Done(PreparedQuery.Selection(rootSel)))
+        val inital = RunInput.root(rootInput, PreparedQuery.Selection(rootSel))
 
         fs2.Stream
-          .eval(evaluate(NonEmptyList.one(inital)))
+          .eval(evalAll[F](NonEmptyList.one(inital), schemaState, sup))
           .flatMap { case (initialFails, initialSuccs, initialSM) =>
-            val jo: JsonObject = initialSuccs.reduceLeft(_ deepMerge _).asObject.get
+            val jo: JsonObject = initialSuccs.map(_.value).reduceLeft(_ deepMerge _).asObject.get
 
             fs2.Stream.emit((initialFails, jo)) ++
               changeStream
@@ -149,11 +160,13 @@ object Interpreter {
 
                       val allSigNodes = activeStreams.toList.map { case (k, sm) => (sm.cursor, k) }
 
+                      // Compute the set of signals that have been evicted from the tree
                       val meta = recompute(allSigNodes, s)
 
                       // The root nodes are the highest common signal ancestors
                       val rootNodes = activeChanges.filter { case (k, _, _, _) => meta.hcsa.contains(k) }
 
+                      // Now we have prepared the input for this next iteration
                       val preparedRoots =
                         rootNodes.map { case (_, _, in, sm) =>
                           in match {
@@ -178,39 +191,44 @@ object Interpreter {
 
                       preparedRoots.toNel
                         .traverse { xs =>
+                          // Some of the streams may have emitted errors, we have to insert nulls into the result at those positions
                           val paddedErrors = xs.toList.mapFilter {
                             case (_, None, c)    => Some((Json.Null, c))
                             case (_, Some(_), _) => None
                           }
 
+                          // These are the inputs that are ready to be evaluated
                           val defined = xs.collect { case (_, Some(x), c) => (x, c) }
 
-                          val evalled =
+                          val evalled: F[(List[EvalNode[Json]], Chain[EvalFailure], Map[Unique.Token, StreamMetadata[F, ?, ?]])] =
                             defined
-                              .collect { case (x, _) => x }
+                              .map { case (x, _) => x }
                               .toNel
-                              .traverse(evaluate)
-                              .flatMap[(List[(Json, Cursor)], Chain[EvalFailure], Map[Unique.Token, StreamMetadata[F, ?, ?]])] {
-                                case None => F.pure((Nil, Chain.empty, activeStreams))
+                              .traverse(evalAll[F](_, schemaState, sup))
+                              .map {
+                                // Okay there were no inputs (toNel), just emit what we have
+                                case None => (Nil, Chain.empty, activeStreams)
+                                // Okay so an evaluation happened
                                 case Some((newFails, newOutputs, newStreams)) =>
-                                  val succWithInfo = newOutputs.toList zip defined.map { case (_, c) => c }
+                                  val newActiveStreams = newStreams ++ activeStreams
+                                  (newOutputs.toList, newFails, newActiveStreams)
+                              }
+                              .flatMap { case (out, errs, actives) =>
+                                // Remove evicted nodes from the actives
+                                val newActives = actives -- meta.toRemove
 
-                                  val withNew = newStreams ++ activeStreams
-                                  // All nodes that occured in the tree but are not in the HCSA are dead
-                                  val garbageCollected = withNew -- meta.toRemove
+                                // Free all the unused streams
+                                val gcF = streamSup.release(meta.toRemove)
 
-                                  // Also remove the subscriptions and dead resources
-                                  val releasesF = streamSup.release(meta.toRemove.toSet)
+                                // Free all the old versions of our roots
+                                val freeRootsF = rootNodes.traverse_ { case (k, r, _, _) => streamSup.freeUnused(k, r) }
 
-                                  val freeF = activeChanges
-                                    .collect { case (k, rt, _, _) if meta.hcsa.contains(k) => (k, rt) }
-                                    .traverse_ { case (k, rt) => streamSup.freeUnused(k, rt) }
-
-                                  sup.supervise(releasesF >> freeF) as (succWithInfo, newFails, garbageCollected)
+                                sup.supervise(gcF &> freeRootsF) as (out, errs, newActives)
                               }
 
+                          // Patch the previously emitted json data
                           evalled.map { case (jsons, errs, finalStreams) =>
-                            val allJsons = jsons ++ paddedErrors
+                            val allJsons = jsons.map(en => (en.value, en.cursor)) ++ paddedErrors
                             val allErrs = errs ++ Chain.fromSeq(xs.toList).flatMap { case (es, _, _) => es }
 
                             val stitched = allJsons.foldLeft(prevOutput) { case (accum, (patch, pos)) =>
@@ -330,8 +348,6 @@ class InterpreterImpl[F[_]](
   val W = Async[W]
   val lift: F ~> W = WriterT.liftK[F, Chain[EvalFailure]]
 
-  def failM[A](e: EvalFailure)(implicit M: Monoid[A]): W[A] = WriterT.put(M.empty)(Chain.one(e))
-
   def submit(name: String, duration: FiniteDuration, size: Int): F[Unit] =
     sup.supervise(stats.updateStats(name, duration, size)).void
 
@@ -382,7 +398,7 @@ class InterpreterImpl[F[_]](
         val cursor = alg.stableUniqueEdgeName
         inputs
           .parFlatTraverse { id =>
-            val runF = attemptTimed(cursor, e => EvalFailure.EffectResolution(id.node.cursor, Left(e), id.node.value)) {
+            val runF = attemptTimed(cursor, e => EvalFailure.EffectResolution(id.node.cursor, Left(e))) {
               id.traverse(f)
             }
 
@@ -413,7 +429,7 @@ class InterpreterImpl[F[_]](
           })
 
           val runF =
-            attemptTimed(cursor, e => EvalFailure.StreamHeadResolution(id.node.cursor, Left(e), id.node.value)) {
+            attemptTimed(cursor, e => EvalFailure.StreamHeadResolution(id.node.cursor, Left(e))) {
               id
                 .traverse { i =>
                   streamAccumulator
@@ -459,7 +475,7 @@ class InterpreterImpl[F[_]](
         val keys: Chain[(Cursor, Set[k])] = inputs.map(id => id.node.cursor -> id.node.value)
 
         lift {
-          batchAccumulator.submit2[k, v](alg.id, keys).map {
+          batchAccumulator.submit[k, v](alg.id, keys).map {
             case None => Chain.empty
             case Some(m) =>
               inputs.map { id =>
