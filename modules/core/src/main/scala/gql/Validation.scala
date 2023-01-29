@@ -317,9 +317,9 @@ object Validation {
             val pv = PreparedQuery.valueToParserValue(dv)
             (x, pv)
           }
-          .traverse { case (a, pv) =>
+          .traverse { case (a: ArgValue[a], pv) =>
             PreparedQuery
-              .parseInput[PreparedQuery.H, Any](pv, a.input.value.asInstanceOf[In[Any]], None, ambigiousEnum = false)
+              .parseInput[PreparedQuery.H, a](pv, a.input.value, None, ambigiousEnum = false)
               .run(PreparedQuery.Prep.empty)
               .value
               .value match {
@@ -477,7 +477,7 @@ object Validation {
       case Enum(_, _, _)       => G.unit
       case Scalar(_, _, _, _)  => G.unit
       case s: Selectable[F, ?] => validateToplevel[F, G](s, discovery)
-      case OutArr(of, _, _)    => validateOutput[F, G](of.asInstanceOf[Out[F, Any]], discovery)
-      case OutOpt(of, _)       => validateOutput[F, G](of.asInstanceOf[Out[F, Any]], discovery)
+      case OutArr(of, _, _)    => validateOutput[F, G](of, discovery)
+      case o: OutOpt[?, ?, ?]  => validateOutput[F, G](o.of, discovery)
     }
 }

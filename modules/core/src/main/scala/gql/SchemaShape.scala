@@ -118,14 +118,14 @@ object SchemaShape {
 
     def goOutput[G[_]](out: Out[F, ?])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]]): G[Unit] =
       out match {
-        case OutArr(of, _, _) => goOutput[G](of.asInstanceOf[Out[F, Any]])
-        case OutOpt(of, _)    => goOutput[G](of.asInstanceOf[Out[F, Any]])
+        case o: OutArr[?, ?, ?, ?] => goOutput[G](o.of)
+        case o: OutOpt[?, ?, ?]    => goOutput[G](o.of)
         case t: OutToplevel[F, ?] =>
           outputNotSeen(t) {
             def handleFields(o: ObjectLike[F, ?]): G[Unit] =
               o.abstractFields.traverse_ { case (_, x) =>
                 goOutput[G](x.output.value) >>
-                  x.arg.traverse_(_.entries.traverse_(x => goInput[G](x.input.value.asInstanceOf[In[Any]])))
+                  x.arg.traverse_(_.entries.traverse_(x => goInput[G](x.input.value)))
               }
 
             t match {
@@ -154,7 +154,7 @@ object SchemaShape {
           inputNotSeen(t) {
             t match {
               case Input(_, fields, _) =>
-                fields.entries.traverse_(x => goInput[G](x.input.value.asInstanceOf[In[Any]]))
+                fields.entries.traverse_(x => goInput[G](x.input.value))
               case _ => G.unit
             }
           }

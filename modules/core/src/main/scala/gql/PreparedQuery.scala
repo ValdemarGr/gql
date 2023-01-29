@@ -317,7 +317,7 @@ object PreparedQuery {
       D: Defer[F]
   ): F[FieldInfo[G]] = ambientField(f.name) {
     // Verify arguments by decoding them
-    val decF = af.arg.traverse_(a => decodeFieldArgs[F, G, Any](a.asInstanceOf[Arg[Any]], f.arguments, variableMap))
+    val decF = af.arg.traverse_{ case a: Arg[a] => decodeFieldArgs[F, G, a](a, f.arguments, variableMap).void }
 
     // Verify subselection
     val c = f.selectionSet.caret
@@ -837,16 +837,16 @@ object PreparedQuery {
           t.implementsMap.get(name) match {
             case None => raise(s"Tried to match with type `$name` on type object type `$n`.", Some(caret))
             case Some(impl) =>
-              val i: Interface[G, _] = impl.value
-              F.pure(i.asInstanceOf[Interface[G, Any]])
+              val i: Interface[G, ?] = impl.value
+              F.pure(i)
           }
         // What types implement this interface?
         // We can both downcast and up-match
         case i @ Interface(n, _, _, _) =>
           i.implementsMap.get(name) match {
             case Some(impl) =>
-              val i: Interface[G, _] = impl.value
-              F.pure(i.asInstanceOf[Interface[G, Any]])
+              val i: Interface[G, ?] = impl.value
+              F.pure(i)
             case None =>
               raiseOpt(
                 discoveryState.implementations.get(i.name),
@@ -867,7 +867,7 @@ object PreparedQuery {
         case u @ Union(n, _, _) =>
           u.instanceMap
             .get(name) match {
-            case Some(i) => F.pure(i.tpe.value.asInstanceOf[Type[G, Any]])
+            case Some(i) => F.pure(i.tpe.value)
             case None =>
               u.types.toList
                 .collectFirstSome { case v =>
@@ -880,7 +880,7 @@ object PreparedQuery {
                       .mkString(", ")}.",
                     caret.some
                   )
-                case Some(x) => F.pure(x.value.asInstanceOf[Interface[G, Any]])
+                case Some(x) => F.pure(x.value)
               }
           }
       }
@@ -992,7 +992,7 @@ object PreparedQuery {
           }
           .flatMap(arr.fromSeq(_).fold(raise(_, None), F.pure(_)))
       case (_: InOpt[a], P.Value.NullValue) => F.pure(Option.empty[a])
-      case (opt: InOpt[a], x)               => parseInput[F, a](x, opt.of, variableMap, ambigiousEnum).map(Some(_).asInstanceOf[A])
+      case (opt: InOpt[a], x)               => parseInput[F, a](x, opt.of, variableMap, ambigiousEnum).map(Some(_))
       case (i, _)                           => raise(s"Expected type `${inName(i)}`, but got value ${pValueName(v)}.", None)
     }
 
@@ -1032,15 +1032,14 @@ object PreparedQuery {
   ): F[A] = {
     // All provided fields are of the correct type
     // All required fields are either defiend or defaulted
-    val fieldsF: F[NonEmptyChain[(String, ArgParam[Any])]] =
-      arg.entries.parTraverse { a =>
-        parseArgValue[F, Any](
-          a.asInstanceOf[ArgValue[Any]],
+    val fieldsF: F[NonEmptyChain[(String, ArgParam[?])]] =
+      arg.entries.parTraverse { case a: ArgValue[a] =>
+        parseArgValue[F, a](
+          a,
           input,
           variableMap,
           ambigiousEnum
-        )
-          .tupleLeft(a.name)
+        ).map(a.name -> _)
       }
 
     fieldsF
