@@ -1,9 +1,6 @@
 ---
 title: Output types
 ---
-:::warning
-this is not up to date
-:::
 An output type `Out[F[_], A]` is an ast node that can take some `A` as input and produce a graphql value in the effect `F`.
 Output types act as continuations of their input types, such that a schema effectively is a tree of continuations.
 The output types of gql are defined in `gql.ast` and are named after their respective GraphQL types.
@@ -14,7 +11,7 @@ The types can naturally be constructed manually as well, but this can be verbose
 :::
 
 Lets import the things we need: 
-```scala 
+```scala mdoc
 import gql.ast._
 import gql.resolver._
 import gql.dsl._
@@ -32,7 +29,7 @@ A `Value` is a graphql value, which is a superset of json.
 
 gql comes with a few predefined scalars, but you can also define your own.
 For instance, the `ID` type is defined for any `Scalar` as follows:
-```scala 
+```scala mdoc
 final case class ID[A](value: A)
 
 object ID {
@@ -51,7 +48,7 @@ implicitly[Scalar[IO, ID[String]]]
 
 ## Enum
 `Enum` types, like `Scalar` types, are terminal types that consist of a name and non-empty bi-directional mapping from a scala type to a `String`:
-```scala 
+```scala mdoc
 sealed trait Color
 object Color {
   case object Red extends Color
@@ -68,7 +65,7 @@ enumType[IO, Color](
 ```
 
 `Enum` types have no constraints on the values they can encode or decode, so they can in fact, be dynamically typed:
-```scala 
+```scala mdoc
 final case class UntypedEnum(s: String)
 
 enumType[IO, UntypedEnum](
@@ -83,9 +80,9 @@ Therefore, it is recommended to enumerate the image of the enum; only use `seale
 
 ## Field
 `Field` is a type that represents a field in a graphql `type` or `interface`.
-A `Field[F, I, T, A]` has arguments `Arg[A]`, a continuation `Out[F, T]` and a resolver that takes `(I, A)` to `F[T]`.
+A `Field[F, I, T]` contains a continuation `Out[F, T]` and a resolver that takes `I` to `F[T]`.
 Field also lazily captures `Out[F, T]`, to allow recursive types.
-The `dsl` lazily captures `Out[F, T]` definitions in the implicit scope.
+The `dsl` functions also lazily capture `Out[F, T]` definitions as implicit parameters.
 :::tip
 Check out the [resolver section](./resolvers.md) for more info on how resolvers work.
 :::
@@ -93,7 +90,7 @@ Check out the [resolver section](./resolvers.md) for more info on how resolvers 
 ## Type (object)
 `Type` is the gql equivalent of `type` in GraphQL parlance.
 A `Type` consists of a name and a non-empty list of fields.
-```scala 
+```scala mdoc
 final case class Domain(
   name: String,
   amount: Int
@@ -102,14 +99,12 @@ final case class Domain(
 Type[IO, Domain](
   "Domain",
   NonEmptyList.of(
-    "name" -> Field[IO, Domain, String, Unit](
-      Applicative[Arg].unit,
-      PureResolver{ case (i, _) => i.name },
+    "name" -> Field[IO, Domain, String](
+      Resolver.lift(_.name),
       Eval.now(stringScalar)
     ),
-    "amount" -> Field[IO, Domain, Int, Unit](
-      Applicative[Arg].unit, 
-      PureResolver{ case (i, _) => i.amount },
+    "amount" -> Field[IO, Domain, Int](
+      Resolver.lift(_.amount),
       Eval.now(intScalar)
     )
   ),
@@ -118,11 +113,11 @@ Type[IO, Domain](
 ```
 
 `Type`'s look very rough, but are significantly easier to define with the `dsl`:
-```scala 
+```scala mdoc
 tpe[IO, Domain](
   "Domain",
-  "name" -> pure(_.name),
-  "amount" -> pure(_.amount)
+  "name" -> lift(_.name),
+  "amount" -> lift(_.amount)
 )
 ```
 
@@ -134,19 +129,19 @@ It is highly reccomended to define all `Type`s, `Union`s and `Interface`s as eit
 ## Union
 `Union` types allow unification of arbitary types.
 The `Union` type defines a set of `PartialFunction`s that can specify the the type.
-```scala 
+```scala mdoc
 sealed trait Animal
 final case class Dog(name: String) extends Animal
 final case class Cat(name: String) extends Animal
 
 implicit lazy val dog = tpe[IO, Dog](
   "Dog",
-  "name" -> pure(_.name)
+  "name" -> lift(_.name)
 )
 
 implicit lazy val cat = tpe[IO, Cat](
   "Cat",
-  "name" -> pure(_.name)
+  "name" -> lift(_.name)
 )
 
 union[IO, Animal]("Animal")
@@ -161,13 +156,11 @@ This is not possible, since the gql type needs to be available at the time of sc
 :::caution
 Defining instances for `Animal` that are not referenced in the gql type is mostly safe, since any spread will simple give no fields.
 Most GraphQL clients also handle this case gracefully, for backwards compatibility reasons.
-The exception is `__typename`.
-If the interpreter cannot find an instance of the value when querying for `__typename`, a GraphQL error will be returned.
 :::
 
 ### Ad-hoc unions
 In the true spirit of unification, `Union` types can be constructed in a more ad-hoc fashion:
-```scala 
+```scala mdoc
 final case class Entity1(value: String)
 final case class Entity2(value: String)
 
@@ -187,13 +180,13 @@ union[IO, Unification]("Unification")
 ```
 ### For the daring
 Since the specify function is a `PartialFunction`, it is indeed possible to have no unifying type:
-```scala 
+```scala mdoc
 union[IO, Any]("AnyUnification")
   .variant{ case x: Entity1 => x }
   .variant{ case x: Entity2 => x }
 ```
 And also complex routing logic:
-```scala 
+```scala mdoc
 union[IO, Unification]("RoutedUnification")
   .variant{ case Unification.E1(x) if x.value == "Jane" => x }
   .variant{ 
@@ -205,9 +198,10 @@ union[IO, Unification]("RoutedUnification")
 ## Interface
 An interface is a `Type` that can be "implemented".
 
-`Interface`s have fields like `Type`s and can also be implemented by other `Type`s and `Interface`s.
+`Interface`s have abstract fields, that are very much like fields in `Type`s.
+`Interface`s can also be implemented by other `Type`s and `Interface`s.
 `Interface`s don't declare their implementations, but rather the implementations declare their interfaces.
-```scala 
+```scala mdoc
 sealed trait Node {
  def id: String
 }
@@ -224,21 +218,20 @@ final case class Company(
   
 implicit lazy val node = interface[IO, Node](
   "Node",
-  "id" -> pure(x => ID(x.id))
+  "id" -> abst[IO, ID[String]]
 )
 
 lazy val person = tpe[IO, Person](
   "Person",
-  "name" -> pure(_.name),
-  "id" -> pure(x => ID(x.id))
+  "name" -> lift(_.name),
+  "id" -> lift(x => ID(x.id))
 ).implements[Node]{ case x: Person => x }
   
 lazy val company = tpe[IO, Company](
   "Company",
-  "name" -> pure(_.name),
-)
-  .addFields(node.fieldsList: _*)
-  .subtypeOf[Node]
+  "name" -> lift(_.name),
+  "id" -> lift(x => ID(x.id))
+).subtypeOf[Node]
 ```
 
 ### A note on interface relationships
@@ -266,10 +259,10 @@ You might want to declare types that are not yet queryable.
 Or maybe you only expose an interface, but not the implementing types, thus the implementations won't be discovered.
 
 The schema lets you declare "extra" types that should occur in introspection, rendering and evaluation (if possible):
-```scala 
+```scala mdoc
 def getNode: Node = Company("gql", "1")
 
-def shape = SchemaShape.make[IO](tpe[IO, Unit]("Query", "node" -> pure(_ => getNode)))
+def shape = SchemaShape.make[IO](tpe[IO, Unit]("Query", "node" -> lift(_ => getNode)))
 
 println(shape.render)
 
