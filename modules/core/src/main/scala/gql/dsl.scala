@@ -89,8 +89,11 @@ object dsl {
   }
 
   final class PartiallyAppliedField[I](private val dummy: Boolean = false) extends AnyVal {
-    def apply[F[_], T](resolver: Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
+    def from[F[_], T](resolver: Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
       Field[F, I, T](resolver, Eval.later(tpe))
+
+    def apply[F[_], T](f: Resolver[F, I, I] => Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
+      Field[F, I, T](f(Resolver.id[F, I]), Eval.later(tpe))
   }
 
   def field[I] = new PartiallyAppliedField[I]

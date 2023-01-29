@@ -74,12 +74,12 @@ def schema[F[_]](implicit repo: Repository[F], F: Async[F]) = {
     "JEDI" -> enumVal(Episode.JEDI)
   )
 
-  lazy val characterFields = fieldGroup[F, Character](
-    "id" -> pure(_.id),
-    "name" -> pure(_.name),
+  lazy val characterFields = fields[F, Character](
+    "id" -> lift(_.id),
+    "name" -> lift(_.name),
     "friends" -> eff(_.friends.traverse(repo.getCharacter)),
-    "appearsIn" -> pure(_.appearsIn),
-    "secretBackstory" -> fallible(_ => F.pure("secretBackstory is secret.".leftIor[String]))
+    "appearsIn" -> lift(_.appearsIn),
+    "secretBackstory" -> field[Character](_.as("secretBackstory is secret.".leftIor[String]).rethrow)
   )
 
   implicit lazy val character: Interface[F, Character] = interfaceFromNel[F, Character](
@@ -89,20 +89,20 @@ def schema[F[_]](implicit repo: Repository[F], F: Async[F]) = {
 
   implicit lazy val human: Type[F, Human] = tpe[F, Human](
     "Human",
-    "homePlanet" -> pure(_.homePlanet)
+    "homePlanet" -> lift(_.homePlanet)
   ).subtypeOf[Character].addFields(characterFields.toList: _*)
 
   implicit lazy val droid: Type[F, Droid] = tpe[F, Droid](
     "Droid",
-    "primaryFunction" -> pure(_.primaryFunction)
+    "primaryFunction" -> lift(_.primaryFunction)
   ).subtypeOf[Character].addFields(characterFields.toList: _*)
 
   Schema.query(
     tpe[F, Unit](
       "Query",
-      "hero" -> eff(arg[Option[Episode]]("episode")) { case (_, ep) => repo.getHero(ep) },
-      "human" -> eff(arg[String]("id")) { case (_, id) => repo.getHuman(id) },
-      "droid" -> eff(arg[String]("id")) { case (_, id) => repo.getDroid(id) }
+      "hero" -> eff(arg[Option[Episode]]("episode")) { case (ep, _) => repo.getHero(ep) },
+      "human" -> eff(arg[String]("id")) { case (id, _) => repo.getHuman(id) },
+      "droid" -> eff(arg[String]("id")) { case (id, _) => repo.getDroid(id) }
     )
   )
 }

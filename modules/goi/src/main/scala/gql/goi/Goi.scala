@@ -58,7 +58,7 @@ object Goi {
   ): Type[F, A] =
     tpe
       .copy(implementations = makeImpl[F, A](specify) :: tpe.implementations)
-      .addFields("id" -> field(resolver.evalMap(s => makeId[F](tpe.name, s).map(ID(_)))))
+      .addFields("id" -> field.from(resolver.evalMap(s => makeId[F](tpe.name, s).map(ID(_)))))
 
   def addId[F[_], A, B](resolver: Resolver[F, A, B], t: Type[F, A])(implicit
       F: Sync[F],
@@ -92,7 +92,7 @@ object Goi {
     shape.copy(query =
       shape.query.copy(
         fields = shape.query.fields.append[(String, Field[F, Q, ?])](
-          "node" -> field {
+          "node" -> field[Q].from {
             Resolver
               .argument(arg[ID[String]]("id"))
               .evalMap { id =>

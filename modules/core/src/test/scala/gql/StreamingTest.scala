@@ -24,7 +24,6 @@ import gql.ast._
 import gql.dsl._
 import cats.effect._
 import fs2.Pull
-import gql.resolver._
 
 final case class Level1(value: Int)
 final case class Level2(value: Int)
@@ -43,7 +42,7 @@ class StreamingTest extends CatsEffectSuite {
       "Level1",
       "value" -> lift(_.value),
       "level2" -> field[Level1] {
-        Resolver.stream(_ => Stream.iterate(0)(_ + 1).lift[IO].flatMap(x => fs2.Stream.resource(level1Resource) as Level2(x)))
+        _.stream(_ => Stream.iterate(0)(_ + 1).lift[IO].flatMap(x => fs2.Stream.resource(level1Resource) as Level2(x)))
       }
     )
 
@@ -51,7 +50,7 @@ class StreamingTest extends CatsEffectSuite {
     "Level2",
     "value" -> lift(_.value),
     "level1" -> field[Level2] {
-      Resolver.stream(_ => Stream.iterate(0)(_ + 1).lift[IO].flatMap(x => fs2.Stream.resource(level2Resource) as Level1(x)))
+      _.stream(_ => Stream.iterate(0)(_ + 1).lift[IO].flatMap(x => fs2.Stream.resource(level2Resource) as Level1(x)))
     }
   )
 
