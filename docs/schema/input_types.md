@@ -1,10 +1,7 @@
 ---
 title: Input types
 ---
-:::warning
-this is not up to date
-:::
-An input type `In[A]` defines an input type and a mapping from the input type to `A`.
+An input type `In[A]` defines an input type that produces an `A` or an error.
 Input types occur as parameters in queries as a way to let the caller provide arguments to query resolution.
 
 ## Scalar
