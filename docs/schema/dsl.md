@@ -4,12 +4,10 @@ title: The DSL
 :::warning
 not up to date
 :::
-The DSL consists of a set of smart constructors for the ast nodes of gql.
+The DSL consists of a series of smart constructors for the ast nodes of gql.
 The source code for the DSL is very easy to follow and as such, the best documentation is the source code itself :-).
 
-## Fields
-The simplest form of field construction comes from the `field` smart constructor.
-It simply lifts a resolver (and optionally an argument) into a field.
+Lets start off with some imports.
 ```scala mdoc
 import cats.data._
 import cats.effect._
@@ -17,73 +15,93 @@ import cats.implicits._
 import gql.dsl._
 import gql.ast._
 import gql.resolver._
+```
 
-def f = field(FallibleResolver[IO, String, String](s => IO.pure(s.rightIor)))
+## Fields
+The simplest form of field construction comes from the `field.from` smart constructor.
+It simply lifts a resolver into a field, given that a gql output type exists for the resolver output.
+```scala mdoc
+def r: Resolver[IO, Int, String] = Resolver.lift(i => i.toString())
 
-def intArg = arg[Int]("intArg")
-field(intArg)(FallibleResolver[IO, (String, Int), String]{ case (s, i) => 
-  IO.pure((s + i.toString()).rightIor)
-})
+val f: Field[IO, Int, String] = field.from(r)
+```
+
+Sometimes type inference cannot find the proper type for a field:
+```scala mdoc:fail
+field.from(Resolver.eval(i => IO(i.toString())))
+```
+The type parameters for `field` are partially applied, such that when type inference isn't enough, types can be supplied succinctly.
+```scala mdoc:silent
+field[Int].from(Resolver.eval(i => IO(i.toString())))
+
+field.from(Resolver.eval((i: Int) => IO(i.toString())))
+```
+
+For most non-trivial fields, there is an even more concise syntax.
+Just calling the `field` constructor, takes a higher order function that goes from the identity resolver to some output:
+```scala mdoc:silent
+field[Int](_.map(i => i * 2).evalMap(i => IO(i))): Field[IO, Int, Int]
+```
+
+### Builders
+Complex structures may require many special resolver compositions.
+The dsl also introduces a somethink akin to a builder pattern.
+The easiet way to summon an instance is with the `builder` function.
+```scala mdoc:silent
+val b: FieldBuilder[IO, Int] = builder[IO, Int]
+```
+Often a builder is only relevant within a scope, thus one ends up having many unused builders in scope.
+The `build` combinator solves with with a simple composition:
+```scala mdoc:silent
+build[IO, Int]{ (fb: FieldBuilder[IO, Int]) =>
+  fb
+}
+```
+The builder dsl contains most of the field related constructors:
+```scala mdoc:silent
+build[IO, Int]{ fb =>
+  fb.tpe(
+    "Query",
+    "answer" -> lift(i => i * 0 + 42),
+    "pong" -> fb(_.map(_ => "pong"))
+  ): Type[IO, Int]
+  
+  fb.fields(
+    "answer" -> fb.lift(i => i * 0 + 42),
+    "ping" -> fb.from(Resolver.lift(_ => "pong"))
+  )
+}
 ```
 
 ### Value resolution
 Wrapping every field in a `field` smart constructor and then defining the resolver seperately is a bit verbose.
-There are smart constructors for three variants of field resolvers that lift the resolver function directly to a `Field`.
+There are smart constructors for two common variants of field resolvers that lift the resolver function directly to a `Field`.
 
-We must decide if the field is pure, an effect or a fallible effect:
+We must decide if the field is pure or effectful:
 :::note
 The effect constructor is named `eff` to avoid collisions with cats-effect.
 :::
-```scala
+```scala mdoc:silent
 final case class Person(
   name: String
 )
 
 tpe[IO, Person](
   "Person",
-  "name" -> pure(_.name),
-  "nameEffect" -> eff(x => IO.delay(x.name)),
-  "nameFallible" -> fallible { x => 
-    IO(Ior.both("some constructive error", x.name))
-  }
+  "name" -> lift(_.name),
+  "nameEffect" -> eff(x => IO(x.name))
 )
 ```
 
-We can also include arguments in fields:
+The `lift` and `eff` constructors can also 
 ```scala
 def familyName = arg[String]("familyName")
 
 tpe[IO, Person](
   "Person",
-  "name" -> pure(familyName)(_ + _),
-  "nameEffect" -> eff(familyName) { case (p, fn) => IO.delay(p.name + fn) },
-  "nameFallible" -> fallible(familyName) { case (p, fn) => 
-    IO(Ior.both("some constructive error for $fn", p.name)) 
-  }
+  "name" -> pure(familyName)(_.name + _),
+  "nameEffect" -> eff(familyName)((p, f) => IO(p.name + f))
 )
-```
-
-### Stream and Batch resolution
-`StreamResolver`s can be constructed via the `stream` and `streamFallible` smart constructors.
-Both smart constructors are overloaded with a variant that take an explicit "next" resolver and a variant that does not.
-
-The `BatchResolver` can be lifted into a `Field` via the `field` smart constructor.
-
-## Resolver composition
-`Resolver`s can be composed by using the `andThen` method.
-There are also several `map` variants that combine `andThen` with different types of resolvers:
-```scala mdoc:silent
-val r: Resolver[IO, Int, Int] = PureResolver[IO, Int, Int](x => x)
-
-r.andThen(PureResolver(_ + 1))
-
-r.map(_ + 1)
-
-r.evalMap(x => IO(x + 1))
-
-r.fallibleMap(x => IO(Ior.both("some constructive error", x + 1)))
-
-r.streamMap(x => fs2.Stream.iterate(x)(_ + 1).map(_.rightIor))
 ```
 
 ## Unification instances
@@ -93,7 +111,7 @@ r.streamMap(x => fs2.Stream.iterate(x)(_ + 1).map(_.rightIor))
 However, `Interface` implementations are declared on the types that implement the interface.
 
 Before continuing, lets setup the environment.
-```scala mdoc:silent
+```scala
 trait Vehicle { 
   def name: String
 }
@@ -104,7 +122,7 @@ final case class Truck(name: String) extends Vehicle
 ```
 
 For the `Union`, variants can be declared using the `variant` function, which takes a `PartialFunction` from the unifying type to the implementation.
-```scala mdoc:silent
+```scala
 implicit def car: Type[IO, Car] = ???
 implicit def boat: Type[IO, Boat] = ???
 implicit def truck: Type[IO, Truck] = ???
@@ -115,7 +133,7 @@ union[IO, Vehicle]("Vehicle")
   .variant[Truck] { case t: Truck => t }
 ```
 A shorthand function exists, if the type of the variant is a subtype of the unifying type.
-```scala mdoc:silent
+```scala
 union[IO, Vehicle]("Vehicle")
   .subtype[Car] 
   .subtype[Boat] 
@@ -123,7 +141,7 @@ union[IO, Vehicle]("Vehicle")
 ```
 
 For an `Interface` the same dsl exists, but is placed on the types that can implement the interface (a `Type` or another `Interface`).
-```scala mdoc:silent
+```scala
 implicit lazy val vehicle: Interface[IO, Vehicle] = interface[IO, Vehicle](
   "Vehicle",
   "name" -> pure(_.name)
