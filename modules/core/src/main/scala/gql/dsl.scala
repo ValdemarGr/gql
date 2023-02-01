@@ -23,9 +23,13 @@ import cats.data._
 import scala.reflect.ClassTag
 
 object dsl {
+  import syntax._
+
+  type Fields[F[_], -A] = NonEmptyList[(String, Field[F, A, ?])]
+
   def tpeNel[F[_], A](
       name: String,
-      entries: NonEmptyList[(String, Field[F, A, ?])]
+      entries: Fields[F, A]
   ) = Type[F, A](name, entries, Nil)
 
   def tpe[F[_], A](
@@ -34,16 +38,10 @@ object dsl {
       tl: (String, Field[F, A, ?])*
   ) = Type[F, A](name, NonEmptyList(hd, tl.toList), Nil)
 
-  def fields[F[_], A, B](f: B => A)(
-      hd: (String, Field[F, A, ?]),
-      tl: (String, Field[F, A, ?])*
-  ): NonEmptyList[(String, Field[F, B, ?])] =
-    NonEmptyList[(String, Field[F, A, ?])](hd, tl.toList).map { case (k, v) => (k, v.contramap(f)) }
-
   def fields[F[_], A](
       hd: (String, Field[F, A, ?]),
       tl: (String, Field[F, A, ?])*
-  ): NonEmptyList[(String, Field[F, A, ?])] =
+  ): Fields[F, A] =
     NonEmptyList[(String, Field[F, A, ?])](hd, tl.toList)
 
   def input[A](
@@ -63,20 +61,13 @@ object dsl {
   def arg[A](name: String, default: Value, description: String)(implicit tpe: => In[A]): Arg[A] =
     Arg.make[A](ArgValue(name, Eval.later(tpe), Some(default), Some(description)))
 
-  final case class PartiallyAppliedArgFull[A](private val dummy: Boolean = false) extends AnyVal {
-    def apply[B](name: String, default: Option[Value], description: Option[String])(
-        f: ArgParam[A] => Either[String, B]
-    )(implicit tpe: => In[A]): Arg[B] =
-      Arg.makeFrom[A, B](ArgValue(name, Eval.later(tpe), default, description))(f)
-  }
-
   def argFull[A] = new PartiallyAppliedArgFull[A]
 
   object value {
-    def scalar[F[_], A](value: A)(implicit tpe: => Scalar[F, A]) =
+    def scalar[A](value: A)(implicit tpe: => Scalar[A]) =
       tpe.encoder(value)
 
-    def fromEnum[F[_], A](value: A)(implicit tpe: => Enum[F, A]) =
+    def fromEnum[F[_], A](value: A)(implicit tpe: => Enum[A]) =
       tpe.revm.get(value).map(enumValue)
 
     def enumValue(value: String) = Value.EnumValue(value)
@@ -88,68 +79,11 @@ object dsl {
     def nullValue = Value.NullValue
   }
 
-  final class PartiallyAppliedField[I](private val dummy: Boolean = false) extends AnyVal {
-    def apply[F[_], T](f: Resolver[F, I, I] => Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field[F, I, T](f(Resolver.id[F, I]), Eval.later(tpe))
-
-    def from[F[_], T](resolver: Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field[F, I, T](resolver, Eval.later(tpe))
-  }
-
   def field[I] = new PartiallyAppliedField[I]
-
-  final class PartiallyAppliedEff[I](private val dummy: Boolean = false) extends AnyVal {
-    def apply[F[_], T, A](arg: Arg[A])(resolver: (A, I) => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field(Resolver.eval[F, (A, I), T] { case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
-
-    def apply[F[_], T](resolver: I => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field(Resolver.eval(resolver), Eval.later(tpe))
-  }
 
   def eff[I] = new PartiallyAppliedEff[I]
 
-  final class PartiallyAppliedLift[F[_], I](private val dummy: Boolean = false) extends AnyVal {
-    def apply[T, A](arg: Arg[A])(resolver: (A, I) => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field(Resolver.lift[F, (A, I), T] { case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
-
-    def apply[T](resolver: I => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field(Resolver.lift[F, I, T](resolver), Eval.later(tpe))
-  }
-
   def lift[F[_], I] = new PartiallyAppliedLift[F, I]
-
-  final class FieldBuilder[F[_], I](private val dummy: Boolean = false) extends AnyVal {
-    def tpe(
-        name: String,
-        hd: (String, Field[F, I, ?]),
-        tl: (String, Field[F, I, ?])*
-    ): Type[F, I] = gql.dsl.tpe[F, I](name, hd, tl: _*)
-
-    def fields(
-        hd: (String, Field[F, I, ?]),
-        tl: (String, Field[F, I, ?])*
-    ): NonEmptyList[(String, Field[F, I, ?])] = gql.dsl.fields[F, I](hd, tl: _*)
-
-    def fields[A](f: I => A)(
-        hd: (String, Field[F, A, ?]),
-        tl: (String, Field[F, A, ?])*
-    ): NonEmptyList[(String, Field[F, I, ?])] = 
-      NonEmptyList[(String, Field[F, A, ?])](hd, tl.toList).map { case (k, v) => (k, v.contramap(f)) }
-
-    def from[T](resolver: Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field[F, I, T](resolver, Eval.later(tpe))
-
-    def apply[T](f: Resolver[F, I, I] => Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field[F, I, T](f(Resolver.id[F, I]), Eval.later(tpe))
-
-    def lift = new PartiallyAppliedLift[F, I]
-
-    def eff[T, A](arg: Arg[A])(resolver: (A, I) => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field(Resolver.eval[F, (A, I), T] { case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
-
-    def eff[T](resolver: I => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field(Resolver.eval(resolver), Eval.later(tpe))
-  }
 
   def builder[F[_], I] = new FieldBuilder[F, I]
 
@@ -165,21 +99,23 @@ object dsl {
   def abstWith[F[_], T, A](arg: Arg[A])(implicit tpe: => Out[F, T]): AbstractField[F, T] =
     AbstractField[F, T](Some(arg), Eval.later(tpe))
 
+  type AbstractFields[F[_]] = NonEmptyList[(String, AbstractField[F, ?])]
+
   def abstGroup[F[_]](
       hd: (String, AbstractField[F, ?]),
       tl: (String, AbstractField[F, ?])*
-  ): NonEmptyList[(String, AbstractField[F, ?])] =
+  ): AbstractFields[F] =
     NonEmptyList(hd, tl.toList)
 
   def enumVal[A](value: A): EnumValue[A] =
     EnumValue(value)
 
-  def enumType[F[_], A](name: String, hd: (String, EnumValue[? <: A]), tl: (String, EnumValue[? <: A])*) =
-    Enum[F, A](name, NonEmptyList(hd, tl.toList))
+  def enumType[A](name: String, hd: (String, EnumValue[? <: A]), tl: (String, EnumValue[? <: A])*) =
+    Enum[A](name, NonEmptyList(hd, tl.toList))
 
   def interfaceNel[F[_], A](
       name: String,
-      fields: NonEmptyList[(String, AbstractField[F, ?])]
+      fields: AbstractFields[F]
   ): Interface[F, A] = Interface[F, A](name, fields, Nil)
 
   def interface[F[_], A](
@@ -190,7 +126,7 @@ object dsl {
 
   def interfaceFromNel[F[_], A](
       name: String,
-      fields: NonEmptyList[(String, Field[F, A, ?])]
+      fields: Fields[F, A]
   ): Interface[F, A] = interfaceNel[F, A](name, fields.map { case (k, v) => k -> v.asAbstract })
 
   def interfaceFrom[F[_], A](
@@ -218,7 +154,24 @@ object dsl {
 
   def arrType[A](implicit tpe: => In[A]): In[Seq[A]] = InArr[A, Seq[A]](tpe, _.asRight)
 
-  implicit class TypeSyntax[F[_], A](private val tpe: Type[F, A]) extends AnyVal {
+  final case class FieldsSyntax[F[_], A](private val fields: Fields[F, A]) extends AnyVal {
+    def addFields(xs: (String, Field[F, A, ?])*) =
+      fields concat xs.toList
+
+    def addFieldsNel(xs: NonEmptyList[(String, Field[F, A, ?])]) =
+      fields concat xs.toList
+
+    def mapValues[B](f: Field[F, A, ?] => Field[F, B, ?]) =
+      fields.map { case (k, v) => k -> f(v) }
+
+    def resolveBy[I2](f: Resolver[F, A, A] => Resolver[F, I2, A]): Fields[F, I2] =
+      mapValues(_.compose(f(Resolver.id)))
+
+    def compose[I2](resolver: Resolver[F, I2, A]): Fields[F, I2] =
+      resolveBy[I2](_.compose(resolver))
+  }
+
+  final case class TypeSyntax[F[_], A](private val tpe: Type[F, A]) extends AnyVal {
     def implements[B](pf: PartialFunction[B, A])(implicit interface: => Interface[F, B]): Type[F, A] =
       tpe.copy(implementations = Implementation(Eval.later(interface))(pf.lift) :: tpe.implementations)
 
@@ -229,7 +182,7 @@ object dsl {
       tpe.copy(fields = tpe.fields concat xs.toList)
   }
 
-  implicit class InterfaceSyntax[F[_], A](private val tpe: Interface[F, A]) extends AnyVal {
+  final case class InterfaceSyntax[F[_], A](private val tpe: Interface[F, A]) extends AnyVal {
     def implements[B](implicit interface: => Interface[F, B]): Interface[F, A] =
       tpe.copy(implementations = Eval.later(interface) :: tpe.implementations)
 
@@ -240,7 +193,173 @@ object dsl {
       tpe.copy(fields = tpe.fields concat xs.toList.map { case (k, v) => k -> v.asAbstract })
   }
 
-  implicit class UnionSyntax[F[_], A](private val tpe: Union[F, A]) extends AnyVal {
+  final case class UnionSyntax[F[_], A](private val tpe: Union[F, A]) extends AnyVal {
+    def variant[B](pf: PartialFunction[A, B])(implicit innerTpe: => Type[F, B]): Union[F, A] =
+      tpe.copy(types = Variant[F, A, B](Eval.later(innerTpe))(pf.lift) :: tpe.types)
+
+    def subtype[B: ClassTag](implicit ev: B <:< A, innerTpe: => Type[F, B]): Union[F, A] =
+      variant[B] { case a: B => a }(innerTpe)
+  }
+
+  final case class PartiallyAppliedUnion1[F[_], A](name: String, hd: Variant[F, A, ?]) {
+    def variant[B](pf: PartialFunction[A, B])(implicit innerTpe: => Type[F, B]): Union[F, A] =
+      Union[F, A](name, NonEmptyList.of(hd, Variant[F, A, B](Eval.later(innerTpe))(pf.lift)), None)
+
+    def subtype[B: ClassTag](implicit ev: B <:< A, innerTpe: => Type[F, B]): Union[F, A] =
+      variant[B] { case a: B => a }(innerTpe)
+  }
+
+  final case class PartiallyAppliedUnion0[F[_], A](name: String) extends AnyVal {
+    def variant[B](pf: PartialFunction[A, B])(implicit innerTpe: => Type[F, B]): PartiallyAppliedUnion1[F, A] =
+      PartiallyAppliedUnion1[F, A](name, Variant[F, A, B](Eval.later(innerTpe))(pf.lift))
+
+    def subtype[B: ClassTag](implicit ev: B <:< A, innerTpe: => Type[F, B]): PartiallyAppliedUnion1[F, A] =
+      variant[B] { case a: B => a }(innerTpe)
+  }
+
+  final case class SyntaxForBatchResolverSignature[F[_], K, V](private val r: Resolver[F, Set[K], Map[K, V]]) extends AnyVal {
+    def optionals[G[_]: Foldable: Functor]: Resolver[F, G[K], G[Option[V]]] =
+      r.contramap[G[K]](_.toList.toSet).tupleIn.map { case (m, g) => g.map(m.get) }
+
+    def collectSome[G[_]: Foldable: FunctorFilter: Functor]: Resolver[F, G[K], G[V]] =
+      optionals[G].map(_.collect { case Some(v) => v })
+
+    def forceF[G[_]: Foldable: FunctorFilter: Functor](implicit
+        S: Show[NonEmptyList[K]]
+    ): Resolver[F, G[K], G[V]] =
+      r.contramap[G[K]](_.toList.toSet).tupleIn.map { case (m, g) => g.map(k => (k, m.get(k))) }.fallibleMap { gov =>
+        val errs = gov.collect { case (k, None) => k }
+        errs.toList.toNel match {
+          case None     => gov.collect { case (_, Some(v)) => v }.rightIor[String]
+          case Some(xs) => S.show(xs).leftIor[G[V]]
+        }
+      }
+
+    def optional: Resolver[F, K, Option[V]] =
+      optionals[Id]
+
+    def forceOne(implicit S: Show[K]): Resolver[F, K, V] =
+      optional.tupleIn.fallibleMap {
+        case (Some(v), _) => v.rightIor[String]
+        case (None, k)    => S.show(k).leftIor[V]
+      }
+
+    def forceNE[G[_]: NonEmptyTraverse](implicit S: Show[NonEmptyList[K]]): Resolver[F, G[K], G[V]] =
+      forceF[List]
+        .contramap[G[K]](_.toList)
+        .tupleIn
+        .fallibleMap { case (v, ks) =>
+          val varr = v.toVector
+          ks.mapWithIndex { case (_, i) => varr(i) }.rightIor
+        }
+  }
+}
+
+object syntax {
+  type Fields[F[_], -A] = NonEmptyList[(String, Field[F, A, ?])]
+
+  final class PartiallyAppliedFieldBuilder[I](private val dummy: Boolean = false) extends AnyVal {
+    def apply[F[_], A](f: FieldBuilder[F, I] => A): A = f(new FieldBuilder[F, I])
+  }
+
+  final class FieldBuilder[F[_], I](private val dummy: Boolean = false) extends AnyVal {
+    def tpe(
+        name: String,
+        hd: (String, Field[F, I, ?]),
+        tl: (String, Field[F, I, ?])*
+    ): Type[F, I] = dsl.tpe[F, I](name, hd, tl: _*)
+
+    def fields(
+        hd: (String, Field[F, I, ?]),
+        tl: (String, Field[F, I, ?])*
+    ): Fields[F, I] = dsl.fields[F, I](hd, tl: _*)
+
+    def from[T](resolver: Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
+      Field[F, I, T](resolver, Eval.later(tpe))
+
+    def apply[T](f: Resolver[F, I, I] => Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
+      Field[F, I, T](f(Resolver.id[F, I]), Eval.later(tpe))
+
+    def lift = new PartiallyAppliedLift[F, I]
+
+    def eff[T, A](arg: Arg[A])(resolver: (A, I) => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
+      Field(Resolver.eval[F, (A, I), T] { case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
+
+    def eff[T](resolver: I => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
+      Field(Resolver.eval(resolver), Eval.later(tpe))
+  }
+
+  final class PartiallyAppliedLift[F[_], I](private val dummy: Boolean = false) extends AnyVal {
+    def apply[T, A](arg: Arg[A])(resolver: (A, I) => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
+      Field(Resolver.lift[F, (A, I), T] { case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
+
+    def apply[T](resolver: I => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
+      Field(Resolver.lift[F, I, T](resolver), Eval.later(tpe))
+  }
+
+  final class PartiallyAppliedEff[I](private val dummy: Boolean = false) extends AnyVal {
+    def apply[F[_], T, A](arg: Arg[A])(resolver: (A, I) => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
+      Field(Resolver.eval[F, (A, I), T] { case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
+
+    def apply[F[_], T](resolver: I => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
+      Field(Resolver.eval(resolver), Eval.later(tpe))
+  }
+
+  final class PartiallyAppliedField[I](private val dummy: Boolean = false) extends AnyVal {
+    def apply[F[_], T](f: Resolver[F, I, I] => Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
+      Field[F, I, T](f(Resolver.id[F, I]), Eval.later(tpe))
+
+    def from[F[_], T](resolver: Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
+      Field[F, I, T](resolver, Eval.later(tpe))
+  }
+
+  final case class PartiallyAppliedArgFull[A](private val dummy: Boolean = false) extends AnyVal {
+    def apply[B](name: String, default: Option[Value], description: Option[String])(
+        f: ArgParam[A] => Either[String, B]
+    )(implicit tpe: => In[A]): Arg[B] =
+      Arg.makeFrom[A, B](ArgValue(name, Eval.later(tpe), default, description))(f)
+  }
+
+  class FieldsSyntax[F[_], A](private val fields: Fields[F, A]) extends AnyVal {
+    def addFields(xs: (String, Field[F, A, ?])*) =
+      fields concat xs.toList
+
+    def addFieldsNel(xs: NonEmptyList[(String, Field[F, A, ?])]) =
+      fields concat xs.toList
+
+    def mapValues[B](f: Field[F, A, ?] => Field[F, B, ?]) =
+      fields.map { case (k, v) => k -> f(v) }
+
+    def resolveBy[I2](f: Resolver[F, A, A] => Resolver[F, I2, A]): Fields[F, I2] =
+      mapValues(_.compose(f(Resolver.id)))
+
+    def compose[I2](resolver: Resolver[F, I2, A]): Fields[F, I2] =
+      resolveBy[I2](_.compose(resolver))
+  }
+
+  class TypeSyntax[F[_], A](private val tpe: Type[F, A]) extends AnyVal {
+    def implements[B](pf: PartialFunction[B, A])(implicit interface: => Interface[F, B]): Type[F, A] =
+      tpe.copy(implementations = Implementation(Eval.later(interface))(pf.lift) :: tpe.implementations)
+
+    def subtypeOf[B](implicit ev: A <:< B, tag: ClassTag[A], interface: => Interface[F, B]): Type[F, A] =
+      implements[B] { case a: A => a }(interface)
+
+    def addFields(xs: (String, Field[F, A, ?])*) =
+      tpe.copy(fields = tpe.fields concat xs.toList)
+  }
+
+  class InterfaceSyntax[F[_], A](private val tpe: Interface[F, A]) extends AnyVal {
+    def implements[B](implicit interface: => Interface[F, B]): Interface[F, A] =
+      tpe.copy(implementations = Eval.later(interface) :: tpe.implementations)
+
+    def addAbstractFields(xs: (String, AbstractField[F, ?])*): Interface[F, A] =
+      tpe.copy(fields = tpe.fields concat xs.toList)
+
+    def addFields(xs: (String, Field[F, A, ?])*): Interface[F, A] =
+      tpe.copy(fields = tpe.fields concat xs.toList.map { case (k, v) => k -> v.asAbstract })
+  }
+
+  class UnionSyntax[F[_], A](private val tpe: Union[F, A]) extends AnyVal {
     def variant[B](pf: PartialFunction[A, B])(implicit innerTpe: => Type[F, B]): Union[F, A] =
       tpe.copy(types = Variant[F, A, B](Eval.later(innerTpe))(pf.lift) :: tpe.types)
 

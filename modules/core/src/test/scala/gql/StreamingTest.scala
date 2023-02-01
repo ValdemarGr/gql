@@ -17,13 +17,12 @@ package gql
 
 import cats.implicits._
 import io.circe._
-import fs2.Stream
+import fs2.{Stream, Pull}
 import munit.CatsEffectSuite
 import gql._
 import gql.ast._
 import gql.dsl._
 import cats.effect._
-import fs2.Pull
 
 final case class Level1(value: Int)
 final case class Level2(value: Int)
@@ -37,22 +36,25 @@ class StreamingTest extends CatsEffectSuite {
   def level2Users = level2UsersRef.get.unsafeRunSync()
   val level2Resource = Resource.make(level2UsersRef.update(_ + 1))(_ => level2UsersRef.update(_ - 1))
 
-  implicit lazy val level1: Type[IO, Level1] =
+  implicit lazy val level1: Type[IO, Level1] = build[IO, Level1] { b =>
     tpe[IO, Level1](
       "Level1",
       "value" -> lift(_.value),
-      "level2" -> field[Level1] {
+      "level2" -> b {
         _.stream(_ => Stream.iterate(0)(_ + 1).lift[IO].flatMap(x => fs2.Stream.resource(level1Resource) as Level2(x)))
       }
     )
+  }
 
-  implicit lazy val level2: Type[IO, Level2] = tpe[IO, Level2](
-    "Level2",
-    "value" -> lift(_.value),
-    "level1" -> field[Level2] {
-      _.stream(_ => Stream.iterate(0)(_ + 1).lift[IO].flatMap(x => fs2.Stream.resource(level2Resource) as Level1(x)))
-    }
-  )
+  implicit lazy val level2: Type[IO, Level2] = build[IO, Level2] { b =>
+    tpe[IO, Level2](
+      "Level2",
+      "value" -> lift(_.value),
+      "level1" -> b {
+        _.stream(_ => Stream.iterate(0)(_ + 1).lift[IO].flatMap(x => fs2.Stream.resource(level2Resource) as Level1(x)))
+      }
+    )
+  }
 
   lazy val schemaShape = SchemaShape[IO, Unit, Unit, Unit](
     tpe[IO, Unit](

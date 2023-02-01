@@ -23,7 +23,7 @@ import gql.resolver._
 import java.util.UUID
 
 object ast extends AstImplicits.Implicits {
-  sealed trait Out[F[_], A]
+  sealed trait Out[+F[_], A]
 
   sealed trait In[A]
 
@@ -32,27 +32,27 @@ object ast extends AstImplicits.Implicits {
     def description: Option[String]
   }
 
-  sealed trait OutToplevel[F[_], A] extends Out[F, A] with Toplevel[A]
+  sealed trait OutToplevel[+F[_], A] extends Out[F, A] with Toplevel[A]
 
   sealed trait InToplevel[A] extends In[A] with Toplevel[A]
 
-  sealed trait Selectable[F[_], A] extends OutToplevel[F, A] {
+  sealed trait Selectable[+F[_], A] extends OutToplevel[F, A] {
     def abstractFields: List[(String, AbstractField[F, ?])]
 
     def abstractFieldMap: Map[String, AbstractField[F, ?]]
   }
 
-  sealed trait ObjectLike[F[_], A] extends Selectable[F, A] {
+  sealed trait ObjectLike[+F[_], A] extends Selectable[F, A] {
     def implementsMap: Map[String, Eval[Interface[F, ?]]]
 
     def abstractFieldsNel: NonEmptyList[(String, AbstractField[F, ?])]
   }
 
-  final case class Implementation[F[_], A, B](implementation: Eval[Interface[F, B]])(implicit
+  final case class Implementation[+F[_], A, B](implementation: Eval[Interface[F, B]])(implicit
       val specify: B => Option[A]
   )
 
-  final case class Type[F[_], A](
+  final case class Type[+F[_], A](
       name: String,
       fields: NonEmptyList[(String, Field[F, A, ?])],
       implementations: List[Implementation[F, A, ?]],
@@ -85,12 +85,12 @@ object ast extends AstImplicits.Implicits {
     def document(description: String): Input[A] = copy(description = Some(description))
   }
 
-  final case class Variant[F[_], A, B](tpe: Eval[Type[F, B]])(implicit val specify: A => Option[B]) {
+  final case class Variant[+F[_], A, B](tpe: Eval[Type[F, B]])(implicit val specify: A => Option[B]) {
     def contramap[C](g: C => A): Variant[F, C, B] =
       Variant[F, C, B](tpe)(c => specify(g(c)))
   }
 
-  final case class Union[F[_], A](
+  final case class Union[+F[_], A](
       name: String,
       types: NonEmptyList[Variant[F, A, ?]],
       description: Option[String] = None
@@ -111,7 +111,7 @@ object ast extends AstImplicits.Implicits {
     lazy val abstractFieldMap = Map.empty
   }
 
-  final case class Interface[F[_], A](
+  final case class Interface[+F[_], A](
       name: String,
       fields: NonEmptyList[(String, AbstractField[F, ?])],
       implementations: List[Eval[Interface[F, ?]]],
@@ -128,19 +128,19 @@ object ast extends AstImplicits.Implicits {
     lazy val implementsMap = implementations.map(i => i.value.name -> i).toMap
   }
 
-  final case class Scalar[F[_], A](
+  final case class Scalar[A](
       name: String,
       encoder: A => Value,
       decoder: Value => Either[String, A],
       description: Option[String] = None
-  ) extends OutToplevel[F, A]
+  ) extends OutToplevel[fs2.Pure, A]
       with InToplevel[A] {
-    def document(description: String): Scalar[F, A] = copy(description = Some(description))
+    def document(description: String): Scalar[A] = copy(description = Some(description))
 
-    def eimap[B](f: A => Either[String, B])(g: B => A): Scalar[F, B] =
+    def eimap[B](f: A => Either[String, B])(g: B => A): Scalar[B] =
       Scalar(name, encoder.compose(g), decoder.andThen(_.flatMap(f)), description)
 
-    def rename(newName: String): Scalar[F, A] = copy(name = newName)
+    def rename(newName: String): Scalar[A] = copy(name = newName)
   }
 
   final case class EnumValue[A](
@@ -150,14 +150,14 @@ object ast extends AstImplicits.Implicits {
     def document(description: String): EnumValue[A] = copy(description = Some(description))
   }
 
-  final case class Enum[F[_], A](
+  final case class Enum[A](
       name: String,
       mappings: NonEmptyList[(String, EnumValue[? <: A])],
       description: Option[String] = None
-  ) extends OutToplevel[F, A]
+  ) extends OutToplevel[fs2.Pure, A]
       with InToplevel[A] {
 
-    def document(description: String): Enum[F, A] = copy(description = Some(description))
+    def document(description: String): Enum[A] = copy(description = Some(description))
 
     lazy val kv = mappings.map { case (k, v) => k -> v.value }
 
@@ -166,7 +166,7 @@ object ast extends AstImplicits.Implicits {
     lazy val revm = kv.map(_.swap).toList.toMap
   }
 
-  final case class Field[F[_], -I, T](
+  final case class Field[+F[_], -I, T](
       resolve: Resolver[F, I, T],
       output: Eval[Out[F, T]],
       description: Option[String] = None
@@ -176,11 +176,14 @@ object ast extends AstImplicits.Implicits {
     def asAbstract: AbstractField[F, T] =
       AbstractField(NonEmptyChain.fromChain(PreparedQuery.collectFields(resolve.underlying)).map(_.nonEmptySequence), output, description)
 
-    def contramap[I2](f: I2 => I): Field[F, I2, T] =
-      Field(resolve.contramap(f), output, description)
+    def compose[F2[x] >: F[x], I2](r: Resolver[F2, I2, I]): Field[F2, I2, T] =
+      Field(r.andThen(resolve), output, description)
+
+    def contramap[F2[x] >: F[x], I2](f: I2 => I): Field[F2, I2, T] =
+      compose[F2, I2](Resolver.lift[F2, I2, I](f))
   }
 
-  final case class AbstractField[F[_], T](
+  final case class AbstractField[+F[_], T](
       arg: Option[Arg[?]],
       output: Eval[Out[F, T]],
       description: Option[String] = None
@@ -188,9 +191,9 @@ object ast extends AstImplicits.Implicits {
     def document(description: String): AbstractField[F, T] = copy(description = Some(description))
   }
 
-  final case class OutOpt[F[_], A, B](of: Out[F, B], resolver: Resolver[F, A, B]) extends Out[F, Option[A]]
+  final case class OutOpt[+F[_], A, B](of: Out[F, B], resolver: Resolver[F, A, B]) extends Out[F, Option[A]]
 
-  final case class OutArr[F[_], A, C, B](of: Out[F, B], toSeq: C => Seq[A], resolver: Resolver[F, A, B]) extends Out[F, C] {
+  final case class OutArr[+F[_], A, C, B](of: Out[F, B], toSeq: C => Seq[A], resolver: Resolver[F, A, B]) extends Out[F, C] {
     def contramap[D](f: D => C): OutArr[F, A, D, B] = OutArr(of, f.andThen(toSeq), resolver)
   }
 
@@ -208,7 +211,7 @@ object ast extends AstImplicits.Implicits {
   }
 
   object Scalar {
-    def fromCirce[F[_], A](name: String)(implicit enc: Encoder[A], dec: Decoder[A]): Scalar[F, A] =
+    def fromCirce[A](name: String)(implicit enc: Encoder[A], dec: Decoder[A]): Scalar[A] =
       Scalar(
         name,
         a => Value.fromJson(enc(a)),
@@ -219,15 +222,15 @@ object ast extends AstImplicits.Implicits {
           }
       )
 
-    implicit def invariantForScalar[F[_]]: Invariant[Scalar[F, *]] = new Invariant[Scalar[F, *]] {
-      override def imap[A, B](fa: Scalar[F, A])(f: A => B)(g: B => A): Scalar[F, B] =
+    implicit lazy val invariantForScalar: Invariant[Scalar] = new Invariant[Scalar] {
+      override def imap[A, B](fa: Scalar[A])(f: A => B)(g: B => A): Scalar[B] =
         Scalar(fa.name, fa.encoder.compose(g), fa.decoder.andThen(_.map(f)), fa.description)
     }
   }
 
   final case class ID[A](value: A) extends AnyVal
   object ID extends IDLowPrio {
-    implicit def idTpe[F[_], A](implicit s: Scalar[F, A]): Scalar[F, ID[A]] =
+    implicit def idTpe[A](implicit s: Scalar[A]): Scalar[ID[A]] =
       s.imap(ID(_))(_.value)
         .rename("ID")
         .document(
@@ -238,7 +241,7 @@ object ast extends AstImplicits.Implicits {
 
   }
   trait IDLowPrio {
-    implicit def idIn[F[_], A](implicit s: Scalar[F, A]): In[ID[A]] = ID.idTpe[F, A]
+    implicit def idIn[A](implicit s: Scalar[A]): In[ID[A]] = ID.idTpe[A]
   }
 }
 
@@ -246,52 +249,52 @@ object AstImplicits {
   import ast._
 
   trait Implicits extends LowPriorityImplicits {
-    implicit def stringScalar[F[_]]: Scalar[F, String] = Scalar
-      .fromCirce[F, String]("String")
+    implicit lazy val stringScalar: Scalar[String] = Scalar
+      .fromCirce[String]("String")
       .document("The `String` is a UTF-8 character sequence usually representing human-readable text.")
 
-    implicit def intScalar[F[_]]: Scalar[F, Int] = Scalar
-      .fromCirce[F, Int]("Int")
+    implicit lazy val intScalar: Scalar[Int] = Scalar
+      .fromCirce[Int]("Int")
       .document(
         "The `Int` scalar type represents non-fractional signed whole numeric values. Int can represent values between -(2^31) and 2^31 - 1."
       )
 
-    implicit def longScalar[F[_]]: Scalar[F, Long] = Scalar
-      .fromCirce[F, Long]("Long")
+    implicit lazy val longScalar: Scalar[Long] = Scalar
+      .fromCirce[Long]("Long")
       .document(
         "The `Long` scalar type represents non-fractional signed whole numeric values. Long can represent values between -(2^63) and 2^63 - 1."
       )
 
-    implicit def floatScalar[F[_]]: Scalar[F, Float] = Scalar
-      .fromCirce[F, Float]("Float")
+    implicit lazy val floatScalar: Scalar[Float] = Scalar
+      .fromCirce[Float]("Float")
       .document(
         "The `Float` scalar type represents signed double-precision fractional values as specified by [IEEE 754](http://en.wikipedia.org/wiki/IEEE_floating_point)."
       )
 
-    implicit def doubleScalar[F[_]]: Scalar[F, Double] = Scalar
-      .fromCirce[F, Double]("Double")
+    implicit lazy val doubleScalar: Scalar[Double] = Scalar
+      .fromCirce[Double]("Double")
       .document(
         "The `Double` scalar type represents signed double-precision fractional values as specified by [IEEE 754](http://en.wikipedia.org/wiki/IEEE_floating_point)."
       )
 
-    implicit def bigIntScalar[F[_]]: Scalar[F, BigInt] = Scalar
-      .fromCirce[F, BigInt]("BigInt")
+    implicit lazy val bigIntScalar: Scalar[BigInt] = Scalar
+      .fromCirce[BigInt]("BigInt")
       .document(
         "The `BigInt` scalar type represents non-fractional signed whole numeric values. BigInt can represent values of arbitrary size."
       )
 
-    implicit def bigDecimalScalar[F[_]]: Scalar[F, BigDecimal] = Scalar
-      .fromCirce[F, BigDecimal]("BigDecimal")
+    implicit lazy val bigDecimalScalar: Scalar[BigDecimal] = Scalar
+      .fromCirce[BigDecimal]("BigDecimal")
       .document(
         "The `BigDecimal` scalar type represents signed double-precision fractional values as specified by [IEEE 754](http://en.wikipedia.org/wiki/IEEE_floating_point)."
       )
 
-    implicit def booleanScalar[F[_]]: Scalar[F, Boolean] = Scalar
-      .fromCirce[F, Boolean]("Boolean")
+    implicit lazy val booleanScalar: Scalar[Boolean] = Scalar
+      .fromCirce[Boolean]("Boolean")
       .document("The `Boolean` scalar type represents `true` or `false`.")
 
-    implicit def uuidScalar[F[_]]: Scalar[F, UUID] = Scalar
-      .fromCirce[F, UUID]("UUID")
+    implicit lazy val uuidScalar: Scalar[UUID] = Scalar
+      .fromCirce[UUID]("UUID")
       .document(
         "The `UUID` scalar type represents a UUID v4 as specified by [RFC 4122](https://tools.ietf.org/html/rfc4122)."
       )

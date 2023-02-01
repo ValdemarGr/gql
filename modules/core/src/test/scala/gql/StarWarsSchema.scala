@@ -17,8 +17,8 @@ package gql
 
 import cats.implicits._
 import cats.effect._
-import gql.dsl._
 import gql.ast._
+import gql.dsl._
 
 // https://github.com/graphql/graphql-js/blob/main/src/__tests__/starWarsData.ts
 object StarWarsSchema {
@@ -105,8 +105,8 @@ object StarWarsSchema {
     IO(droidData.get(id))
 
   lazy val schemaShape = {
-    implicit lazy val episode: Enum[IO, Episode] =
-      enumType[IO, Episode](
+    implicit lazy val episode: Enum[Episode] =
+      enumType[Episode](
         "Episode",
         "NEWHOPE" -> enumVal(Episode.NEWHOPE),
         "EMPIRE" -> enumVal(Episode.EMPIRE),

@@ -234,9 +234,9 @@ object PreparedQuery {
   def appendMessage[F[_], A](message: String)(fa: F[A])(implicit F: MonadError[F, NonEmptyChain[PositionalError]]) =
     modifyError[F, A](d => d.copy(message = d.message + "\n" + message))(fa)
 
-  def typenameField[G[_], A](typename: String) = {
+  def typenameField[A](typename: String) = {
     import gql.dsl._
-    lift[G, A](_ => typename)
+    lift[fs2.Pure, A](_ => typename)
   }
 
   def inFragment[F[_], A](
@@ -317,7 +317,7 @@ object PreparedQuery {
       D: Defer[F]
   ): F[FieldInfo[G]] = ambientField(f.name) {
     // Verify arguments by decoding them
-    val decF = af.arg.traverse_{ case a: Arg[a] => decodeFieldArgs[F, G, a](a, f.arguments, variableMap).void }
+    val decF = af.arg.traverse_ { case a: Arg[a] => decodeFieldArgs[F, G, a](a, f.arguments, variableMap).void }
 
     // Verify subselection
     val c = f.selectionSet.caret
@@ -328,10 +328,10 @@ object PreparedQuery {
         case (ol: Selectable[G, ?], Some(ss)) =>
           collectSelectionInfo[F, G](ol, ss, variableMap, fragments, discoveryState)
             .map(xs => SimplifiedType.Selectable(ol.name, xs))
-        case (e: Enum[G, ?], None)   => F.pure(SimplifiedType.Enum(e.name))
-        case (s: Scalar[G, ?], None) => F.pure(SimplifiedType.Scalar(s.name))
-        case (o, Some(_))            => raise(s"Type `${friendlyName(o)}` cannot have selections.", Some(c))
-        case (o, None)               => raise(s"Object like type `${friendlyName(o)}` must have a selection.", Some(c))
+        case (e: Enum[?], None)   => F.pure(SimplifiedType.Enum(e.name))
+        case (s: Scalar[?], None) => F.pure(SimplifiedType.Scalar(s.name))
+        case (o, Some(_))         => raise(s"Type `${friendlyName(o)}` cannot have selections.", Some(c))
+        case (o, None)            => raise(s"Object like type `${friendlyName(o)}` must have a selection.", Some(c))
       }
 
     decF &> verifySubsel(af.output.value).flatMap(FieldInfo[F, G](f.name, f.alias, f.arguments, _, caret))
@@ -357,7 +357,7 @@ object PreparedQuery {
     val fields = ss.selections.collect { case Pos(caret, P.Selection.FieldSelection(field)) => (caret, field) }
 
     val actualFields: Map[String, AbstractField[G, ?]] =
-      s.abstractFieldMap + ("__typename" -> AbstractField(None, Eval.now(stringScalar[G]), None))
+      s.abstractFieldMap + ("__typename" -> AbstractField(None, Eval.now(stringScalar), None))
 
     val validateFieldsF: F[List[SelectionInfo[G]]] = fields
       .parTraverse { case (caret, field) =>
@@ -604,8 +604,8 @@ object PreparedQuery {
       s: Selectable[G, A],
       discoveryState: SchemaShape.DiscoveryState[G]
   ): List[FoundImplementation[G, A, ?]] = s match {
-    case t @ Type(_, _, _, _) => List(FoundImplementation(t, Some(_)))
-    case u @ Union(_, _, _) =>
+    case t: Type[G, ?] => List(FoundImplementation(t, Some(_)))
+    case u: Union[G, ?] =>
       u.types.toList.map { case x: gql.ast.Variant[G, A, b] =>
         FoundImplementation(x.tpe.value, x.specify)
       }
@@ -657,7 +657,7 @@ object PreparedQuery {
       grouped.get(k).toList.traverse { fields =>
         fields
           .parTraverse { f =>
-            if (f.name === "__typename") F.pure(PairedFieldSelection[G, b](f, typenameField[G, b](t.name)))
+            if (f.name === "__typename") F.pure(PairedFieldSelection[G, b](f, typenameField[b](t.name)))
             else {
               t.fieldMap.get(f.name) match {
                 case None        => raise[F, PairedFieldSelection[G, b]](s"Could not find field '${f.name}' on type `${t.name}`.", None)
@@ -752,9 +752,9 @@ object PreparedQuery {
             prepareSelectable[F, G, a](s, ss, variableMap, discoveryState)
               .map(Selection(_))
           }
-        case (e: Enum[G, a], None) =>
+        case (e: Enum[a], None) =>
           Used[F].pure(PreparedLeaf(e.name, x => Json.fromString(e.revm(x))))
-        case (s: Scalar[G, a], None) =>
+        case (s: Scalar[a], None) =>
           Used[F].pure(PreparedLeaf(s.name, x => s.encoder(x).asJson))
         case (o, Some(_)) =>
           Used.liftF(raise(s"Type `${friendlyName(o)}` cannot have selections.", Some(selCaret)))
@@ -834,19 +834,15 @@ object PreparedQuery {
       sel match {
         case t @ Type(n, _, _, _) =>
           // Check downcast
-          t.implementsMap.get(name) match {
-            case None => raise(s"Tried to match with type `$name` on type object type `$n`.", Some(caret))
-            case Some(impl) =>
-              val i: Interface[G, ?] = impl.value
-              F.pure(i)
+          t.implementsMap.get(name).map(_.value) match {
+            case None    => raise(s"Tried to match with type `$name` on type object type `$n`.", Some(caret))
+            case Some(i) => F.pure(i)
           }
         // What types implement this interface?
         // We can both downcast and up-match
         case i @ Interface(n, _, _, _) =>
-          i.implementsMap.get(name) match {
-            case Some(impl) =>
-              val i: Interface[G, ?] = impl.value
-              F.pure(i)
+          i.implementsMap.get(name).map(_.value) match {
+            case Some(i) => F.pure(i)
             case None =>
               raiseOpt(
                 discoveryState.implementations.get(i.name),
@@ -855,8 +851,8 @@ object PreparedQuery {
               ).flatMap { m =>
                 raiseOpt(
                   m.get(name).map {
-                    case SchemaShape.InterfaceImpl.TypeImpl(x, _)    => x
-                    case SchemaShape.InterfaceImpl.OtherInterface(i) => i
+                    case t: SchemaShape.InterfaceImpl.TypeImpl[G, ?, ?]    => t.t
+                    case i: SchemaShape.InterfaceImpl.OtherInterface[G, ?] => i.i
                   },
                   s"`$name` does not implement interface `$n`, possible implementations are ${m.keySet.mkString(", ")}.",
                   caret.some
@@ -870,10 +866,8 @@ object PreparedQuery {
             case Some(i) => F.pure(i.tpe.value)
             case None =>
               u.types.toList
-                .collectFirstSome { case v =>
-                  val t: Type[G, _] = v.tpe.value
-                  t.implementsMap.get(name)
-                } match {
+                .map(_.tpe.value)
+                .collectFirstSome(_.implementsMap.get(name)) match {
                 case None =>
                   raise(
                     s"`$name` is not a member of the union `$n` (or any of the union's types' implemented interfaces), possible members are ${u.instanceMap.keySet
@@ -1271,7 +1265,7 @@ object PreparedQuery {
         case P.OperationType.Query =>
           val i: NonEmptyList[(String, Field[G, Unit, ?])] = schema.shape.introspection
           val q = schema.shape.query
-          val full = q.copy(fields = i.map { case (k, v) => k -> v.contramap[Q](_ => ()) } concatNel q.fields)
+          val full = q.copy(fields = i.map { case (k, v) => k -> v.contramap[G, Q](_ => ()) } concatNel q.fields)
           runWith[Q](full).map(PrepResult.Query(_))
         case P.OperationType.Mutation =>
           raiseOpt(schema.shape.mutation, "No `Mutation` type defined in this schema.", None)

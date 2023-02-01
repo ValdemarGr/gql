@@ -359,7 +359,7 @@ object Validation {
     useOutputEdge[F, G](sel, discovery) {
       validateTypeName[F, G](sel.name) >> {
         def checkOl(ol: ObjectLike[F, ?]): G[Unit] = {
-          val uniqF =
+          val uniqF: G[Unit] =
             allUnique[F, G](DuplicateInterfaceInstance.apply, ol.implementsMap.values.toList.map(_.value.name))
           val fieldsF = validateFields[F, G](ol.abstractFieldsNel, discovery)
 
@@ -463,8 +463,8 @@ object Validation {
             allUnique[F, G](DuplicateUnionInstance.apply, ols.map(_.value.name)) >>
               ols.traverse_(x => validateOutput[F, G](x.value, discovery))
           // TODO on both (interface extension)
-          case t @ Type(_, _, _, _)      => checkOl(t)
-          case i @ Interface(_, _, _, _) => checkOl(i)
+          case t: Type[F, ?]      => checkOl(t)
+          case i: Interface[F, ?] => checkOl(i)
         }
       }
     }

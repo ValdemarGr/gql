@@ -49,7 +49,7 @@ object EvalFailure {
   ) extends EvalFailure
   final case class StreamHeadResolution(
       path: Cursor,
-      error: Either[Throwable, String],
+      error: Either[Throwable, String]
   ) extends EvalFailure {
     lazy val paths = Chain(path)
   }
@@ -61,14 +61,14 @@ object EvalFailure {
   }
   final case class BatchResolution(
       paths: Chain[Cursor],
-      ex: Throwable,
+      ex: Throwable
   ) extends EvalFailure {
     lazy val exception = Some(ex)
     lazy val error = Left(ex)
   }
   final case class EffectResolution(
       path: Cursor,
-      error: Either[Throwable, String],
+      error: Either[Throwable, String]
   ) extends EvalFailure {
     lazy val paths = Chain(path)
   }

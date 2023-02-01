@@ -16,7 +16,6 @@
 package gql.goi
 
 import gql.ast._
-import gql.dsl._
 import cats.effect._
 import java.util.Base64
 import java.nio.charset.StandardCharsets
@@ -25,6 +24,7 @@ import cats.data._
 import cats._
 import gql.SchemaShape
 import gql.resolver.Resolver
+import gql.dsl._
 
 trait Node {
   def value: Any = this
@@ -38,27 +38,25 @@ object Node {
 
   private case class NodeImpl(override val value: Any, typename: String) extends Node
 
-  val nodeInterface = interface[cats.Id, Node](
+  implicit val nodeInterface: Interface[fs2.Pure, Node] = interface[fs2.Pure, Node](
     "Node",
-    "id" -> abst[cats.Id, ID[String]]
+    "id" -> abst[fs2.Pure, ID[String]]
   )
-
-  implicit def nodeInterfaceF[F[_]]: Interface[F, Node] = nodeInterface.asInstanceOf[Interface[F, Node]]
 }
 
 object Goi {
   def makeId[F[_]](typename: String, id: String)(implicit F: Sync[F]): F[String] =
     F.delay(new String(Base64.getEncoder.encode(s"$typename:$id".getBytes()), StandardCharsets.UTF_8))
 
-  def makeImpl[F[_], A](specify: Node => Option[A]) =
-    gql.ast.Implementation(Eval.now(Node.nodeInterfaceF[F]))(specify)
+  def makeImpl[A](specify: Node => Option[A]) =
+    gql.ast.Implementation(Eval.now(Node.nodeInterface))(specify)
 
-  def addIdWith[F[_], A](resolver: Resolver[F, A, String], tpe: Type[F, A], specify: Node => Option[A])(implicit
+  def addIdWith[F[_], A](resolver: Resolver[F, A, String], t: Type[F, A], specify: Node => Option[A])(implicit
       F: Sync[F]
   ): Type[F, A] =
-    tpe
-      .copy(implementations = makeImpl[F, A](specify) :: tpe.implementations)
-      .addFields("id" -> field.from(resolver.evalMap(s => makeId[F](tpe.name, s).map(ID(_)))))
+    t
+      .copy(implementations = makeImpl[A](specify) :: t.implementations)
+      .addFields("id" -> field.from(resolver.evalMap(s => makeId[F](t.name, s).map(ID(_)))))
 
   def addId[F[_], A, B](resolver: Resolver[F, A, B], t: Type[F, A])(implicit
       F: Sync[F],

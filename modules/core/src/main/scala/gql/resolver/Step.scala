@@ -18,7 +18,7 @@ package gql.resolver
 import gql._
 import cats.data._
 
-sealed trait Step[F[_], -I, +O]
+sealed trait Step[+F[_], -I, +O]
 
 object Step {
   object Alg {
