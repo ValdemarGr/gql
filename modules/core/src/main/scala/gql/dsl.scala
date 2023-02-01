@@ -79,19 +79,17 @@ object dsl {
     def nullValue = Value.NullValue
   }
 
-  def field[I] = new PartiallyAppliedField[I]
-
   def eff[I] = new PartiallyAppliedEff[I]
 
   def lift[F[_], I] = new PartiallyAppliedLift[F, I]
 
-  def builder[F[_], I] = new FieldBuilder[F, I]
+  def build[F[_], I] = new FieldBuilder[F, I]
 
   final class PartiallyAppliedFieldBuilder[F[_], I](private val dummy: Boolean = false) extends AnyVal {
-    def apply[A](f: FieldBuilder[F, I] => A): A = f(builder[F, I])
+    def apply[A](f: FieldBuilder[F, I] => A): A = f(build[F, I])
   }
 
-  def build[F[_], I] = new PartiallyAppliedFieldBuilder[F, I]
+  def builder[F[_], I] = new PartiallyAppliedFieldBuilder[F, I]
 
   def abst[F[_], T](implicit tpe: => Out[F, T]): AbstractField[F, T] =
     AbstractField[F, T](None, Eval.later(tpe))
@@ -154,105 +152,22 @@ object dsl {
 
   def arrType[A](implicit tpe: => In[A]): In[Seq[A]] = InArr[A, Seq[A]](tpe, _.asRight)
 
-  final case class FieldsSyntax[F[_], A](private val fields: Fields[F, A]) extends AnyVal {
-    def addFields(xs: (String, Field[F, A, ?])*) =
-      fields concat xs.toList
+  implicit def syntaxForFields[F[_], A](fields: Fields[F, A]): FieldsSyntax[F, A] =
+    FieldsSyntax[F, A](fields)
 
-    def addFieldsNel(xs: NonEmptyList[(String, Field[F, A, ?])]) =
-      fields concat xs.toList
+  implicit def syntaxForType[F[_], A](tpe: Type[F, A]): TypeSyntax[F, A] =
+    TypeSyntax[F, A](tpe)
 
-    def mapValues[B](f: Field[F, A, ?] => Field[F, B, ?]) =
-      fields.map { case (k, v) => k -> f(v) }
+  implicit def syntaxForInterface[F[_], A](tpe: Interface[F, A]): InterfaceSyntax[F, A] =
+    InterfaceSyntax[F, A](tpe)
 
-    def resolveBy[I2](f: Resolver[F, A, A] => Resolver[F, I2, A]): Fields[F, I2] =
-      mapValues(_.compose(f(Resolver.id)))
+  implicit def syntaxForUnion[F[_], A](tpe: Union[F, A]): UnionSyntax[F, A] =
+    UnionSyntax[F, A](tpe)
 
-    def compose[I2](resolver: Resolver[F, I2, A]): Fields[F, I2] =
-      resolveBy[I2](_.compose(resolver))
-  }
-
-  final case class TypeSyntax[F[_], A](private val tpe: Type[F, A]) extends AnyVal {
-    def implements[B](pf: PartialFunction[B, A])(implicit interface: => Interface[F, B]): Type[F, A] =
-      tpe.copy(implementations = Implementation(Eval.later(interface))(pf.lift) :: tpe.implementations)
-
-    def subtypeOf[B](implicit ev: A <:< B, tag: ClassTag[A], interface: => Interface[F, B]): Type[F, A] =
-      implements[B] { case a: A => a }(interface)
-
-    def addFields(xs: (String, Field[F, A, ?])*) =
-      tpe.copy(fields = tpe.fields concat xs.toList)
-  }
-
-  final case class InterfaceSyntax[F[_], A](private val tpe: Interface[F, A]) extends AnyVal {
-    def implements[B](implicit interface: => Interface[F, B]): Interface[F, A] =
-      tpe.copy(implementations = Eval.later(interface) :: tpe.implementations)
-
-    def addAbstractFields(xs: (String, AbstractField[F, ?])*): Interface[F, A] =
-      tpe.copy(fields = tpe.fields concat xs.toList)
-
-    def addFields(xs: (String, Field[F, A, ?])*): Interface[F, A] =
-      tpe.copy(fields = tpe.fields concat xs.toList.map { case (k, v) => k -> v.asAbstract })
-  }
-
-  final case class UnionSyntax[F[_], A](private val tpe: Union[F, A]) extends AnyVal {
-    def variant[B](pf: PartialFunction[A, B])(implicit innerTpe: => Type[F, B]): Union[F, A] =
-      tpe.copy(types = Variant[F, A, B](Eval.later(innerTpe))(pf.lift) :: tpe.types)
-
-    def subtype[B: ClassTag](implicit ev: B <:< A, innerTpe: => Type[F, B]): Union[F, A] =
-      variant[B] { case a: B => a }(innerTpe)
-  }
-
-  final case class PartiallyAppliedUnion1[F[_], A](name: String, hd: Variant[F, A, ?]) {
-    def variant[B](pf: PartialFunction[A, B])(implicit innerTpe: => Type[F, B]): Union[F, A] =
-      Union[F, A](name, NonEmptyList.of(hd, Variant[F, A, B](Eval.later(innerTpe))(pf.lift)), None)
-
-    def subtype[B: ClassTag](implicit ev: B <:< A, innerTpe: => Type[F, B]): Union[F, A] =
-      variant[B] { case a: B => a }(innerTpe)
-  }
-
-  final case class PartiallyAppliedUnion0[F[_], A](name: String) extends AnyVal {
-    def variant[B](pf: PartialFunction[A, B])(implicit innerTpe: => Type[F, B]): PartiallyAppliedUnion1[F, A] =
-      PartiallyAppliedUnion1[F, A](name, Variant[F, A, B](Eval.later(innerTpe))(pf.lift))
-
-    def subtype[B: ClassTag](implicit ev: B <:< A, innerTpe: => Type[F, B]): PartiallyAppliedUnion1[F, A] =
-      variant[B] { case a: B => a }(innerTpe)
-  }
-
-  final case class SyntaxForBatchResolverSignature[F[_], K, V](private val r: Resolver[F, Set[K], Map[K, V]]) extends AnyVal {
-    def optionals[G[_]: Foldable: Functor]: Resolver[F, G[K], G[Option[V]]] =
-      r.contramap[G[K]](_.toList.toSet).tupleIn.map { case (m, g) => g.map(m.get) }
-
-    def collectSome[G[_]: Foldable: FunctorFilter: Functor]: Resolver[F, G[K], G[V]] =
-      optionals[G].map(_.collect { case Some(v) => v })
-
-    def forceF[G[_]: Foldable: FunctorFilter: Functor](implicit
-        S: Show[NonEmptyList[K]]
-    ): Resolver[F, G[K], G[V]] =
-      r.contramap[G[K]](_.toList.toSet).tupleIn.map { case (m, g) => g.map(k => (k, m.get(k))) }.fallibleMap { gov =>
-        val errs = gov.collect { case (k, None) => k }
-        errs.toList.toNel match {
-          case None     => gov.collect { case (_, Some(v)) => v }.rightIor[String]
-          case Some(xs) => S.show(xs).leftIor[G[V]]
-        }
-      }
-
-    def optional: Resolver[F, K, Option[V]] =
-      optionals[Id]
-
-    def forceOne(implicit S: Show[K]): Resolver[F, K, V] =
-      optional.tupleIn.fallibleMap {
-        case (Some(v), _) => v.rightIor[String]
-        case (None, k)    => S.show(k).leftIor[V]
-      }
-
-    def forceNE[G[_]: NonEmptyTraverse](implicit S: Show[NonEmptyList[K]]): Resolver[F, G[K], G[V]] =
-      forceF[List]
-        .contramap[G[K]](_.toList)
-        .tupleIn
-        .fallibleMap { case (v, ks) =>
-          val varr = v.toVector
-          ks.mapWithIndex { case (_, i) => varr(i) }.rightIor
-        }
-  }
+  implicit def syntaxForBatchResolverSignature[F[_], K, V](
+      resolver: Resolver[F, Set[K], Map[K, V]]
+  ): SyntaxForBatchResolverSignature[F, K, V] =
+    SyntaxForBatchResolverSignature[F, K, V](resolver)
 }
 
 object syntax {
@@ -305,14 +220,6 @@ object syntax {
       Field(Resolver.eval(resolver), Eval.later(tpe))
   }
 
-  final class PartiallyAppliedField[I](private val dummy: Boolean = false) extends AnyVal {
-    def apply[F[_], T](f: Resolver[F, I, I] => Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field[F, I, T](f(Resolver.id[F, I]), Eval.later(tpe))
-
-    def from[F[_], T](resolver: Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field[F, I, T](resolver, Eval.later(tpe))
-  }
-
   final case class PartiallyAppliedArgFull[A](private val dummy: Boolean = false) extends AnyVal {
     def apply[B](name: String, default: Option[Value], description: Option[String])(
         f: ArgParam[A] => Either[String, B]
@@ -320,7 +227,7 @@ object syntax {
       Arg.makeFrom[A, B](ArgValue(name, Eval.later(tpe), default, description))(f)
   }
 
-  class FieldsSyntax[F[_], A](private val fields: Fields[F, A]) extends AnyVal {
+  final case class FieldsSyntax[F[_], A](private val fields: Fields[F, A]) extends AnyVal {
     def addFields(xs: (String, Field[F, A, ?])*) =
       fields concat xs.toList
 
@@ -337,7 +244,7 @@ object syntax {
       resolveBy[I2](_.compose(resolver))
   }
 
-  class TypeSyntax[F[_], A](private val tpe: Type[F, A]) extends AnyVal {
+  final case class TypeSyntax[F[_], A](private val tpe: Type[F, A]) extends AnyVal {
     def implements[B](pf: PartialFunction[B, A])(implicit interface: => Interface[F, B]): Type[F, A] =
       tpe.copy(implementations = Implementation(Eval.later(interface))(pf.lift) :: tpe.implementations)
 
@@ -348,7 +255,7 @@ object syntax {
       tpe.copy(fields = tpe.fields concat xs.toList)
   }
 
-  class InterfaceSyntax[F[_], A](private val tpe: Interface[F, A]) extends AnyVal {
+  final case class InterfaceSyntax[F[_], A](private val tpe: Interface[F, A]) extends AnyVal {
     def implements[B](implicit interface: => Interface[F, B]): Interface[F, A] =
       tpe.copy(implementations = Eval.later(interface) :: tpe.implementations)
 
@@ -359,7 +266,7 @@ object syntax {
       tpe.copy(fields = tpe.fields concat xs.toList.map { case (k, v) => k -> v.asAbstract })
   }
 
-  class UnionSyntax[F[_], A](private val tpe: Union[F, A]) extends AnyVal {
+  final case class UnionSyntax[F[_], A](private val tpe: Union[F, A]) extends AnyVal {
     def variant[B](pf: PartialFunction[A, B])(implicit innerTpe: => Type[F, B]): Union[F, A] =
       tpe.copy(types = Variant[F, A, B](Eval.later(innerTpe))(pf.lift) :: tpe.types)
 
@@ -367,7 +274,7 @@ object syntax {
       variant[B] { case a: B => a }(innerTpe)
   }
 
-  final case class PartiallyAppliedUnion1[F[_], A](name: String, hd: Variant[F, A, ?]) {
+  final case class PartiallyAppliedUnion1[F[_], A](private val name: String, private val hd: Variant[F, A, ?]) {
     def variant[B](pf: PartialFunction[A, B])(implicit innerTpe: => Type[F, B]): Union[F, A] =
       Union[F, A](name, NonEmptyList.of(hd, Variant[F, A, B](Eval.later(innerTpe))(pf.lift)), None)
 
@@ -381,5 +288,42 @@ object syntax {
 
     def subtype[B: ClassTag](implicit ev: B <:< A, innerTpe: => Type[F, B]): PartiallyAppliedUnion1[F, A] =
       variant[B] { case a: B => a }(innerTpe)
+  }
+
+  final case class SyntaxForBatchResolverSignature[F[_], K, V](private val r: Resolver[F, Set[K], Map[K, V]]) extends AnyVal {
+    def optionals[G[_]: Foldable: Functor]: Resolver[F, G[K], G[Option[V]]] =
+      r.contramap[G[K]](_.toList.toSet).tupleIn.map { case (m, g) => g.map(m.get) }
+
+    def collectSome[G[_]: Foldable: FunctorFilter: Functor]: Resolver[F, G[K], G[V]] =
+      optionals[G].map(_.collect { case Some(v) => v })
+
+    def forceF[G[_]: Foldable: FunctorFilter: Functor](implicit
+        S: Show[NonEmptyList[K]]
+    ): Resolver[F, G[K], G[V]] =
+      r.contramap[G[K]](_.toList.toSet).tupleIn.map { case (m, g) => g.map(k => (k, m.get(k))) }.fallibleMap { gov =>
+        val errs = gov.collect { case (k, None) => k }
+        errs.toList.toNel match {
+          case None     => gov.collect { case (_, Some(v)) => v }.rightIor[String]
+          case Some(xs) => S.show(xs).leftIor[G[V]]
+        }
+      }
+
+    def optional: Resolver[F, K, Option[V]] =
+      optionals[Id]
+
+    def forceOne(implicit S: Show[K]): Resolver[F, K, V] =
+      optional.tupleIn.fallibleMap {
+        case (Some(v), _) => v.rightIor[String]
+        case (None, k)    => S.show(k).leftIor[V]
+      }
+
+    def forceNE[G[_]: NonEmptyTraverse](implicit S: Show[NonEmptyList[K]]): Resolver[F, G[K], G[V]] =
+      forceF[List]
+        .contramap[G[K]](_.toList)
+        .tupleIn
+        .fallibleMap { case (v, ks) =>
+          val varr = v.toVector
+          ks.mapWithIndex { case (_, i) => varr(i) }.rightIor
+        }
   }
 }

@@ -56,7 +56,7 @@ object Goi {
   ): Type[F, A] =
     t
       .copy(implementations = makeImpl[A](specify) :: t.implementations)
-      .addFields("id" -> field.from(resolver.evalMap(s => makeId[F](t.name, s).map(ID(_)))))
+      .addFields("id" -> build.from(resolver.evalMap(s => makeId[F](t.name, s).map(ID(_)))))
 
   def addId[F[_], A, B](resolver: Resolver[F, A, B], t: Type[F, A])(implicit
       F: Sync[F],
@@ -90,7 +90,7 @@ object Goi {
     shape.copy(query =
       shape.query.copy(
         fields = shape.query.fields.append[(String, Field[F, Q, ?])](
-          "node" -> field.from {
+          "node" -> build.from {
             Resolver
               .argument(arg[ID[String]]("id"))
               .evalMap { id =>

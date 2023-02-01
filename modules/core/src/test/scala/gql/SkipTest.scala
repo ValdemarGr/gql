@@ -25,7 +25,7 @@ class SkipTest extends CatsEffectSuite {
   val effectState = IO.ref(Option.empty[Int]).unsafeRunSync()
 
   lazy val schemaShape = SchemaShape.make[IO](
-    build[IO, Unit] { b =>
+    builder[IO, Unit] { b =>
       b.tpe(
         "Query",
         "num" -> b(

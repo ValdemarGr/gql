@@ -36,7 +36,7 @@ class StreamingTest extends CatsEffectSuite {
   def level2Users = level2UsersRef.get.unsafeRunSync()
   val level2Resource = Resource.make(level2UsersRef.update(_ + 1))(_ => level2UsersRef.update(_ - 1))
 
-  implicit lazy val level1: Type[IO, Level1] = build[IO, Level1] { b =>
+  implicit lazy val level1: Type[IO, Level1] = builder[IO, Level1] { b =>
     tpe[IO, Level1](
       "Level1",
       "value" -> lift(_.value),
@@ -46,7 +46,7 @@ class StreamingTest extends CatsEffectSuite {
     )
   }
 
-  implicit lazy val level2: Type[IO, Level2] = build[IO, Level2] { b =>
+  implicit lazy val level2: Type[IO, Level2] = builder[IO, Level2] { b =>
     tpe[IO, Level2](
       "Level2",
       "value" -> lift(_.value),

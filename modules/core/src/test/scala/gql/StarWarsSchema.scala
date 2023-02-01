@@ -113,7 +113,7 @@ object StarWarsSchema {
         "JEDI" -> enumVal(Episode.JEDI)
       )
 
-    lazy val characterFields = build[IO, Character] { b =>
+    lazy val characterFields = builder[IO, Character] { b =>
       b.fields(
         "id" -> lift(_.id),
         "name" -> lift(_.name),
