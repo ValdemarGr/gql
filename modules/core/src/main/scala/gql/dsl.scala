@@ -130,6 +130,12 @@ object dsl {
         tl: (String, Field[F, I, ?])*
     ): NonEmptyList[(String, Field[F, I, ?])] = gql.dsl.fields[F, I](hd, tl: _*)
 
+    def fields[A](f: I => A)(
+        hd: (String, Field[F, A, ?]),
+        tl: (String, Field[F, A, ?])*
+    ): NonEmptyList[(String, Field[F, I, ?])] = 
+      NonEmptyList[(String, Field[F, A, ?])](hd, tl.toList).map { case (k, v) => (k, v.contramap(f)) }
+
     def from[T](resolver: Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
       Field[F, I, T](resolver, Eval.later(tpe))
 
