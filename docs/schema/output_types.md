@@ -33,7 +33,7 @@ For instance, the `ID` type is defined for any `Scalar` as follows:
 final case class ID[A](value: A)
 
 object ID {
-  implicit def idTpe[F[_], A](implicit s: Scalar[F, A]): Scalar[F, ID[A]] =
+  implicit def idTpe[A](implicit s: Scalar[A]): Scalar[ID[A]] =
     s.imap(ID(_))(_.value)
       .rename("ID")
       .document(
@@ -43,7 +43,7 @@ object ID {
       )
 }
   
-implicitly[Scalar[IO, ID[String]]]
+implicitly[Scalar[ID[String]]]
 ```
 
 ## Enum
@@ -56,7 +56,7 @@ object Color {
   case object Blue extends Color
 }
 
-enumType[IO, Color](
+enumType[Color](
   "Color",
   "RED" -> enumVal(Color.Red),
   "GREEN" -> enumVal(Color.Green),
@@ -68,7 +68,7 @@ enumType[IO, Color](
 ```scala mdoc
 final case class UntypedEnum(s: String)
 
-enumType[IO, UntypedEnum](
+enumType[UntypedEnum](
   "UntypedEnum",
   "FIRST" -> enumVal(UntypedEnum("FIRST"))
 )

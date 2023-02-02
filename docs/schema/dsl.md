@@ -1,9 +1,6 @@
 ---
 title: The DSL
 ---
-:::warning
-not up to date
-:::
 The DSL consists of a series of smart constructors for the ast nodes of gql.
 The source code for the DSL is very easy to follow and as such, the best documentation is the source code itself :-).
 
@@ -93,7 +90,7 @@ tpe[IO, Person](
 )
 ```
 
-The `lift` and `eff` constructors can also 
+The `lift` and `eff` constructors can also also be supplied with arguments:
 ```scala mdoc:silent
 def familyName = arg[String]("familyName")
 
@@ -230,7 +227,7 @@ tpe[IO, Example](
 :::note
 `Pure` will be avaiable with any effect type but `cats.Id` will not.
 When working in `Pure` we have guarenteed that no there are no effects, since no value can inhabit `Nothing`.
-A transformation from `cats.Id` requies walking through the ast and transforming `cats.Id` to `F`.
+A transformation from `cats.Id` requires walking through the ast and transforming `cats.Id` to `F`.
 ```scala mdoc:fail
 tpe[fs2.Pure, Entity](
   "Entity",

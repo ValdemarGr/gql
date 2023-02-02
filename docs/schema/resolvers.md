@@ -1,6 +1,43 @@
 ---
 title: Resolvers
 ---
+Resolvers are at the core of gql; a resolver `Resolver[F, I, O]` takes an `I` to an `O` and operates in `F`.
+Resolvers are embedded in fields and act as continuations.
+When gql executes a query it first constructs a tree of continueations from your schema and the supplied GraphQL query.
+
+`Resolver`s compose like functions with combinators such as `andThen` and `compose`.
+
+# The simple resolvers
+The simplest `Resolver` type is `Lift`/`lift` which simply lifts a function `I => O` into `Resolver[F, I, O]`.
+`lift`'s compositional counterpart is `map`, which for any resolver `Resolver[F, I, O]` produces a new resolver `Resolver[F, I, O2]` given a fucntion `O => O2`.
+:::note
+Having `lift` is important since we wouldn't be able to lift into `F` without an `Applicative`, without `lift`.
+:::
+
+Another simple resolver is `Effect`/`eval` which lifts a function `I => F[O]` into `Resolver[F, I, O]`.
+`eval`'s compositional counterpart is `evalMap`.
+
+A `Resolver` also implements `first` which is very convinient since some `Resolver`s are constant functions (they throw away their arguments/`I`).
+Since a `Resolver` does not form a `Monad`, `first` is necessary to implement non-trivial resolver compositions.
+
+GraphQL arguments are also introduced via `Resolver`s.
+That is, a `Resolver` can introduce new variables to the composition at any one point and gql will ensure that the argument is available when executing the query.
+```scala mdoc:silent
+import gql.dsl._
+import gql.resolver._
+import cats.effect._
+
+def nameArg = arg[String]("lastName")
+
+Resolver.eval[IO, Unit, String](_ => IO("John"))
+  .arg(nameArg)
+  .map{ case (lastName, john) => s"$john $lastName" }
+```
+
+## Steps
+A `Step` is the low-level algebra for a resolver, that describes a single step of evaluation for a query.
+The variants of `Step` are clearly listed in the source code, and are all orthogonal in what abilities they provide.
+
 :::warning
 this is not up to date
 :::
