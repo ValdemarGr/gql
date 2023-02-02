@@ -18,48 +18,48 @@ import gql.resolver._
 ```
 
 ## Fields
-The simplest form of field construction comes from the `field.from` smart constructor.
+The simplest form of field construction comes from the `build.from` smart constructor.
 It simply lifts a resolver into a field, given that a gql output type exists for the resolver output.
 ```scala mdoc
 def r: Resolver[IO, Int, String] = Resolver.lift(i => i.toString())
 
-val f: Field[IO, Int, String] = field.from(r)
+val f: Field[IO, Int, String] = build.from(r)
 ```
 
 Sometimes type inference cannot find the proper type for a field:
 ```scala mdoc:fail
-field.from(Resolver.eval(i => IO(i.toString())))
+build.from(Resolver.eval(i => IO(i.toString())))
 ```
-The type parameters for `field` are partially applied, such that when type inference isn't enough, types can be supplied succinctly.
+The type parameters for `build` are partially applied, such that when type inference isn't enough, types can be supplied explicitly.
 ```scala mdoc:silent
-field[Int].from(Resolver.eval(i => IO(i.toString())))
+build[IO, Int].from(Resolver.eval(i => IO(i.toString())))
 
-field.from(Resolver.eval((i: Int) => IO(i.toString())))
+build.from(Resolver.eval((i: Int) => IO(i.toString())))
 ```
 
 For most non-trivial fields, there is an even more concise syntax.
-Just calling the `field` constructor, takes a higher order function that goes from the identity resolver to some output:
+Invoking the `apply` method of `build`, takes a higher order function that goes from the identity resolver to some output:
 ```scala mdoc:silent
-field[Int](_.map(i => i * 2).evalMap(i => IO(i))): Field[IO, Int, Int]
+build[IO, Int](_.map(i => i * 2).evalMap(i => IO(i))): Field[IO, Int, Int]
 ```
 
 ### Builders
 Complex structures may require many special resolver compositions.
 The dsl also introduces a somethink akin to a builder pattern.
-The easiet way to summon an instance is with the `builder` function.
+The `build` function from the previous section, in fact, creates a builder that has many more options than just `from` and `apply`.
 ```scala mdoc:silent
-val b: FieldBuilder[IO, Int] = builder[IO, Int]
+val b: FieldBuilder[IO, Int] = build[IO, Int]
 ```
-Often a builder is only relevant within a scope, thus one ends up having many unused builders in scope.
-The `build` combinator solves with with a simple composition:
+Often a builder is only relevant within a scope, thus one can end up having many unused builders in scope.
+The `builder` makes such code more concise:
 ```scala mdoc:silent
-build[IO, Int]{ (fb: FieldBuilder[IO, Int]) =>
+builder[IO, Int]{ (fb: FieldBuilder[IO, Int]) =>
   fb
 }
 ```
 The builder dsl contains most of the field related constructors:
 ```scala mdoc:silent
-build[IO, Int]{ fb =>
+builder[IO, Int]{ fb =>
   fb.tpe(
     "Query",
     "answer" -> lift(i => i * 0 + 42),
@@ -74,7 +74,7 @@ build[IO, Int]{ fb =>
 ```
 
 ### Value resolution
-Wrapping every field in a `field` smart constructor and then defining the resolver seperately is a bit verbose.
+Wrapping every field in a `build` smart constructor and then defining the resolver seperately is a bit verbose.
 There are smart constructors for two common variants of field resolvers that lift the resolver function directly to a `Field`.
 
 We must decide if the field is pure or effectful:
@@ -94,24 +94,24 @@ tpe[IO, Person](
 ```
 
 The `lift` and `eff` constructors can also 
-```scala
+```scala mdoc:silent
 def familyName = arg[String]("familyName")
 
 tpe[IO, Person](
   "Person",
-  "name" -> pure(familyName)(_.name + _),
-  "nameEffect" -> eff(familyName)((p, f) => IO(p.name + f))
+  "name" -> lift(familyName)(_ + _.name),
+  "nameEffect" -> eff(familyName)((f, p) => IO(p.name + f))
 )
 ```
 
 ## Unification instances
-`Union`s and `Interface`s require implementations of their type.
+`Union`s and `Interface`s are abstract types that have implementations.
 
-`Union` declares it's implementations on the `Union` structure.
-However, `Interface` implementations are declared on the types that implement the interface.
+`Union` declares it's implementations up-front, like a `sealed trait`.
+However, `Interface` implementations are declared on the types that implement the interface, like a `trait` or an `abstract class`.
 
 Before continuing, lets setup the environment.
-```scala
+```scala mdoc:silent
 trait Vehicle { 
   def name: String
 }
@@ -122,7 +122,7 @@ final case class Truck(name: String) extends Vehicle
 ```
 
 For the `Union`, variants can be declared using the `variant` function, which takes a `PartialFunction` from the unifying type to the implementation.
-```scala
+```scala mdoc:silent
 implicit def car: Type[IO, Car] = ???
 implicit def boat: Type[IO, Boat] = ???
 implicit def truck: Type[IO, Truck] = ???
@@ -133,7 +133,7 @@ union[IO, Vehicle]("Vehicle")
   .variant[Truck] { case t: Truck => t }
 ```
 A shorthand function exists, if the type of the variant is a subtype of the unifying type.
-```scala
+```scala mdoc:silent
 union[IO, Vehicle]("Vehicle")
   .subtype[Car] 
   .subtype[Boat] 
@@ -141,16 +141,16 @@ union[IO, Vehicle]("Vehicle")
 ```
 
 For an `Interface` the same dsl exists, but is placed on the types that can implement the interface (a `Type` or another `Interface`).
-```scala
+```scala mdoc:silent
 implicit lazy val vehicle: Interface[IO, Vehicle] = interface[IO, Vehicle](
   "Vehicle",
-  "name" -> pure(_.name)
+  "name" -> abst[IO, String]
 )
 
-tpe[IO, Car]("Car", "name" -> pure(_.name))
+tpe[IO, Car]("Car", "name" -> lift(_.name))
   .implements[Vehicle]{ case c: Car => c }
   
-tpe[IO, Boat]("Boat", "name" -> pure(_.name))
+tpe[IO, Boat]("Boat", "name" -> lift(_.name))
   .subtypeOf[Vehicle]
   
 trait OtherVehicle extends Vehicle {
@@ -159,12 +159,42 @@ trait OtherVehicle extends Vehicle {
 
 interface[IO, OtherVehicle](
   "OtherVehicle",
-  "weight" -> pure(_.weight),
+  "weight" -> abst[IO, Int],
   // Since OtherVehicle is a subtype of Vehicle
   // we can directly embed the Vehicle fields
-  vehicle.fieldsList: _*
-).subtypeOf[Vehicle]
+  vehicle.abstractFields: _*
+).implements[Vehicle]
 ```
+### Interface pattern
+It can be a bit cumbersome to implement an interface's fields every time it is extended.
+An interface constructor has been provided that can convert field implementations into abstract fields:
+```scala mdoc:silent
+trait Pet {
+  def name: String
+  def age: Int
+  def weight: Double
+}
+
+case class Dog(name: String, age: Int, weight: Double) extends Pet
+
+val petFields = fields[IO, Pet](
+  "name" -> lift(_.name),
+  "age" -> lift(_.age),
+  "weight" -> lift(_.weight)
+)
+
+implicit val pet = interfaceFromNel[IO, Pet](
+  "Pet",
+  petFields
+)
+
+implicit val dof = tpe[IO, Dog](
+  "Dog",
+  "bark" -> lift(_ => "woof!")
+)
+  .addFields(petFields.toList: _*)
+  .subtypeOf[Pet]
+``` 
 
 ## Input types
 Review the [Input types](./input_types) section for more information.
@@ -172,3 +202,40 @@ Review the [Input types](./input_types) section for more information.
 ## Other output structures
 Examples of other structures can be in the [Output types](./output_types) section.
 
+### Covariant effects
+Output types in gql are covariant in `F`, such that output types written in different effects seamlessly weave together.
+`fs2` provides a type that we can reuse for pure effects defined as `type Pure[A] <: Nothing`.
+Consider the following:
+```scala mdoc:silent
+final case class Entity(
+  name: String,
+  age: Int
+)
+
+object Entity {
+  implicit lazy val gqlType = tpe[fs2.Pure, Entity](
+    "Entity",
+    "name" -> lift(_.name),
+    "age" -> lift(_.age)
+  )
+}
+
+trait Example
+
+tpe[IO, Example](
+  "Example",
+  "entity" -> lift(_ => Entity("John Doe", 42))
+)
+```
+:::note
+`Pure` will be avaiable with any effect type but `cats.Id` will not.
+When working in `Pure` we have guarenteed that no there are no effects, since no value can inhabit `Nothing`.
+A transformation from `cats.Id` requies walking through the ast and transforming `cats.Id` to `F`.
+```scala mdoc:fail
+tpe[fs2.Pure, Entity](
+  "Entity",
+  "name" -> lift(_.name),
+  "age" -> eff(x => fs2.Pure(x.age))
+)
+```
+:::

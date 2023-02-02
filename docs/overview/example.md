@@ -67,7 +67,7 @@ import cats.implicits._
 Now we can define our schema:
 ```scala mdoc
 def schema[F[_]](implicit repo: Repository[F], F: Async[F]) = {
-  implicit lazy val episode: Enum[F, Episode] = enumType[F, Episode](
+  implicit lazy val episode: Enum[Episode] = enumType[Episode](
     "Episode",
     "NEWHOPE" -> enumVal(Episode.NEWHOPE),
     "EMPIRE" -> enumVal(Episode.EMPIRE),
@@ -79,7 +79,7 @@ def schema[F[_]](implicit repo: Repository[F], F: Async[F]) = {
     "name" -> lift(_.name),
     "friends" -> eff(_.friends.traverse(repo.getCharacter)),
     "appearsIn" -> lift(_.appearsIn),
-    "secretBackstory" -> field[Character](_.as("secretBackstory is secret.".leftIor[String]).rethrow)
+    "secretBackstory" -> build[F, Character](_.as("secretBackstory is secret.".leftIor[String]).rethrow)
   )
 
   implicit lazy val character: Interface[F, Character] = interfaceFromNel[F, Character](

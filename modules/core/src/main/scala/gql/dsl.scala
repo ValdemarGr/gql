@@ -23,8 +23,6 @@ import cats.data._
 import scala.reflect.ClassTag
 
 object dsl {
-  import syntax._
-
   type Fields[F[_], -A] = NonEmptyList[(String, Field[F, A, ?])]
 
   def tpeNel[F[_], A](
@@ -168,14 +166,6 @@ object dsl {
       resolver: Resolver[F, Set[K], Map[K, V]]
   ): SyntaxForBatchResolverSignature[F, K, V] =
     SyntaxForBatchResolverSignature[F, K, V](resolver)
-}
-
-object syntax {
-  type Fields[F[_], -A] = NonEmptyList[(String, Field[F, A, ?])]
-
-  final class PartiallyAppliedFieldBuilder[I](private val dummy: Boolean = false) extends AnyVal {
-    def apply[F[_], A](f: FieldBuilder[F, I] => A): A = f(new FieldBuilder[F, I])
-  }
 
   final class FieldBuilder[F[_], I](private val dummy: Boolean = false) extends AnyVal {
     def tpe(
@@ -297,7 +287,7 @@ object syntax {
     def collectSome[G[_]: Foldable: FunctorFilter: Functor]: Resolver[F, G[K], G[V]] =
       optionals[G].map(_.collect { case Some(v) => v })
 
-    def forceF[G[_]: Foldable: FunctorFilter: Functor](implicit
+    def force[G[_]: Foldable: FunctorFilter: Functor](implicit
         S: Show[NonEmptyList[K]]
     ): Resolver[F, G[K], G[V]] =
       r.contramap[G[K]](_.toList.toSet).tupleIn.map { case (m, g) => g.map(k => (k, m.get(k))) }.fallibleMap { gov =>
@@ -318,7 +308,7 @@ object syntax {
       }
 
     def forceNE[G[_]: NonEmptyTraverse](implicit S: Show[NonEmptyList[K]]): Resolver[F, G[K], G[V]] =
-      forceF[List]
+      force[List]
         .contramap[G[K]](_.toList)
         .tupleIn
         .fallibleMap { case (v, ks) =>
