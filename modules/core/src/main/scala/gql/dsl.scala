@@ -61,6 +61,8 @@ object dsl {
 
   def argFull[A] = new PartiallyAppliedArgFull[A]
 
+  def arged[F[_], I, A](a: Arg[A]) = Resolver.argument[F, I, A](a)
+
   object value {
     def scalar[A](value: A)(implicit tpe: => Scalar[A]) =
       tpe.encoder(value)
@@ -188,23 +190,34 @@ object dsl {
     def lift = new PartiallyAppliedLift[F, I]
 
     def eff[T, A](arg: Arg[A])(resolver: (A, I) => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field(Resolver.eval[F, (A, I), T] { case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
+      Field(Resolver.eval[F, (A, I)] { case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
 
     def eff[T](resolver: I => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
       Field(Resolver.eval(resolver), Eval.later(tpe))
   }
 
+  // final class ArgBuilder[A](private val name: String) extends AnyVal {
+  //   def full[B](g: ArgValue[A] => ArgValue[A])(f: ArgParam[A] => Either[String, B])(implicit in: => In[A]): Arg[B] =
+  //     Arg.makeFrom[A, B](g(ArgValue(name, Eval.later(in), None, None)))(f)
+
+  //   def apply(f: ArgValue[A] => ArgValue[A])(implicit in: => In[A]): Arg[A] =
+  //     full(f)(_.value.asRight)(in)
+  // }
+
+  // def buildArg[A](name: String): ArgBuilder[A] =
+  //   new ArgBuilder[A](name)
+
   final class PartiallyAppliedLift[F[_], I](private val dummy: Boolean = false) extends AnyVal {
     def apply[T, A](arg: Arg[A])(resolver: (A, I) => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field(Resolver.lift[F, (A, I), T] { case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
+      Field(Resolver.lift[F, (A, I)] { case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
 
     def apply[T](resolver: I => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field(Resolver.lift[F, I, T](resolver), Eval.later(tpe))
+      Field(Resolver.lift[F, I](resolver), Eval.later(tpe))
   }
 
   final class PartiallyAppliedEff[I](private val dummy: Boolean = false) extends AnyVal {
     def apply[F[_], T, A](arg: Arg[A])(resolver: (A, I) => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field(Resolver.eval[F, (A, I), T] { case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
+      Field(Resolver.eval[F, (A, I)] { case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
 
     def apply[F[_], T](resolver: I => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
       Field(Resolver.eval(resolver), Eval.later(tpe))
@@ -288,13 +301,13 @@ object dsl {
       optionals[G].map(_.collect { case Some(v) => v })
 
     def force[G[_]: Foldable: FunctorFilter: Functor](implicit
-        S: Show[NonEmptyList[K]]
+        S: ShowMissingKeys[K]
     ): Resolver[F, G[K], G[V]] =
       r.contramap[G[K]](_.toList.toSet).tupleIn.map { case (m, g) => g.map(k => (k, m.get(k))) }.fallibleMap { gov =>
         val errs = gov.collect { case (k, None) => k }
         errs.toList.toNel match {
           case None     => gov.collect { case (_, Some(v)) => v }.rightIor[String]
-          case Some(xs) => S.show(xs).leftIor[G[V]]
+          case Some(xs) => S.showMissingKeys(xs).leftIor[G[V]]
         }
       }
 
@@ -307,7 +320,7 @@ object dsl {
         case (None, k)    => S.show(k).leftIor[V]
       }
 
-    def forceNE[G[_]: NonEmptyTraverse](implicit S: Show[NonEmptyList[K]]): Resolver[F, G[K], G[V]] =
+    def forceNE[G[_]: NonEmptyTraverse](implicit S: ShowMissingKeys[K]): Resolver[F, G[K], G[V]] =
       force[List]
         .contramap[G[K]](_.toList)
         .tupleIn
@@ -315,5 +328,24 @@ object dsl {
           val varr = v.toVector
           ks.mapWithIndex { case (_, i) => varr(i) }.rightIor
         }
+  }
+
+  trait ShowMissingKeys[A] {
+    def showMissingKeys(xs: NonEmptyList[A]): String
+  }
+
+  object ShowMissingKeys {
+    def apply[A](implicit ev: ShowMissingKeys[A]): ShowMissingKeys[A] = ev
+
+    def showFull[A](show: NonEmptyList[A] => String): ShowMissingKeys[A] =
+      new ShowMissingKeys[A] {
+        def showMissingKeys(xs: NonEmptyList[A]): String = show(xs)
+      }
+
+    def showForKey[A: Show](prefix: String): ShowMissingKeys[A] =
+      showFull(xs => s"$prefix: ${xs.map(_.show).mkString_(", ")}")
+
+    def show[A](showKey: A => String, prefix: String): ShowMissingKeys[A] =
+      showForKey[A](prefix)(Show.show(showKey))
   }
 }

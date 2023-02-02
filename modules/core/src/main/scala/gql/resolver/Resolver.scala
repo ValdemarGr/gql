@@ -51,21 +51,33 @@ final class Resolver[+F[_], -I, +O](private[gql] val underlying: Step[F, I, O]) 
     this andThen Resolver.meta[F, O].tupleIn
 
   def stream[F2[x] >: F[x], O2](f: O => fs2.Stream[F2, O2]): Resolver[F2, I, O2] =
-    this andThen Resolver.stream[F2, O, O2](f)
+    this andThen Resolver.stream(f)
 
   def skippable[O1 >: O]: Resolver[F, Either[I, O1], O1] =
     new Resolver(Step.skip(this.underlying))
 }
 
 object Resolver extends ResolverInstances {
-  def lift[F[_], I, O](f: I => O): Resolver[F, I, O] =
+  def liftFull[F[_], I, O](f: I => O): Resolver[F, I, O] =
     new Resolver(Step.lift(f))
+
+  final class PartiallyAppliedLift[F[_], I](private val dummy: Boolean = true) extends AnyVal {
+    def apply[O](f: I => O): Resolver[F, I, O] = liftFull(f)
+  }
+
+  def lift[F[_], I]: PartiallyAppliedLift[F, I] = new PartiallyAppliedLift[F, I]
 
   def id[F[_], I]: Resolver[F, I, I] =
     lift(identity)
 
-  def eval[F[_], I, O](f: I => F[O]): Resolver[F, I, O] =
+  def evalFull[F[_], I, O](f: I => F[O]): Resolver[F, I, O] =
     new Resolver(Step.effect(f))
+
+  final class PartiallAppliedEval[F[_], I](private val dummy: Boolean = true) extends AnyVal {
+    def apply[O](f: I => F[O]): Resolver[F, I, O] = evalFull(f)
+  }
+
+  def eval[F[_], I]: PartiallAppliedEval[F, I] = new PartiallAppliedEval[F, I]
 
   def rethrow[F[_], I]: Resolver[F, Ior[String, I], I] =
     new Resolver(Step.rethrow[F, I])
@@ -76,8 +88,14 @@ object Resolver extends ResolverInstances {
   def meta[F[_], I <: Any]: Resolver[F, I, Meta] =
     new Resolver(Step.getMeta)
 
-  def stream[F[_], I, O](f: I => fs2.Stream[F, O]): Resolver[F, I, O] =
+  def streamFull[F[_], I, O](f: I => fs2.Stream[F, O]): Resolver[F, I, O] =
     new Resolver(Step.stream(f))
+
+  final class PartiallyAppliedStream[F[_], I](private val dummy: Boolean = true) extends AnyVal {
+    def apply[O](f: I => fs2.Stream[F, O]): Resolver[F, I, O] = streamFull(f)
+  }
+
+  def stream[F[_], I]: PartiallyAppliedStream[F, I] = new PartiallyAppliedStream[F, I]
 
   def batch[F[_], K, V](f: Set[K] => F[Map[K, V]]): State[gql.SchemaState[F], Resolver[F, Set[K], Map[K, V]]] =
     Step.batch[F, K, V](f).map(new Resolver(_))
@@ -98,7 +116,7 @@ object Resolver extends ResolverInstances {
       self andThen f(Resolver.id[F, O])
 
     def contramap[I2](f: I2 => I): Resolver[F, I2, O] =
-      Resolver.lift[F, I2, I](f) andThen self
+      Resolver.lift(f) andThen self
 
     def evalContramap[I2](f: I2 => F[I]): Resolver[F, I2, O] =
       Resolver.eval(f) andThen self
