@@ -252,7 +252,7 @@ object Planner {
       go(root).value
     }
 
-    lazy val batches: List[(Int, NonEmptyChain[Int])] =
+    lazy val batches: List[(Int, NonEmptyChain[(Int, Node)])] =
       flattened
         .map(n => (n.batchId, n))
         .collect { case (Some(batcherKey), node) => (batcherKey, node) }
@@ -264,7 +264,7 @@ object Planner {
             .toSortedMap
             .toList
             .map { case (batcherKey, batch) =>
-              batcherKey -> batch.map { case (br, _) => br.uniqueNodeId }
+              batcherKey -> batch.map { case (br, node) => (br.uniqueNodeId, node) }
             }
         }
 
@@ -277,7 +277,7 @@ object Planner {
 
       val batchSubtraction = thisBatches.map { case (_, xs) =>
         // cost * (size - 1 )
-        thisFlattenedMap(xs.head).cost * (xs.size - 1)
+        thisFlattenedMap(xs.head._2.id).cost * (xs.size - 1)
       }.sum
 
       naiveCost - batchSubtraction
