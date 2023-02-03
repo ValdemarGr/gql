@@ -420,7 +420,7 @@ class InterpreterImpl[F[_]](
         val contR: StepCont[F, a, O] = StepCont.Continue[F, a, C, O](alg.right, cont)
         runStep[I, a, O](inputs, alg.left, contR)
       case Stream(f, cursor) =>
-        inputs.flatTraverse { id =>
+        inputs.parFlatTraverse { id =>
           // We modify the cont for the next stream emission
           // We need to get rid of the skips since they are a part of THIS evaluation, not the next
           val ridded = StepCont.visit(cont)(new StepCont.Visitor[F] {
@@ -526,7 +526,7 @@ class InterpreterImpl[F[_]](
           // Then re-build an output, padding every empty output
           val parted = in.map(x => x.setValue(specify(x.value)))
           val somes = parted.collect { case EvalNode(c, Some(x)) => EvalNode(c, x) }
-          val fa = selection.traverse { df =>
+          val fa = selection.parTraverse { df =>
             runDataField(df, somes).map(_.map(j => Map(df.outputName -> j)))
           }
           fa.map(_.toList.map { ys =>
