@@ -475,7 +475,7 @@ class InterpreterImpl[F[_]](
         val keys: Chain[(Cursor, Set[k])] = inputs.map(id => id.node.cursor -> id.node.value)
 
         lift {
-          batchAccumulator.submit[k, v](alg.id, keys).map {
+          batchAccumulator.submit[k, v](alg.globalEdgeId, keys).map {
             case None => Chain.empty
             case Some(m) =>
               inputs.map { id =>
