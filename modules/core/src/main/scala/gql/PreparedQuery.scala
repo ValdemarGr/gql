@@ -86,8 +86,10 @@ object PreparedQuery {
     final case class Skip[F[_], I, O](compute: PreparedStep[F, I, O]) extends AnyRef with PreparedStep[F, Either[I, O], O]
     final case class GetMeta[F[_], I](meta: PreparedMeta) extends AnyRef with PreparedStep[F, I, Meta]
     final case class First[F[_], I, O, C](step: PreparedStep[F, I, O]) extends AnyRef with PreparedStep[F, (I, C), (O, C)]
-    final case class Batch[F[_], K, V](id: Int, globalEdgeId: Int) extends AnyRef with PreparedStep[F, Set[K], Map[K, V]]
+    final case class Batch[F[_], K, V](id: Step.BatchKey[K, V], globalEdgeId: UniqueBatchInstance[K, V]) extends AnyRef with PreparedStep[F, Set[K], Map[K, V]]
   }
+
+  final case class UniqueBatchInstance[K, V](id: Int) extends AnyVal
 
   final case class UniqueEdgeCursor(path: NonEmptyChain[String]) {
     def append(name: String): UniqueEdgeCursor = UniqueEdgeCursor(path append name)
@@ -162,7 +164,7 @@ object PreparedQuery {
       case Step.Alg.GetMeta() => pure(PreparedStep.GetMeta(meta))
       case alg: Step.Alg.Batch[g, k, v] =>
         Used[F].pure(State{ (i: Int) =>
-          (i + 1, PreparedStep.Batch[g, k, v](alg.id, i))
+          (i + 1, PreparedStep.Batch[g, k, v](alg.id, UniqueBatchInstance(i)))
         })
       case alg: Step.Alg.First[g, i, o, c] =>
         rec[i, o](alg.step, "first").map(_.map(s => PreparedStep.First[G, i, o, c](s)))

@@ -22,6 +22,7 @@ import scala.collection.immutable.TreeSet
 import cats._
 import scala.io.AnsiColor
 import cats.mtl.Stateful
+import gql.resolver.Step
 
 trait Planner[F[_]] { self =>
   def plan(naive: Planner.NodeTree): F[Planner.NodeTree]
@@ -33,9 +34,9 @@ trait Planner[F[_]] { self =>
 }
 
 object Planner {
-  final case class BatchRef(
-    batcherId: Int,
-    uniqueNodeId: Int
+  final case class BatchRef[K, V](
+    batcherId: gql.resolver.Step.BatchKey[K, V],
+    uniqueNodeId: PreparedQuery.UniqueBatchInstance[K, V]
   )
 
   final case class Node(
@@ -45,7 +46,7 @@ object Planner {
       cost: Double,
       elemCost: Double,
       children: List[Node],
-      batchId: Option[BatchRef]
+      batchId: Option[BatchRef[?, ?]]
   ) {
     lazy val start = end - cost
   }
@@ -193,7 +194,7 @@ object Planner {
                 // When a parent has been moved, it adds a reference for every children to their parent's end time
                 Map.empty[Int, Double],
                 // When a node has been visited and is batchable, it is added here
-                Map.empty[Int, TreeSet[Double]]
+                Map.empty[Step.BatchKey[?, ?], TreeSet[Double]]
               )
             ) { case ((parentEnds, batchMap), n) =>
               val minEnd = parentEnds.getOrElse(n.id, 0d) + n.cost
@@ -252,7 +253,7 @@ object Planner {
       go(root).value
     }
 
-    lazy val batches: List[(Int, NonEmptyChain[(Int, Node)])] =
+    lazy val batches: List[(Step.BatchKey[?, ?], NonEmptyChain[BatchRef[?, ?]])] =
       flattened
         .map(n => (n.batchId, n))
         .collect { case (Some(batcherKey), node) => (batcherKey, node) }
@@ -260,24 +261,25 @@ object Planner {
         .toList
         .flatMap { case (_, endGroup) =>
           endGroup
-            .groupBy { case (batcherKey, _) => batcherKey.batcherId }
+            .groupBy { case (batcherKey, _) => batcherKey.batcherId.id }
             .toSortedMap
             .toList
             .map { case (batcherKey, batch) =>
-              batcherKey -> batch.map { case (br, node) => (br.uniqueNodeId, node) }
+              Step.BatchKey(batcherKey) -> batch.map { case (br, _) => br }
             }
         }
 
     def totalCost: Double = {
       val thisFlat = flattened
-      val thisFlattenedMap = thisFlat.map(n => n.id -> n).toMap
       val thisBatches = batches.filter { case (_, edges) => edges.size > 1 }
+      val batchCostMap: Map[Step.BatchKey[?, ?], Double] = 
+        thisFlat.mapFilter(n => n.batchId.map(br => br.batcherId -> n.cost)).toMap
 
       val naiveCost = thisFlat.map(_.cost).sum
 
       val batchSubtraction = thisBatches.map { case (_, xs) =>
         // cost * (size - 1 )
-        thisFlattenedMap(xs.head._2.id).cost * (xs.size - 1)
+        batchCostMap(xs.head.batcherId) * (xs.size - 1)
       }.sum
 
       naiveCost - batchSubtraction

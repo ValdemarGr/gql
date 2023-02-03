@@ -16,10 +16,11 @@
 package gql
 
 import cats._
+import gql.resolver.Step.BatchKey
 
 final case class SchemaState[F[_]](
     nextId: Int,
-    batchFunctions: Map[Int, SchemaState.BatchFunction[F, ?, ?]]
+    batchFunctions: Map[BatchKey[?, ?], SchemaState.BatchFunction[F, ?, ?]]
 ) {
   def mapK[G[_]](fk: F ~> G): SchemaState[G] =
     SchemaState(

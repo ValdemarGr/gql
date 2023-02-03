@@ -40,7 +40,7 @@ object Step {
 
     final case class First[F[_], A, B, C](step: Step[F, A, B]) extends Step[F, (A, C), (B, C)]
 
-    final case class Batch[F[_], K, V](id: Int) extends Step[F, Set[K], Map[K, V]]
+    final case class Batch[F[_], K, V](id: BatchKey[K, V]) extends Step[F, Set[K], Map[K, V]]
   }
 
   def lift[F[_], I, O](f: I => O): Step[F, I, O] =
@@ -70,10 +70,13 @@ object Step {
   def first[F[_], A, B, C](step: Step[F, A, B]): Step[F, (A, C), (B, C)] =
     Alg.First(step)
 
+  final case class BatchKey[K, V](id: Int) extends AnyVal
+
   def batch[F[_], K, V](f: Set[K] => F[Map[K, V]]): State[gql.SchemaState[F], Step[F, Set[K], Map[K, V]]] =
     State { s =>
       val id = s.nextId
-      (s.copy(nextId = id + 1, batchFunctions = s.batchFunctions + (id -> SchemaState.BatchFunction(f))), Alg.Batch(id))
+      val k = BatchKey[K, V](id)
+      (s.copy(nextId = id + 1, batchFunctions = s.batchFunctions + (k -> SchemaState.BatchFunction(f))), Alg.Batch(k))
     }
 
   import cats.arrow._

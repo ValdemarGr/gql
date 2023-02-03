@@ -22,10 +22,12 @@ import gql.Planner
 import cats.data._
 import gql.SchemaState
 import gql.Statistics
+import gql.resolver.Step
+import gql.PreparedQuery
 
 trait BatchAccumulator[F[_]] {
   // Emits the whole result of the batch, so the calle must filter
-  def submit[K, V](id: Int, values: Chain[(Cursor, Set[K])]): F[Option[Map[K, V]]]
+  def submit[K, V](id: PreparedQuery.UniqueBatchInstance[K, V], values: Chain[(Cursor, Set[K])]): F[Option[Map[K, V]]]
 
   def getErrors: F[List[EvalFailure.BatchResolution]]
 }
@@ -35,8 +37,8 @@ object BatchAccumulator {
       F: Async[F],
       stats: Statistics[F]
   ): F[BatchAccumulator[F]] = {
-    val batches: Chain[(Int, NonEmptyChain[Int])] =
-      Chain.fromSeq(plan.batches.map { case (k, v) => (k, v.map { case (b, _) => b }) })
+    val batches: Chain[(Step.BatchKey[?, ?], NonEmptyChain[Planner.BatchRef[?, ?]])] =
+      Chain.fromSeq(plan.batches)
 
     // Now we allocate a deferred for each id in each batch
     //type BatchPromise = Option[Map[BatchKey, BatchValue]] => F[Unit]
@@ -47,21 +49,25 @@ object BatchAccumulator {
     F.ref(List.empty[EvalFailure.BatchResolution]).flatMap { errState =>
       batches
         .flatTraverse { case (batcherKey, batch) =>
-          F.ref(Map.empty[Int, Batch[?, ?]]).map { inputAccum =>
-            batch.map(id => id -> (inputAccum, batch, batcherKey)).toChain
+          F.ref(Map.empty[PreparedQuery.UniqueBatchInstance[?, ?], Batch[?, ?]]).map { inputAccum =>
+            val batchIds = batch.map(_.uniqueNodeId)
+            batchIds.map(id => id -> (inputAccum, batchIds, batcherKey)).toChain
           }
         }
         .map(_.toList.toMap)
         .map { accumLookup =>
           new BatchAccumulator[F] {
-            def submit[K, V](id: Int, values: Chain[(Cursor, Set[K])]): F[Option[Map[K, V]]] = {
+            def submit[K, V](id: PreparedQuery.UniqueBatchInstance[K, V], values: Chain[(Cursor, Set[K])]): F[Option[Map[K, V]]] = {
               F.deferred[Option[Map[K, V]]].flatMap { ret =>
-                val (state0, batchIds, batcherKey) = accumLookup(id)
-                val state1: Ref[F, Map[Int, Batch[?, ?]]] = state0
-                val state = state1.asInstanceOf[Ref[F, Map[Int, Batch[K, V]]]]
+                val (state0, batchIds0, batcherKey) = accumLookup(id)
+                val state1: Ref[F, Map[PreparedQuery.UniqueBatchInstance[?, ?], Batch[?, ?]]] = state0
+                val state = state1.asInstanceOf[Ref[F, Map[PreparedQuery.UniqueBatchInstance[K, V], Batch[K, V]]]]
 
                 val resolver0: SchemaState.BatchFunction[F, ?, ?] = schemaState.batchFunctions(batcherKey)
                 val resolver = resolver0.asInstanceOf[SchemaState.BatchFunction[F, K, V]]
+
+                val batchIds1: NonEmptyChain[PreparedQuery.UniqueBatchInstance[?, ?]] = batchIds0
+                val batchIds = batchIds1.asInstanceOf[NonEmptyChain[PreparedQuery.UniqueBatchInstance[K, V]]]
 
                 val modState: F[Option[Chain[Batch[K, V]]]] = {
                   val complete: Option[Map[K, V]] => F[Unit] = ret.complete(_).void
