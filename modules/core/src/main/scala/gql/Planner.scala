@@ -33,6 +33,11 @@ trait Planner[F[_]] { self =>
 }
 
 object Planner {
+  final case class BatchRef(
+    batcherId: Int,
+    uniqueNodeId: Int
+  )
+
   final case class Node(
       id: Int,
       name: String,
@@ -40,7 +45,7 @@ object Planner {
       cost: Double,
       elemCost: Double,
       children: List[Node],
-      batchId: Option[Int]
+      batchId: Option[BatchRef]
   ) {
     lazy val start = end - cost
   }
@@ -72,9 +77,9 @@ object Planner {
       case Compose(l, r)                    => costForStep[F, G](l, costForStep[F, G](r, right))
       case alg: Skip[G, ?, ?]               => costForStep[F, G](alg.compute, right)
       case alg: First[G, ?, ?, ?]           => costForStep[F, G](alg.step, right)
-      case Batch(_) | Effect(_, _) | Stream(_, _) =>
+      case Batch(_, _) | Effect(_, _) | Stream(_, _) =>
         val name = step match {
-          case Batch(id)         => s"batch_$id"
+          case Batch(id, _)         => s"batch_$id"
           case Effect(_, cursor) => cursor.asString
           case Stream(_, cursor) => cursor.asString
           case _                 => ???
@@ -99,7 +104,7 @@ object Planner {
                       cost.extraElementCost,
                       children,
                       step match {
-                        case Batch(id) => Some(id)
+                        case Batch(batcherId, uniqueNodeId) => Some(BatchRef(batcherId, uniqueNodeId))
                         case _         => None
                       }
                     )
@@ -196,15 +201,15 @@ object Planner {
                 // No batching here, move up as far as possible
                 case None => (minEnd, batchMap)
                 case Some(bn) =>
-                  batchMap.get(bn) match {
-                    case None    => (minEnd, batchMap + (bn -> TreeSet(minEnd)))
+                  batchMap.get(bn.batcherId) match {
+                    case None    => (minEnd, batchMap + (bn.batcherId -> TreeSet(minEnd)))
                     case Some(s) =>
                       // This is a possible batch possibility
                       val o = if (s.contains(minEnd)) Some(minEnd) else s.minAfter(minEnd)
                       // If a batch is found, then we can move up to the batch and don't need to modify the set
                       // If no batch is found, then we move up to the minimum end and add this to the set
                       o match {
-                        case None    => (minEnd, batchMap + (bn -> (s + minEnd)))
+                        case None    => (minEnd, batchMap + (bn.batcherId -> (s + minEnd)))
                         case Some(x) => (x, batchMap)
                       }
                   }
@@ -255,11 +260,11 @@ object Planner {
         .toList
         .flatMap { case (_, endGroup) =>
           endGroup
-            .groupBy { case (batcherKey, _) => batcherKey }
+            .groupBy { case (batcherKey, _) => batcherKey.batcherId }
             .toSortedMap
             .toList
             .map { case (batcherKey, batch) =>
-              batcherKey -> batch.map { case (_, node) => node.id }
+              batcherKey -> batch.map { case (br, _) => br.uniqueNodeId }
             }
         }
 
