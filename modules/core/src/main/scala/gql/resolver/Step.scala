@@ -24,15 +24,15 @@ object Step {
   object Alg {
     final case class Lift[F[_], I, O](f: I => O) extends AnyRef with Step[F, I, O]
 
-    final case class Effect[F[_], I, O](f: I => F[O]) extends AnyRef with Step[F, I, O]
+    final case class EmbedEffect[F[_], I]() extends AnyRef with Step[F, F[I], I]
 
-    final case class Rethrow[F[_], I]() extends AnyRef with Step[F, Ior[String, I], I]
+    final case class EmbedStream[F[_], I]() extends AnyRef with Step[F, fs2.Stream[F, I], I]
+    
+    final case class EmbedError[F[_], I]() extends AnyRef with Step[F, Ior[String, I], I]
 
     final case class Argument[F[_], I, A](arg: Arg[A]) extends Step[F, I, A]
 
     final case class Compose[F[_], I, A, O](left: Step[F, I, A], right: Step[F, A, O]) extends Step[F, I, O]
-
-    final case class Stream[F[_], I, O](f: I => fs2.Stream[F, O]) extends AnyRef with Step[F, I, O]
 
     final case class Skip[F[_], I, O](compute: Step[F, I, O]) extends Step[F, Either[I, O], O]
 
@@ -46,20 +46,20 @@ object Step {
   def lift[F[_], I, O](f: I => O): Step[F, I, O] =
     Alg.Lift(f)
 
-  def effect[F[_], I, O](f: I => F[O]): Step[F, I, O] =
-    Alg.Effect(f)
+  def embedEffect[F[_], I]: Step[F, F[I], I] =
+    Alg.EmbedEffect()
 
-  def rethrow[F[_], I]: Step[F, Ior[String, I], I] =
-    Alg.Rethrow()
+  def embedError[F[_], I]: Step[F, Ior[String, I], I] =
+    Alg.EmbedError()
+
+  def embedStream[F[_], I, O]: Step[F, fs2.Stream[F, I], I] =
+    Alg.EmbedStream()
 
   def argument[F[_], A](arg: Arg[A]): Step[F, Any, A] =
     Alg.Argument(arg)
 
   def compose[F[_], I, A, O](left: Step[F, I, A], right: Step[F, A, O]): Step[F, I, O] =
     Alg.Compose(left, right)
-
-  def stream[F[_], I, O](f: I => fs2.Stream[F, O]): Step[F, I, O] =
-    Alg.Stream(f)
 
   def skip[F[_], I, O](compute: Step[F, I, O]): Step[F, Either[I, O], O] =
     Alg.Skip(compute)

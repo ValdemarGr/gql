@@ -35,8 +35,8 @@ trait Planner[F[_]] { self =>
 
 object Planner {
   final case class BatchRef[K, V](
-    batcherId: gql.resolver.Step.BatchKey[K, V],
-    uniqueNodeId: PreparedQuery.UniqueBatchInstance[K, V]
+      batcherId: gql.resolver.Step.BatchKey[K, V],
+      uniqueNodeId: PreparedQuery.UniqueBatchInstance[K, V]
   )
 
   final case class Node(
@@ -74,16 +74,16 @@ object Planner {
   ): F[List[Node]] = {
     import PreparedStep._
     step match {
-      case Lift(_) | Rethrow() | GetMeta(_) => right
-      case Compose(l, r)                    => costForStep[F, G](l, costForStep[F, G](r, right))
-      case alg: Skip[G, ?, ?]               => costForStep[F, G](alg.compute, right)
-      case alg: First[G, ?, ?, ?]           => costForStep[F, G](alg.step, right)
-      case Batch(_, _) | Effect(_, _) | Stream(_, _) =>
+      case Lift(_) | EmbedError() | GetMeta(_) => right
+      case Compose(l, r)                       => costForStep[F, G](l, costForStep[F, G](r, right))
+      case alg: Skip[G, ?, ?]                  => costForStep[F, G](alg.compute, right)
+      case alg: First[G, ?, ?, ?]              => costForStep[F, G](alg.step, right)
+      case Batch(_, _) | EmbedEffect(_) | EmbedStream(_) =>
         val name = step match {
-          case Batch(id, _)         => s"batch_$id"
-          case Effect(_, cursor) => cursor.asString
-          case Stream(_, cursor) => cursor.asString
-          case _                 => ???
+          case Batch(id, _)        => s"batch_$id"
+          case EmbedEffect(cursor) => cursor.asString
+          case EmbedStream(cursor) => cursor.asString
+          case _                   => ???
         }
 
         val costF = stats
@@ -106,7 +106,7 @@ object Planner {
                       children,
                       step match {
                         case Batch(batcherId, uniqueNodeId) => Some(BatchRef(batcherId, uniqueNodeId))
-                        case _         => None
+                        case _                              => None
                       }
                     )
                   )
@@ -272,7 +272,7 @@ object Planner {
     def totalCost: Double = {
       val thisFlat = flattened
       val thisBatches = batches.filter { case (_, edges) => edges.size > 1 }
-      val batchCostMap: Map[Step.BatchKey[?, ?], Double] = 
+      val batchCostMap: Map[Step.BatchKey[?, ?], Double] =
         thisFlat.mapFilter(n => n.batchId.map(br => br.batcherId -> n.cost)).toMap
 
       val naiveCost = thisFlat.map(_.cost).sum

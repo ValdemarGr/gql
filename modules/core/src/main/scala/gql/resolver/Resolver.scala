@@ -36,7 +36,7 @@ final class Resolver[+F[_], -I, +O](private[gql] val underlying: Step[F, I, O]) 
     Resolver.eval(f) andThen this
 
   def fallibleMap[O2](f: O => Ior[String, O2]): Resolver[F, I, O2] =
-    this.map(f) andThen Resolver.rethrow
+    this.map(f) andThen (new Resolver(Step.embedError))
 
   def first[C]: Resolver[F, (I, C), (O, C)] =
     new Resolver(Step.first(underlying))
@@ -71,16 +71,13 @@ object Resolver extends ResolverInstances {
     lift(identity)
 
   def evalFull[F[_], I, O](f: I => F[O]): Resolver[F, I, O] =
-    new Resolver(Step.effect(f))
+    liftFull(f).andThen(new Resolver(Step.embedEffect))
 
   final class PartiallAppliedEval[F[_], I](private val dummy: Boolean = true) extends AnyVal {
     def apply[O](f: I => F[O]): Resolver[F, I, O] = evalFull(f)
   }
 
   def eval[F[_], I]: PartiallAppliedEval[F, I] = new PartiallAppliedEval[F, I]
-
-  def rethrow[F[_], I]: Resolver[F, Ior[String, I], I] =
-    new Resolver(Step.rethrow[F, I])
 
   def argument[F[_], I <: Any, A](arg: Arg[A]): Resolver[F, I, A] =
     new Resolver(Step.argument(arg))
@@ -89,7 +86,7 @@ object Resolver extends ResolverInstances {
     new Resolver(Step.getMeta)
 
   def streamFull[F[_], I, O](f: I => fs2.Stream[F, O]): Resolver[F, I, O] =
-    new Resolver(Step.stream(f))
+    liftFull(f).andThen(new Resolver(Step.embedStream))
 
   final class PartiallyAppliedStream[F[_], I](private val dummy: Boolean = true) extends AnyVal {
     def apply[O](f: I => fs2.Stream[F, O]): Resolver[F, I, O] = streamFull(f)
@@ -102,7 +99,7 @@ object Resolver extends ResolverInstances {
 
   implicit class RethrowOps[F[_], I, O](private val self: Resolver[F, I, Ior[String, O]]) extends AnyVal {
     def rethrow: Resolver[F, I, O] =
-      self andThen Resolver.rethrow
+      self andThen (new Resolver(Step.embedError))
   }
 
   implicit class InvariantOps[F[_], I, O](private val self: Resolver[F, I, O]) extends AnyVal {
@@ -122,7 +119,7 @@ object Resolver extends ResolverInstances {
       Resolver.eval(f) andThen self
 
     def fallibleContraMap[I2](f: I2 => Ior[String, I]): Resolver[F, I2, O] =
-      Resolver.rethrow[F, I].contramap[I2](f) andThen self
+      (new Resolver(Step.embedError[F, I])).contramap[I2](f) andThen self
 
     def tupleIn: Resolver[F, I, (O, I)] =
       self.first[I].contramap[I](i => (i, i))

@@ -69,24 +69,18 @@ object PreparedQuery {
 
   object PreparedStep {
     final case class Lift[F[_], I, O](f: I => O) extends AnyRef with PreparedStep[F, I, O]
-    final case class Effect[F[_], I, O](
-        f: I => F[O],
-        stableUniqueEdgeName: UniqueEdgeCursor
-    ) extends AnyRef
-        with PreparedStep[F, I, O]
-    final case class Rethrow[F[_], I]() extends AnyRef with PreparedStep[F, Ior[String, I], I]
+    final case class EmbedEffect[F[_], I](stableUniqueEdgeName: UniqueEdgeCursor) extends AnyRef with PreparedStep[F, F[I], I]
+    final case class EmbedStream[F[_], I](stableUniqueEdgeName: UniqueEdgeCursor) extends AnyRef with PreparedStep[F, fs2.Stream[F, I], I]
+    final case class EmbedError[F[_], I]() extends AnyRef with PreparedStep[F, Ior[String, I], I]
     final case class Compose[F[_], I, A, O](left: PreparedStep[F, I, A], right: PreparedStep[F, A, O])
         extends AnyRef
-        with PreparedStep[F, I, O]
-    final case class Stream[F[_], I, O](
-        f: I => fs2.Stream[F, O],
-        stableUniqueEdgeName: UniqueEdgeCursor
-    ) extends AnyRef
         with PreparedStep[F, I, O]
     final case class Skip[F[_], I, O](compute: PreparedStep[F, I, O]) extends AnyRef with PreparedStep[F, Either[I, O], O]
     final case class GetMeta[F[_], I](meta: PreparedMeta) extends AnyRef with PreparedStep[F, I, Meta]
     final case class First[F[_], I, O, C](step: PreparedStep[F, I, O]) extends AnyRef with PreparedStep[F, (I, C), (O, C)]
-    final case class Batch[F[_], K, V](id: Step.BatchKey[K, V], globalEdgeId: UniqueBatchInstance[K, V]) extends AnyRef with PreparedStep[F, Set[K], Map[K, V]]
+    final case class Batch[F[_], K, V](id: Step.BatchKey[K, V], globalEdgeId: UniqueBatchInstance[K, V])
+        extends AnyRef
+        with PreparedStep[F, Set[K], Map[K, V]]
   }
 
   final case class UniqueBatchInstance[K, V](id: Int) extends AnyVal
@@ -151,19 +145,19 @@ object PreparedQuery {
       compileStep[F, G, I2, O2](step, cursor append edge, meta)
 
     step match {
-      case Step.Alg.Lift(f)   => pure(PreparedStep.Lift(f))
-      case Step.Alg.Rethrow() => pure(PreparedStep.Rethrow[G, O]())
+      case Step.Alg.Lift(f)      => pure(PreparedStep.Lift(f))
+      case Step.Alg.EmbedError() => pure(PreparedStep.EmbedError[G, O]())
       case alg: Step.Alg.Compose[G, i, a, o] =>
         val left = rec[i, a](alg.left, "left")
         val right = rec[a, o](alg.right, "right")
         (left, right).parMapN((_, _).tupled).map(_.map { case (l, r) => PreparedStep.Compose(l, r) })
-      case alg: Step.Alg.Effect[G, ?, ?] => pure(PreparedStep.Effect(alg.f, cursor))
-      case Step.Alg.Stream(f) => pure(PreparedStep.Stream(f, cursor))
+      case _: Step.Alg.EmbedEffect[?, i] => pure(PreparedStep.EmbedEffect[G, i](cursor))
+      case _: Step.Alg.EmbedStream[?, i] => pure(PreparedStep.EmbedStream(cursor))
       case alg: Step.Alg.Skip[g, i, ?] =>
         rec[i, O](alg.compute, "skip").map(_.map(s => PreparedStep.Skip(s)))
       case Step.Alg.GetMeta() => pure(PreparedStep.GetMeta(meta))
       case alg: Step.Alg.Batch[g, k, v] =>
-        Used[F].pure(State{ (i: Int) =>
+        Used[F].pure(State { (i: Int) =>
           (i + 1, PreparedStep.Batch[g, k, v](alg.id, UniqueBatchInstance(i)))
         })
       case alg: Step.Alg.First[g, i, o, c] =>
@@ -745,17 +739,21 @@ object PreparedQuery {
           val nc = cursor append "array"
           val compiledStep = compileStep[F, G, a, b](innerStep, nc, meta)
           val compiledCont = compileCont[b](out.of, nc)
-          (compiledStep, compiledCont).parMapN((_, _).tupled).map(_.map { case (s, c) =>
-            PreparedList(PreparedCont(s, c), out.toSeq)
-          })
+          (compiledStep, compiledCont)
+            .parMapN((_, _).tupled)
+            .map(_.map { case (s, c) =>
+              PreparedList(PreparedCont(s, c), out.toSeq)
+            })
         case (out: gql.ast.OutOpt[g, a, b], _) =>
           val innerStep: Step[G, a, b] = out.resolver.underlying
           val nc = cursor append "option"
           val compiledStep = compileStep[F, G, a, b](innerStep, nc, meta)
           val compiledCont = compileCont[b](out.of, nc)
-          (compiledStep, compiledCont).parMapN((_, _).tupled).map(_.map { case (s, c) =>
-            PreparedOption(PreparedCont(s, c))
-          })
+          (compiledStep, compiledCont)
+            .parMapN((_, _).tupled)
+            .map(_.map { case (s, c) =>
+              PreparedOption(PreparedCont(s, c))
+            })
         case (s: Selectable[G, a], Some(ss)) =>
           Used.liftF {
             prepareSelectable[F, G, a](s, ss, variableMap, discoveryState)
@@ -774,10 +772,11 @@ object PreparedQuery {
     val usedF = (
       compileStep[F, G, I, T](step, rootUniqueName, meta),
       compileCont(tpe, rootUniqueName)
-    ).parMapN((_, _).tupled).map(_.map { case (s, c) =>
-      val pc = PreparedCont(s, c)
-      PreparedDataField(name, fi.alias, pc)
-    })
+    ).parMapN((_, _).tupled)
+      .map(_.map { case (s, c) =>
+        val pc = PreparedCont(s, c)
+        PreparedDataField(name, fi.alias, pc)
+      })
 
     usedF.run
       .flatMap { case (used, a) =>
@@ -800,16 +799,18 @@ object PreparedQuery {
       D: Defer[F]
   ): F[State[Int, NonEmptyList[PreparedSpecification[G, A, ?]]]] = {
     mergeImplementations[F, G, A](s, sis, discoveryState).flatMap { impls =>
-      impls.parTraverse[F, State[Int, PreparedSpecification[G, A, ?]]] { case impl: MergedImplementation[G, A, b] =>
-        val fa: F[NonEmptyList[State[Int, PreparedDataField[G, b]]]] = impl.selections.parTraverse { sel =>
-          sel.field match {
-            case field: Field[G, b2, t] =>
-              prepareField[F, G, b, t](sel.info, field, impl.leaf.name, variableMap, discoveryState)
+      impls
+        .parTraverse[F, State[Int, PreparedSpecification[G, A, ?]]] { case impl: MergedImplementation[G, A, b] =>
+          val fa: F[NonEmptyList[State[Int, PreparedDataField[G, b]]]] = impl.selections.parTraverse { sel =>
+            sel.field match {
+              case field: Field[G, b2, t] =>
+                prepareField[F, G, b, t](sel.info, field, impl.leaf.name, variableMap, discoveryState)
+            }
           }
-        }
 
-        fa.map(_.sequence.map(xs => PreparedSpecification[G, A, b](s.name, impl.specify, xs)))
-      }.map(_.sequence)
+          fa.map(_.sequence.map(xs => PreparedSpecification[G, A, b](s.name, impl.specify, xs)))
+        }
+        .map(_.sequence)
     }
   }
 
