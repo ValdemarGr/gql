@@ -25,13 +25,13 @@ val f: Field[IO, Int, String] = build.from(r)
 
 Sometimes type inference cannot find the proper type for a field:
 ```scala mdoc:fail
-build.from(Resolver.eval(i => IO(i.toString())))
+build.from(Resolver.liftF(i => IO(i.toString())))
 ```
 The type parameters for `build` are partially applied, such that when type inference isn't enough, types can be supplied explicitly.
 ```scala mdoc:silent
-build[IO, Int].from(Resolver.eval(i => IO(i.toString())))
+build[IO, Int].from(Resolver.liftF(i => IO(i.toString())))
 
-build.from(Resolver.eval((i: Int) => IO(i.toString())))
+build.from(Resolver.liftF((i: Int) => IO(i.toString())))
 ```
 
 For most non-trivial fields, there is an even more concise syntax.
