@@ -2,12 +2,6 @@
 title: Example
 ---
 
-# Example
-gql is a GraphQL implementation.
-gql comes with many of the standard features of a GraphQL implementation such as a dsl, parser and interpreter.
-But also some unique features such as, herustic query planning and signals.
-The most important goals of gql is to be simple, predictable and composable.
-
 For this showcase, Star Wars will be our domain of choice:
 ```scala mdoc
 sealed trait Episode

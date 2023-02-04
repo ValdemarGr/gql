@@ -14,6 +14,12 @@ function HomepageHeader() {
       <div className="container">
         <h1 className="hero__title">{siteConfig.title}</h1>
         <p className="hero__subtitle">{siteConfig.tagline}</p>
+        {/*<p className="hero__subtitle">
+        gql is a GraphQL implementation.
+        gql comes with many of the standard features of a GraphQL implementation such as a dsl, parser and interpreter.
+        But also some unique features such as, herustic query planning and signals.
+        The most important goals of gql is to be simple, predictable and composable.  
+  </p>*/}
         <div className={styles.buttons}>
           <Link
             className="button button--secondary button--lg"
