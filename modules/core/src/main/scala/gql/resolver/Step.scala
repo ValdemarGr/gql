@@ -27,7 +27,7 @@ object Step {
     final case class EmbedEffect[F[_], I]() extends AnyRef with Step[F, F[I], I]
 
     final case class EmbedStream[F[_], I]() extends AnyRef with Step[F, fs2.Stream[F, I], I]
-    
+
     final case class EmbedError[F[_], I]() extends AnyRef with Step[F, Ior[String, I], I]
 
     final case class Argument[F[_], I, A](arg: Arg[A]) extends Step[F, I, A]

@@ -398,7 +398,7 @@ class InterpreterImpl[F[_]](
         inputs
           .parFlatTraverse { id =>
             val runF = attemptTimed(cursor, e => EvalFailure.EffectResolution(id.node.cursor, Left(e))) {
-              id.sequence
+              id.sequence[F, i]
             }
 
             runF.map(Chain.fromOption(_))
@@ -418,7 +418,7 @@ class InterpreterImpl[F[_]](
       case alg: Compose[F, ?, a, ?] =>
         val contR: StepCont[F, a, O] = StepCont.Continue[F, a, C, O](alg.right, cont)
         runStep[I, a, O](inputs, alg.left, contR)
-      case EmbedStream(cursor) =>
+      case alg: EmbedStream[F, i] =>
         inputs.parFlatTraverse { id =>
           // We modify the cont for the next stream emission
           // We need to get rid of the skips since they are a part of THIS evaluation, not the next
@@ -428,9 +428,9 @@ class InterpreterImpl[F[_]](
           })
 
           val runF =
-            attemptTimed(cursor, e => EvalFailure.StreamHeadResolution(id.node.cursor, Left(e))) {
+            attemptTimed(alg.stableUniqueEdgeName, e => EvalFailure.StreamHeadResolution(id.node.cursor, Left(e))) {
               id
-                .traverse { i =>
+                .traverse { (i: fs2.Stream[F, i]) =>
                   streamAccumulator
                     .add(
                       Interpreter.StreamMetadata(

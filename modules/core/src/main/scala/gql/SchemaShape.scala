@@ -21,7 +21,6 @@ import cats.mtl._
 import cats.data._
 import gql.ast._
 import org.typelevel.paiges.Doc
-import fs2.Pure
 
 final case class SchemaShape[F[_], Q, M, S](
     query: Type[F, Q],
@@ -342,15 +341,15 @@ object SchemaShape {
     case object NON_NULL extends __TypeKind
   }
 
-  def introspect[F[_]](ss: SchemaShape[F, ?, ?, ?]): NonEmptyList[(String, Field[fs2.Pure, Unit, ?])] = {
+  def introspect[F[_]](ss: SchemaShape[F, ?, ?, ?]): NonEmptyList[(String, Field[F, Unit, ?])] = {
     import dsl._
 
     // We do a little lazy evaluation trick to include the introspection schema in itself
     lazy val d = {
       val ds = ss.discover
-      val introspectionDiscovery = discover[fs2.Pure](
-        SchemaShape.make[fs2.Pure](
-          tpe[Pure, Unit](
+      val introspectionDiscovery = discover[F](
+        SchemaShape.make[F](
+          tpe[F, Unit](
             "Query",
             rootFields.head,
             rootFields.tail: _*
@@ -359,7 +358,7 @@ object SchemaShape {
       )
       // Omit Query
       val withoutQuery = introspectionDiscovery.copy(outputs = introspectionDiscovery.outputs - "Query")
-      val out = DiscoveryState[Any](
+      val out = DiscoveryState[F](
         ds.inputs ++ withoutQuery.inputs,
         ds.outputs ++ withoutQuery.outputs,
         ds.implementations ++ withoutQuery.implementations
@@ -380,7 +379,7 @@ object SchemaShape {
       "NON_NULL" -> enumVal(__TypeKind.NON_NULL)
     )
 
-    implicit lazy val __inputValue: Type[Pure, ArgValue[?]] = tpe[Pure, ArgValue[?]](
+    implicit lazy val __inputValue: Type[F, ArgValue[?]] = tpe[F, ArgValue[?]](
       "__InputValue",
       "name" -> lift(_.name),
       "description" -> lift(_.description),
@@ -392,12 +391,12 @@ object SchemaShape {
 
     final case class NamedField(
         name: String,
-        field: AbstractField[Any, ?]
+        field: AbstractField[F, ?]
     )
 
     def inclDeprecated = arg[Boolean]("includeDeprecated", value.scalar(false))
 
-    implicit lazy val namedField: Type[Pure, NamedField] = tpe[Pure, NamedField](
+    implicit lazy val namedField: Type[F, NamedField] = tpe[F, NamedField](
       "__Field",
       "name" -> lift(_.name),
       "description" -> lift(_.field.description),
@@ -415,7 +414,7 @@ object SchemaShape {
       def next: Option[TypeInfo] = None
     }
     object TypeInfo {
-      final case class OutInfo(t: OutToplevel[Any, ?]) extends InnerTypeInfo {
+      final case class OutInfo(t: OutToplevel[F, ?]) extends InnerTypeInfo {
         def asToplevel: Option[Toplevel[?]] = Some(t)
       }
       final case class InInfo(t: InToplevel[?]) extends InnerTypeInfo {
@@ -433,7 +432,7 @@ object SchemaShape {
         }
       }
 
-      def fromOutput[F[_]](o: Out[F, ?]): TypeInfo = {
+      def fromOutput(o: Out[F, ?]): TypeInfo = {
         val ms = getOutputModifierStack[F](o)
         ms.modifiers match {
           case Nil    => OutInfo(ms.inner)
@@ -450,7 +449,7 @@ object SchemaShape {
       }
     }
 
-    implicit lazy val __type: Type[Pure, TypeInfo] = tpe[Pure, TypeInfo](
+    implicit lazy val __type: Type[F, TypeInfo] = tpe[F, TypeInfo](
       "__Type",
       "kind" -> lift {
         case m: TypeInfo.ModifierStack =>
@@ -529,7 +528,7 @@ object SchemaShape {
         name: String,
         value: EnumValue[?]
     )
-    implicit lazy val enumValue: Type[Pure, NamedEnumValue] = tpe[Pure, NamedEnumValue](
+    implicit lazy val enumValue: Type[F, NamedEnumValue] = tpe[F, NamedEnumValue](
       "__EnumValue",
       "name" -> lift(_.name),
       "description" -> lift(_.value.description),
@@ -584,7 +583,7 @@ object SchemaShape {
     )
 
     case object PhantomDirective
-    implicit lazy val directive: Type[Pure, PhantomDirective.type] = tpe[Pure, PhantomDirective.type](
+    implicit lazy val directive: Type[F, PhantomDirective.type] = tpe[F, PhantomDirective.type](
       "__Directive",
       "name" -> lift(_ => ""),
       "description" -> lift(_ => Option.empty[String]),
@@ -594,7 +593,7 @@ object SchemaShape {
     )
 
     case object PhantomSchema
-    implicit lazy val schema: Type[Pure, PhantomSchema.type] = tpe[Pure, PhantomSchema.type](
+    implicit lazy val schema: Type[F, PhantomSchema.type] = tpe[F, PhantomSchema.type](
       "__Schema",
       "description" -> lift(_ => Option.empty[String]),
       "types" -> lift { _ =>
@@ -608,7 +607,7 @@ object SchemaShape {
       "directives" -> lift(_ => List.empty[PhantomDirective.type])
     )
 
-    lazy val rootFields: NonEmptyList[(String, Field[Pure, Unit, ?])] =
+    lazy val rootFields: NonEmptyList[(String, Field[F, Unit, ?])] =
       fields(
         "__schema" -> lift(_ => PhantomSchema),
         "__type" -> lift(arg[String]("name")) { case (name, _) =>

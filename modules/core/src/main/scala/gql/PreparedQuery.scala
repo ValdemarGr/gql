@@ -152,15 +152,15 @@ object PreparedQuery {
         val right = rec[a, o](alg.right, "right")
         (left, right).parMapN((_, _).tupled).map(_.map { case (l, r) => PreparedStep.Compose(l, r) })
       case _: Step.Alg.EmbedEffect[?, i] => pure(PreparedStep.EmbedEffect[G, i](cursor))
-      case _: Step.Alg.EmbedStream[?, i] => pure(PreparedStep.EmbedStream(cursor))
+      case _: Step.Alg.EmbedStream[?, i] => pure(PreparedStep.EmbedStream[G, i](cursor))
       case alg: Step.Alg.Skip[g, i, ?] =>
         rec[i, O](alg.compute, "skip").map(_.map(s => PreparedStep.Skip(s)))
       case Step.Alg.GetMeta() => pure(PreparedStep.GetMeta(meta))
-      case alg: Step.Alg.Batch[g, k, v] =>
+      case alg: Step.Alg.Batch[?, k, v] =>
         Used[F].pure(State { (i: Int) =>
-          (i + 1, PreparedStep.Batch[g, k, v](alg.id, UniqueBatchInstance(i)))
+          (i + 1, PreparedStep.Batch[G, k, v](alg.id, UniqueBatchInstance(i)))
         })
-      case alg: Step.Alg.First[g, i, o, c] =>
+      case alg: Step.Alg.First[?, i, o, c] =>
         rec[i, o](alg.step, "first").map(_.map(s => PreparedStep.First[G, i, o, c](s)))
       case alg: Step.Alg.Argument[g, ?, a] =>
         val fa = Used
