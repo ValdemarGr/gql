@@ -398,7 +398,7 @@ class InterpreterImpl[F[_]](
         inputs
           .parFlatTraverse { id =>
             val runF = attemptTimed(cursor, e => EvalFailure.EffectResolution(id.node.cursor, Left(e))) {
-              id.traverse(x => x)
+              id.sequence
             }
 
             runF.map(Chain.fromOption(_))
