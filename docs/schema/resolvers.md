@@ -5,34 +5,112 @@ Resolvers are at the core of gql; a resolver `Resolver[F, I, O]` takes an `I` to
 Resolvers are embedded in fields and act as continuations.
 When gql executes a query it first constructs a tree of continueations from your schema and the supplied GraphQL query.
 
-`Resolver`s compose like functions with combinators such as `andThen` and `compose`.
+`Resolver`s act and compose like functions with combinators such as `andThen` and `compose`.
 
-# The simple resolvers
-The simplest `Resolver` type is `Lift`/`lift` which simply lifts a function `I => O` into `Resolver[F, I, O]`.
-`lift`'s compositional counterpart is `map`, which for any resolver `Resolver[F, I, O]` produces a new resolver `Resolver[F, I, O2]` given a fucntion `O => O2`.
-:::note
-Having `lift` is important since we wouldn't be able to lift into `F` without an `Applicative`, without `lift`.
-:::
-
-Another simple resolver is `Effect`/`eval` which lifts a function `I => F[O]` into `Resolver[F, I, O]`.
-`eval`'s compositional counterpart is `evalMap`.
-
-A `Resolver` also implements `first` which is very convinient since some `Resolver`s are constant functions (they throw away their arguments/`I`).
-Since a `Resolver` does not form a `Monad`, `first` is necessary to implement non-trivial resolver compositions.
-
-GraphQL arguments are also introduced via `Resolver`s.
-That is, a `Resolver` can introduce new variables to the composition at any one point and gql will ensure that the argument is available when executing the query.
-```scala mdoc:silent
+Lets start off with some imports:
+```scala mdoc
 import gql.dsl._
 import gql.resolver._
 import cats.effect._
-
-def nameArg = arg[String]("lastName")
-
-Resolver.eval[IO, Unit, String](_ => IO("John"))
-  .arg(nameArg)
-  .map{ case (lastName, john) => s"$john $lastName" }
+import cats.implicits._
+import cats.data._
 ```
+
+## Resolvers
+`Resolver` is a collection of high-level combinators that constructs a tree of `Step`.
+:::note
+If you are familiar with the relationship between `fs2.Stream` and `fs2.Pull`, then the relationship between `Resolver` and `Step` should be familiar.
+:::
+Within this section the various constructors are referenced as `Step/Resolver`.
+### Lift
+The simplest `Resolver` type is `Lift`/`lift` which simply lifts a function `I => O` into `Resolver[F, I, O]`.
+`lift`'s method form is `map`, which for any resolver `Resolver[F, I, O]` produces a new resolver `Resolver[F, I, O2]` given a fucntion `O => O2`.
+```scala mdoc:nest
+val r = Resolver.lift[IO, Int](_.toLong)
+r.map(_.toString())
+```
+
+### LiftF
+Another simple resolver is `EmbedEffect`/`liftF` which lifts a function `I => F[O]` into `Resolver[F, I, O]`.
+`eval`'s method form is `evalMap`.
+```scala mdoc:nest
+val r = Resolver.liftF[IO, Int](i => IO(i.toLong))
+r.evalMap(l => IO(l.toString()))
+```
+:::note
+`liftF` is a combination of `lift` and then embedding the effect `F` into resolver.
+The implementation of `liftF` is a composition of `Step.Alg.Lift` and `Step.Alg.EmbedEffect`.
+Most resolvers are implemented or composed on by `lift`ing a function and composing an embedding.
+:::
+
+### Arguments
+Arguments in gql are provided through resolvers.
+A resolver `∀F, I. Resolver[F, I, A]` can be constructed from an argument `Arg[A]`:
+```scala mdoc:nest
+val r = Resolver.argument[IO, Nothing, String](arg[String]("name"))
+val r2 = r.arg(arg[Int]("age"))
+r2.map{ case (age, name) => s"$name is $age years old" }
+```
+
+`Arg` also has an applicative defined for it, so sequential argument resolution can be simplified.
+```scala mdoc:nest
+val r = Resolver.argument[IO, Nothing, (String, Int)]((arg[String]("name"), arg[Int]("age")).tupled)
+r.map{ case (age, name) => s"$name is $age years old" }
+```
+
+### Meta
+The `GetMeta/meta` resolver provides metadata regarding query execution, such as the position of query execution, field aliasing and the provided arguments.
+
+### Errors
+Well formed errors are returned in an `cats.data.Ior`.
+An `Ior` is a non-exclusive `Either`.
+
+The `Ior` datatype's left side must be `String` and acts as an optional error that will be present in the query result.
+gql can return an error and a result for the same path, given that `Ior` has both left and right side defined.
+
+Errors are embedded into resolvers via `EmbedError/rethrow`.
+The extension method `rethrow` is present on any resolver of type `∀F, I, O. Resolver[F, I, Ior[String, O]]`:
+```scala mdoc:nest
+val r = Resolver.lift[IO, Int](i => Ior.Both("I will be in the errors :)", i))
+r.rethrow
+```
+
+### First
+A `Resolver` also implements `First/first` (`∀C. Resolver[F, A, B] => Resolver[F, (A, C), (B, C)]`) which is very convinient since some `Resolver`s are constant functions (they throw away their arguments/`I`).
+Since a `Resolver` does not form a `Monad`, `first` is necessary to implement non-trivial resolver compositions.
+For instance, resolving an argument will ignore the input of the resolver, which is not always the desired outcome.
+
+Lets assume we'd like to implement a resolver given a name can get a list of friends for the person with that name:
+```scala mdoc
+type PersonId = Int
+
+case class Person(id: PersonId, name: String)
+
+def getFriends(id: PersonId, limit: Int): IO[List[Person]] = ???
+
+def getPerson(name: String): IO[Person] = ???
+
+def getPersonResolver = Resolver.liftF[IO, String](getPerson)
+
+def limitResolver = Resolver.argument[IO, Person, Int](arg[Int]("limit"))
+
+getPersonResolver andThen 
+  limitResolver.first[Person].contramap[Person](p => (p, p)) andThen
+  Resolver.liftF{ case (limit, p) => getFriends(p.id, limit) }
+```
+The above example might be a bit tough to follow, but there methods available to make such formulations less verbose.
+```scala mdoc:nest
+getPersonResolver
+  .arg(arg[Int]("limit"))
+  .evalMap{ case (limit, p) => getFriends(p.id, limit) }
+```
+
+### Batch
+Like most other GraphQL implementations, gql also supports batching.
+
+Unlike any other GraphQL implementations, gql's batching implementation features a global query planner that lets gql delay field execution until it can be paired with another field.
+
+### Steam
 
 ## Steps
 A `Step` is the low-level algebra for a resolver, that describes a single step of evaluation for a query.

@@ -30,10 +30,10 @@ final class Resolver[+F[_], -I, +O](private[gql] val underlying: Step[F, I, O]) 
     this andThen Resolver.lift(f)
 
   def evalMap[F2[x] >: F[x], O2](f: O => F2[O2]): Resolver[F2, I, O2] =
-    this andThen Resolver.eval(f)
+    this andThen Resolver.liftF(f)
 
   def evalContramap[F2[x] >: F[x], I1 <: I, I2](f: I2 => F2[I1]): Resolver[F2, I2, O] =
-    Resolver.eval(f) andThen this
+    Resolver.liftF(f) andThen this
 
   def fallibleMap[O2](f: O => Ior[String, O2]): Resolver[F, I, O2] =
     this.map(f) andThen (new Resolver(Step.embedError))
@@ -70,14 +70,14 @@ object Resolver extends ResolverInstances {
   def id[F[_], I]: Resolver[F, I, I] =
     lift(identity)
 
-  def evalFull[F[_], I, O](f: I => F[O]): Resolver[F, I, O] =
+  def liftFullF[F[_], I, O](f: I => F[O]): Resolver[F, I, O] =
     liftFull(f).andThen(new Resolver(Step.embedEffect))
 
-  final class PartiallAppliedEval[F[_], I](private val dummy: Boolean = true) extends AnyVal {
-    def apply[O](f: I => F[O]): Resolver[F, I, O] = evalFull(f)
+  final class PartiallAppliedLiftF[F[_], I](private val dummy: Boolean = true) extends AnyVal {
+    def apply[O](f: I => F[O]): Resolver[F, I, O] = liftFullF(f)
   }
 
-  def eval[F[_], I]: PartiallAppliedEval[F, I] = new PartiallAppliedEval[F, I]
+  def liftF[F[_], I]: PartiallAppliedLiftF[F, I] = new PartiallAppliedLiftF[F, I]
 
   def argument[F[_], I <: Any, A](arg: Arg[A]): Resolver[F, I, A] =
     new Resolver(Step.argument(arg))
@@ -116,7 +116,7 @@ object Resolver extends ResolverInstances {
       Resolver.lift(f) andThen self
 
     def evalContramap[I2](f: I2 => F[I]): Resolver[F, I2, O] =
-      Resolver.eval(f) andThen self
+      Resolver.liftF(f) andThen self
 
     def fallibleContraMap[I2](f: I2 => Ior[String, I]): Resolver[F, I2, O] =
       (new Resolver(Step.embedError[F, I])).contramap[I2](f) andThen self

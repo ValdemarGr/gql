@@ -189,11 +189,8 @@ object dsl {
 
     def lift = new PartiallyAppliedLift[F, I]
 
-    def eff[T, A](arg: Arg[A])(resolver: (A, I) => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field(Resolver.eval[F, (A, I)] { case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
-
     def eff[T](resolver: I => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field(Resolver.eval(resolver), Eval.later(tpe))
+      Field(Resolver.liftF(resolver), Eval.later(tpe))
   }
 
   // final class ArgBuilder[A](private val name: String) extends AnyVal {
@@ -217,10 +214,10 @@ object dsl {
 
   final class PartiallyAppliedEff[I](private val dummy: Boolean = false) extends AnyVal {
     def apply[F[_], T, A](arg: Arg[A])(resolver: (A, I) => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field(Resolver.eval[F, (A, I)] { case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
+      Field(Resolver.liftF[F, (A, I)] { case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
 
     def apply[F[_], T](resolver: I => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field(Resolver.eval(resolver), Eval.later(tpe))
+      Field(Resolver.liftF(resolver), Eval.later(tpe))
   }
 
   final case class PartiallyAppliedArgFull[A](private val dummy: Boolean = false) extends AnyVal {

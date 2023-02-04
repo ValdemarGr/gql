@@ -97,12 +97,17 @@ def schema[F[_]](implicit repo: Repository[F], F: Async[F]) = {
     "primaryFunction" -> lift(_.primaryFunction)
   ).subtypeOf[Character].addFields(characterFields.toList: _*)
 
+  val episodeArg = arg[Option[Episode]]("episode")
+  val idArg = arg[String]("id")
+
   Schema.query(
     tpe[F, Unit](
       "Query",
-      "hero" -> eff(arg[Option[Episode]]("episode")) { case (ep, _) => repo.getHero(ep) },
-      "human" -> eff(arg[String]("id")) { case (id, _) => repo.getHuman(id) },
-      "droid" -> eff(arg[String]("id")) { case (id, _) => repo.getDroid(id) }
+      "hero" -> build.from(arged(episodeArg).evalMap(repo.getHero)),
+      "human" -> build.from(arged(idArg).evalMap(repo.getHuman)),
+      "droid" -> eff(idArg){ case (id, _) => 
+        repo.getDroid(id) 
+      }
     )
   )
 }
