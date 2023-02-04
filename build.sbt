@@ -1,7 +1,7 @@
 val scala213Version = "2.13.9"
 
 ThisBuild / scalaVersion := scala213Version
-ThisBuild / crossScalaVersions := Seq(scala213Version, "3.2.0")
+ThisBuild / crossScalaVersions := Seq(scala213Version, "3.2.2")
 ThisBuild / organization := "io.github.valdemargr"
 
 ThisBuild / tlBaseVersion := "0.1"
@@ -70,7 +70,7 @@ lazy val sharedSettings = Seq(
 lazy val core = project
   .in(file("modules/core"))
   .settings(sharedSettings)
-  .settings(name := "gql-core"/*, tlFatalWarnings := true*/)
+  .settings(name := "gql-core", tlFatalWarnings := true)
 
 lazy val natchez = project
   .in(file("modules/natchez"))

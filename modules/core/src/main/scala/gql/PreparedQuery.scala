@@ -147,10 +147,10 @@ object PreparedQuery {
     step match {
       case Step.Alg.Lift(f)      => pure(PreparedStep.Lift(f))
       case Step.Alg.EmbedError() => pure(PreparedStep.EmbedError[G, O]())
-      case alg: Step.Alg.Compose[G, i, a, o] =>
+      case alg: Step.Alg.Compose[?, i, a, o] =>
         val left = rec[i, a](alg.left, "left")
         val right = rec[a, o](alg.right, "right")
-        (left, right).parMapN((_, _).tupled).map(_.map { case (l, r) => PreparedStep.Compose(l, r) })
+        (left, right).parMapN((_, _).tupled).map(_.map { case (l, r) => PreparedStep.Compose[G, i, a, o](l, r) })
       case _: Step.Alg.EmbedEffect[?, i] => pure(PreparedStep.EmbedEffect[G, i](cursor))
       case _: Step.Alg.EmbedStream[?, i] => pure(PreparedStep.EmbedStream[G, i](cursor))
       case alg: Step.Alg.Skip[g, i, ?] =>
@@ -861,8 +861,8 @@ object PreparedQuery {
               ).flatMap { m =>
                 raiseOpt(
                   m.get(name).map {
-                    case t: SchemaShape.InterfaceImpl.TypeImpl[G, ?, ?]    => t.t
-                    case i: SchemaShape.InterfaceImpl.OtherInterface[G, ?] => i.i
+                    case t: SchemaShape.InterfaceImpl.TypeImpl[G @unchecked, ?, ?]    => t.t
+                    case i: SchemaShape.InterfaceImpl.OtherInterface[G @unchecked, ?] => i.i
                   },
                   s"`$name` does not implement interface `$n`, possible implementations are ${m.keySet.mkString(", ")}.",
                   caret.some

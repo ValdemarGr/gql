@@ -269,9 +269,9 @@ object SchemaShape {
         .filterNot(x => exclusion.contains(x.name))
         .map { tl =>
           tl match {
-            case e @ Enum(name, _, desc) =>
-              doc(desc) +
-                Doc.text(s"enum $name {") + Doc.hardLine +
+            case e: Enum[?] =>
+              doc(e.description) +
+                Doc.text(s"enum ${e.name} {") + Doc.hardLine +
                 Doc.intercalate(
                   Doc.hardLine,
                   e.mappings.toList.map { case (name, value) => doc(value.description) + Doc.text(name) }

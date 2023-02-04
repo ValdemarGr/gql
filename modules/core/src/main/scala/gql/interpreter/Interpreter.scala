@@ -393,7 +393,7 @@ class InterpreterImpl[F[_]](
 
     step match {
       case Lift(f) => runNext(inputs.map(_.map(f)))
-      case alg: EmbedEffect[F, i] =>
+      case alg: EmbedEffect[F @unchecked, i] =>
         val cursor = alg.stableUniqueEdgeName
         inputs
           .parFlatTraverse { id =>
@@ -418,7 +418,7 @@ class InterpreterImpl[F[_]](
       case alg: Compose[F, ?, a, ?] =>
         val contR: StepCont[F, a, O] = StepCont.Continue[F, a, C, O](alg.right, cont)
         runStep[I, a, O](inputs, alg.left, contR)
-      case alg: EmbedStream[F, i] =>
+      case alg: EmbedStream[F @unchecked, i] =>
         inputs.parFlatTraverse { id =>
           // We modify the cont for the next stream emission
           // We need to get rid of the skips since they are a part of THIS evaluation, not the next
