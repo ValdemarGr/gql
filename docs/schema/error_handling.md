@@ -14,7 +14,7 @@ For instance, the `EffectResolver[F, I, A]` wraps the function `I => F[Ior[Strin
 
 ## Examples
 Let's setup the scene:
-```scala mdoc
+```scala
 import gql.ast._
 import gql.dsl._
 import gql.dsl.value._
@@ -49,22 +49,22 @@ go("query { field }")
 ```
 
 A query can fail gracefully by returning `Ior.left`:
-```scala mdoc
+```scala
 go("query { field(i: 0) }")
 ```
 
 A query can fail hard by raising an exception:
-```scala mdoc
+```scala
 go("query { field(i: 1) }")
 ```
 
 A query can also fail before even evaluating the query:
-```scala mdoc
+```scala
 go("query { nonExisting }")
 ```
 
 And finally, it can fail if it isn't parsable:
-```scala mdoc
+```scala
 def largerQuery = """
   query {
     field1
@@ -85,7 +85,7 @@ Parser errors also look nice in ANSI terminals:
 
 ### Exception trick
 If for whatever reason you wish to pass information through exceptions, that is also possible:
-```scala mdoc
+```scala
 final case class MyException(msg: String, data: Int) extends Exception(msg)
 
 val res = 

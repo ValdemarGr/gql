@@ -7,7 +7,7 @@ The `SchemaShape` also contains extra types that should occur in the schema but 
 
 The `SchemaShape` also has derived information embedded in it.
 For instance, one can render the schema:
-```scala mdoc
+```scala
 import cats.effect._
 import cats.implicits._
 import gql._
@@ -26,7 +26,7 @@ println(ss.render)
 
 ### Validation
 Validation of the shape is also derived information:
-```scala mdoc
+```scala
 println(ss.validate)
 ```
 Running validation is completely optional, but is highly recommended.
@@ -43,7 +43,7 @@ Validation also reports other non-critical issues such as cases of ambiguity.
 For instance, if a cyclic type is defined with `def`, validation cannot determine if the type is truely valid.
 Solving this would require an infinite amount of time.
 An exmaple follows:
-```scala mdoc
+```scala
 final case class A()
 
 def cyclicType(i: Int): Type[IO, A] = {
@@ -71,7 +71,7 @@ recursiveSchema.validate.toList.mkString("\n")
 After `10000` iterations the type is no longer unifyable.
 
 One can also choose to simply ignore some of the validation errors:
-```scala mdoc
+```scala
 recursiveSchema.validate.filter{
   case SchemaShape.Problem(SchemaShape.ValidationError.CyclicDivergingTypeReference("A"), _) => false
   case _ => true
