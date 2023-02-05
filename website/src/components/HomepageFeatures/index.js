@@ -104,7 +104,7 @@ const FeatureList = [
     )
   },
   {
-    title: 'Easy to extends',
+    title: 'Easy to extend',
     // Svg: require('@site/static/img/undraw_docusaurus_mountain.svg').default,
     description: (
       <>

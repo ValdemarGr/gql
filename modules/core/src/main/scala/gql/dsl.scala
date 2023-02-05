@@ -294,7 +294,7 @@ object dsl {
     def optionals[G[_]: Foldable: Functor]: Resolver[F, G[K], G[Option[V]]] =
       r.contramap[G[K]](_.toList.toSet).tupleIn.map { case (m, g) => g.map(m.get) }
 
-    def collectSome[G[_]: Foldable: FunctorFilter: Functor]: Resolver[F, G[K], G[V]] =
+    def values[G[_]: Foldable: FunctorFilter: Functor]: Resolver[F, G[K], G[V]] =
       optionals[G].map(_.collect { case Some(v) => v })
 
     def force[G[_]: Foldable: FunctorFilter: Functor](implicit
@@ -311,10 +311,10 @@ object dsl {
     def optional: Resolver[F, K, Option[V]] =
       optionals[Id]
 
-    def forceOne(implicit S: Show[K]): Resolver[F, K, V] =
+    def forceOne(implicit S: ShowMissingKeys[K]): Resolver[F, K, V] =
       optional.tupleIn.fallibleMap {
         case (Some(v), _) => v.rightIor[String]
-        case (None, k)    => S.show(k).leftIor[V]
+        case (None, k)    => S.showMissingKeys(NonEmptyList.one(k)).leftIor[V]
       }
 
     def forceNE[G[_]: NonEmptyTraverse](implicit S: ShowMissingKeys[K]): Resolver[F, G[K], G[V]] =

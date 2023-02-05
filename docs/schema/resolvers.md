@@ -21,9 +21,8 @@ import cats.data._
 :::note
 If you are familiar with the relationship between `fs2.Stream` and `fs2.Pull`, then the relationship between `Resolver` and `Step` should be familiar.
 :::
-Within this section the various constructors are referenced as `Step/Resolver`.
 ### Lift
-The simplest `Resolver` type is `Lift`/`lift` which simply lifts a function `I => O` into `Resolver[F, I, O]`.
+The simplest `Resolver` type is `lift` which simply lifts a function `I => O` into `Resolver[F, I, O]`.
 `lift`'s method form is `map`, which for any resolver `Resolver[F, I, O]` produces a new resolver `Resolver[F, I, O2]` given a fucntion `O => O2`.
 ```scala mdoc:nest
 val r = Resolver.lift[IO, Int](_.toLong)
@@ -31,7 +30,7 @@ r.map(_.toString())
 ```
 
 ### LiftF
-Another simple resolver is `EmbedEffect`/`liftF` which lifts a function `I => F[O]` into `Resolver[F, I, O]`.
+Another simple resolver is `liftF` which lifts a function `I => F[O]` into `Resolver[F, I, O]`.
 `eval`'s method form is `evalMap`.
 ```scala mdoc:nest
 val r = Resolver.liftF[IO, Int](i => IO(i.toLong))
@@ -45,7 +44,7 @@ Most resolvers are implemented or composed on by `lift`ing a function and compos
 
 ### Arguments
 Arguments in gql are provided through resolvers.
-A resolver `∀F, I. Resolver[F, I, A]` can be constructed from an argument `Arg[A]`:
+A resolver `∀F, I. Resolver[F, I, A]` can be constructed from an argument `Arg[A]`, through either `argument` or `arg` in method form.
 ```scala mdoc:nest
 val r = Resolver.argument[IO, Nothing, String](arg[String]("name"))
 val r2 = r.arg(arg[Int]("age"))
@@ -59,7 +58,7 @@ r.map{ case (age, name) => s"$name is $age years old" }
 ```
 
 ### Meta
-The `GetMeta/meta` resolver provides metadata regarding query execution, such as the position of query execution, field aliasing and the provided arguments.
+The `meta` resolver provides metadata regarding query execution, such as the position of query execution, field aliasing and the provided arguments.
 
 ### Errors
 Well formed errors are returned in an `cats.data.Ior`.
@@ -68,7 +67,7 @@ An `Ior` is a non-exclusive `Either`.
 The `Ior` datatype's left side must be `String` and acts as an optional error that will be present in the query result.
 gql can return an error and a result for the same path, given that `Ior` has both left and right side defined.
 
-Errors are embedded into resolvers via `EmbedError/rethrow`.
+Errors are embedded into resolvers via `rethrow`.
 The extension method `rethrow` is present on any resolver of type `∀F, I, O. Resolver[F, I, Ior[String, O]]`:
 ```scala mdoc:nest
 val r = Resolver.lift[IO, Int](i => Ior.Both("I will be in the errors :)", i))
@@ -76,7 +75,7 @@ r.rethrow
 ```
 
 ### First
-A `Resolver` also implements `First/first` (`∀C. Resolver[F, A, B] => Resolver[F, (A, C), (B, C)]`) which is very convinient since some `Resolver`s are constant functions (they throw away their arguments/`I`).
+A `Resolver` also implements `first` (`∀C. Resolver[F, A, B] => Resolver[F, (A, C), (B, C)]`) which is very convinient since some `Resolver`s are constant functions (they throw away their arguments/`I`).
 Since a `Resolver` does not form a `Monad`, `first` is necessary to implement non-trivial resolver compositions.
 For instance, resolving an argument will ignore the input of the resolver, which is not always the desired outcome.
 
@@ -110,7 +109,135 @@ Like most other GraphQL implementations, gql also supports batching.
 
 Unlike any other GraphQL implementations, gql's batching implementation features a global query planner that lets gql delay field execution until it can be paired with another field.
 
-### Steam
+Batch declaration and usage occurs as follows:
+* Declare a function `Set[K] => F[Map[K, V]]`.
+* Give this function to gql and get back a `Resolver[F, Set[K], Map[K, V]]` in a `State` monad (for unique id generation).
+* Use this new resolver where you want batching.
+
+And now put into practice:
+```scala mdoc
+case class Person(id: Int, name: String)
+
+def getPeopleFromDB(ids: Set[Int]): IO[List[Person]] = ???
+
+Resolver.batch[IO, Int, Person]{ keys => 
+  getPeopleFromDB(keys).map(_.map(x => x.id -> x).toMap)
+}
+```
+
+Whenever gql sees this resolver in any composition, it will look for similar resolvers during query planning.
+
+Note however that the you should only declare each batch resolver variant **once**, that is, you should build your schema in `State`. gql consideres different batch instantiations incompatible regardless of any type information.
+
+State has both `Monad` and `Applicative` defined for it, so it composes well.
+Here is an example of multiple batchers:
+```scala mdoc
+def b1 = Resolver.batch[IO, Int, Person](_ => ???)
+def b2 = Resolver.batch[IO, Int, String](_ => ???)
+
+(b1, b2).tupled
+```
+:::tip
+Even if your field doesn't benefit from batching, batching can still perform duplicate key elimination.
+:::
+
+#### Batch resolver syntax
+When a resolver in a very specific form `Resolver[F, Set[K], Map[K, V]]`, then the gql dsl provides some helper methods.
+For instance, it is very likely that a batcher is embedded in a singular context (`K => V`).
+Here is a showcase of some of the helper methods:
+```scala mdoc
+def pb: Resolver[IO, Set[Int], Map[Int, Person]] = 
+  // Stub implementation
+  Resolver.lift(_ => Map.empty)
+
+// None if a key is missing
+pb.optionals[List]
+
+// Emits all values
+pb.values[List]
+
+// Every key must have an associated value
+// or else raise an error via a custom show-like typeclass
+implicit lazy val showMissingPersonId =
+  ShowMissingKeys.showForKey[Int]("not all people could be found")
+pb.force[List]
+
+// Maybe there is one value for one key?
+pb.optional
+
+// There is always one value for one key
+pb.forceOne
+
+// Same as force but for non-empty containers
+pb.forceNE[NonEmptyList]
+```
+
+:::tip
+For larger programs, consider declaring all your batchers up-front and putting them into some type of collection:
+```scala mdoc
+case class MyBatchers(
+  personBatcher: Resolver[IO, Set[Int], Map[Int, Person]],
+  intStringBatcher: Resolver[IO, Set[Int], Map[Int, String]]
+)
+
+(b1, b2).mapN(MyBatchers.apply)
+```
+For most batchers it is likely that you eventually want to pre-compose them in various ways, for instance requsting args, which this pattern promotes.
+:::
+
+:::tip
+Sometimes you have multiple groups of fields in the same object where each group have different performance overheads.
+
+For instance, a `Person` has `name` which is pure, but it may also have `friends` which is a field derived from the `Person` structure.
+Most databases can query a person and their friends in one query instead of two via joins or something similar.
+We can solve this by instead of constructing a type for `Person`, we construct it for `PersonId` instead:
+INCOMPLETE
+```scala mdoc:nest
+/*case class Person(id: Int, name: String)
+
+def getPerson(personId: Int): IO[Person] = ???
+
+def getPersonAndFriends(personId: Int): IO[(Person, List[Person])] = ???
+
+sealed trait PersonKey {
+  def id: Int
+}
+object Personkey {
+  case class JustPerson(id: Int) extends PersonKey
+  case class FriendsOf(id: Int) extends PersonKey
+
+  implicit lazy val showMissingPersonId =
+    ShowMissingKeys.show[PersonKey](_.toString(), "not all people could be found")
+}
+
+def pkBatch = Resolver.batch[IO, PersonKey, Person]{ keys => 
+  keys
+    .groupBy{
+      case PersonKey.JustPerson(id) => id
+      case PersonKey.FriendsOf(id) => id
+    }
+    .toList
+    .traverse{ case (k, values) => 
+      // ...
+      ???
+    }
+}
+
+pkBatch.map{ b => 
+  val purePersonFields = fields[IO, Person](
+    "name" -> lift(_.name)
+  )
+
+  val derivedPersonFields = fields[IO, PersonKey](
+    "friends" -> build.from(b.forceOne.contramap[PersonKey](pk => FriendsOf(pk.id)))
+  )
+}*/
+```
+TODO leftjoin with ids (applicative) + get some on document
+:::
+Check out planner at ...
+
+### Stream
 
 ## Steps
 A `Step` is the low-level algebra for a resolver, that describes a single step of evaluation for a query.
@@ -121,6 +248,8 @@ this is not up to date
 :::
 Resolvers are the edges that connect fields and types.
 Resolvers can be composed to build simple or complex edge strucures.
+
+## Additional syntax for resolvers TODO
 
 ## PureResolver
 The simplest resolver is the `PureResolver[F, I, A]`, which simply contains a function `I => A`.
