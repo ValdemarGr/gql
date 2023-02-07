@@ -593,7 +593,18 @@ object PreparedQuery {
       F: MonadError[F, NonEmptyChain[PositionalError]],
       L: Local[F, Prep]
   ) = {
+    val ys: NonEmptyMap[String, NonEmptyList[(SelectionInfo[G], FieldInfo[G])]] =
+      xs.flatMap(si => si.fields tupleLeft si)
+        .groupByNem { case (_, f) => f.outputName }
 
+    // For every field:
+  }
+
+  def mergeTypes[F[_]: Parallel, G[_]](xs: NonEmptyList[(FieldInfo[G], SelectionInfo[G])], caret: Caret)(implicit
+      F: MonadError[F, NonEmptyChain[PositionalError]],
+      L: Local[F, Prep]
+  ) = {
+    val (hd, _) = xs.head
   }
 
   def checkSelectionsMerge[F[_]: Parallel, G[_]](xs: NonEmptyList[SelectionInfo[G]])(implicit
