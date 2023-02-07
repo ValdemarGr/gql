@@ -485,6 +485,46 @@ object PreparedQuery {
     }
   }
 
+  /*
+   * Put into simpler more explicit terms:
+   * "shape identical" means that for two fields f1 and f2:
+   *   * if f1's type is a list then f2's type must also be a list. The inner types must be "shape identical".
+   *   * if f1's type is a non-null then f2's type must also be a non-null. The inner types must be "shape identical".
+   *   * if f1's type is a terminal type then f2's type must also be a terminal type and they must be the same.
+   *   * if f1's type is selectable then f2's type must also be selectable.
+   *     for every field f1' in f1's type and f2' in f2's type that share the same name (alias or not),
+   *     f1' and f2' must be "shape identical".
+   * "fully identical" means that two fields must:
+   *   * Have the same parameters
+   *   * The same underlying field names
+   *   * Be "shape identical".
+   *
+   * For any two fields f1 and f2 defined on two possibly different types t1 and t2
+   * with the same name (alisaed or not), the following must hold:
+   *  - If t1 = t2 then f1 and f2 must be "fully identical".
+   *  - If t1 is an Object and t2 is an Object but t1 != t2 (fully disjoint), f1 and f2 must be "shape identical".
+   *  - If t1 or t2 is not an Object (trivially true since this is the only remaining case)
+   *    then f1 and f2 "fully identical". Elaboration:
+   *      It is a lazy way of ensuring that in the instance that the two types are the same,
+   *      the fields are "fully identical".
+   *      A through algorithm would check if the intersection of subtypes of the two abstract types was empty and
+   *      thereby conclude wether the fields were to be "fully identical" or "shape identical".
+   *
+   * This algorithm runs through the tree two times for every branch of the tree.
+   * It can quickly degrade into something akin O(2^n).
+   *
+   * Instead, we can implement this algorithm in a single pass while keeping it simple.
+   * Since "fully identical" is a stricter requirement than "shape identical", we can simply handle the
+   * case in the selection part of the algorithm.
+   *
+   * Furthermore, the check in the algorithm has two cases for the whole set of fields:
+   * If a non-object type is encountered, then all fields must be "fully identical".
+   * If an object type is encountered, then group all fields by name and do "full identical" checks.
+   *
+   * Optimization:
+   * We can check more than two fields at once by passing in a comparison field and a non-empty list of fields.
+   */
+
   // https://spec.graphql.org/draft/#sec-Field-Selection-Merging.Formal-Specification
   def checkFieldsMerge[F[_]: Parallel, G[_]](a: FieldInfo[G], asi: SelectionInfo[G], b: FieldInfo[G], bsi: SelectionInfo[G])(implicit
       F: MonadError[F, NonEmptyChain[PositionalError]],
@@ -549,6 +589,13 @@ object PreparedQuery {
     thoroughCheckF &> shapeCheckF
   }
 
+  def mergeSelections[F[_]: Parallel, G[_]](xs: NonEmptyList[SelectionInfo[G]])(implicit
+      F: MonadError[F, NonEmptyChain[PositionalError]],
+      L: Local[F, Prep]
+  ) = {
+
+  }
+
   def checkSelectionsMerge[F[_]: Parallel, G[_]](xs: NonEmptyList[SelectionInfo[G]])(implicit
       F: MonadError[F, NonEmptyChain[PositionalError]],
       L: Local[F, Prep]
@@ -565,7 +612,8 @@ object PreparedQuery {
         zs.tail.parTraverse_ { case (si, fi) => checkFieldsMerge[F, G](fiHead, siHead, fi, si) }
       }
 
-      mergeFieldsF >> zs.toList.flatMap { case (_, fi) => fi.tpe.selections }.toNel.traverse_(checkSelectionsMerge[F, G])
+      mergeFieldsF >>
+        zs.toList.flatMap { case (_, fi) => fi.tpe.selections }.toNel.traverse_(checkSelectionsMerge[F, G])
     }
   }
 
@@ -652,7 +700,10 @@ object PreparedQuery {
 
     val grouped = nestedSelections
       .groupMap { case (k, _) => k } { case (_, vs) => vs }
-      .collect { case (k, x :: xs) => k -> NonEmptyList(x, xs).flatten.map(x => x.outputName -> x).toNem.toNonEmptyList }
+      .collect { case (k, x :: xs) =>
+        // Merge bug
+        k -> NonEmptyList(x, xs).flatten.map(x => x.outputName -> x).toNem.toNonEmptyList
+      }
 
     val collected: F[List[MergedImplementation[G, A, ?]]] = concreteBase.parFlatTraverse { case (k, (fi: FoundImplementation[G, A, b])) =>
       val t = fi.tpe
@@ -827,7 +878,9 @@ object PreparedQuery {
       D: Defer[F]
   ): F[NonEmptyList[PreparedSpecification[G, A, ?]]] = {
     collectSelectionInfo[F, G](s, ss, variableMap, fragments, discoveryState).flatMap { root =>
-      checkSelectionsMerge[F, G](root) >> prepareSelectable[F, G, A](s, root, variableMap, discoveryState).map(_.runA(0).value)
+      checkSelectionsMerge[F, G](root) >>
+        prepareSelectable[F, G, A](s, root, variableMap, discoveryState)
+          .map(_.runA(0).value)
     }
   }
 
