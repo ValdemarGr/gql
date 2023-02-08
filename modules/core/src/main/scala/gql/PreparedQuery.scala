@@ -552,9 +552,9 @@ object PreparedQuery {
   // There's a bug here that will allow fewer valid queries than the spec allows.
   // In the spec, when two fields are not to be considered equal in regards to arguments and aliasing
   // (i.e. they are not to be merged), they should only be structurally equal.
-  // However, during structural equality checking, we can start to check the arguments of the again if two fields are defined in the same type.
+  // However, during structural equality checking, we can start to check the arguments again if two fields are defined in the same type.
   //
-  // The version of this function has two outcomes for every field name:
+  // A new version of this function has two outcomes for every field name:
   // Either at-least one field is defined on a non-object type and all types must be fully equal (structural, arguments and alias)
   // Or all fields are defined on object types and only fields that are defied on the same type must be fully equal (structural, arguments and alias)
   // Fields between different types should just be structurally equal.
