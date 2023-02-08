@@ -642,4 +642,84 @@ class StarWarsTest extends CatsEffectSuite {
       """
     }
   }
+
+  test("should be able to select multiple disjunctive nested fragments, and they should be merged") {
+    val q = """
+      fragment FriendAppearsIn on Character {
+        friends {
+          appearsIn
+        }
+      }
+
+      fragment FriendNames on Character {
+        friends {
+          name
+        }
+        ...FriendAppearsIn
+      }
+
+      fragment FriendNames2 on Character {
+        friends {
+          name2: name
+        }
+      }
+
+      fragment FriendIds on Character {
+        friends {
+          id
+        }
+        ...FriendNames2
+      }
+
+      query FullQuery {
+        hero {
+          ...FriendNames
+          ...FriendIds
+        }
+      }
+    """
+
+    assertJsonIO(query(q)) {
+      """
+      {
+        "data": {
+          "hero": {
+            "friends": [
+              {
+                "name": "Luke Skywalker",
+                "id": "1000",
+                "name2": "Luke Skywalker",
+                "appearsIn": [
+                  "NEWHOPE",
+                  "EMPIRE",
+                  "JEDI"
+                ]
+              },
+              {
+                "name": "Han Solo",
+                "id": "1002",
+                "name2": "Han Solo",
+                "appearsIn": [
+                  "NEWHOPE",
+                  "EMPIRE",
+                  "JEDI"
+                ]
+              },
+              {
+                "name": "Leia Organa",
+                "id": "1003",
+                "name2": "Leia Organa",
+                "appearsIn": [
+                  "NEWHOPE",
+                  "EMPIRE",
+                  "JEDI"
+                ]
+              }
+            ]
+          }
+        }
+      }
+      """
+    }
+  }
 }
