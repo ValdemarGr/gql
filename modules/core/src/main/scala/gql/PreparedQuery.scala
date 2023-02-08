@@ -485,46 +485,6 @@ object PreparedQuery {
     }
   }
 
-  /*
-   * Put into simpler more explicit terms:
-   * "shape identical" means that for two fields f1 and f2:
-   *   * if f1's type is a list then f2's type must also be a list. The inner types must be "shape identical".
-   *   * if f1's type is a non-null then f2's type must also be a non-null. The inner types must be "shape identical".
-   *   * if f1's type is a terminal type then f2's type must also be a terminal type and they must be the same.
-   *   * if f1's type is selectable then f2's type must also be selectable.
-   *     for every field f1' in f1's type and f2' in f2's type that share the same name (alias or not),
-   *     f1' and f2' must be "shape identical".
-   * "fully identical" means that two fields must:
-   *   * Have the same parameters
-   *   * The same underlying field names
-   *   * Be "shape identical".
-   *
-   * For any two fields f1 and f2 defined on two possibly different types t1 and t2
-   * with the same name (alisaed or not), the following must hold:
-   *  - If t1 = t2 then f1 and f2 must be "fully identical".
-   *  - If t1 is an Object and t2 is an Object but t1 != t2 (fully disjoint), f1 and f2 must be "shape identical".
-   *  - If t1 or t2 is not an Object (trivially true since this is the only remaining case)
-   *    then f1 and f2 "fully identical". Elaboration:
-   *      It is a lazy way of ensuring that in the instance that the two types are the same,
-   *      the fields are "fully identical".
-   *      A through algorithm would check if the intersection of subtypes of the two abstract types was empty and
-   *      thereby conclude wether the fields were to be "fully identical" or "shape identical".
-   *
-   * This algorithm runs through the tree two times for every branch of the tree.
-   * It can quickly degrade into something akin O(2^n).
-   *
-   * Instead, we can implement this algorithm in a single pass while keeping it simple.
-   * Since "fully identical" is a stricter requirement than "shape identical", we can simply handle the
-   * case in the selection part of the algorithm.
-   *
-   * Furthermore, the check in the algorithm has two cases for the whole set of fields:
-   * If a non-object type is encountered, then all fields must be "fully identical".
-   * If an object type is encountered, then group all fields by name and do "full identical" checks.
-   *
-   * Optimization:
-   * We can check more than two fields at once by passing in a comparison field and a non-empty list of fields.
-   */
-
   // https://spec.graphql.org/draft/#sec-Field-Selection-Merging.Formal-Specification
   def checkFieldsMerge[F[_]: Parallel, G[_]](a: FieldInfo[G], asi: SelectionInfo[G], b: FieldInfo[G], bsi: SelectionInfo[G])(implicit
       F: MonadError[F, NonEmptyChain[PositionalError]],
@@ -589,6 +549,17 @@ object PreparedQuery {
     thoroughCheckF &> shapeCheckF
   }
 
+  // There's a bug here that will allow fewer valid queries than the spec allows.
+  // In the spec, when two fields are not to be considered equal in regards to arguments and aliasing
+  // (i.e. they are not to be merged), they should only be structurally equal.
+  // However, during structural equality checking, we can start to check the arguments of the again if two fields are defined in the same type.
+  //
+  // The version of this function has two outcomes for every field name:
+  // Either at-least one field is defined on a non-object type and all types must be fully equal (structural, arguments and alias)
+  // Or all fields are defined on object types and only fields that are defied on the same type must be fully equal (structural, arguments and alias)
+  // Fields between different types should just be structurally equal.
+  //
+  // It should be very feasible to implement this efficiently (i.e O(n)).
   def checkSelectionsMerge[F[_]: Parallel, G[_]](xs: NonEmptyList[SelectionInfo[G]])(implicit
       F: MonadError[F, NonEmptyChain[PositionalError]],
       L: Local[F, Prep]
@@ -664,8 +635,17 @@ object PreparedQuery {
         .collect { case ti: SchemaShape.InterfaceImpl.TypeImpl[G, A, b] => FoundImplementation(ti.t, ti.specify) }
   }
 
+  final case class MergedFieldInfo[G[_]](
+      name: String,
+      alias: Option[String],
+      args: Option[P.Arguments],
+      selections: List[SelectionInfo[G]],
+      // TODO these two should probably be lists
+      caret: Caret,
+      path: PrepCursor
+  )
   final case class PairedFieldSelection[G[_], A](
-      info: FieldInfo[G],
+      info: MergedFieldInfo[G],
       field: Field[G, A, ?]
   )
   final case class MergedImplementation[G[_], A, B](
@@ -681,45 +661,76 @@ object PreparedQuery {
       F: MonadError[F, NonEmptyChain[PositionalError]],
       L: Local[F, Prep]
   ): F[NonEmptyList[MergedImplementation[G, A, ?]]] = {
+    // We need to find all implementations of the base type
     val concreteBaseMap = findImplementations[G, A](base, discoveryState).map(x => x.tpe.name -> x).toMap
+
     val concreteBase = concreteBaseMap.toList
 
-    val nestedSelections = sels.toList.flatMap { sel =>
+    val nestedSelections: List[(String, NonEmptyList[FieldInfo[G]])] = sels.toList.flatMap { sel =>
+      /* The set of typenames that implement whatever we're selecting on
+       * ```graphql
+       * interface A {
+       *   name: String
+       * }
+       *
+       * {
+       *   ...
+       *   ... on A {
+       *     name
+       *   }
+       * }
+       * ```
+       * In this case, we have a selection on `A`, so we must figure out what types implement `A`
+       * and then for every type `T` that implements `A`, we must find the field `name` and select it on `T`.
+       */
       val concreteIntersections = findImplementations(sel.s, discoveryState)
         .map { case FoundImplementation(t, _) => t.name }
 
       concreteIntersections tupleRight sel.fields
     }
 
-    val grouped = nestedSelections
+    // TODO field merging can be optimized significantly by deduplicating fragment spreads
+    // (if two fields are in the same fragment (maybe also the same position)?)
+    /*
+     * Now we must merge all fields that are selected on the same type.
+     *
+     * Merge fields at this level only.
+     * We cannot merge fields globally, because we need to know the base type
+     * And even if we looked for the base type, we might as well do resolver/step preparation and argument parsing
+     * since that would require us to walk the tree again.
+     */
+
+    type Typename = String
+    type FieldName = String
+    // There may be more than one field with the same name
+    // This is fine, but we need to merge their implementations
+    val grouped: Map[Typename, NonEmptyMap[FieldName, NonEmptyList[FieldInfo[G]]]] = nestedSelections
       .groupMap { case (k, _) => k } { case (_, vs) => vs }
-      .collect { case (k, x :: xs) =>
-        // Merge bug
-        // Recursively merge fields
-        NonEmptyList(x, xs).flatten.groupByNem(_.outputName).map{ case fs =>
-          val h = fs.head
-          FieldInfo(
-            h.name,
-            h.alias,
-            h.args,
-            h.tpe,
-            h.caret,
-            h.path
-          )
-        }
-        k -> NonEmptyList(x, xs).flatten.map(x => x.outputName -> x).toNem.toNonEmptyList
-      }
+      .collect { case (k, x :: xs) => k -> NonEmptyList(x, xs).flatten.groupByNem(_.outputName) }
+
+    val merged = grouped.fmap(_.fmap { fields =>
+      val sels = fields.map(_.tpe.selections).reduce
+      MergedFieldInfo(
+        fields.head.name,
+        fields.head.alias,
+        fields.head.args,
+        sels,
+        fields.head.caret,
+        fields.head.path
+      )
+    })
 
     val collected: F[List[MergedImplementation[G, A, ?]]] = concreteBase.parFlatTraverse { case (k, (fi: FoundImplementation[G, A, b])) =>
       val t = fi.tpe
       val specify = fi.specify
-      grouped.get(k).toList.traverse { fields =>
-        fields
+      merged.get(k).toList.traverse { fields =>
+        fields.toNonEmptyList
           .parTraverse { f =>
             if (f.name === "__typename") F.pure(PairedFieldSelection[G, b](f, typenameField[b](t.name)))
             else {
               t.fieldMap.get(f.name) match {
-                case None        => raise[F, PairedFieldSelection[G, b]](s"Could not find field '${f.name}' on type `${t.name}`.", None)
+                case None =>
+                  raise[F, PairedFieldSelection[G, b]](s"Could not find field '${f.name}' on type `${t.name}`.", None)
                 case Some(field) => F.pure(PairedFieldSelection[G, b](f, field))
               }
             }
@@ -755,17 +766,11 @@ object PreparedQuery {
     val argObj =
       P.Value.ObjectValue(provided.map(a => a.name -> a.value))
 
-    // a match {
-    //   case PureArg(value) if provided.isEmpty => value.fold(raise(_, None), F.pure(_))
-    //   case PureArg(_) =>
-    //     raise(s"Field '$name' does not accept arguments.", Some(caret))
-    // case nea @ NonEmptyArg(_, _) =>
     parseInputObj[F, A](argObj, a, Some(variableMap), ambigiousEnum = false)
-    // }
   }
 
   def prepareField[F[_]: Parallel, G[_]: Applicative, I, T](
-      fi: FieldInfo[G],
+      fi: MergedFieldInfo[G],
       field: Field[G, I, T],
       currentTypename: String,
       variableMap: VariableMap,
@@ -789,7 +794,7 @@ object PreparedQuery {
     )
 
     def compileCont[A](t: Out[G, A], cursor: UniqueEdgeCursor): Used[F, State[Int, Prepared[G, A]]] =
-      (t, fi.tpe.selections.toNel) match {
+      (t, fi.selections.toNel) match {
         case (out: gql.ast.OutArr[g, a, c, b], _) =>
           val innerStep: Step[G, a, b] = out.resolver.underlying
           val nc = cursor append "array"
