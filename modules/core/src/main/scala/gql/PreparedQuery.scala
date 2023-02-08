@@ -589,24 +589,6 @@ object PreparedQuery {
     thoroughCheckF &> shapeCheckF
   }
 
-  def mergeSelections[F[_]: Parallel, G[_]](xs: NonEmptyList[SelectionInfo[G]])(implicit
-      F: MonadError[F, NonEmptyChain[PositionalError]],
-      L: Local[F, Prep]
-  ) = {
-    val ys: NonEmptyMap[String, NonEmptyList[(SelectionInfo[G], FieldInfo[G])]] =
-      xs.flatMap(si => si.fields tupleLeft si)
-        .groupByNem { case (_, f) => f.outputName }
-
-    // For every field:
-  }
-
-  def mergeTypes[F[_]: Parallel, G[_]](xs: NonEmptyList[(FieldInfo[G], SelectionInfo[G])], caret: Caret)(implicit
-      F: MonadError[F, NonEmptyChain[PositionalError]],
-      L: Local[F, Prep]
-  ) = {
-    val (hd, _) = xs.head
-  }
-
   def checkSelectionsMerge[F[_]: Parallel, G[_]](xs: NonEmptyList[SelectionInfo[G]])(implicit
       F: MonadError[F, NonEmptyChain[PositionalError]],
       L: Local[F, Prep]
@@ -713,6 +695,18 @@ object PreparedQuery {
       .groupMap { case (k, _) => k } { case (_, vs) => vs }
       .collect { case (k, x :: xs) =>
         // Merge bug
+        // Recursively merge fields
+        NonEmptyList(x, xs).flatten.groupByNem(_.outputName).map{ case fs =>
+          val h = fs.head
+          FieldInfo(
+            h.name,
+            h.alias,
+            h.args,
+            h.tpe,
+            h.caret,
+            h.path
+          )
+        }
         k -> NonEmptyList(x, xs).flatten.map(x => x.outputName -> x).toNem.toNonEmptyList
       }
 

@@ -139,3 +139,32 @@ object Compiler { outer =>
 
   def apply[F[_]](implicit F: Async[F]): PartiallyAppliedCompiler[F] = new PartiallyAppliedCompiler[F](F)
 }
+
+
+object Test {
+  /*
+    Define relationships and how to resolve them batched
+
+    we have that 
+    A *-> B *-> C
+    a {
+      b {
+        c {
+          id
+        }
+      }
+    }
+
+    define innermost first 
+
+    there exists a function 
+    A => [B]
+    and B => [C]
+    and A => [(B, [C])]
+
+    tpe[C](
+      "C",
+      "id" -> lift(_.id),
+    )
+  */
+}
