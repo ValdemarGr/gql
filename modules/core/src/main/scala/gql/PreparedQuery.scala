@@ -162,7 +162,7 @@ object PreparedQuery {
         })
       case alg: Step.Alg.First[?, i, o, c] =>
         rec[i, o](alg.step, "first").map(_.map(s => PreparedStep.First[G, i, o, c](s)))
-      case alg: Step.Alg.Argument[g, ?, a] =>
+      case alg: Step.Alg.Argument[?, a] =>
         val fa = Used
           .liftF(decodeFieldArgs[F, G, a](alg.arg, meta.args, meta.variables))
           .map[PreparedStep[G, I, O]](o => PreparedStep.Lift[G, I, O](_ => o)) <*

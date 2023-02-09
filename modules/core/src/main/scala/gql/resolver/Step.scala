@@ -22,21 +22,21 @@ sealed trait Step[+F[_], -I, +O]
 
 object Step {
   object Alg {
-    final case class Lift[F[_], I, O](f: I => O) extends AnyRef with Step[F, I, O]
+    final case class Lift[I, O](f: I => O) extends AnyRef with Step[Nothing, I, O]
 
     final case class EmbedEffect[F[_], I]() extends AnyRef with Step[F, F[I], I]
 
     final case class EmbedStream[F[_], I]() extends AnyRef with Step[F, fs2.Stream[F, I], I]
 
-    final case class EmbedError[F[_], I]() extends AnyRef with Step[F, Ior[String, I], I]
+    final case class EmbedError[I]() extends AnyRef with Step[Nothing, Ior[String, I], I]
 
-    final case class Argument[F[_], I, A](arg: Arg[A]) extends Step[F, I, A]
+    final case class Argument[I, A](arg: Arg[A]) extends Step[Nothing, I, A]
 
     final case class Compose[F[_], I, A, O](left: Step[F, I, A], right: Step[F, A, O]) extends Step[F, I, O]
 
     final case class Skip[F[_], I, O](compute: Step[F, I, O]) extends Step[F, Either[I, O], O]
 
-    final case class GetMeta[F[_], I]() extends Step[F, I, Meta]
+    final case class GetMeta[I]() extends Step[Nothing, I, Meta]
 
     final case class First[F[_], A, B, C](step: Step[F, A, B]) extends Step[F, (A, C), (B, C)]
 
