@@ -11,6 +11,7 @@ Lets start off with some imports:
 ```scala mdoc
 import gql.dsl._
 import gql.resolver._
+import gql.ast._
 import cats.effect._
 import cats.implicits._
 import cats.data._
@@ -107,7 +108,7 @@ getPersonResolver
 ### Batch
 Like most other GraphQL implementations, gql also supports batching.
 
-Unlike any other GraphQL implementations, gql's batching implementation features a global query planner that lets gql delay field execution until it can be paired with another field.
+Unlike most other GraphQL implementations, gql's batching implementation features a global query planner that lets gql delay field execution until it can be paired with another field.
 
 Batch declaration and usage occurs as follows:
 * Declare a function `Set[K] => F[Map[K, V]]`.
@@ -129,7 +130,7 @@ Whenever gql sees this resolver in any composition, it will look for similar res
 
 Note however that the you should only declare each batch resolver variant **once**, that is, you should build your schema in `State`. gql consideres different batch instantiations incompatible regardless of any type information.
 
-State has both `Monad` and `Applicative` defined for it, so it composes well.
+State has `Monad` (and transitively `Applicative`) defined for it, so it composes well.
 Here is an example of multiple batchers:
 ```scala mdoc
 def b1 = Resolver.batch[IO, Int, Person](_ => ???)
@@ -138,7 +139,7 @@ def b2 = Resolver.batch[IO, Int, String](_ => ???)
 (b1, b2).tupled
 ```
 :::tip
-Even if your field doesn't benefit from batching, batching can still perform duplicate key elimination.
+Even if your field doesn't benefit from batching, batching can still do duplicate key elimination.
 :::
 
 #### Batch resolver syntax
@@ -188,6 +189,63 @@ For most batchers it is likely that you eventually want to pre-compose them in v
 :::tip
 Sometimes you have multiple groups of fields in the same object where each group have different performance overheads.
 
+Say you had a `Person` object in your database.
+This `Person` object also exists in a remote api.
+This remote api can tell you, the friends of a `Person` given the object's id and name.
+
+```scala mdoc:nest:silent
+case class PersonId(id: Int)
+
+def pureFields = fields[IO, PersonId](
+  "id" -> lift(_.id)
+)
+
+case class PersonDB(
+  id: PersonId, 
+  name: String, 
+  remoteApiId: String
+)
+
+// SELECT id, name, remote_api_id FROM person WHERE id in (...)
+def dbBatchResolver: Resolver[IO, PersonId, PersonDB] = ???
+
+def dbFields = fields[IO, PersonDB](
+  "name" -> lift(_.name),
+  "apiId" -> lift(_.remoteApiId)
+)
+
+case class PersonRemoteAPI(
+  id: PersonId, 
+  friends: List[PersonId]
+)
+
+// Given a PersonDB we can call the api (via a batched GET or something)
+def personBatchResolver: Resolver[IO, PersonDB, PersonRemoteAPI] = ???
+
+def remoteApiFields = fields[IO, PersonRemoteAPI](
+  "friends" -> lift(_.friends)
+)
+
+// Given a PersonDB object we have the following fields
+def dbFields2: Fields[IO, PersonDB] = 
+  remoteApiFields.compose(personBatchResolver) ::: dbFields
+
+// Given a PersonId we have every field
+// If "friends" is selected, gql will first run `dbBatchResolver` and then `personBatchResolver`
+def allFields = dbFields2.compose(dbBatchResolver) ::: pureFields
+
+implicit def person: Type[IO, PersonId] = tpeNel[IO, PersonId](
+  "Person",
+  allFields
+)
+```
+
+The general pattern for this decomposition revolves around figuring out what the most basic description of your object is.
+In this example, every fields can (eventually through various side-effects) be resolved from just `PersonId`.
+
+Notice that even if we had many more fields, the composition overhead remains constant.
+:::
+:::tip
 For instance, a `Person` has `name` which is pure, but it may also have `friends` which is a field derived from the `Person` structure.
 Most databases can query a person and their friends in one query instead of two via joins or something similar.
 We can solve this by instead of constructing a type for `Person`, we construct it for `PersonId` instead:
@@ -238,6 +296,8 @@ TODO leftjoin with ids (applicative) + get some on document
 Check out planner at ...
 
 ### Stream
+
+### Skip/Caching
 
 ## Steps
 A `Step` is the low-level algebra for a resolver, that describes a single step of evaluation for a query.
