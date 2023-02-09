@@ -571,6 +571,7 @@ object PreparedQuery {
         .map { case (_, v) => v }
 
     ys.parTraverse_ { zs =>
+      // TODO partition into what should be fullchecked and what should be structural
       val mergeFieldsF = {
         val (siHead, fiHead) = zs.head
         zs.tail.parTraverse_ { case (si, fi) => checkFieldsMerge[F, G](fiHead, siHead, fi, si) }
