@@ -295,9 +295,10 @@ TODO leftjoin with ids (applicative) + get some on document
 :::
 Check out planner at ...
 
-### Stream
-
 ### Skip/Caching
+Sometimes
+
+### Stream
 
 ## Steps
 A `Step` is the low-level algebra for a resolver, that describes a single step of evaluation for a query.
