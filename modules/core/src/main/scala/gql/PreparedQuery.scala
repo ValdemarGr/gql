@@ -81,6 +81,7 @@ object PreparedQuery {
     final case class Batch[F[_], K, V](id: Step.BatchKey[K, V], globalEdgeId: UniqueBatchInstance[K, V])
         extends AnyRef
         with PreparedStep[F, Set[K], Map[K, V]]
+    final case class Choice[F[_], A, B, C](fac: PreparedStep[F, A, C], fab: PreparedStep[F, B, C]) extends PreparedStep[F, Either[A, B], C]
   }
 
   final case class UniqueBatchInstance[K, V](id: Int) extends AnyVal
@@ -136,39 +137,44 @@ object PreparedQuery {
   }
   def compileStep[F[_]: Parallel, G[_], I, O](step: Step[G, I, O], cursor: UniqueEdgeCursor, meta: PreparedMeta)(implicit
       L: Local[F, Prep],
+      S: Stateful[F, Int],
       F: MonadError[F, NonEmptyChain[PositionalError]]
-  ): Used[F, State[Int, PreparedStep[G, I, O]]] = {
-    def pure[A](a: A): Used[F, State[Int, A]] =
-      Used[F].pure(State.pure(a))
+  ): Used[F, PreparedStep[G, I, O]] = {
+    def pure[A](a: A): Used[F, A] =
+      Used[F].pure(a)
 
-    def rec[I2, O2](step: Step[G, I2, O2], edge: String): Used[F, State[Int, PreparedStep[G, I2, O2]]] =
+    def rec[I2, O2](step: Step[G, I2, O2], edge: String): Used[F, PreparedStep[G, I2, O2]] =
       compileStep[F, G, I2, O2](step, cursor append edge, meta)
 
     step match {
       case Step.Alg.Lift(f)      => pure(PreparedStep.Lift(f))
       case Step.Alg.EmbedError() => pure(PreparedStep.EmbedError[G, O]())
       case alg: Step.Alg.Compose[?, i, a, o] =>
-        val left = rec[i, a](alg.left, "left")
-        val right = rec[a, o](alg.right, "right")
-        (left, right).parMapN((_, _).tupled).map(_.map { case (l, r) => PreparedStep.Compose[G, i, a, o](l, r) })
+        val left = rec[i, a](alg.left, "compose-left")
+        val right = rec[a, o](alg.right, "compose-right")
+        (left, right).parMapN((l, r) => PreparedStep.Compose[G, i, a, o](l, r))
       case _: Step.Alg.EmbedEffect[?, i] => pure(PreparedStep.EmbedEffect[G, i](cursor))
       case _: Step.Alg.EmbedStream[?, i] => pure(PreparedStep.EmbedStream[G, i](cursor))
       case alg: Step.Alg.Skip[g, i, ?] =>
-        rec[i, O](alg.compute, "skip").map(_.map(s => PreparedStep.Skip(s)))
+        rec[i, O](alg.compute, "skip").map(s => PreparedStep.Skip(s))
+      case alg: Step.Alg.Choice[?, a, b, c] =>
+        val left = rec[a, c](alg.fac, "choice-left")
+        val right = rec[b, c](alg.fab, "choice-right")
+        (left, right).parMapN((l, r) => PreparedStep.Choice[G, a, b, c](l, r))
       case Step.Alg.GetMeta() => pure(PreparedStep.GetMeta(meta))
       case alg: Step.Alg.Batch[?, k, v] =>
-        Used[F].pure(State { (i: Int) =>
-          (i + 1, PreparedStep.Batch[G, k, v](alg.id, UniqueBatchInstance(i)))
-        })
+        Used.liftF {
+          S.inspect[PreparedStep[G, I, O]] { i =>
+            PreparedStep.Batch[G, k, v](alg.id, UniqueBatchInstance(i))
+          } <* S.modify(_ + 1)
+        }
       case alg: Step.Alg.First[?, i, o, c] =>
-        rec[i, o](alg.step, "first").map(_.map(s => PreparedStep.First[G, i, o, c](s)))
+        rec[i, o](alg.step, "first").map(s => PreparedStep.First[G, i, o, c](s))
       case alg: Step.Alg.Argument[?, a] =>
-        val fa = Used
+        Used
           .liftF(decodeFieldArgs[F, G, a](alg.arg, meta.args, meta.variables))
           .map[PreparedStep[G, I, O]](o => PreparedStep.Lift[G, I, O](_ => o)) <*
           WriterT.tell(alg.arg.entries.map(_.name).toList.toSet)
-
-        fa.map(State.pure(_))
     }
   }
 
@@ -778,9 +784,10 @@ object PreparedQuery {
       discoveryState: SchemaShape.DiscoveryState[G]
   )(implicit
       L: Local[F, Prep],
+      S: Stateful[F, Int],
       F: MonadError[F, NonEmptyChain[PositionalError]],
       D: Defer[F]
-  ): F[State[Int, PreparedDataField[G, I]]] = D.defer {
+  ): F[PreparedDataField[G, I]] = D.defer {
     val tpe = field.output.value
     val selCaret = fi.caret
     val name = fi.name
@@ -794,7 +801,7 @@ object PreparedQuery {
       fi.args
     )
 
-    def compileCont[A](t: Out[G, A], cursor: UniqueEdgeCursor): Used[F, State[Int, Prepared[G, A]]] =
+    def compileCont[A](t: Out[G, A], cursor: UniqueEdgeCursor): Used[F, Prepared[G, A]] =
       (t, fi.selections.toNel) match {
         case (out: gql.ast.OutArr[g, a, c, b], _) =>
           val innerStep: Step[G, a, b] = out.resolver.underlying
@@ -802,29 +809,23 @@ object PreparedQuery {
           val compiledStep = compileStep[F, G, a, b](innerStep, nc, meta)
           val compiledCont = compileCont[b](out.of, nc)
           (compiledStep, compiledCont)
-            .parMapN((_, _).tupled)
-            .map(_.map { case (s, c) =>
-              PreparedList(PreparedCont(s, c), out.toSeq)
-            })
+            .parMapN((s, c) => PreparedList(PreparedCont(s, c), out.toSeq))
         case (out: gql.ast.OutOpt[g, a, b], _) =>
           val innerStep: Step[G, a, b] = out.resolver.underlying
           val nc = cursor append "option"
           val compiledStep = compileStep[F, G, a, b](innerStep, nc, meta)
           val compiledCont = compileCont[b](out.of, nc)
           (compiledStep, compiledCont)
-            .parMapN((_, _).tupled)
-            .map(_.map { case (s, c) =>
-              PreparedOption(PreparedCont(s, c))
-            })
+            .parMapN((s, c) => PreparedOption(PreparedCont(s, c)))
         case (s: Selectable[G, a], Some(ss)) =>
           Used.liftF {
             prepareSelectable[F, G, a](s, ss, variableMap, discoveryState)
-              .map(_.map(Selection(_)))
+              .map(Selection(_))
           }
         case (e: Enum[a], None) =>
-          Used[F].pure(State.pure(PreparedLeaf(e.name, x => Json.fromString(e.revm(x)))))
+          Used[F].pure(PreparedLeaf(e.name, x => Json.fromString(e.revm(x))))
         case (s: Scalar[a], None) =>
-          Used[F].pure(State.pure(PreparedLeaf(s.name, x => s.encoder(x).asJson)))
+          Used[F].pure(PreparedLeaf(s.name, x => s.encoder(x).asJson))
         case (o, Some(_)) =>
           Used.liftF(raise(s"Type `${friendlyName(o)}` cannot have selections.", Some(selCaret)))
         case (o, None) =>
@@ -834,11 +835,10 @@ object PreparedQuery {
     val usedF = (
       compileStep[F, G, I, T](step, rootUniqueName, meta),
       compileCont(tpe, rootUniqueName)
-    ).parMapN((_, _).tupled)
-      .map(_.map { case (s, c) =>
-        val pc = PreparedCont(s, c)
-        PreparedDataField(name, fi.alias, pc)
-      })
+    ).parMapN { (s, c) =>
+      val pc = PreparedCont(s, c)
+      PreparedDataField(name, fi.alias, pc)
+    }
 
     usedF.run
       .flatMap { case (used, a) =>
@@ -858,21 +858,20 @@ object PreparedQuery {
       G: Applicative[G],
       L: Local[F, Prep],
       F: MonadError[F, NonEmptyChain[PositionalError]],
+      S: Stateful[F, Int],
       D: Defer[F]
-  ): F[State[Int, NonEmptyList[PreparedSpecification[G, A, ?]]]] = {
+  ): F[NonEmptyList[PreparedSpecification[G, A, ?]]] = {
     mergeImplementations[F, G, A](s, sis, discoveryState).flatMap { impls =>
-      impls
-        .parTraverse[F, State[Int, PreparedSpecification[G, A, ?]]] { case impl: MergedImplementation[G, A, b] =>
-          val fa: F[NonEmptyList[State[Int, PreparedDataField[G, b]]]] = impl.selections.parTraverse { sel =>
-            sel.field match {
-              case field: Field[G, b2, t] =>
-                prepareField[F, G, b, t](sel.info, field, impl.leaf.name, variableMap, discoveryState)
-            }
+      impls.parTraverse[F, PreparedSpecification[G, A, ?]] { case impl: MergedImplementation[G, A, b] =>
+        val fa = impl.selections.parTraverse { sel =>
+          sel.field match {
+            case field: Field[G, b2, t] =>
+              prepareField[F, G, b, t](sel.info, field, impl.leaf.name, variableMap, discoveryState)
           }
-
-          fa.map(_.sequence.map(xs => PreparedSpecification[G, A, b](s.name, impl.specify, xs)))
         }
-        .map(_.sequence)
+
+        fa.map(xs => PreparedSpecification[G, A, b](s.name, impl.specify, xs))
+      }
     }
   }
 
@@ -885,13 +884,12 @@ object PreparedQuery {
   )(implicit
       G: Applicative[G],
       L: Local[F, Prep],
+      S: Stateful[F, Int],
       F: MonadError[F, NonEmptyChain[PositionalError]],
       D: Defer[F]
   ): F[NonEmptyList[PreparedSpecification[G, A, ?]]] = {
     collectSelectionInfo[F, G](s, ss, variableMap, fragments, discoveryState).flatMap { root =>
-      checkSelectionsMerge[F, G](root) >>
-        prepareSelectable[F, G, A](s, root, variableMap, discoveryState)
-          .map(_.runA(0).value)
+      checkSelectionsMerge[F, G](root) >> prepareSelectable[F, G, A](s, root, variableMap, discoveryState)
     }
   }
 
@@ -1201,6 +1199,7 @@ object PreparedQuery {
   )(implicit
       L: Local[F, Prep],
       F: MonadError[F, NonEmptyChain[PositionalError]],
+      S: Stateful[F, Int],
       D: Defer[F]
   ): F[PrepResult[G, Q, M, S]] = {
     val ot = operationType(op)
@@ -1353,7 +1352,17 @@ object PreparedQuery {
     }
   }
 
-  type H[A] = Kleisli[EitherT[Eval, NonEmptyChain[PositionalError], *], Prep, A]
+  // We can derive stateful and local from monad partial order for the stack :)
+  // Note that EitherT must be the wrap State since EitherT provides a parallel evidence even though its effect is not parallel; wohoo
+  // Note also that State (Stateful) can model what Kleisli (Local) does, but it is nicer to use Local for non-stateful operations
+  // Using State for the Local algbra can easily cause headaches, such as when accidentally resetting the state or similar
+  // The Prepare program needs to accumulate ids, while resetting paths.
+  type H[A] = EitherT[Kleisli[State[Int, *], Prep, *], NonEmptyChain[PositionalError], A]
+
+  val runK = new (H ~> EitherNec[PositionalError, *]) {
+    override def apply[A](fa: H[A]): EitherNec[PositionalError, A] =
+      fa.value.run(Prep.empty).runA(0).value
+  }
 
   def prepare[F[_]: Applicative, Q, M, S](
       executabels: NonEmptyList[P.ExecutableDefinition],
@@ -1369,10 +1378,9 @@ object PreparedQuery {
     getOperationDefinition[Either[(String, List[Caret]), *]](ops, operationName) match {
       case Left((e, carets)) => Left(NonEmptyChain.one(PositionalError(PrepCursor.empty, carets, e)))
       case Right(op) =>
-        prepareParts[H, F, Q, M, S](op, frags, schema, variableMap)
-          .run(Prep.empty)
-          .value
-          .value
+        runK {
+          prepareParts[H, F, Q, M, S](op, frags, schema, variableMap)
+        }
     }
   }
 }

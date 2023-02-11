@@ -36,6 +36,8 @@ object Step {
 
     final case class Skip[F[_], I, O](compute: Step[F, I, O]) extends Step[F, Either[I, O], O]
 
+    final case class Choice[F[_], A, B, C](fac: Step[F, A, C], fab: Step[F, B, C]) extends Step[F, Either[A, B], C]
+
     final case class GetMeta[I]() extends Step[Nothing, I, Meta]
 
     final case class First[F[_], A, B, C](step: Step[F, A, B]) extends Step[F, (A, C), (B, C)]

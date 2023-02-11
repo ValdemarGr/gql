@@ -296,7 +296,11 @@ TODO leftjoin with ids (applicative) + get some on document
 Check out planner at ...
 
 ### Skip/Caching
-Sometimes
+Sometimes a resolver requires the ability to "skip" execution when various conditions hold.
+A resolver `Resolver[F, I, O]` can be 
+Caching is a classic example of where skipping expensive effects is needed.
+
+
 
 ### Stream
 
