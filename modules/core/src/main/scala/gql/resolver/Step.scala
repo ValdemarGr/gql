@@ -34,7 +34,7 @@ object Step {
 
     final case class Compose[F[_], I, A, O](left: Step[F, I, A], right: Step[F, A, O]) extends Step[F, I, O]
 
-    final case class Choice[F[_], A, B, C](fac: Step[F, A, C], fab: Step[F, B, C]) extends Step[F, Either[A, B], C]
+    final case class Choose[F[_], A, B, C, D](fac: Step[F, A, C], fab: Step[F, B, D]) extends Step[F, Either[A, B], Either[C, D]]
 
     final case class GetMeta[I]() extends Step[Nothing, I, Meta]
 
@@ -61,8 +61,8 @@ object Step {
   def compose[F[_], I, A, O](left: Step[F, I, A], right: Step[F, A, O]): Step[F, I, O] =
     Alg.Compose(left, right)
 
-  def choice[F[_], A, B, C](fac: Step[F, A, C], fab: Step[F, B, C]): Step[F, Either[A, B], C] =
-    Alg.Choice(fac, fab)
+  def choose[F[_], A, B, C, D](fac: Step[F, A, C], fab: Step[F, B, D]): Step[F, Either[A, B], Either[C, D]] =
+    Alg.Choose(fac, fab)
 
   def getMeta[F[_]]: Step[F, Any, Meta] =
     Alg.GetMeta()
@@ -80,7 +80,10 @@ object Step {
     }
 
   import cats.arrow._
-  implicit def arrowForStep[F[_]]: Arrow[Step[F, *, *]] = new Arrow[Step[F, *, *]] {
+  implicit def arrowChoiceForStep[F[_]]: ArrowChoice[Step[F, *, *]] = new ArrowChoice[Step[F, *, *]] {
+    override def choose[A, B, C, D](f: Step[F,A,C])(g: Step[F,B,D]): Step[F,Either[A,B],Either[C,D]] = 
+      Step.choose(f, g)
+
     override def compose[A, B, C](f: Step[F, B, C], g: Step[F, A, B]): Step[F, A, C] = Step.compose(g, f)
 
     override def first[A, B, C](fa: Step[F, A, B]): Step[F, (A, C), (B, C)] = Step.first(fa)

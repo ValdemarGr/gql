@@ -100,8 +100,11 @@ object Resolver extends ResolverInstances {
   }
 
   implicit class InvariantOps[F[_], I, O](private val self: Resolver[F, I, O]) extends AnyVal {
+    def choose[I2, O2](that: Resolver[F, I2, O2]): Resolver[F, Either[I, I2], Either[O, O2]] =
+      new Resolver(Step.choose(self.underlying, that.underlying))
+
     def choice[I2](that: Resolver[F, I2, O]): Resolver[F, Either[I, I2], O] =
-      new Resolver(Step.choice(self.underlying, that.underlying))
+      choose[I2, O](that).map(_.merge)
 
     def skippable: Resolver[F, Either[I, O], O] =
       this.choice(Resolver.id[F, O])
@@ -139,7 +142,10 @@ object Resolver extends ResolverInstances {
 
 trait ResolverInstances {
   import cats.arrow._
-  implicit def arrowForResolver[F[_]]: Arrow[Resolver[F, *, *]] = new Arrow[Resolver[F, *, *]] {
+  implicit def arrowChoiceForResolver[F[_]]: ArrowChoice[Resolver[F, *, *]] = new ArrowChoice[Resolver[F, *, *]] {
+    override def choose[A, B, C, D](f: Resolver[F,A,C])(g: Resolver[F,B,D]): Resolver[F,Either[A,B],Either[C,D]] = 
+      f.choose(g)
+
     override def compose[A, B, C](f: Resolver[F, B, C], g: Resolver[F, A, B]): Resolver[F, A, C] =
       f.compose(g)
 

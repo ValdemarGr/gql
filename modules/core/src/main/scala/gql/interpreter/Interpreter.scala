@@ -449,7 +449,7 @@ class InterpreterImpl[F[_]](
             }
           runF.map(Chain.fromOption(_))
         } >>= runNext
-      case alg: Choice[F @unchecked, a, b, c] =>
+      case alg: Choose[F @unchecked, a, b, c, d] =>
         val (lefts, rights) = (inputs: Chain[IndexedData[Either[a, b]]]).partitionEither { in =>
           in.node.value match {
             case Left(a)  => Left(in as a)
@@ -467,9 +467,12 @@ class InterpreterImpl[F[_]](
                   Some(xs ++ other)
                 }
             }
+          
+          val leftAlg = Compose(alg.fac, Lift[F, c, C](Left(_)))
+          val rightAlg = Compose(alg.fbc, Lift[F, d, C](Right(_)))
 
-          val leftF = runStep(lefts, alg.fac, StepCont.Join[F, C, O](complete _, cont))
-          val rightF = runStep(rights, alg.fbc, StepCont.Join[F, C, O](complete _, cont))
+          val leftF = runStep(lefts, leftAlg, StepCont.Join[F, C, O](complete _, cont))
+          val rightF = runStep(rights, rightAlg, StepCont.Join[F, C, O](complete _, cont))
 
           (leftF, rightF).parMapN(_ ++ _)
         }

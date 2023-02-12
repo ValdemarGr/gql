@@ -80,7 +80,10 @@ object PreparedQuery {
     final case class Batch[F[_], K, V](id: Step.BatchKey[K, V], globalEdgeId: UniqueBatchInstance[K, V])
         extends AnyRef
         with PreparedStep[F, Set[K], Map[K, V]]
-    final case class Choice[F[_], A, B, C](fac: PreparedStep[F, A, C], fbc: PreparedStep[F, B, C]) extends PreparedStep[F, Either[A, B], C]
+    final case class Choose[F[_], A, B, C, D](
+      fac: PreparedStep[F, A, C], 
+      fbc: PreparedStep[F, B, D]
+      ) extends PreparedStep[F, Either[A, B], Either[C, D]]
   }
 
   final case class UniqueBatchInstance[K, V](id: Int) extends AnyVal
@@ -154,10 +157,10 @@ object PreparedQuery {
         (left, right).parMapN((l, r) => PreparedStep.Compose[G, i, a, o](l, r))
       case _: Step.Alg.EmbedEffect[?, i] => pure(PreparedStep.EmbedEffect[G, i](cursor))
       case _: Step.Alg.EmbedStream[?, i] => pure(PreparedStep.EmbedStream[G, i](cursor))
-      case alg: Step.Alg.Choice[?, a, b, c] =>
+      case alg: Step.Alg.Choose[?, a, b, c, d] =>
         val left = rec[a, c](alg.fac, "choice-left")
-        val right = rec[b, c](alg.fab, "choice-right")
-        (left, right).parMapN((l, r) => PreparedStep.Choice[G, a, b, c](l, r))
+        val right = rec[b, d](alg.fab, "choice-right")
+        (left, right).parMapN((l, r) => PreparedStep.Choose[G, a, b, c, d](l, r))
       case Step.Alg.GetMeta() => pure(PreparedStep.GetMeta(meta))
       case alg: Step.Alg.Batch[?, k, v] =>
         Used.liftF {
@@ -179,7 +182,7 @@ object PreparedQuery {
     step match {
       case Step.Alg.Argument(a)   => Chain.one(a)
       case Step.Alg.First(s)      => collectFields(s)
-      case Step.Alg.Choice(l, r)    => collectFields(l) ++ collectFields(r)
+      case Step.Alg.Choose(l, r)    => collectFields(l) ++ collectFields(r)
       case Step.Alg.Compose(l, r) => collectFields(l) ++ collectFields(r)
       case _                      => Chain.empty
     }

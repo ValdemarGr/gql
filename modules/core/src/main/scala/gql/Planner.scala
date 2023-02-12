@@ -103,7 +103,7 @@ object Planner {
     step match {
       case Lift(_) | EmbedError() | GetMeta(_) => F.unit
       case Compose(l, r)                       => costForStep[F, G](l) *> costForStep[F, G](r)
-      case alg: Choice[G, ?, ?, ?] => goParallel(alg.fac, alg.fbc)
+      case alg: Choose[G, ?, ?, ?, ?] => goParallel(alg.fac, alg.fbc)
       case alg: First[G, ?, ?, ?] => costForStep[F, G](alg.step)
       case Batch(_, _) | EmbedEffect(_) | EmbedStream(_) =>
         val name = step match {
