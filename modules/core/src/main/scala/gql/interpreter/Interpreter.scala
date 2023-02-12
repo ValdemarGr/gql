@@ -107,20 +107,19 @@ object Interpreter {
       background: Supervisor[F]
   )(implicit planner: Planner[F]): F[(Chain[EvalFailure], NonEmptyList[EvalNode[Json]], Map[Unique.Token, StreamMetadata[F, ?, ?]])] =
     for {
-      costTree <- metas.toList
-        .flatTraverse { ri =>
-          Planner.runCostAnalysisFor[F, List[Planner.Node]] { implicit stats2 =>
-            def contCost(step: StepCont[F, ?, ?]): Planner.H[F, List[Planner.Node]] =
-              step match {
-                case d: StepCont.Done[F, i]           => Planner.costForPrepared[Planner.H[F, *], F](d.prep)
-                case c: StepCont.Continue[F, ?, ?, ?] => Planner.costForStep[Planner.H[F, *], F](c.step, contCost(c.next))
-                case StepCont.AppendClosure(_, next)  => contCost(next)
-                case StepCont.TupleWith(_, next)      => contCost(next)
-              }
-            contCost(ri.cps)
-          }
+      costTree <- Planner.runCostAnalysis[F, Unit] { implicit stats2 =>
+        metas.toList.traverse_ { ri =>
+          def contCost(step: StepCont[F, ?, ?]): Planner.H[F, Unit] =
+            step match {
+              case d: StepCont.Done[F, i] => Planner.costForPrepared[Planner.H[F, *], F](d.prep)
+              case c: StepCont.Continue[F, ?, ?, ?] =>
+                Planner.costForStep[Planner.H[F, *], F](c.step) *> contCost(c.next)
+              case StepCont.Join(_, next)   => contCost(next)
+              case StepCont.TupleWith(_, next)     => contCost(next)
+            }
+          contCost(ri.cps)
         }
-        .map(Planner.NodeTree(_))
+      }
       planned <- planner.plan(costTree)
       accumulator <- BatchAccumulator[F](schemaState, planned)
       res <- metas.parTraverse(evalOne(_, background, accumulator))
@@ -315,8 +314,8 @@ object StepCont {
       step: PreparedStep[F, I, C],
       next: StepCont[F, C, O]
   ) extends StepCont[F, I, O]
-  final case class AppendClosure[F[_], I, O](
-      xs: Chain[IndexedData[I]],
+  final case class Join[F[_], I, O](
+      submit: Chain[IndexedData[I]] => F[Option[Chain[IndexedData[I]]]],
       next: StepCont[F, I, O]
   ) extends StepCont[F, I, O]
   final case class TupleWith[F[_], I, C, O](
@@ -326,15 +325,15 @@ object StepCont {
 
   trait Visitor[F[_]] {
     def visitContinue[I, C, O](step: Continue[F, I, C, O]): StepCont[F, I, O] = step
-    def visitAppendClosure[I, O](xs: AppendClosure[F, I, O]): StepCont[F, I, O] = xs
     def visitTupleWith[I, C, O](m: TupleWith[F, I, C, O]): StepCont[F, I, O] = m
+    def visitJoin[I, O](p: Join[F, I, O]): StepCont[F, I, O] = p
   }
 
   def visit[F[_], I, O](cont: StepCont[F, I, O])(visitor: Visitor[F]): StepCont[F, I, O] =
     cont match {
       case x: Continue[F, i, c, o]   => visitor.visitContinue(x.copy(next = visit(x.next)(visitor)))
-      case x: AppendClosure[F, i, o] => visitor.visitAppendClosure(x.copy(next = visit(x.next)(visitor)))
       case x: TupleWith[F, i, c, o]  => visitor.visitTupleWith(x.copy(next = visit(x.next)(visitor)))
+      case x: Join[F, ?, ?]          => visitor.visitJoin(x.copy(next = visit(x.next)(visitor)))
       case _: Done[?, ?]             => cont
     }
 }
@@ -357,9 +356,13 @@ class InterpreterImpl[F[_]](
   ): W[Chain[(Int, Json)]] =
     cont match {
       case c: StepCont.Continue[F, ?, c, ?] => runStep[I, c, O](cs, c.step, c.next)
-      case StepCont.AppendClosure(xs, next) => runEdgeCont(cs ++ xs, next)
       case t: StepCont.TupleWith[F, i, c, ?] =>
         runEdgeCont[(i, c), O](cs.map(id => id.map(i => (i, t.m(id.index)))), t.next)
+      case StepCont.Join(c, next) =>
+        lift(c(cs)).flatMap {
+          case None     => W.pure(Chain.empty)
+          case Some(cs) => runEdgeCont(cs, next)
+        }
       case StepCont.Done(prep) =>
         startNext(prep, cs.map(_.node))
           .map(_.zipWith(cs) { case (j, IndexedData(i, _)) => (i, j) })
@@ -423,8 +426,8 @@ class InterpreterImpl[F[_]](
           // We modify the cont for the next stream emission
           // We need to get rid of the skips since they are a part of THIS evaluation, not the next
           val ridded = StepCont.visit(cont)(new StepCont.Visitor[F] {
-            override def visitAppendClosure[I, O](cont: StepCont.AppendClosure[F, I, O]): StepCont[F, I, O] =
-              cont.copy(xs = Chain.empty)
+            override def visitJoin[I, O](cont: StepCont.Join[F, I, O]): StepCont[F, I, O] =
+              cont.next
           })
 
           val runF =
@@ -446,16 +449,30 @@ class InterpreterImpl[F[_]](
             }
           runF.map(Chain.fromOption(_))
         } >>= runNext
-      case alg: Skip[F @unchecked, i, ?] => // scala 2 unused type variable bug?
-        val (force0, skip) = (inputs: Chain[IndexedData[Either[i, C]]]).partitionEither { in =>
+      case alg: Choice[F @unchecked, a, b, c] =>
+        val (lefts, rights) = (inputs: Chain[IndexedData[Either[a, b]]]).partitionEither { in =>
           in.node.value match {
-            case Left(i2) => Left(in as i2)
-            case Right(c) => Right(in as c)
+            case Left(a)  => Left(in as a)
+            case Right(b) => Right(in as b)
           }
         }
-        val force: Chain[IndexedData[i]] = force0
-        val contR = StepCont.AppendClosure[F, C, O](skip, cont)
-        runStep[i, C, O](force, alg.compute, contR)
+
+        lift(F.deferred[Chain[IndexedData[C]]]).flatMap { d =>
+          // For any side, either it completes ot it lets the other side complete
+          def complete(xs: Chain[IndexedData[C]]): F[Option[Chain[IndexedData[C]]]] =
+            d.complete(xs).flatMap {
+              case true => F.pure(None)
+              case false =>
+                d.get.map { other =>
+                  Some(xs ++ other)
+                }
+            }
+
+          val leftF = runStep(lefts, alg.fac, StepCont.Join[F, C, O](complete _, cont))
+          val rightF = runStep(rights, alg.fbc, StepCont.Join[F, C, O](complete _, cont))
+
+          (leftF, rightF).parMapN(_ ++ _)
+        }
       case GetMeta(pm) =>
         runNext(inputs.map(in => in as Meta(in.node.cursor, pm.alias, pm.args, pm.variables)))
       case alg: First[F @unchecked, i2, o2, c2] =>

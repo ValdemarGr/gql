@@ -34,8 +34,6 @@ object Step {
 
     final case class Compose[F[_], I, A, O](left: Step[F, I, A], right: Step[F, A, O]) extends Step[F, I, O]
 
-    final case class Skip[F[_], I, O](compute: Step[F, I, O]) extends Step[F, Either[I, O], O]
-
     final case class Choice[F[_], A, B, C](fac: Step[F, A, C], fab: Step[F, B, C]) extends Step[F, Either[A, B], C]
 
     final case class GetMeta[I]() extends Step[Nothing, I, Meta]
@@ -63,8 +61,8 @@ object Step {
   def compose[F[_], I, A, O](left: Step[F, I, A], right: Step[F, A, O]): Step[F, I, O] =
     Alg.Compose(left, right)
 
-  def skip[F[_], I, O](compute: Step[F, I, O]): Step[F, Either[I, O], O] =
-    Alg.Skip(compute)
+  def choice[F[_], A, B, C](fac: Step[F, A, C], fab: Step[F, B, C]): Step[F, Either[A, B], C] =
+    Alg.Choice(fac, fab)
 
   def getMeta[F[_]]: Step[F, Any, Meta] =
     Alg.GetMeta()

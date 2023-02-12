@@ -75,13 +75,12 @@ object PreparedQuery {
     final case class Compose[F[_], I, A, O](left: PreparedStep[F, I, A], right: PreparedStep[F, A, O])
         extends AnyRef
         with PreparedStep[F, I, O]
-    final case class Skip[F[_], I, O](compute: PreparedStep[F, I, O]) extends AnyRef with PreparedStep[F, Either[I, O], O]
     final case class GetMeta[F[_], I](meta: PreparedMeta) extends AnyRef with PreparedStep[F, I, Meta]
     final case class First[F[_], I, O, C](step: PreparedStep[F, I, O]) extends AnyRef with PreparedStep[F, (I, C), (O, C)]
     final case class Batch[F[_], K, V](id: Step.BatchKey[K, V], globalEdgeId: UniqueBatchInstance[K, V])
         extends AnyRef
         with PreparedStep[F, Set[K], Map[K, V]]
-    final case class Choice[F[_], A, B, C](fac: PreparedStep[F, A, C], fab: PreparedStep[F, B, C]) extends PreparedStep[F, Either[A, B], C]
+    final case class Choice[F[_], A, B, C](fac: PreparedStep[F, A, C], fbc: PreparedStep[F, B, C]) extends PreparedStep[F, Either[A, B], C]
   }
 
   final case class UniqueBatchInstance[K, V](id: Int) extends AnyVal
@@ -155,8 +154,6 @@ object PreparedQuery {
         (left, right).parMapN((l, r) => PreparedStep.Compose[G, i, a, o](l, r))
       case _: Step.Alg.EmbedEffect[?, i] => pure(PreparedStep.EmbedEffect[G, i](cursor))
       case _: Step.Alg.EmbedStream[?, i] => pure(PreparedStep.EmbedStream[G, i](cursor))
-      case alg: Step.Alg.Skip[g, i, ?] =>
-        rec[i, O](alg.compute, "skip").map(s => PreparedStep.Skip(s))
       case alg: Step.Alg.Choice[?, a, b, c] =>
         val left = rec[a, c](alg.fac, "choice-left")
         val right = rec[b, c](alg.fab, "choice-right")
@@ -182,7 +179,7 @@ object PreparedQuery {
     step match {
       case Step.Alg.Argument(a)   => Chain.one(a)
       case Step.Alg.First(s)      => collectFields(s)
-      case Step.Alg.Skip(s)       => collectFields(s)
+      case Step.Alg.Choice(l, r)    => collectFields(l) ++ collectFields(r)
       case Step.Alg.Compose(l, r) => collectFields(l) ++ collectFields(r)
       case _                      => Chain.empty
     }

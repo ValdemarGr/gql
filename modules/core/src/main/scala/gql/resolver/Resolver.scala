@@ -52,9 +52,6 @@ final class Resolver[+F[_], -I, +O](private[gql] val underlying: Step[F, I, O]) 
 
   def stream[F2[x] >: F[x], O2](f: O => fs2.Stream[F2, O2]): Resolver[F2, I, O2] =
     this andThen Resolver.stream(f)
-
-  def skippable[O1 >: O]: Resolver[F, Either[I, O1], O1] =
-    new Resolver(Step.skip(this.underlying))
 }
 
 object Resolver extends ResolverInstances {
@@ -103,6 +100,12 @@ object Resolver extends ResolverInstances {
   }
 
   implicit class InvariantOps[F[_], I, O](private val self: Resolver[F, I, O]) extends AnyVal {
+    def choice[I2](that: Resolver[F, I2, O]): Resolver[F, Either[I, I2], O] =
+      new Resolver(Step.choice(self.underlying, that.underlying))
+
+    def skippable: Resolver[F, Either[I, O], O] =
+      this.choice(Resolver.id[F, O])
+
     def skipThis[I2](verify: Resolver[F, I2, Either[I, O]]): Resolver[F, I2, O] =
       verify andThen self.skippable
 
