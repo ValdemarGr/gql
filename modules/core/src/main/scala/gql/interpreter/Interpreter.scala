@@ -458,7 +458,7 @@ class InterpreterImpl[F[_]](
         }
 
         lift(F.deferred[Chain[IndexedData[C]]]).flatMap { d =>
-          // For any side, either it completes ot it lets the other side complete
+          // For any side, either it completes or it lets the other side complete
           def complete(xs: Chain[IndexedData[C]]): F[Option[Chain[IndexedData[C]]]] =
             d.complete(xs).flatMap {
               case true => F.pure(None)
