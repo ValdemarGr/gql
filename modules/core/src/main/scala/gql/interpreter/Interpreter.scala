@@ -137,8 +137,6 @@ object Interpreter {
     StreamSupervisor[F](openTails).flatMap { implicit streamSup =>
       fs2.Stream.resource(Supervisor[F]).flatMap { sup =>
         val changeStream = streamSup.changes
-          .map(_.toList.reverse.distinctBy { case (tok, _, _) => tok }.toNel)
-          .unNone
 
         val inital = RunInput.root(rootInput, PreparedQuery.Selection(rootSel))
 

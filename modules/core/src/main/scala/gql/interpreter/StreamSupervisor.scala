@@ -168,8 +168,11 @@ object StreamSupervisor {
               override def changes: Stream[F, NonEmptyList[(StreamToken, ResourceToken, Either[Throwable, ?])]] =
                 Stream
                   .fromQueueUnterminatedChunk(q)
-                  .chunks
+                  .chunkN(128, allowFewer = true)
                   .map(_.toNel)
+                  .unNone
+                  // Only respect newest element for a given token pair
+                  .map(_.toList.reverse.distinctBy { case (tok, _, _) => tok }.toNel)
                   .unNone
             }
           }

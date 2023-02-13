@@ -129,6 +129,9 @@ lazy val docs = project
     mdocVariables ++= Map(
       "VERSION" -> tlLatestVersion.value.getOrElse(version.value)
     ),
+    libraryDependencies ++= Seq(
+      "com.47deg" %% "fetch" % "3.1.0"
+    ),
     tlFatalWarnings := false
   )
   .dependsOn(core % "compile->compile;compile->test")

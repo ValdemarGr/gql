@@ -83,28 +83,28 @@ object Planner {
       S: Stateful[F, TraversalState]
   ): F[Unit] = {
     def goParallel(l: PreparedStep[G, ?, ?], r: PreparedStep[G, ?, ?]): F[Unit] = {
-        // A parallel op is disjunctive so the parent must be the same for both branches
-        // This creates a diamond shape in the graph
-        // Parent -> Left -> Child
-        // Parent -> Right -> Child
-        S.inspect(_.parents).flatMap{ ps =>
-          val setParents = S.modify(s => s.copy(parents = ps))
-          val left = setParents *> costForStep(l) *> S.inspect(_.parents)
-          val right = setParents *> costForStep(r) *> S.inspect(_.parents)
+      // A parallel op is disjunctive so the parent must be the same for both branches
+      // This creates a diamond shape in the graph
+      // Parent -> Left -> Child
+      // Parent -> Right -> Child
+      S.inspect(_.parents).flatMap { ps =>
+        val setParents = S.modify(s => s.copy(parents = ps))
+        val left = setParents *> costForStep(l) *> S.inspect(_.parents)
+        val right = setParents *> costForStep(r) *> S.inspect(_.parents)
 
-          (left, right).flatMapN{ case (lp, rp) =>
-            val parents = lp ++ rp
-            S.modify(s => s.copy(parents = parents))
-          }
+        (left, right).flatMapN { case (lp, rp) =>
+          val parents = lp ++ rp
+          S.modify(s => s.copy(parents = parents))
         }
+      }
     }
 
     import PreparedStep._
     step match {
       case Lift(_) | EmbedError() | GetMeta(_) => F.unit
       case Compose(l, r)                       => costForStep[F, G](l) *> costForStep[F, G](r)
-      case alg: Choose[G, ?, ?, ?, ?] => goParallel(alg.fac, alg.fbc)
-      case alg: First[G, ?, ?, ?] => costForStep[F, G](alg.step)
+      case alg: Choose[G, ?, ?, ?, ?]          => goParallel(alg.fac, alg.fbc)
+      case alg: First[G, ?, ?, ?]              => costForStep[F, G](alg.step)
       case Batch(_, _) | EmbedEffect(_) | EmbedStream(_) =>
         val name = step match {
           case Batch(id, _)        => s"batch_$id"
@@ -289,13 +289,10 @@ object Planner {
         .groupByNec { case (_, node) => endTimesV(node.id) }
         .toList
         .flatMap { case (_, endGroup) =>
-          endGroup
-            .groupBy { case (batcherKey, _) => batcherKey.batcherId.id }
-            .toSortedMap
-            .toList
-            .map { case (batcherKey, batch) =>
-              Step.BatchKey(batcherKey) -> batch.map { case (br, _) => br }
-            }
+          endGroup.toList
+            .groupBy { case (batcherKey, _) => batcherKey.batcherId }
+            .map { case (batcherKey, batch) => batcherKey -> NonEmptyChain.fromSeq(batch.map { case (br, _) => br }) }
+            .collect { case (k, Some(vs)) => k -> vs }
         }
     }
 
