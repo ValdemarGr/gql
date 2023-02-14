@@ -49,7 +49,8 @@ object StreamSupervisor {
           stream
             .evalMap { a =>
               F.deferred[Unit].flatMap { d =>
-                streamScope.leaseHere2(Resource.onFinalize(d.complete(()).void))
+                streamScope
+                  .leaseHere2(Resource.onFinalize(d.complete(()).void))
               }
             }
         }
