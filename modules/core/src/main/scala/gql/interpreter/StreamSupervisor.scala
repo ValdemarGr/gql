@@ -18,6 +18,7 @@ package gql.interpreter
 import cats.data._
 import cats.effect._
 import cats.implicits._
+import cats.effect.implicits._
 import cats.effect.std._
 import fs2.{Chunk, Stream}
 
@@ -33,15 +34,28 @@ trait StreamSupervisor[F[_]] {
 
 object StreamSupervisor {
   final case class State2[F[_]](
-    id: BigInt
+      id: BigInt
   )
-  
+
   final case class State[F[_]](
       unsubscribe: F[Unit],
       allocatedResources: Vector[(ResourceToken, F[Unit])]
   )
 
   def apply[F[_]](openTail: Boolean)(implicit F: Async[F]): Stream[F, StreamSupervisor[F]] = {
+    def addNewScope[A](parent: Scope[F], stream: Stream[F, A]) = {
+      parent.openChild2.flatMap { streamScope =>
+        streamScope.leaseHere2 {
+          stream
+            .evalMap { a =>
+              F.deferred[Unit].flatMap { d =>
+                streamScope.leaseHere2(Resource.onFinalize(d.complete(()).void))
+              }
+            }
+        }
+      }
+    }
+
     def removeStates(xs: List[State[F]]) = {
       xs.traverse_(_.unsubscribe) >>
         xs.traverse_(_.allocatedResources.toList.traverse_ { case (_, fa) => fa })

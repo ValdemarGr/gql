@@ -114,8 +114,8 @@ object Interpreter {
               case d: StepCont.Done[F, i] => Planner.costForPrepared[Planner.H[F, *], F](d.prep)
               case c: StepCont.Continue[F, ?, ?, ?] =>
                 Planner.costForStep[Planner.H[F, *], F](c.step) *> contCost(c.next)
-              case StepCont.Join(_, next)   => contCost(next)
-              case StepCont.TupleWith(_, next)     => contCost(next)
+              case StepCont.Join(_, next)      => contCost(next)
+              case StepCont.TupleWith(_, next) => contCost(next)
             }
           contCost(ri.cps)
         }
@@ -329,10 +329,10 @@ object StepCont {
 
   def visit[F[_], I, O](cont: StepCont[F, I, O])(visitor: Visitor[F]): StepCont[F, I, O] =
     cont match {
-      case x: Continue[F, i, c, o]   => visitor.visitContinue(x.copy(next = visit(x.next)(visitor)))
-      case x: TupleWith[F, i, c, o]  => visitor.visitTupleWith(x.copy(next = visit(x.next)(visitor)))
-      case x: Join[F, ?, ?]          => visitor.visitJoin(x.copy(next = visit(x.next)(visitor)))
-      case _: Done[?, ?]             => cont
+      case x: Continue[F, i, c, o]  => visitor.visitContinue(x.copy(next = visit(x.next)(visitor)))
+      case x: TupleWith[F, i, c, o] => visitor.visitTupleWith(x.copy(next = visit(x.next)(visitor)))
+      case x: Join[F, ?, ?]         => visitor.visitJoin(x.copy(next = visit(x.next)(visitor)))
+      case _: Done[?, ?]            => cont
     }
 }
 
@@ -465,7 +465,7 @@ class InterpreterImpl[F[_]](
                   Some(xs ++ other)
                 }
             }
-          
+
           val leftAlg = Compose(alg.fac, Lift[F, c, C](Left(_)))
           val rightAlg = Compose(alg.fbc, Lift[F, d, C](Right(_)))
 
