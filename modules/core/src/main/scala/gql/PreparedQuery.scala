@@ -70,7 +70,7 @@ object PreparedQuery {
   object PreparedStep {
     final case class Lift[F[_], I, O](f: I => O) extends AnyRef with PreparedStep[F, I, O]
     final case class EmbedEffect[F[_], I](stableUniqueEdgeName: UniqueEdgeCursor) extends AnyRef with PreparedStep[F, F[I], I]
-    final case class EmbedStream[F[_], I](stableUniqueEdgeName: UniqueEdgeCursor) extends AnyRef with PreparedStep[F, fs2.Stream[F, I], I]
+    final case class EmbedStream[F[_], I](signal: Boolean, stableUniqueEdgeName: UniqueEdgeCursor) extends AnyRef with PreparedStep[F, fs2.Stream[F, I], I]
     final case class EmbedError[F[_], I]() extends AnyRef with PreparedStep[F, Ior[String, I], I]
     final case class Compose[F[_], I, A, O](left: PreparedStep[F, I, A], right: PreparedStep[F, A, O])
         extends AnyRef
@@ -156,7 +156,7 @@ object PreparedQuery {
         val right = rec[a, o](alg.right, "compose-right")
         (left, right).parMapN((l, r) => PreparedStep.Compose[G, i, a, o](l, r))
       case _: Step.Alg.EmbedEffect[?, i] => pure(PreparedStep.EmbedEffect[G, i](cursor))
-      case _: Step.Alg.EmbedStream[?, i] => pure(PreparedStep.EmbedStream[G, i](cursor))
+      case alg: Step.Alg.EmbedStream[?, i] => pure(PreparedStep.EmbedStream[G, i](alg.signal, cursor))
       case alg: Step.Alg.Choose[?, a, b, c, d] =>
         val left = rec[a, c](alg.fac, "choice-left")
         val right = rec[b, d](alg.fab, "choice-right")

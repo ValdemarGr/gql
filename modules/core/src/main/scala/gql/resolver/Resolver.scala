@@ -50,7 +50,7 @@ final class Resolver[+F[_], -I, +O](private[gql] val underlying: Step[F, I, O]) 
   def meta: Resolver[F, I, (Meta, O)] =
     this andThen Resolver.meta[F, O].tupleIn
 
-  def stream[F2[x] >: F[x], O2](f: O => fs2.Stream[F2, O2]): Resolver[F2, I, O2] =
+  def streamMap[F2[x] >: F[x], O2](f: O => fs2.Stream[F2, O2]): Resolver[F2, I, O2] =
     this andThen Resolver.stream(f)
 }
 
@@ -137,6 +137,14 @@ object Resolver extends ResolverInstances {
 
     def skipThatWith(f: Resolver[F, I2, I2] => Resolver[F, I2, O]): Resolver[F, I, O] =
       skipThat(f(Resolver.id[F, I2]))
+  }
+
+  implicit class StreamOps[F[_], I, O](private val self: Resolver[F, I, fs2.Stream[F, O]]) extends AnyVal {
+    def embedStream: Resolver[F, I, O] = 
+      self andThen new Resolver(Step.embedStream)
+
+    def embedSequentialStream: Resolver[F, I, O] = 
+      self andThen new Resolver(Step.embedStreamFull(signal = false))
   }
 }
 

@@ -32,6 +32,10 @@ trait StreamSupervisor[F[_]] {
 }
 
 object StreamSupervisor {
+  final case class State2[F[_]](
+    id: BigInt
+  )
+  
   final case class State[F[_]](
       unsubscribe: F[Unit],
       allocatedResources: Vector[(ResourceToken, F[Unit])]
