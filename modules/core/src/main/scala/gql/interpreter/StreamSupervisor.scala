@@ -15,6 +15,7 @@
  */
 package gql.interpreter
 
+import cats.effect.implicits._
 import cats.data._
 import cats.effect._
 import cats.implicits._
@@ -41,22 +42,42 @@ object StreamSupervisor {
   )
 
   final case class SupervisorState[F[_]](
-    states: Map[StreamToken, State[F]],
-    nextResourceOrder: BigInt
+      states: Map[StreamToken, State[F]],
+      nextResourceOrder: BigInt
   )
 
   def apply[F[_]](openTail: Boolean)(implicit F: Async[F]): Stream[F, StreamSupervisor[F]] = {
-    def acquireAwait[A](stream: Stream[F, A], scope: Scope[F]) = {
-      def publish(a: A, scope: Scope[F]): F[Unit] = ???
-/*
-      scope.openChild(
-        stream
-          .evalMap{ a =>
-            F.deferred[Unit].flatMap{ d =>
+    def f[A] = {
+      Queue.bounded[F, Chunk[(Scope[F], A)]](1024).map { q =>
+        def acquireAwait(stream: Stream[F, A], scope: Scope[F]): F[(Scope[F], A)] = {
+          F.deferred[(Scope[F], A)].flatMap { head =>
+            def publish(idx: Long, a: A, scope: Scope[F]): F[Unit] =
+              if (idx === 0L) head.complete((scope, a)).void
+              else if (openTail) q.offer(Chunk.singleton((scope, a)))
+              else F.unit
 
-            }
+            scope.openChild { parentScope =>
+              stream.zipWithIndex
+                .evalMap { case (a, i) =>
+                  F.deferred[Unit].flatMap { d =>
+                    parentScope
+                      .openChild { _ =>
+                        Resource.onFinalize(d.complete(()).void)
+                      }
+                      .flatMap {
+                        case None                  => F.pure(fs2.Stream[F, Unit]())
+                        case Some((childScope, _)) => publish(i, a, childScope).as(fs2.Stream.eval(d.get))
+                      }
+                  }
+                }
+                .parJoinUnbounded
+                .compile
+                .drain
+                .background
+            } >> head.get
           }
-      )*/
+        }
+      }
     }
 
     def removeStates(xs: List[State[F]]) = {
@@ -67,10 +88,12 @@ object StreamSupervisor {
     val emptyState = SupervisorState(Map.empty[StreamToken, State[F]], 1)
 
     def stateF =
-      Resource.make(F.ref(emptyState))(_.get.flatMap{ (s: SupervisorState[F]) =>
-        val ided = s.states.toList.flatMap{ case (st, s) => (st.value, s.unsubscribe) :: s.allocatedResources.toList.map{ case (tok, cleanup) => (tok.value, cleanup) } }
+      Resource.make(F.ref(emptyState))(_.get.flatMap { (s: SupervisorState[F]) =>
+        val ided = s.states.toList.flatMap { case (st, s) =>
+          (st.value, s.unsubscribe) :: s.allocatedResources.toList.map { case (tok, cleanup) => (tok.value, cleanup) }
+        }
 
-        ided.sortBy{ case (k, _) => k }(Ordering[BigInt].reverse).traverse_{ case (_, fa) => fa }
+        ided.sortBy { case (k, _) => k }(Ordering[BigInt].reverse).traverse_ { case (_, fa) => fa }
       })
 
     fs2.Stream.resource(Supervisor[F]).flatMap { sup =>
@@ -135,14 +158,14 @@ object StreamSupervisor {
                   } yield head.get tupleLeft token
                 }.flatten
 
-              override def release(tokens: Set[StreamToken]): F[Unit] = ???/*
+              override def release(tokens: Set[StreamToken]): F[Unit] = ??? /*
                 F.uncancelable { _ =>
                   state
                     .modify(m => (m -- tokens, tokens.toList.flatMap(m.get(_).toList)))
                     .flatMap(removeStates)
                 }*/
 
-              override def freeUnused(token: StreamToken, resource: ResourceToken): F[Unit] = ???/*
+              override def freeUnused(token: StreamToken, resource: ResourceToken): F[Unit] = ??? /*
                 F.uncancelable { _ =>
                   state.modify { s =>
                     s.get(token) match {
