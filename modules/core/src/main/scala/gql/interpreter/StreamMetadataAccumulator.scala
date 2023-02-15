@@ -20,21 +20,21 @@ import cats.implicits._
 import fs2.Stream
 
 trait StreamMetadataAccumulator[F[_], A] {
-  def add[B](context: A, stream: Stream[F, B]): F[(Unique.Token, Either[Throwable, B])]
+  def add[B](context: A, stream: Stream[F, B]): F[(StreamToken, Either[Throwable, B])]
 
-  def getState: F[Map[Unique.Token, A]]
+  def getState: F[Map[StreamToken, A]]
 }
 
 object StreamMetadataAccumulator {
   def apply[F[_], A](implicit streamSup: StreamSupervisor[F], F: Concurrent[F]) =
-    F.ref(Map.empty[Unique.Token, A]).map { state =>
+    F.ref(Map.empty[StreamToken, A]).map { state =>
       new StreamMetadataAccumulator[F, A] {
-        override def add[B](context: A, stream: Stream[F, B]): F[(Unique.Token, Either[Throwable, B])] =
+        override def add[B](context: A, stream: Stream[F, B]): F[(StreamToken, Either[Throwable, B])] =
           streamSup
             .acquireAwait[B](stream)
             .flatTap { case (token, _) => state.update(_ + (token -> context)) }
 
-        override def getState: F[Map[Unique.Token, A]] = state.get
+        override def getState: F[Map[StreamToken, A]] = state.get
       }
     }
 }

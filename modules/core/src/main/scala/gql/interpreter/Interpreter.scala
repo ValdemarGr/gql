@@ -86,7 +86,7 @@ object Interpreter {
       input: RunInput[F, A, B],
       background: Supervisor[F],
       batchAccum: BatchAccumulator[F]
-  ): F[(Chain[EvalFailure], EvalNode[Json], Map[Unique.Token, StreamMetadata[F, ?, ?]])] = {
+  ): F[(Chain[EvalFailure], EvalNode[Json], Map[StreamToken, StreamMetadata[F, ?, ?]])] = {
     StreamMetadataAccumulator[F, StreamMetadata[F, ?, ?]].flatMap { sma =>
       val interpreter = new InterpreterImpl[F](sma, batchAccum, background)
 
@@ -105,7 +105,7 @@ object Interpreter {
       metas: NonEmptyList[RunInput[F, ?, ?]],
       schemaState: SchemaState[F],
       background: Supervisor[F]
-  )(implicit planner: Planner[F]): F[(Chain[EvalFailure], NonEmptyList[EvalNode[Json]], Map[Unique.Token, StreamMetadata[F, ?, ?]])] =
+  )(implicit planner: Planner[F]): F[(Chain[EvalFailure], NonEmptyList[EvalNode[Json]], Map[StreamToken, StreamMetadata[F, ?, ?]])] =
     for {
       costTree <- Planner.runCostAnalysis[F, Unit] { implicit stats2 =>
         metas.toList.traverse_ { ri =>
@@ -197,7 +197,7 @@ object Interpreter {
                           // These are the inputs that are ready to be evaluated
                           val defined = xs.collect { case (_, Some(x), c) => (x, c) }
 
-                          val evalled: F[(List[EvalNode[Json]], Chain[EvalFailure], Map[Unique.Token, StreamMetadata[F, ?, ?]])] =
+                          val evalled: F[(List[EvalNode[Json]], Chain[EvalFailure], Map[StreamToken, StreamMetadata[F, ?, ?]])] =
                             defined
                               .map { case (x, _) => x }
                               .toNel
@@ -220,7 +220,7 @@ object Interpreter {
                                 // Free all the old versions of our roots
                                 val freeRootsF = rootNodes.traverse_ { case (k, r, _, _) => streamSup.freeUnused(k, r) }
 
-                                sup.supervise(gcF &> freeRootsF) as (out, errs, newActives)
+                                sup.supervise(gcF &> freeRootsF) as ((out, errs, newActives))
                               }
 
                           // Patch the previously emitted json data

@@ -18,9 +18,11 @@ package gql.interpreter
 import cats.data._
 import cats.effect._
 import cats.implicits._
-import cats.effect.implicits._
 import cats.effect.std._
 import fs2.{Chunk, Stream}
+
+final case class StreamToken(value: BigInt) extends AnyVal
+final case class ResourceToken(value: BigInt) extends AnyVal
 
 trait StreamSupervisor[F[_]] {
   def acquireAwait[A](stream: Stream[F, A]): F[(StreamToken, Either[Throwable, A])]
@@ -33,28 +35,28 @@ trait StreamSupervisor[F[_]] {
 }
 
 object StreamSupervisor {
-  final case class State2[F[_]](
-      id: BigInt
-  )
-
   final case class State[F[_]](
       unsubscribe: F[Unit],
       allocatedResources: Vector[(ResourceToken, F[Unit])]
   )
 
+  final case class SupervisorState[F[_]](
+    states: Map[StreamToken, State[F]],
+    nextResourceOrder: BigInt
+  )
+
   def apply[F[_]](openTail: Boolean)(implicit F: Async[F]): Stream[F, StreamSupervisor[F]] = {
-    def addNewScope[A](parent: Scope[F], stream: Stream[F, A]) = {
-      parent.openChild2.flatMap { streamScope =>
-        streamScope.leaseHere2 {
-          stream
-            .evalMap { a =>
-              F.deferred[Unit].flatMap { d =>
-                streamScope
-                  .leaseHere2(Resource.onFinalize(d.complete(()).void))
-              }
+    def acquireAwait[A](stream: Stream[F, A], scope: Scope[F]) = {
+      def publish(a: A, scope: Scope[F]): F[Unit] = ???
+/*
+      scope.openChild(
+        stream
+          .evalMap{ a =>
+            F.deferred[Unit].flatMap{ d =>
+
             }
-        }
-      }
+          }
+      )*/
     }
 
     def removeStates(xs: List[State[F]]) = {
@@ -62,64 +64,33 @@ object StreamSupervisor {
         xs.traverse_(_.allocatedResources.toList.traverse_ { case (_, fa) => fa })
     }
 
-    type StateMap = Map[StreamToken, State[F]]
+    val emptyState = SupervisorState(Map.empty[StreamToken, State[F]], 1)
+
+    def stateF =
+      Resource.make(F.ref(emptyState))(_.get.flatMap{ (s: SupervisorState[F]) =>
+        val ided = s.states.toList.flatMap{ case (st, s) => (st.value, s.unsubscribe) :: s.allocatedResources.toList.map{ case (tok, cleanup) => (tok.value, cleanup) } }
+
+        ided.sortBy{ case (k, _) => k }(Ordering[BigInt].reverse).traverse_{ case (_, fa) => fa }
+      })
+
     fs2.Stream.resource(Supervisor[F]).flatMap { sup =>
       fs2.Stream
-        .bracket(F.ref(Map.empty[StreamToken, State[F]]))(_.get.flatMap(xs => removeStates(xs.values.toList)))
-        .flatMap { (state: Ref[F, StateMap]) =>
+        .resource(stateF)
+        .flatMap { (state: Ref[F, SupervisorState[F]]) =>
+          val nextId_ = state.modify(s => (s.copy(nextResourceOrder = s.nextResourceOrder + 1), s.nextResourceOrder))
+          val nextResourceId = nextId_.map(ResourceToken(_))
+          val nextStreamId = nextId_.map(StreamToken(_))
+
           fs2.Stream.eval(Queue.bounded[F, Chunk[(StreamToken, ResourceToken, Either[Throwable, ?])]](1024)).map { q =>
             new StreamSupervisor[F] {
-              override def acquireAwait[A](stream: Stream[F, A]): F[(Unique.Token, Either[Throwable, A])] =
+              override def acquireAwait[A](stream: Stream[F, A]): F[(StreamToken, Either[Throwable, A])] =
                 F.uncancelable { _ =>
                   for {
-                    token <- F.unique
+                    token <- nextStreamId
 
                     head <- F.deferred[Either[Throwable, A]]
 
                     start <- F.deferred[Unit]
-
-                    // close <- {
-                    //   def go(stream: fs2.Stream[F, (Either[Throwable, A], Long)]): fs2.Pull[F, Nothing, Unit] =
-                    //     stream.pull.uncons1
-                    //       .flatMap {
-                    //         case None => fs2.Pull.done
-                    //         case Some(((hd, i), tl)) =>
-                    //           fs2.Pull.eval(F.deferred[Either[Throwable, Unit]]).flatMap { die =>
-                    //             fs2.Pull
-                    //               .extendScopeTo(fs2.Stream.never[F].interruptWhen(die))
-                    //               .evalMap(back => sup.supervise(back.compile.drain))
-                    //               .flatMap { resourceFiber =>
-                    //                 fs2.Pull.eval(F.unique).flatMap { resourceToken =>
-                    //                   val updateStateF = state.modify { m =>
-                    //                     m.get(token) match {
-                    //                       // We are closed for business
-                    //                       case None => (m, resourceFiber.cancel)
-                    //                       case Some(state) =>
-                    //                         val resourceEntry = (resourceToken, resourceFiber.cancel)
-                    //                         val newEntry = state.copy(
-                    //                           allocatedResources = state.allocatedResources :+ resourceEntry
-                    //                         )
-                    //                         val publish =
-                    //                           if (i == 0) head.complete(hd).void
-                    //                           else if (openTail) q.offer(Chunk((token, resourceToken, hd)))
-                    //                           else F.unit
-                    //                         (m + (token -> newEntry), publish)
-                    //                     }
-                    //                   }.flatten
-
-                    //                   fs2.Pull.eval(updateStateF) >> go(tl)
-                    //                 }
-                    //               }
-                    //           }
-                    //       }
-
-                    //   sup.supervise {
-                    //     start.get >> go(stream.attempt.zipWithIndex).stream.as(()).compile.drain
-                    //   }
-                    // }.map(_.cancel)
-
-                    // TODO find a more elegant way of holding fs2 Leases
-                    // start <- F.deferred[Unit]
 
                     // Hold fs2 leases by:
                     // 1. allocate a token for the resource and a killSignal / releaseSignal
@@ -132,17 +103,17 @@ object StreamSupervisor {
                             stream.attempt.zipWithIndex
                               .evalMap { case (a, i) =>
                                 F.deferred[Unit].flatMap { killSignal =>
-                                  F.unique.flatMap { resourceToken =>
-                                    state.update { m =>
-                                      m.get(token) match {
+                                  nextResourceId.flatMap { resourceToken =>
+                                    state.update { s =>
+                                      s.states.get(token) match {
                                         // We are closed for business
-                                        case None => m
+                                        case None => s
                                         case Some(state) =>
                                           val resourceEntry = (resourceToken, killSignal.complete(()).void)
                                           val newEntry = state.copy(
                                             allocatedResources = state.allocatedResources :+ resourceEntry
                                           )
-                                          (m + (token -> newEntry))
+                                          s.copy(states = (s.states + (token -> newEntry)))
                                       }
                                     } >> {
                                       if (i == 0) head.complete(a).void
@@ -159,19 +130,19 @@ object StreamSupervisor {
                       }
                       .map(_.cancel)
 
-                    _ <- state.update(_ + (token -> State(close, Vector.empty)))
+                    _ <- state.update(s => s.copy(states = s.states + (token -> State(close, Vector.empty))))
                     _ <- start.complete(())
                   } yield head.get tupleLeft token
                 }.flatten
 
-              override def release(tokens: Set[StreamToken]): F[Unit] =
+              override def release(tokens: Set[StreamToken]): F[Unit] = ???/*
                 F.uncancelable { _ =>
                   state
                     .modify(m => (m -- tokens, tokens.toList.flatMap(m.get(_).toList)))
                     .flatMap(removeStates)
-                }
+                }*/
 
-              override def freeUnused(token: StreamToken, resource: ResourceToken): F[Unit] =
+              override def freeUnused(token: StreamToken, resource: ResourceToken): F[Unit] = ???/*
                 F.uncancelable { _ =>
                   state.modify { s =>
                     s.get(token) match {
@@ -182,7 +153,7 @@ object StreamSupervisor {
                         (s + (token -> newState), release.traverse_ { case (_, fa) => fa })
                     }
                   }.flatten
-                }
+                }*/
 
               override def changes: Stream[F, NonEmptyList[(StreamToken, ResourceToken, Either[Throwable, ?])]] =
                 Stream

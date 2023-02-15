@@ -41,7 +41,7 @@ class StreamingTest extends CatsEffectSuite {
       "Level1",
       "value" -> lift(_.value),
       "level2" -> b {
-        _.stream(_ => Stream.iterate(0)(_ + 1).lift[IO].flatMap(x => fs2.Stream.resource(level1Resource) as Level2(x)))
+        _.streamMap(_ => Stream.iterate(0)(_ + 1).lift[IO].flatMap(x => fs2.Stream.resource(level1Resource) as Level2(x)))
       }
     )
   }
@@ -51,7 +51,7 @@ class StreamingTest extends CatsEffectSuite {
       "Level2",
       "value" -> lift(_.value),
       "level1" -> b {
-        _.stream(_ => Stream.iterate(0)(_ + 1).lift[IO].flatMap(x => fs2.Stream.resource(level2Resource) as Level1(x)))
+        _.streamMap(_ => Stream.iterate(0)(_ + 1).lift[IO].flatMap(x => fs2.Stream.resource(level2Resource) as Level1(x)))
       }
     )
   }
