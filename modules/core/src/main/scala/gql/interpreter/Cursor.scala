@@ -53,18 +53,3 @@ object Cursor {
       Cursor(x.path ++ y.path)
   }
 }
-
-final case class EvalNode[+A](cursor: Cursor, value: A) {
-  def setValue[B](value: B): EvalNode[B] = copy(value = value)
-
-  def modify(f: Cursor => Cursor): EvalNode[A] = copy(cursor = f(cursor))
-
-  def succeed[B](value: B, f: Cursor => Cursor): EvalNode[B] =
-    EvalNode(f(cursor), value)
-
-  def succeed[B](value: B): EvalNode[B] = succeed(value, identity)
-}
-
-object EvalNode {
-  def empty[A](value: A) = EvalNode[A](Cursor.empty, value)
-}

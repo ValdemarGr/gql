@@ -66,6 +66,13 @@ object Interpreter {
         }
     }
 
+  final case class StreamingData[F[_], A, B](
+      originIndex: Int,
+      cursor: Cursor,
+      edges: StepCont[F, A, B],
+      value: A
+  )
+
   final case class StreamMetadata[F[_], A, B](
       originIndex: Int,
       cursor: Cursor,
@@ -289,6 +296,22 @@ object Interpreter {
   def groupNodeValues[A](nvs: List[(Cursor, A)]): Map[GraphArc, List[(Cursor, A)]] =
     nvs.groupMap { case (c, _) => c.head } { case (c, v) => (c.tail, v) }
 }
+
+final case class EvalNode[+A](cursor: Cursor, value: A) {
+  def setValue[B](value: B): EvalNode[B] = copy(value = value)
+
+  def modify(f: Cursor => Cursor): EvalNode[A] = copy(cursor = f(cursor))
+
+  def succeed[B](value: B, f: Cursor => Cursor): EvalNode[B] =
+    EvalNode(f(cursor), value)
+
+  def succeed[B](value: B): EvalNode[B] = succeed(value, identity)
+}
+
+object EvalNode {
+  def empty[A](value: A) = EvalNode[A](Cursor.empty, value)
+}
+
 
 final case class IndexedData[+A](
     index: Int,
