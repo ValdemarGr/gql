@@ -46,15 +46,18 @@ object StreamScopes {
           scope.openChild { parentScope => 
             stream0.zipWithIndex
               .evalMap { case (a, i) =>
+                println(s"got $a")
                 F.deferred[Unit].flatMap { d =>
                   parentScope
                     .openChild { _ =>
                       Resource.onFinalize(d.complete(()).void)
                     }
-                    .flatMap {
+                    .flatMap { o => 
+                      println(s"lease outcome for $i and $a was $o")
+                      o match {
                       case None                  => F.pure(fs2.Stream[F, Unit]())
                       case Some((childScope, _)) => publish(i, a, childScope).as(fs2.Stream.eval(d.get))
-                    }
+                    }}
                 }
               }
               .parJoinUnbounded

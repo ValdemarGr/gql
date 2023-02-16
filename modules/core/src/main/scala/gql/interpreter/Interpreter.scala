@@ -73,12 +73,6 @@ object Interpreter {
       value: Either[Throwable, A]
   )
 
-  final case class StreamMetadata[F[_], A, B](
-      originIndex: Int,
-      cursor: Cursor,
-      edges: StepCont[F, A, B]
-  )
-
   final case class RunInput[F[_], A, B](
       data: IndexedData[F, A],
       cps: StepCont[F, A, B]
@@ -236,37 +230,6 @@ object Interpreter {
       schemaState: SchemaState[F]
   ): F[(Chain[EvalFailure], JsonObject)] =
     constructStream[F, A](rootInput, rootSel, schemaState, false).take(1).compile.lastOrError
-
-  def findToRemove[A](nodes: List[(Cursor, A)], s: Set[A]): Set[A] = {
-    val (children, nodeHere) = nodes
-      .partitionEither {
-        case (xs, y) if xs.path.isEmpty => Right(y)
-        case (xs, y)                    => Left((xs, y))
-      }
-
-    lazy val msg =
-      s"something went terribly wrong s=$s, nodeHere:${nodeHere}\niterates:\n${children.mkString("\n")}\nall nodes:\n${nodes.mkString("\n")}"
-
-    nodeHere match {
-      case x :: Nil if s.contains(x) => children.map { case (_, v) => v }.toSet
-      case _ :: Nil | Nil            => groupNodeValues(children).flatMap { case (_, v) => findToRemove(v, s) }.toSet
-      case _                         => throw new Exception(msg)
-    }
-  }
-
-  final case class StreamRecompute[A](
-      toRemove: Set[A],
-      hcsa: Set[A]
-  )
-
-  def recompute[A](nodes: List[(Cursor, A)], s: Set[A]): StreamRecompute[A] = {
-    val tr = findToRemove(nodes, s)
-    val hcsa = s -- tr
-    StreamRecompute(tr, hcsa)
-  }
-
-  def groupNodeValues[A](nvs: List[(Cursor, A)]): Map[GraphArc, List[(Cursor, A)]] =
-    nvs.groupMap { case (c, _) => c.head } { case (c, v) => (c.tail, v) }
 }
 
 final case class EvalNode[F[_], +A](cursor: Cursor, value: A, scope: Scope[F]) {
@@ -416,6 +379,7 @@ class InterpreterImpl[F[_]](
         val contR: StepCont[F, a, O] = StepCont.Continue[F, a, C, O](alg.right, cont)
         runStep[I, a, O](inputs, alg.left, contR)
       case alg: EmbedStream[F @unchecked, i] =>
+        println(s"streaming at $inputs")
         inputs.parFlatTraverse { id =>
           // We modify the cont for the next stream emission
           // We need to get rid of the skips since they are a part of THIS evaluation, not the next
