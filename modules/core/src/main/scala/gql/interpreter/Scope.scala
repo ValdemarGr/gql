@@ -15,9 +15,9 @@ trait Scope[F[_]] {
 
   def releaseChildren(children: NonEmptyList[Unique.Token]): F[Unit]
 
-  def leases: F[List[Lease[F]]]
+  // def leases: F[List[Lease[F]]]
 
-  def releaseLeases(leases: NonEmptyList[Unique.Token]): F[Unit]
+  // def releaseLeases(leases: NonEmptyList[Unique.Token]): F[Unit]
 
   def openChild[A](r: Scope[F] => Resource[F, A]): F[Option[(Scope[F], A)]]
 
@@ -136,18 +136,18 @@ object Scope {
             case State.Open(_, _) => parent.traverse_(_.releaseChildren(NonEmptyList.one(id)))
           }
 
-          override def leases: F[List[Lease[F]]] = state.get.map {
-            case State.Closed()        => Nil
-            case State.Open(leases, _) => leases
-          }
+          // override def leases: F[List[Lease[F]]] = state.get.map {
+          //   case State.Closed()        => Nil
+          //   case State.Open(leases, _) => leases
+          // }
 
-          override def releaseLeases(ids: NonEmptyList[Unique.Token]): F[Unit] = state.modify {
-            case State.Closed() => State.Closed() -> F.unit
-            case State.Open(leases, children) =>
-              val asSet = ids.toList.toSet
-              val (toRelease, toKeep) = leases.partition(l => asSet.contains(l.id))
-              State.Open(toKeep, children) -> toRelease.parTraverse_(_.release)
-          }.flatten
+          // override def releaseLeases(ids: NonEmptyList[Unique.Token]): F[Unit] = state.modify {
+          //   case State.Closed() => State.Closed() -> F.unit
+          //   case State.Open(leases, children) =>
+          //     val asSet = ids.toList.toSet
+          //     val (toRelease, toKeep) = leases.partition(l => asSet.contains(l.id))
+          //     State.Open(toKeep, children) -> toRelease.parTraverse_(_.release)
+          // }.flatten
         }
       }
     }

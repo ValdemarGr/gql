@@ -7,6 +7,7 @@ import cats.effect.std._
 import fs2.{Chunk, Stream}
 import fs2.concurrent.SignallingRef
 import scala.annotation.tailrec
+import cats.data.Chain
 
 // This is an abstraction on top of StreamScopes
 // It respects different consumption strategies such as "signal" and "sequential"
@@ -45,21 +46,20 @@ object ConfiguredStreamScopes {
                     case ((_, true), ss)  => Left(ss)
                     case ((_, false), ss) => Right(ss)
                   }
+                  val seqed = seqs.collect { case x :: xs => (x, xs) }
 
-                  val partedSigs = sigs.map(ys => ys.splitAt(ys.size - 1))
+                  val relevantSigs = sigs.mapFilter(_.lastOption)
 
-                  val relevantSigs = partedSigs.collect { case (_, x :: Nil) => x }
-                  val outdatedSigs = partedSigs.flatMap { case (ys, _) => ys }
-                  val outdatedSigsF = outdatedSigs.parTraverse_ { case (s, _) => s.closeInParent }
+                  // Then filter dead scopes
+                  // If a scope occurs as a child of another live scope that was also updated, then the child scope is outdated
+                  // A dead child scope will be closed automatically when the parent releases old children
+                  val liveIds = (
+                    sigs.flatMap(_.map { case (s, _) => s.id }) ++ seqed.map { case ((s, _), _) => s.id }
+                  ).toSet
 
-                  // Then eliminiate dead events
-                  // If a scope occurs as a child of another scope that was updated, then the child scope is outdated
-                  // It is not enough to close the scope itself, we must close the parent scope since scopes are
-                  // always in pairs, an enclosing stream scope and children event scopes
-                  val ids = asLst.map { case (s, _) => s.id }.toSet
                   @tailrec
                   def didParentUpdate_(s: Scope[F]): Boolean =
-                    if (ids.contains(s.id)) true
+                    if (liveIds.contains(s.id)) true
                     else
                       s.parent match {
                         case None    => false
@@ -69,25 +69,30 @@ object ConfiguredStreamScopes {
                   def didParentUpdate(s: Scope[F]): Boolean =
                     s.parent.fold(false)(didParentUpdate_)
 
-                  val (outdatedSigs2, relevantSigs2) = relevantSigs.partitionEither {
-                    case (s, _) if didParentUpdate(s) => Left(s)
-                    case (s, a)                       => Right((s, a))
-                  }
-                  val outdatedSigs2F = outdatedSigs2.parTraverse_(_.parent.traverse_(_.closeInParent))
+                  val relevantSigs2 = relevantSigs.filter { case (s, _) => !didParentUpdate(s) }
 
-                  // If head occurs in a parent scope we can safely close it
-                  val (outdatedSeqs2, relevantSeqs2) = seqs
-                    .collect { case x :: xs => (x, xs) }
-                    .partitionEither {
-                      case ((hd, _), _) if didParentUpdate(hd) => Left(hd)
-                      case ((hd, a), tl)                       => Right((hd, a, tl))
+                  // If head is no longer live, then we must close it
+                  val relevantSeqs2 = seqed.filter { case ((hd, _), _) => !didParentUpdate(hd) }
+
+                  val allRelevant = relevantSigs2 ++ relevantSeqs2.map { case ((s, a), _) => (s, a) }
+
+                  // For all relevant events, we must close old children of the parent scope
+                  val cleanupOldChildrenF = allRelevant.parTraverse_ { case (liveChild, _) =>
+                    liveChild.parent.traverse_ { parent =>
+                      // Children are always in reverse allocation order
+                      // We must drop everything older than the live child
+                      parent.children.flatMap { allChildren =>
+                        val oldChildren = allChildren.dropWhile(_.id =!= liveChild.id).drop(1)
+                        oldChildren.map(_.id).toNel.traverse_(parent.releaseChildren)
+                      }
                     }
-                  val outdatedSeqs2F = outdatedSeqs2.parTraverse_(_.parent.traverse(_.closeInParent))
+                  }
 
-                  val allOutdatedF = outdatedSigsF &> outdatedSigs2F &> outdatedSeqs2F
-                  val allRelevant = relevantSigs2 ++ relevantSeqs2.map { case (s, a, _) => (s, a) }
-                  val toPutBack = relevantSeqs2.flatMap { case (_, _, tl) => tl }
-                  (Chunk.seq(toPutBack.map { case (s, a) => (s, (a, false)) }), sup.supervise(allOutdatedF).void as allRelevant)
+                  val toPutBack = relevantSeqs2.flatMap { case (_, tl) => tl }
+                  (
+                    Chunk.seq(toPutBack.map { case (s, a) => (s, (a, false)) }),
+                    sup.supervise(cleanupOldChildrenF).void as allRelevant
+                  )
                 }.flatten
               }
 
