@@ -56,11 +56,11 @@ object StreamSupervisor {
               else if (openTail) q.offer(Chunk.singleton((scope, a)))
               else F.unit
 
-            scope.openChild { parentScope =>
+            scope.lease { 
               stream.zipWithIndex
                 .evalMap { case (a, i) =>
                   F.deferred[Unit].flatMap { d =>
-                    parentScope
+                    scope
                       .openChild { _ =>
                         Resource.onFinalize(d.complete(()).void)
                       }
