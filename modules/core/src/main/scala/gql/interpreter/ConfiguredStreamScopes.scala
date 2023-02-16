@@ -47,6 +47,8 @@ object ConfiguredStreamScopes {
 
                   // Then eliminiate dead events
                   // If a scope occurs as a child of another scope that was updated, then the child scope is outdated
+                  // It is not enough to close the scope itself, we must close the parent scope since scopes are 
+                  // always in pairs, an enclosing stream scope and children event scopes
                   val ids = asLst.map { case (s, _) => s.id }.toSet
                   @tailrec
                   def didParentUpdate(s: Scope[F]): Boolean =
@@ -61,7 +63,7 @@ object ConfiguredStreamScopes {
                     case (s, _) if didParentUpdate(s) => Left(s)
                     case (s, a)                       => Right((s, a))
                   }
-                  val outdatedSigs2F = outdatedSigs2.parTraverse_(_.closeInParent)
+                  val outdatedSigs2F = outdatedSigs2.parTraverse_(_.parent.traverse_(_.closeInParent))
 
                   val (outdatedSeqs2, relevantSeqs2) = seqs
                     .collect { case x :: xs => (x, xs) }
@@ -69,7 +71,7 @@ object ConfiguredStreamScopes {
                       case ((hd, _), _) if didParentUpdate(hd) => Left(hd)
                       case ((hd, a), tl)                       => Right((hd, a, tl))
                     }
-                  val outdatedSeqs2F = outdatedSeqs2.parTraverse_(_.closeInParent)
+                  val outdatedSeqs2F = outdatedSeqs2.parTraverse_(_.parent.traverse(_.closeInParent))
 
                   val allOutdatedF = outdatedSigsF &> outdatedSigs2F &> outdatedSeqs2F
                   val allRelevant = relevantSigs2 ++ relevantSeqs2.map { case (s, a, _) => (s, a) }
