@@ -23,6 +23,7 @@ import gql._
 import gql.ast._
 import gql.dsl._
 import cats.effect._
+import scala.concurrent.duration._
 
 final case class Level1(value: Int)
 final case class Level2(value: Int)
@@ -41,7 +42,13 @@ class StreamingTest extends CatsEffectSuite {
       "Level1",
       "value" -> lift(_.value),
       "level2" -> b {
-        _.streamMap(_ => Stream.iterate(0)(_ + 1).lift[IO].flatMap(x => fs2.Stream.resource(level1Resource) as Level2(x)))
+        _.map(_ =>
+          Stream
+            .iterate(0)(_ + 1)
+            .lift[IO]
+            .meteredStartImmediately(100.millis)
+            .flatMap(x => fs2.Stream.resource(level1Resource) as Level2(x))
+        ).embedSequentialStream
       }
     )
   }
@@ -51,7 +58,13 @@ class StreamingTest extends CatsEffectSuite {
       "Level2",
       "value" -> lift(_.value),
       "level1" -> b {
-        _.streamMap(_ => Stream.iterate(0)(_ + 1).lift[IO].flatMap(x => fs2.Stream.resource(level2Resource) as Level1(x)))
+        _.streamMap(_ =>
+          Stream
+            .iterate(0)(_ + 1)
+            .lift[IO]
+            .meteredStartImmediately(200.millis)
+            .flatMap(x => fs2.Stream.resource(level2Resource) as Level1(x))
+        )
       }
     )
   }
@@ -179,6 +192,9 @@ class StreamingTest extends CatsEffectSuite {
         }
         .compile
         .drain
+    } >> IO {
+      assertEquals(clue(level1Users), 0)
+      assertEquals(clue(level2Users), 0)
     }
   }
 
@@ -225,7 +241,10 @@ class StreamingTest extends CatsEffectSuite {
       .take(10)
       .map(Json.fromJsonObject(_).field("data").field("level1"))
       .compile
-      .drain
+      .drain >> IO {
+      assertEquals(clue(level1Users), 0)
+      assertEquals(clue(level2Users), 0)
+    }
   }
 
   test("resource aquisition should work as expected") {

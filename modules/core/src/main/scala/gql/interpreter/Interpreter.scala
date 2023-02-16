@@ -24,7 +24,7 @@ import cats.effect.implicits._
 import io.circe._
 import io.circe.syntax._
 import cats.effect.std.Supervisor
-import scala.concurrent.duration.FiniteDuration
+import scala.concurrent.duration._
 import cats._
 import gql._
 
@@ -133,7 +133,7 @@ object Interpreter {
       rootSel: NonEmptyList[PreparedField[F, A]],
       schemaState: SchemaState[F],
       openTails: Boolean,
-      pipeF: PipeF[F] = PipeF.identity[F]
+      pipeF: PipeF[F]
   )(implicit F: Async[F], planner: Planner[F]): fs2.Stream[F, (Chain[EvalFailure], JsonObject)] =
     ConfiguredStreamScopes[F, StreamingData[F, ?, ?]](takeOne = !openTails, pipeF).flatMap { css =>
       fs2.Stream.resource(Scope[F](None)).flatMap { rootScope =>
@@ -222,14 +222,14 @@ object Interpreter {
       rootSel: NonEmptyList[PreparedField[F, A]],
       schemaState: SchemaState[F]
   )(implicit F: Async[F]): fs2.Stream[F, (Chain[EvalFailure], JsonObject)] =
-    constructStream[F, A](rootInput, rootSel, schemaState, true)
+    constructStream[F, A](rootInput, rootSel, schemaState, true, PipeF.groupWithin[F](128, 5.millis))
 
   def runSync[F[_]: Async: Statistics: Planner, A](
       rootInput: A,
       rootSel: NonEmptyList[PreparedField[F, A]],
       schemaState: SchemaState[F]
   ): F[(Chain[EvalFailure], JsonObject)] =
-    constructStream[F, A](rootInput, rootSel, schemaState, false).take(1).compile.lastOrError
+    constructStream[F, A](rootInput, rootSel, schemaState, false, PipeF.identity[F]).take(1).compile.lastOrError
 }
 
 final case class EvalNode[F[_], +A](cursor: Cursor, value: A, scope: Scope[F]) {
@@ -379,7 +379,6 @@ class InterpreterImpl[F[_]](
         val contR: StepCont[F, a, O] = StepCont.Continue[F, a, C, O](alg.right, cont)
         runStep[I, a, O](inputs, alg.left, contR)
       case alg: EmbedStream[F @unchecked, i] =>
-        println(s"streaming at $inputs")
         inputs.parFlatTraverse { id =>
           // We modify the cont for the next stream emission
           // We need to get rid of the skips since they are a part of THIS evaluation, not the next

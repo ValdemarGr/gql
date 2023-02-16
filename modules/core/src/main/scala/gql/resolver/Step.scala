@@ -58,7 +58,7 @@ object Step {
     Alg.EmbedStream(signal)
 
   def embedStream[F[_], I, O]: Step[F, fs2.Stream[F, I], I] =
-    embedStreamFull(signal = false)
+    embedStreamFull(signal = true)
 
   def argument[F[_], A](arg: Arg[A]): Step[F, Any, A] =
     Alg.Argument(arg)

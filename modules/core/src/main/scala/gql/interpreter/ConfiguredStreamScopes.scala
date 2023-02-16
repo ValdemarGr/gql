@@ -24,6 +24,8 @@ object ConfiguredStreamScopes {
     Stream.resource(Supervisor[F]).flatMap { sup =>
       Stream.eval(StreamScopes[F, (A, Boolean)](takeOne)).flatMap { scopes =>
         Stream.eval(SignallingRef[F, Chunk[(Scope[F], (A, Boolean))]](Chunk.empty)).flatMap { sr =>
+          // We use the signal for events
+          // Then we uncons the events and filter out the dead ones
           def consumeChunk: F[List[(Scope[F], A)]] =
             sr.discrete
               .filter(_.nonEmpty)
@@ -34,30 +36,38 @@ object ConfiguredStreamScopes {
                 sr.modify { xs =>
                   val asLst = xs.toList
                   // First figure out what events we can handle now and what to ignore
-                  val g = xs.toList.groupMap { case (s, (_, b)) => (s.id, b) } { case (s, (a, _)) => (s, a) }.toList
+                  // Group by parent scope, we wish to group children of the same parent
+                  val g = xs.toList
+                    .mapFilter { case d @ (s, _) => s.parent.map(_.id) tupleRight d }
+                    .groupMap { case (pid, (_, (_, b))) => (pid, b) } { case (_, (s, (a, _))) => (s, a) }
+                    .toList
                   val (sigs, seqs) = g.partitionEither {
                     case ((_, true), ss)  => Left(ss)
                     case ((_, false), ss) => Right(ss)
                   }
 
-                  val partedSigs = sigs.map(_.splitAt(xs.size - 1))
+                  val partedSigs = sigs.map(ys => ys.splitAt(ys.size - 1))
 
                   val relevantSigs = partedSigs.collect { case (_, x :: Nil) => x }
-                  val outdatedSigsF = partedSigs.flatMap { case (ys, _) => ys }.parTraverse_ { case (s, _) => s.closeInParent }
+                  val outdatedSigs = partedSigs.flatMap { case (ys, _) => ys }
+                  val outdatedSigsF = outdatedSigs.parTraverse_ { case (s, _) => s.closeInParent }
 
                   // Then eliminiate dead events
                   // If a scope occurs as a child of another scope that was updated, then the child scope is outdated
-                  // It is not enough to close the scope itself, we must close the parent scope since scopes are 
+                  // It is not enough to close the scope itself, we must close the parent scope since scopes are
                   // always in pairs, an enclosing stream scope and children event scopes
                   val ids = asLst.map { case (s, _) => s.id }.toSet
                   @tailrec
-                  def didParentUpdate(s: Scope[F]): Boolean =
+                  def didParentUpdate_(s: Scope[F]): Boolean =
                     if (ids.contains(s.id)) true
                     else
                       s.parent match {
                         case None    => false
-                        case Some(p) => didParentUpdate(p)
+                        case Some(p) => didParentUpdate_(p)
                       }
+
+                  def didParentUpdate(s: Scope[F]): Boolean =
+                    s.parent.fold(false)(didParentUpdate_)
 
                   val (outdatedSigs2, relevantSigs2) = relevantSigs.partitionEither {
                     case (s, _) if didParentUpdate(s) => Left(s)
@@ -65,6 +75,7 @@ object ConfiguredStreamScopes {
                   }
                   val outdatedSigs2F = outdatedSigs2.parTraverse_(_.parent.traverse_(_.closeInParent))
 
+                  // If head occurs in a parent scope we can safely close it
                   val (outdatedSeqs2, relevantSeqs2) = seqs
                     .collect { case x :: xs => (x, xs) }
                     .partitionEither {
