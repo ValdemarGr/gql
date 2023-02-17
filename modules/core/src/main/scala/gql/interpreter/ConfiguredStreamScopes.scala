@@ -47,16 +47,13 @@ object ConfiguredStreamScopes {
                   .mapFilter { case d @ (s, _) => s.parent.map(_.id) tupleRight d }
                   .groupMap { case (pid, (_, (_, b))) => (pid, b) } { case (_, (s, (a, _))) => (s, a) }
                   .toList
-                // println(s"elems: ${g.size}")
                 val (sigs, seqs) = g.partitionEither {
                   case ((_, true), ss)  => Left(ss)
                   case ((_, false), ss) => Right(ss)
                 }
                 val seqed = seqs.collect { case x :: xs => (x, xs) }
-                // println(s"seqed: ${seqed.map(x => "\nseqed: " + x.toString())}")
 
                 val relevantSigs = sigs.mapFilter(_.lastOption)
-                // println(s"relevantSigs: ${relevantSigs.map(x => "\nrelevant sig: " + x.toString())}")
 
                 // Then filter dead scopes
                 // If a scope occurs as a child of another live scope that was also updated, then the child scope is outdated
@@ -64,7 +61,6 @@ object ConfiguredStreamScopes {
                 val liveIds = (
                   sigs.flatMap(_.map { case (s, _) => s.id }) ++ seqed.map { case ((s, _), _) => s.id }
                 ).toSet
-                // println(s"liveIds: ${liveIds.map(x => "\nliveId: " + x.toString())}")
 
                 @tailrec
                 def didParentUpdate_(s: Scope[F]): Boolean =
@@ -79,29 +75,23 @@ object ConfiguredStreamScopes {
                   s.parent.fold(false)(didParentUpdate_)
 
                 val relevantSigs2 = relevantSigs.filter { case (s, _) => !didParentUpdate(s) }
-                // println(s"relevantSigs2: ${relevantSigs2.map(x => "\nrelevant sig2: " + x.toString())}")
 
                 // If head is no longer live, then we must close it
                 val relevantSeqs2 = seqed.filter { case ((hd, _), _) => !didParentUpdate(hd) }
-                // println(s"relevantSeqs2: ${relevantSeqs2.map(x => "\nrelevant seq2: " + x.toString())}")
 
                 val allRelevant = relevantSigs2 ++ relevantSeqs2.map { case ((s, a), _) => (s, a) }
 
                 // For all relevant events, we must close old children of the parent scope
                 val cleanupOldChildrenF = allRelevant.parTraverse_ { case (liveChild, _) =>
                   liveChild.parent.traverse_ { parent =>
-                    // println(s"parent: ${parent.id}")
                     // Children are always in reverse allocation order
                     // We must drop everything older than the live child
                     parent.children.flatMap { allChildren =>
-                      // println(s"liveChild: ${liveChild.id}")
-                      // println(s"allChildren: ${allChildren.map(x => "\nallChildren: " + x.toString())}")
                       val oldChildren = allChildren.dropWhile(_.id =!= liveChild.id).drop(1)
-                      // println(s"oldChildren: ${oldChildren.map(x => "\noldChild: " + x.toString())}")
                       oldChildren.map(_.id).toNel.traverse_(parent.releaseChildren)
                     }
                   }
-                } // <* allRelevant.traverse { case (s, _) => s.isOpen.map(b => println(s"${s.id} is open? $b")) }
+                }
 
                 val toPutBack = relevantSeqs2.flatMap { case (_, tl) => tl }
 

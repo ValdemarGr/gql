@@ -91,7 +91,6 @@ object Interpreter {
   ): F[(Chain[EvalFailure], EvalNode[F, Json])] = {
     val interpreter = new InterpreterImpl[F](css, batchAccum, background)
 
-    // println("going")
     interpreter
       .runEdgeCont(Chain(input.data), input.cps)
       .run
@@ -124,11 +123,8 @@ object Interpreter {
       }
       planned <- planner.plan(costTree)
       accumulator <- BatchAccumulator[F](schemaState, planned)
-      // _ <- Async[F].delay(println(s"Planned: $planned"))
       res <- metas.parTraverse(evalOne(_, background, accumulator, css))
-      // _ <- Async[F].delay(println(s"Evaluated: $res"))
       bes <- accumulator.getErrors
-      // _ <- Async[F].delay(println(s"Batch errors: $bes"))
       allErrors = Chain.fromSeq(res.toList).flatMap { case (errs, _) => errs } ++ Chain.fromSeq(bes)
     } yield (allErrors, res.map { case (_, en) => en })
 
@@ -146,7 +142,6 @@ object Interpreter {
 
           val inital = RunInput.root(rootInput, PreparedQuery.Selection(rootSel), rootScope)
 
-          // println("### inital evaluating ###")
           fs2.Stream
             .eval(evalAll[F](NonEmptyList.one(inital), schemaState, sup, css))
             .flatMap { case (initialFails, initialSuccs) =>
@@ -155,13 +150,10 @@ object Interpreter {
               fs2.Stream.emit((initialFails, jo)) ++
                 changeStream
                   .evalMapAccumulate(jo) { case (prevOutput, changes) =>
-                    // println("### running iteration ###")
                     changes.toNel match {
                       case None =>
-                        // println("no changes")
                         F.pure((prevOutput, Option.empty[(Chain[EvalFailure], JsonObject)]))
                       case Some(activeChanges) =>
-                        // println("changes")
                         // Now we have prepared the input for this next iteration
                         val preparedRoots =
                           activeChanges.map { case (s, sd: StreamingData[F, a, b]) =>
@@ -193,7 +185,6 @@ object Interpreter {
                         val defined = preparedRoots.collect { case (_, Some(x), c) => (x, c) }
 
                         val evalled: F[(List[EvalNode[F, Json]], Chain[EvalFailure])] =
-                          // F.delay(println(s"evalling for $defined")) *>
                             defined
                               .map { case (x, _) => x }
                               .toNel
@@ -203,11 +194,7 @@ object Interpreter {
                                 case None => (Nil, Chain.empty)
                                 // Okay so an evaluation happened
                                 case Some((newFails, newOutputs)) => 
-                                  // println("got results")
                                   (newOutputs.toList, newFails)
-                              } <* F.delay{
-                                ()
-                                //println("done evalling")
                               }
 
                         // Patch the previously emitted json data
@@ -218,8 +205,6 @@ object Interpreter {
                           val stitched = allJsons.foldLeft(prevOutput) { case (accum, (patch, pos)) =>
                             stitchInto(accum.asJson, patch, pos).asObject.get
                           }
-
-                          // println("done running")
 
                           (stitched, allErrs)
                         }
@@ -328,7 +313,6 @@ class InterpreterImpl[F[_]](
       cs: Chain[IndexedData[F, I]],
       cont: StepCont[F, I, O]
   ): W[Chain[(Int, Json)]] = {
-    // println("edge cont")
     cont match {
       case c: StepCont.Continue[F, ?, c, ?] => runStep[I, c, O](cs, c.step, c.next)
       case t: StepCont.TupleWith[F, i, c, ?] =>
@@ -349,7 +333,6 @@ class InterpreterImpl[F[_]](
       step: PreparedStep[F, I, C],
       cont: StepCont[F, C, O]
   ): W[Chain[(Int, Json)]] = {
-    // println(s"run step $step")
     import PreparedStep._
 
     def runNext(cs: Chain[IndexedData[F, C]]): W[Chain[(Int, Json)]] =
@@ -498,7 +481,6 @@ class InterpreterImpl[F[_]](
       edges: PreparedStep[F, I, O],
       cont: Prepared[F, O]
   ): W[Chain[Json]] = {
-    // println(s"runEdge: ${edges}")
     val indexed = inputs.zipWithIndex.map { case (en, i) => IndexedData(i, en) }
     runStep(indexed, edges, StepCont.Done(cont))
       .map { indexedJson =>
@@ -508,7 +490,6 @@ class InterpreterImpl[F[_]](
   }
 
   def runDataField[I](df: PreparedDataField[F, I], in: Chain[EvalNode[F, I]]): W[Chain[Json]] = {
-    // println(s"runDataField: ${df}")
     df.cont match {
       case cont: PreparedCont[F, i, a] =>
         runEdge[i, a](
@@ -525,7 +506,6 @@ class InterpreterImpl[F[_]](
     ns.mapAccumulate(dat)((ds, n) => ds.splitAt(n).swap)._2
 
   def runFields[I](dfs: NonEmptyList[PreparedField[F, I]], in: Chain[EvalNode[F, I]]): W[Chain[Map[String, Json]]] = {
-    // println(s"runFields: ${dfs}")
     Chain
       .fromSeq(dfs.toList)
       .parFlatTraverse {
@@ -560,7 +540,6 @@ class InterpreterImpl[F[_]](
   }
 
   def startNext[I](s: Prepared[F, I], in: Chain[EvalNode[F, I]]): W[Chain[Json]] = W.defer {
-    // println(s"startNext: ${s}")
     s match {
       case PreparedLeaf(_, enc) => W.pure(in.map(x => enc(x.value)))
       case Selection(fields)    => runFields(fields, in).map(_.map(JsonObject.fromMap(_).asJson))
