@@ -199,6 +199,7 @@ class StreamingTest extends CatsEffectSuite {
   }
 
   test("nesting with fragments works") {
+    // println("running fragment test")
     assertEquals(clue(level1Users), 0)
     assertEquals(clue(level2Users), 0)
     val q = """
@@ -240,6 +241,8 @@ class StreamingTest extends CatsEffectSuite {
     query(q)
       .take(10)
       .map(Json.fromJsonObject(_).field("data").field("level1"))
+      .zipWithIndex
+      // .map { case (_, i) => println(s"index $i") }
       .compile
       .drain >> IO {
       assertEquals(clue(level1Users), 0)
@@ -248,6 +251,7 @@ class StreamingTest extends CatsEffectSuite {
   }
 
   test("resource aquisition should work as expected") {
+    // println("running resource test")
     assertEquals(clue(level1Users), 0)
     assertEquals(clue(level2Users), 0)
 
@@ -270,6 +274,9 @@ class StreamingTest extends CatsEffectSuite {
         case Some((_, _)) =>
           Pull.eval {
             IO {
+              // println(s"asserting")
+              // println(level1Users)
+              // println(level2Users)
               // There should be one lease on both resources
               assert(clue(level1Users) >= 1)
               assert(clue(level2Users) >= 1)
@@ -280,6 +287,7 @@ class StreamingTest extends CatsEffectSuite {
       .compile
       .drain >>
       IO {
+        // println("last assertion")
         assert(clue(level1Users) == 0)
         assert(clue(level2Users) == 0)
       }

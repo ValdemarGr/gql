@@ -10,6 +10,8 @@ trait Scope[F[_]] {
 
   def parent: Option[Scope[F]]
 
+  def isOpen: F[Boolean]
+
   // Child order is reverse allocation order
   def children: F[List[Scope[F]]]
 
@@ -30,9 +32,6 @@ trait Scope[F[_]] {
   // Closes all children in parallel
   // Then closes all leases in parallel
   def close: F[Unit]
-
-  // Closes this scope in it's parent
-  def closeInParent: F[Unit]
 }
 
 object Scope {
@@ -131,9 +130,14 @@ object Scope {
                 }
             }.flatten
 
-          override def closeInParent: F[Unit] = state.get.flatMap {
-            case State.Closed()   => F.unit
-            case State.Open(_, _) => parent.traverse_(_.releaseChildren(NonEmptyList.one(id)))
+          // override def closeInParent: F[Unit] = state.get.flatMap {
+          //   case State.Closed()   => F.unit
+          //   case State.Open(_, _) => parent.traverse_(_.releaseChildren(NonEmptyList.one(id)))
+          // }
+
+          override def isOpen: F[Boolean] = state.get.map {
+            case State.Closed()   => false
+            case State.Open(_, _) => true
           }
 
           // override def leases: F[List[Lease[F]]] = state.get.map {
