@@ -5,7 +5,7 @@ import cats.implicits._
 import cats.effect.implicits._
 import cats.data._
 
-trait Scope[F[_]] {
+trait Scope[F[_]] { self =>
   def id: Unique.Token
 
   def parent: Option[Scope[F]]
@@ -16,10 +16,6 @@ trait Scope[F[_]] {
   def children: F[List[Scope[F]]]
 
   def releaseChildren(children: NonEmptyList[Unique.Token]): F[Unit]
-
-  // def leases: F[List[Lease[F]]]
-
-  // def releaseLeases(leases: NonEmptyList[Unique.Token]): F[Unit]
 
   def openChild[A](r: Scope[F] => Resource[F, A]): F[Option[(Scope[F], A)]]
 
@@ -33,7 +29,12 @@ trait Scope[F[_]] {
   // Then closes all leases in parallel
   def close: F[Unit]
 
-  def string: F[String]
+  def string(names: Map[Unique.Token, String] = Map.empty): F[String]
+
+  def root: Scope[F] = parent.fold(self)(_.root)
+
+  def path: NonEmptyChain[Unique.Token] = 
+    NonEmptyChain.of(id) prependChain parent.map(_.path.toChain).getOrElse(Chain.empty)
 }
 
 object Scope {
@@ -132,33 +133,15 @@ object Scope {
                 }
             }.flatten
 
-          // override def closeInParent: F[Unit] = state.get.flatMap {
-          //   case State.Closed()   => F.unit
-          //   case State.Open(_, _) => parent.traverse_(_.releaseChildren(NonEmptyList.one(id)))
-          // }
-
           override def isOpen: F[Boolean] = state.get.map {
             case State.Closed()   => false
             case State.Open(_, _) => true
           }
 
-          // override def leases: F[List[Lease[F]]] = state.get.map {
-          //   case State.Closed()        => Nil
-          //   case State.Open(leases, _) => leases
-          // }
-
-          // override def releaseLeases(ids: NonEmptyList[Unique.Token]): F[Unit] = state.modify {
-          //   case State.Closed() => State.Closed() -> F.unit
-          //   case State.Open(leases, children) =>
-          //     val asSet = ids.toList.toSet
-          //     val (toRelease, toKeep) = leases.partition(l => asSet.contains(l.id))
-          //     State.Open(toKeep, children) -> toRelease.parTraverse_(_.release)
-          // }.flatten
-
-          def string: F[String] = {
+          def string(names: Map[Unique.Token, String] = Map.empty): F[String] = {
             def loop(s: Scope[F], indent: Int): F[Chain[String]] = {
               val pad = " " * indent + "|- "
-              val hd = pad + s.id.toString()
+              val hd = pad + names.get(s.id).getOrElse(s"unknown-${s.id.toString()}")
 
               s.isOpen.flatMap {
                 case false => F.pure(Chain(hd + " closed"))

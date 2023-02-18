@@ -28,7 +28,29 @@ import cats.parse.Caret
 import gql.parser.QueryParser
 
 object PreparedQuery {
-  sealed trait PreparedField[F[_], A]
+  sealed trait PreparedField[F[_], A] extends Product with Serializable
+
+  sealed trait PreparedStep[F[_], -I, +O] extends Product with Serializable
+  object PreparedStep {
+    final case class Lift[F[_], I, O](f: I => O) extends AnyRef with PreparedStep[F, I, O]
+    final case class EmbedEffect[F[_], I](stableUniqueEdgeName: UniqueEdgeCursor) extends AnyRef with PreparedStep[F, F[I], I]
+    final case class EmbedStream[F[_], I](signal: Boolean, stableUniqueEdgeName: UniqueEdgeCursor)
+        extends AnyRef
+        with PreparedStep[F, fs2.Stream[F, I], I]
+    final case class EmbedError[F[_], I]() extends AnyRef with PreparedStep[F, Ior[String, I], I]
+    final case class Compose[F[_], I, A, O](left: PreparedStep[F, I, A], right: PreparedStep[F, A, O])
+        extends AnyRef
+        with PreparedStep[F, I, O]
+    final case class GetMeta[F[_], I](meta: PreparedMeta) extends AnyRef with PreparedStep[F, I, Meta]
+    final case class First[F[_], I, O, C](step: PreparedStep[F, I, O]) extends AnyRef with PreparedStep[F, (I, C), (O, C)]
+    final case class Batch[F[_], K, V](id: Step.BatchKey[K, V], globalEdgeId: UniqueBatchInstance[K, V])
+        extends AnyRef
+        with PreparedStep[F, Set[K], Map[K, V]]
+    final case class Choose[F[_], A, B, C, D](
+        fac: PreparedStep[F, A, C],
+        fbc: PreparedStep[F, B, D]
+    ) extends PreparedStep[F, Either[A, B], Either[C, D]]
+  }
 
   sealed trait Prepared[F[_], I]
 
@@ -59,32 +81,11 @@ object PreparedQuery {
       selection: NonEmptyList[PreparedDataField[F, A]]
   ) extends PreparedField[F, I]
 
-  sealed trait PreparedStep[F[_], -I, +O]
-
   final case class PreparedMeta(
       variables: VariableMap,
       alias: Option[String],
       args: Option[P.Arguments]
   )
-
-  object PreparedStep {
-    final case class Lift[F[_], I, O](f: I => O) extends AnyRef with PreparedStep[F, I, O]
-    final case class EmbedEffect[F[_], I](stableUniqueEdgeName: UniqueEdgeCursor) extends AnyRef with PreparedStep[F, F[I], I]
-    final case class EmbedStream[F[_], I](signal: Boolean, stableUniqueEdgeName: UniqueEdgeCursor) extends AnyRef with PreparedStep[F, fs2.Stream[F, I], I]
-    final case class EmbedError[F[_], I]() extends AnyRef with PreparedStep[F, Ior[String, I], I]
-    final case class Compose[F[_], I, A, O](left: PreparedStep[F, I, A], right: PreparedStep[F, A, O])
-        extends AnyRef
-        with PreparedStep[F, I, O]
-    final case class GetMeta[F[_], I](meta: PreparedMeta) extends AnyRef with PreparedStep[F, I, Meta]
-    final case class First[F[_], I, O, C](step: PreparedStep[F, I, O]) extends AnyRef with PreparedStep[F, (I, C), (O, C)]
-    final case class Batch[F[_], K, V](id: Step.BatchKey[K, V], globalEdgeId: UniqueBatchInstance[K, V])
-        extends AnyRef
-        with PreparedStep[F, Set[K], Map[K, V]]
-    final case class Choose[F[_], A, B, C, D](
-      fac: PreparedStep[F, A, C], 
-      fbc: PreparedStep[F, B, D]
-      ) extends PreparedStep[F, Either[A, B], Either[C, D]]
-  }
 
   final case class UniqueBatchInstance[K, V](id: Int) extends AnyVal
 
@@ -155,7 +156,7 @@ object PreparedQuery {
         val left = rec[i, a](alg.left, "compose-left")
         val right = rec[a, o](alg.right, "compose-right")
         (left, right).parMapN((l, r) => PreparedStep.Compose[G, i, a, o](l, r))
-      case _: Step.Alg.EmbedEffect[?, i] => pure(PreparedStep.EmbedEffect[G, i](cursor))
+      case _: Step.Alg.EmbedEffect[?, i]   => pure(PreparedStep.EmbedEffect[G, i](cursor))
       case alg: Step.Alg.EmbedStream[?, i] => pure(PreparedStep.EmbedStream[G, i](alg.signal, cursor))
       case alg: Step.Alg.Choose[?, a, b, c, d] =>
         val left = rec[a, c](alg.fac, "choice-left")
@@ -182,7 +183,7 @@ object PreparedQuery {
     step match {
       case Step.Alg.Argument(a)   => Chain.one(a)
       case Step.Alg.First(s)      => collectFields(s)
-      case Step.Alg.Choose(l, r)    => collectFields(l) ++ collectFields(r)
+      case Step.Alg.Choose(l, r)  => collectFields(l) ++ collectFields(r)
       case Step.Alg.Compose(l, r) => collectFields(l) ++ collectFields(r)
       case _                      => Chain.empty
     }

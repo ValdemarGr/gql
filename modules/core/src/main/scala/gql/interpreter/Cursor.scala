@@ -17,6 +17,7 @@ package gql.interpreter
 
 import cats.data._
 import cats._
+import cats.implicits._
 
 sealed trait GraphArc
 object GraphArc {
@@ -51,5 +52,13 @@ object Cursor {
   implicit lazy val semigroupForCursor: Semigroup[Cursor] = new Semigroup[Cursor] {
     override def combine(x: Cursor, y: Cursor): Cursor =
       Cursor(x.path ++ y.path)
+  }
+
+  implicit lazy val showForCursor = Show.show[Cursor]{ c =>
+    val tl = c.path.map{
+      case GraphArc.Field(name) => s".$name"
+      case GraphArc.Index(i) =>  s"[$i]"
+    }
+    s"root${tl.mkString_("")}"
   }
 }

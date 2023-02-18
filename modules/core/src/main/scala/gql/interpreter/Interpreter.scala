@@ -68,10 +68,21 @@ object Interpreter {
 
   final case class StreamingData[F[_], A, B](
       originIndex: Int,
-      cursor: Cursor,
       edges: StepCont[F, A, B],
       value: Either[Throwable, A]
   )
+
+  object StreamingData {
+    implicit def showForStreamingData[F[_]]: Show[StreamingData[F, _, _]] =
+      Show.show { sd =>
+        val data = sd.value.map(_.getClass().getName()).leftMap(_.getMessage())
+        s"""StreamingData(
+  index=${sd.originIndex}, 
+      edges=${""/*StepCont.showForStepCont[F].show(sd.edges)*/}, 
+  data=${data}
+)"""
+      }
+  }
 
   final case class RunInput[F[_], A, B](
       data: IndexedData[F, A],
@@ -133,18 +144,16 @@ object Interpreter {
       rootSel: NonEmptyList[PreparedField[F, A]],
       schemaState: SchemaState[F],
       openTails: Boolean,
-      pipeF: PipeF[F]
-  )(implicit F: Async[F], planner: Planner[F]): fs2.Stream[F, (Chain[EvalFailure], JsonObject)] =
+      pipeF: PipeF[F],
+      debug: DebugPrinter[F]
+  )(implicit F: Async[F], planner: Planner[F]): fs2.Stream[F, (Chain[EvalFailure], JsonObject)] = {
     fs2.Stream.resource(Scope[F](None)).flatMap { rootScope =>
-      val showRoot = rootScope.string.map(println)
-      ConfiguredStreamScopes[F, StreamingData[F, ?, ?]](takeOne = !openTails, pipeF).flatMap { css =>
+      ConfiguredStreamScopes[F, StreamingData[F, ?, ?]](takeOne = !openTails, pipeF, debug).flatMap { css =>
         fs2.Stream.resource(Supervisor[F]).flatMap { sup =>
           val changeStream = fs2.Stream.repeatEval {
-            F.delay(println("## waiting for changes")) >>
-              showRoot >>
+            debug("waiting for changes") >>
               css.unconsRelevantEvents <*
-              F.delay(println("## got changes")) <*
-              showRoot
+              debug("got changes")
           }
 
           val inital = RunInput.root(rootInput, PreparedQuery.Selection(rootSel), rootScope)
@@ -157,71 +166,63 @@ object Interpreter {
               fs2.Stream.emit((initialFails, jo)) ++
                 changeStream
                   .evalMapAccumulate(jo) { case (prevOutput, changes) =>
-                    println("## running it")
-                    changes.toNel match {
-                      case None =>
-                        F.pure((prevOutput, Option.empty[(Chain[EvalFailure], JsonObject)]))
-                      case Some(activeChanges) =>
-                        // Now we have prepared the input for this next iteration
-                        val preparedRoots =
-                          activeChanges.map { case (s, sd: StreamingData[F, a, b]) =>
-                            sd.value match {
-                              case Left(ex) =>
-                                (Chain(EvalFailure.StreamTailResolution(sd.cursor, Left(ex))), None, sd.cursor)
-                              case Right(a) =>
-                                val sc = sd.edges
-                                (
-                                  Chain.empty,
-                                  Some(
-                                    RunInput[F, a, b](
-                                      IndexedData(sd.originIndex, EvalNode(sd.cursor, a, s)),
-                                      sc
-                                    )
-                                  ),
-                                  sd.cursor
+                    // Now we have prepared the input for this next iteration
+                    val preparedRoots =
+                      changes.map { case ConfiguredStreamScopes.LeasedValue(s, c, sd: StreamingData[F, a, b], _) =>
+                        sd.value match {
+                          case Left(ex) =>
+                            (Chain(EvalFailure.StreamTailResolution(c, Left(ex))), None, c)
+                          case Right(a) =>
+                            val sc = sd.edges
+                            (
+                              Chain.empty,
+                              Some(
+                                RunInput[F, a, b](
+                                  IndexedData(sd.originIndex, EvalNode(c, a, s)),
+                                  sc
                                 )
-                            }
-                          }
-
-                        // Some of the streams may have emitted errors, we have to insert nulls into the result at those positions
-                        val paddedErrors = preparedRoots.toList.mapFilter {
-                          case (_, None, c)    => Some((Json.Null, c))
-                          case (_, Some(_), _) => None
+                              ),
+                              c
+                            )
                         }
+                      }
 
-                        // These are the inputs that are ready to be evaluated
-                        val defined = preparedRoots.collect { case (_, Some(x), c) => (x, c) }
-
-                        val evalled: F[(List[EvalNode[F, Json]], Chain[EvalFailure])] =
-                          defined
-                            .map { case (x, _) => x }
-                            .toNel
-                            .traverse(evalAll[F](_, schemaState, sup, css))
-                            .map {
-                              // Okay there were no inputs (toNel), just emit what we have
-                              case None => (Nil, Chain.empty)
-                              // Okay so an evaluation happened
-                              case Some((newFails, newOutputs)) =>
-                                (newOutputs.toList, newFails)
-                            }
-
-                        // Patch the previously emitted json data
-                        val o: F[(JsonObject, Chain[EvalFailure])] = evalled.map { case (jsons, errs) =>
-                          val allJsons = jsons.map(en => (en.value, en.cursor)) ++ paddedErrors
-                          val allErrs = errs ++ Chain.fromSeq(preparedRoots.toList).flatMap { case (es, _, _) => es }
-
-                          val stitched = allJsons.foldLeft(prevOutput) { case (accum, (patch, pos)) =>
-                            stitchInto(accum.asJson, patch, pos).asObject.get
-                          }
-
-                          println("## done it")
-
-                          (stitched, allErrs)
-                        } <* showRoot
-
-
-                        o.map { case (o, errs) => (o, (errs, o).some) }
+                    // Some of the streams may have emitted errors, we have to insert nulls into the result at those positions
+                    val paddedErrors = preparedRoots.toList.mapFilter {
+                      case (_, None, c)    => Some((Json.Null, c))
+                      case (_, Some(_), _) => None
                     }
+
+                    // These are the inputs that are ready to be evaluated
+                    val defined = preparedRoots.collect { case (_, Some(x), c) => (x, c) }
+
+                    val evalled: F[(List[EvalNode[F, Json]], Chain[EvalFailure])] =
+                      debug(s"interpreting for ${defined.size} inputs") >>
+                        defined
+                          .map { case (x, _) => x }
+                          .toNel
+                          .traverse(evalAll[F](_, schemaState, sup, css))
+                          .map {
+                            // Okay there were no inputs (toNel), just emit what we have
+                            case None => (Nil, Chain.empty)
+                            // Okay so an evaluation happened
+                            case Some((newFails, newOutputs)) =>
+                              (newOutputs.toList, newFails)
+                          } <* debug("done interpreting")
+
+                    // Patch the previously emitted json data
+                    val o: F[(JsonObject, Chain[EvalFailure])] = evalled.map { case (jsons, errs) =>
+                      val allJsons = jsons.map(en => (en.value, en.cursor)) ++ paddedErrors
+                      val allErrs = errs ++ Chain.fromSeq(preparedRoots.toList).flatMap { case (es, _, _) => es }
+
+                      val stitched = allJsons.foldLeft(prevOutput) { case (accum, (patch, pos)) =>
+                        stitchInto(accum.asJson, patch, pos).asObject.get
+                      }
+
+                      (stitched, allErrs)
+                    }
+
+                    o.map { case (o, errs) => (o, (errs, o).some) }
                   }
                   .map { case (_, x) => x }
                   .unNone
@@ -229,20 +230,24 @@ object Interpreter {
         }
       }
     }
+  }
 
   def runStreamed[F[_]: Statistics: Planner, A](
       rootInput: A,
       rootSel: NonEmptyList[PreparedField[F, A]],
-      schemaState: SchemaState[F]
+      schemaState: SchemaState[F],
+      pipeF: PipeF[F],
+      debug: DebugPrinter[F]
   )(implicit F: Async[F]): fs2.Stream[F, (Chain[EvalFailure], JsonObject)] =
-    constructStream[F, A](rootInput, rootSel, schemaState, true, PipeF.groupWithin[F](128, 5.millis))
+    constructStream[F, A](rootInput, rootSel, schemaState, true, pipeF, debug)
 
   def runSync[F[_]: Async: Statistics: Planner, A](
       rootInput: A,
       rootSel: NonEmptyList[PreparedField[F, A]],
-      schemaState: SchemaState[F]
+      schemaState: SchemaState[F],
+      debug: DebugPrinter[F]
   ): F[(Chain[EvalFailure], JsonObject)] =
-    constructStream[F, A](rootInput, rootSel, schemaState, false, PipeF.identity[F]).take(1).compile.lastOrError
+    constructStream[F, A](rootInput, rootSel, schemaState, false, PipeF.identity[F], debug).take(1).compile.lastOrError
 }
 
 final case class EvalNode[F[_], +A](cursor: Cursor, value: A, scope: Scope[F]) {
@@ -410,13 +415,13 @@ class InterpreterImpl[F[_]](
                       i.attempt.map { i =>
                         Interpreter.StreamingData(
                           id.index,
-                          id.node.cursor,
                           ridded,
                           i
                         )
                       },
                       id.node.scope,
-                      signal = alg.signal
+                      signal = alg.signal,
+                      cursor = id.node.cursor
                     )
                     .map { case (s, sd) => sd.value.map { case i: i @unchecked => (i, s) } }
                     .rethrow
