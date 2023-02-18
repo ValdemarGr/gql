@@ -22,7 +22,7 @@ object DebugPrinter {
   import gql.PreparedQuery._
 
   object Printer {
-    def kv(k: String, v: Doc): Doc = Doc.text(k) + Doc.char('=') + Doc.space + v
+    def kv(k: String, v: Doc): Doc = Doc.text(k) + Doc.space + Doc.char('=') + Doc.space + v
 
     def fields(ds: Doc*) = Doc.intercalate(Doc.char(',') + Doc.line, ds)
 
@@ -30,7 +30,7 @@ object DebugPrinter {
       fields(kvs.map { case (k, v) => kv(k, v) }: _*)
 
     def recordBy(name: String, left: Doc, right: Doc, d: Doc): Doc =
-      Doc.text(name) + d.bracketBy(left, right)
+      Doc.text(name) + d.tightBracketBy(left, right)
 
     def record(name: String, d: Doc): Doc =
       recordBy(name, Doc.char('('), Doc.char(')'), d)
@@ -114,5 +114,15 @@ object DebugPrinter {
       case StepCont.Join(_, next)      => record("StepCont.Join", stepContDoc(next))
       case StepCont.TupleWith(_, next) => record("StepCont.TupleWith", stepContDoc(next))
     }
+
+    def streamingDataDoc[F[_]](sd: Interpreter.StreamingData[F, ?, ?]): Doc =
+        record(
+            "StreamingData",
+            kvs(
+                "originIndex" -> Doc.text(sd.originIndex.toString()),
+                "edges" -> stepContDoc(sd.edges),
+                "value" -> Doc.text(sd.value.leftMap(_.getMessage()).map(_.getClass().getName()).toString())
+            )
+        )
   }
 }

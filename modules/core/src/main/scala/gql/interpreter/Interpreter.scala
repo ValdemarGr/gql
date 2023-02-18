@@ -74,14 +74,7 @@ object Interpreter {
 
   object StreamingData {
     implicit def showForStreamingData[F[_]]: Show[StreamingData[F, _, _]] =
-      Show.show { sd =>
-        val data = sd.value.map(_.getClass().getName()).leftMap(_.getMessage())
-        s"""StreamingData(
-  index=${sd.originIndex}, 
-      edges=${""/*StepCont.showForStepCont[F].show(sd.edges)*/}, 
-  data=${data}
-)"""
-      }
+      Show.show(sd => DebugPrinter.Printer.streamingDataDoc[F](sd).render(80))
   }
 
   final case class RunInput[F[_], A, B](
