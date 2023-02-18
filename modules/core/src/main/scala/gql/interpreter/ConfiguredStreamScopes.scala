@@ -6,6 +6,7 @@ import cats.implicits._
 import cats.effect.std._
 import fs2.{Chunk, Stream}
 import scala.annotation.tailrec
+import scala.concurrent.duration._
 
 // This is an abstraction on top of StreamScopes
 // It respects different consumption strategies such as "signal" and "sequential"
@@ -40,6 +41,12 @@ object ConfiguredStreamScopes {
                * If submit1 closed whatever was submitted in submit2, then we would have a dead event in uncons2
                */
               .evalMap(_.traverseFilter { case d @ (s, _) => s.isOpen.ifF(d.some, none) })
+              .evalTap(xs => F.delay(println(s"updates for ${xs.map{ case (s, _) => s.id }}")))
+              .evalTap{ xs => 
+                val h = xs.map{ case (s, _) => s }.head
+                def findRoot(s: Scope[F]): Scope[F] = s.parent.fold(s)(findRoot)
+                h.map(findRoot).traverse_(_.string.map(println(_)))
+              }
               .evalMap { xs =>
                 // First figure out what events we can handle now and what to ignore
                 // Group by parent scope, we wish to group children of the same parent
@@ -58,6 +65,7 @@ object ConfiguredStreamScopes {
                 // Then filter dead scopes
                 // If a scope occurs as a child of another live scope that was also updated, then the child scope is outdated
                 // A dead child scope will be closed automatically when the parent releases old children
+                // bug live id should be parent or something
                 val liveIds = (
                   sigs.flatMap(_.map { case (s, _) => s.id }) ++ seqed.map { case ((s, _), _) => s.id }
                 ).toSet
@@ -96,6 +104,9 @@ object ConfiguredStreamScopes {
                 val toPutBack = relevantSeqs2.flatMap { case (_, tl) => tl }
 
                 val prefix = Chunk.seq(toPutBack.map { case (s, a) => (s, (a, false)) })
+
+                println(s"emitting ${allRelevant.size} events")
+                println(allRelevant.map{ case (s, _) => s.id}.mkString(", "))
 
                 // Invokes self cycle
                 // This is inteded since these events are to be sequenced

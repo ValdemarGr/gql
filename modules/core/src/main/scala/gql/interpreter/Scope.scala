@@ -32,6 +32,8 @@ trait Scope[F[_]] {
   // Closes all children in parallel
   // Then closes all leases in parallel
   def close: F[Unit]
+
+  def string: F[String]
 }
 
 object Scope {
@@ -44,7 +46,7 @@ object Scope {
     ) extends State[F]
   }
 
-  def apply[F[_]](parent: Option[Scope[F]])(implicit F: Concurrent[F]): Resource[F, Scope[F]] = {
+  def apply[F[_]](parent: Option[Scope[F]])(implicit F: Async[F]): Resource[F, Scope[F]] = {
     val parent0 = parent
     val stateF =
       Resource.make(F.ref[State[F]](State.Open(Nil, Nil)))(_.getAndSet(State.Closed()).flatMap {
@@ -152,6 +154,31 @@ object Scope {
           //     val (toRelease, toKeep) = leases.partition(l => asSet.contains(l.id))
           //     State.Open(toKeep, children) -> toRelease.parTraverse_(_.release)
           // }.flatten
+
+          def string: F[String] = {
+            def loop(s: Scope[F], indent: Int): F[Chain[String]] = {
+              val pad = " " * indent + "|- "
+              val hd = pad + s.id.toString()
+
+              s.isOpen.flatMap {
+                case false => F.pure(Chain(hd + " closed"))
+                case true =>
+                  s.children.flatMap { cs =>
+                    Chain
+                      .fromSeq(cs)
+                      .flatTraverse { c =>
+                        loop(c, indent + 2)
+                      }
+                      .map { strs =>
+                        if (strs.size === 0) Chain(hd)
+                        else Chain(hd, " " * indent + "|-+") ++ strs
+                      }
+                  }
+              }
+            }
+
+            loop(self, 0).map(_.mkString_("\n"))
+          }
         }
       }
     }

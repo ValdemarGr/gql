@@ -135,10 +135,17 @@ object Interpreter {
       openTails: Boolean,
       pipeF: PipeF[F]
   )(implicit F: Async[F], planner: Planner[F]): fs2.Stream[F, (Chain[EvalFailure], JsonObject)] =
-    ConfiguredStreamScopes[F, StreamingData[F, ?, ?]](takeOne = !openTails, pipeF).flatMap { css =>
-      fs2.Stream.resource(Scope[F](None)).flatMap { rootScope =>
+    fs2.Stream.resource(Scope[F](None)).flatMap { rootScope =>
+      val showRoot = rootScope.string.map(println)
+      ConfiguredStreamScopes[F, StreamingData[F, ?, ?]](takeOne = !openTails, pipeF).flatMap { css =>
         fs2.Stream.resource(Supervisor[F]).flatMap { sup =>
-          val changeStream = fs2.Stream.repeatEval(css.unconsRelevantEvents)
+          val changeStream = fs2.Stream.repeatEval {
+            F.delay(println("## waiting for changes")) >>
+              showRoot >>
+              css.unconsRelevantEvents <*
+              F.delay(println("## got changes")) <*
+              showRoot
+          }
 
           val inital = RunInput.root(rootInput, PreparedQuery.Selection(rootSel), rootScope)
 
@@ -150,6 +157,7 @@ object Interpreter {
               fs2.Stream.emit((initialFails, jo)) ++
                 changeStream
                   .evalMapAccumulate(jo) { case (prevOutput, changes) =>
+                    println("## running it")
                     changes.toNel match {
                       case None =>
                         F.pure((prevOutput, Option.empty[(Chain[EvalFailure], JsonObject)]))
@@ -185,17 +193,17 @@ object Interpreter {
                         val defined = preparedRoots.collect { case (_, Some(x), c) => (x, c) }
 
                         val evalled: F[(List[EvalNode[F, Json]], Chain[EvalFailure])] =
-                            defined
-                              .map { case (x, _) => x }
-                              .toNel
-                              .traverse(evalAll[F](_, schemaState, sup, css))
-                              .map {
-                                // Okay there were no inputs (toNel), just emit what we have
-                                case None => (Nil, Chain.empty)
-                                // Okay so an evaluation happened
-                                case Some((newFails, newOutputs)) => 
-                                  (newOutputs.toList, newFails)
-                              }
+                          defined
+                            .map { case (x, _) => x }
+                            .toNel
+                            .traverse(evalAll[F](_, schemaState, sup, css))
+                            .map {
+                              // Okay there were no inputs (toNel), just emit what we have
+                              case None => (Nil, Chain.empty)
+                              // Okay so an evaluation happened
+                              case Some((newFails, newOutputs)) =>
+                                (newOutputs.toList, newFails)
+                            }
 
                         // Patch the previously emitted json data
                         val o: F[(JsonObject, Chain[EvalFailure])] = evalled.map { case (jsons, errs) =>
@@ -206,8 +214,11 @@ object Interpreter {
                             stitchInto(accum.asJson, patch, pos).asObject.get
                           }
 
+                          println("## done it")
+
                           (stitched, allErrs)
-                        }
+                        } <* showRoot
+
 
                         o.map { case (o, errs) => (o, (errs, o).some) }
                     }

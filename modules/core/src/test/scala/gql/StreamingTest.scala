@@ -46,7 +46,7 @@ class StreamingTest extends CatsEffectSuite {
           Stream
             .iterate(0)(_ + 1)
             .lift[IO]
-            .meteredStartImmediately(100.millis)
+            .meteredStartImmediately(1000.millis)
             .flatMap(x => fs2.Stream.resource(level1Resource) as Level2(x))
         ).embedStream
       }
@@ -62,7 +62,7 @@ class StreamingTest extends CatsEffectSuite {
           Stream
             .iterate(0)(_ + 1)
             .lift[IO]
-            .meteredStartImmediately(200.millis)
+            .meteredStartImmediately(2000.millis)
             .flatMap(x => fs2.Stream.resource(level2Resource) as Level1(x))
         )
       }
@@ -198,6 +198,7 @@ class StreamingTest extends CatsEffectSuite {
   }
 
   test("nesting with fragments works") {
+    println("!!!! running frag test")
     assertEquals(clue(level1Users), 0)
     assertEquals(clue(level2Users), 0)
     val q = """
@@ -240,6 +241,7 @@ class StreamingTest extends CatsEffectSuite {
       .take(10)
       .map(Json.fromJsonObject(_).field("data").field("level1"))
       .zipWithIndex
+      .evalTap(x => IO.println(x))
       .compile
       .drain >> IO {
       assertEquals(clue(level1Users), 0)

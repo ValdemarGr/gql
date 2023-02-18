@@ -35,8 +35,8 @@ object StreamScopes {
        * Since parent and thisStream are siblings, their releases are not ordered.
        * If opening "thisStream" depends on the resource lease of "parent" then this strategy is not sufficient.
        * We must allocate a scope just for "thisStream" and then open a child scope for each emission:
-       *          scope
-       *            |
+       *         scope
+       *           |
        *         parent  
        *           |
        *       thisStream
