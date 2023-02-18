@@ -130,15 +130,12 @@ object ConfiguredStreamScopes {
                 val filteredSigsF = relevantSigs.filterA(_.scope.isOpen)
                 val filteredSeqsF = seqed.filterA { case (d, _) => d.scope.isOpen }
 
-                // Construct the prefix, such that they can be sequenced
-                val prefixF = filteredSeqsF
-                  .map(_.flatMap { case (_, tl) => tl })
-                  .map(Chunk.seq)
-
-                cleanupOldChildrenF *> (prefixF, filteredSigsF).flatMapN { case (prefix, sigs) =>
+                cleanupOldChildrenF *> (filteredSeqsF, filteredSigsF).flatMapN { case (seqs, sigs) =>
+                  val headSeqs = seqs.map { case (hd, _) => hd }
+                  val prefix = Chunk.seq(seqs.flatMap { case (_, tl) => tl })
                   // Invokes self cycle
                   // This is inteded since these events are to be sequenced
-                  (if (prefix.nonEmpty) publish(prefix ++ _) else F.unit) as sigs
+                  (if (prefix.nonEmpty) publish(prefix ++ _) else F.unit) as (sigs ++ headSeqs)
                 }
               }
               .evalTap(rs => debug.eval(debugShow(Chain.fromSeq(rs)).map(s => s"relevant updates for:\n$s")))

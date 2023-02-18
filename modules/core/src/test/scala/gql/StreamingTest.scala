@@ -24,7 +24,6 @@ import gql.ast._
 import gql.dsl._
 import cats.effect._
 import scala.concurrent.duration._
-import gql.interpreter.DebugPrinter
 
 final case class Level1(value: Int)
 final case class Level2(value: Int)
@@ -47,9 +46,9 @@ class StreamingTest extends CatsEffectSuite {
           Stream
             .iterate(0)(_ + 1)
             .lift[IO]
-            .meteredStartImmediately(100.millis)
+            .meteredStartImmediately(200.millis)
             .flatMap(x => fs2.Stream.resource(level1Resource) as Level2(x))
-        ).embedStream
+        ).embedSequentialStream
       }
     )
   }
@@ -63,7 +62,7 @@ class StreamingTest extends CatsEffectSuite {
           Stream
             .iterate(0)(_ + 1)
             .lift[IO]
-            .meteredStartImmediately(200.millis)
+            .meteredStartImmediately(400.millis)
             .flatMap(x => fs2.Stream.resource(level2Resource) as Level1(x))
         )
       }
@@ -86,7 +85,7 @@ class StreamingTest extends CatsEffectSuite {
   lazy val schema = Schema.simple(schemaShape).unsafeRunSync()
 
   def query(q: String, variables: Map[String, Json] = Map.empty): Stream[IO, JsonObject] =
-    Compiler[IO].compile(schema, q, variables = variables, debug= DebugPrinter[IO](IO.println)) match {
+    Compiler[IO].compile(schema, q, variables = variables/*, debug= gql.interpreter.DebugPrinter[IO](IO.println)*/) match {
       case Left(err)                          => Stream(err.asGraphQL)
       case Right(Application.Subscription(s)) => s.map(_.asGraphQL)
       case _                                  => ???
