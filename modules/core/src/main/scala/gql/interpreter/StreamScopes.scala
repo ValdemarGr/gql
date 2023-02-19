@@ -32,7 +32,6 @@ trait StreamScopes[F[_], A] {
   // Gets changes in the entire scope tree
   def changes: Stream[F, Chunk[(Scope[F], A, Cursor)]]
 
-  // Debugging info
   def getPrintState: F[Map[Unique.Token, String]]
 }
 

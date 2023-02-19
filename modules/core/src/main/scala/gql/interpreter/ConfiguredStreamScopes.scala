@@ -42,7 +42,7 @@ object ConfiguredStreamScopes {
       signal: Boolean
   )
 
-  def apply[F[_], A: Show](takeOne: Boolean, pipeF: PipeF[F], debug: DebugPrinter[F])(implicit
+  def apply[F[_], A: Doced](takeOne: Boolean, pipeF: PipeF[F], debug: DebugPrinter[F])(implicit
       F: Async[F]
   ): Stream[F, ConfiguredStreamScopes[F, A]] = {
     Stream.eval(StreamScopes[F, (A, Boolean)](takeOne)).flatMap { scopes =>
@@ -50,7 +50,7 @@ object ConfiguredStreamScopes {
         Stream.eval(F.ref[Chunk[LeasedValue[F, A]]](Chunk.empty)).flatMap { sr =>
           def publish(f: Chunk[LeasedValue[F, A]] => Chunk[LeasedValue[F, A]]): F[Unit] =
             sr.update(f) *> notifications.offer(false)
-
+/*
           def debugShow(xs: Chain[LeasedValue[F, A]]) =
             scopes.getPrintState.flatMap { lookup =>
               xs.headOption.traverse(_.scope.root.string(lookup)).map(_.getOrElse("no tree")).flatMap { tree =>
@@ -70,7 +70,7 @@ object ConfiguredStreamScopes {
                   }
 
               }
-            }
+            }*/
 
           def consumeChunk: F[NonEmptyList[LeasedValue[F, A]]] =
             fs2.Stream
@@ -83,7 +83,7 @@ object ConfiguredStreamScopes {
                * submit1 -> uncons1 -> submit2 -> cleanup1 -> uncons2
                * If submit1 closed whatever was submitted in submit2, then we would have a dead event in uncons2
                */
-              .evalTap(xs => debug.eval(debugShow(xs.toChain).map(s => s"got updates for:\n$s")))
+              //.evalTap(xs => debug.eval(debugShow(xs.toChain).map(s => s"got updates for:\n$s")))
               .evalMap(_.traverseFilter(d => d.scope.isOpen.ifF(d.some, none)))
               .evalMap { xs =>
                 // First figure out what events we can handle now and what to ignore
@@ -153,7 +153,7 @@ object ConfiguredStreamScopes {
                   (if (prefix.nonEmpty) publish(prefix ++ _) else F.unit) as (sigs ++ headSeqs)
                 }
               }
-              .evalTap(rs => debug.eval(debugShow(Chain.fromSeq(rs)).map(s => s"relevant updates for:\n$s")))
+              //.evalTap(rs => debug.eval(debugShow(Chain.fromSeq(rs)).map(s => s"relevant updates for:\n$s")))
               .map(_.toNel)
               .unNone
               .head

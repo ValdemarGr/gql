@@ -73,8 +73,8 @@ object Interpreter {
   )
 
   object StreamingData {
-    implicit def showForStreamingData[F[_]]: Show[StreamingData[F, _, _]] =
-      Show.show(sd => DebugPrinter.Printer.streamingDataDoc[F](sd).render(80))
+    implicit def docedForStreamingData[F[_]]: Doced[StreamingData[F, ?, ?]] =
+      DebugPrinter.Printer.streamingDataDoced[F]
   }
 
   final case class RunInput[F[_], A, B](
