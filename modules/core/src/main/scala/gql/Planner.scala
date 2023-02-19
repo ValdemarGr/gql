@@ -23,6 +23,7 @@ import cats._
 import scala.io.AnsiColor
 import cats.mtl.Stateful
 import gql.resolver.Step
+import scala.collection.immutable.SortedMap
 
 trait Planner[F[_]] { self =>
   def plan(naive: Planner.NodeTree): F[Planner.NodeTree]
@@ -39,51 +40,77 @@ object Planner {
       uniqueNodeId: PreparedQuery.UniqueBatchInstance[K, V]
   )
 
+  final case class NodeId(id: Int) extends AnyVal
+
+  object NodeId {
+    implicit val ord: Order[NodeId] = Order.by[NodeId, Int](_.id)
+  }
+
   final case class Node(
-      id: Int,
+      id: NodeId,
       name: String,
-      end: Double,
+      //end: Double,
       cost: Double,
       elemCost: Double,
-      children: List[Node],
+      //children: List[Node],
+      parents: Set[NodeId],
       batchId: Option[BatchRef[?, ?]]
-  ) {
-    lazy val start = end - cost
-  }
+  ) //{
+  //lazy val start = end - cost
+  //}
 
   final case class TraversalState(
       id: Int,
-      currentCost: Double
+      parents: Set[NodeId],
+      nodes: Chain[Node]
   )
 
-  def scopeCost[F[_]: Monad, A](fa: F[A])(implicit S: Stateful[F, TraversalState]): F[A] =
-    S.inspect(_.currentCost).flatMap { initial =>
-      fa <* S.modify(_.copy(currentCost = initial))
-    }
+  def getId[F[_]: Applicative](implicit S: Stateful[F, TraversalState]): F[NodeId] =
+    S.inspect(x => NodeId(x.id)) <* S.modify(s => s.copy(id = s.id + 1))
 
-  def getId[F[_]: Applicative](implicit S: Stateful[F, TraversalState]): F[Int] =
-    S.inspect(_.id) <* S.modify(s => s.copy(id = s.id + 1))
+  def setParents[F[_]](parents: Set[NodeId])(implicit S: Stateful[F, TraversalState]): F[Unit] =
+    S.modify(s => s.copy(parents = parents))
 
-  def nextId[F[_]: Applicative](implicit S: Stateful[F, Int]): F[Int] =
-    S.get <* S.modify(_ + 1)
+  def addNodes[F[_]](nodes: Chain[Node])(implicit S: Stateful[F, TraversalState]): F[Unit] =
+    S.modify(s => s.copy(nodes = s.nodes ++ nodes))
 
-  def costForStep[F[_], G[_]](step: PreparedStep[G, ?, ?], right: F[List[Node]])(implicit
+  def addNode[F[_]](node: Node)(implicit S: Stateful[F, TraversalState]): F[Unit] =
+    S.modify(s => s.copy(nodes = s.nodes :+ node))
+
+  def costForStep[F[_], G[_]](step: PreparedStep[G, ?, ?])(implicit
       stats: Statistics[F],
       F: Monad[F],
       S: Stateful[F, TraversalState]
-  ): F[List[Node]] = {
+  ): F[Unit] = {
+    def goParallel(l: PreparedStep[G, ?, ?], r: PreparedStep[G, ?, ?]): F[Unit] = {
+      // A parallel op is disjunctive so the parent must be the same for both branches
+      // This creates a diamond shape in the graph
+      // Parent -> Left -> Child
+      // Parent -> Right -> Child
+      S.inspect(_.parents).flatMap { ps =>
+        val setParents = S.modify(s => s.copy(parents = ps))
+        val left = setParents *> costForStep(l) *> S.inspect(_.parents)
+        val right = setParents *> costForStep(r) *> S.inspect(_.parents)
+
+        (left, right).flatMapN { case (lp, rp) =>
+          val parents = lp ++ rp
+          S.modify(s => s.copy(parents = parents))
+        }
+      }
+    }
+
     import PreparedStep._
     step match {
-      case Lift(_) | EmbedError() | GetMeta(_) => right
-      case Compose(l, r)                       => costForStep[F, G](l, costForStep[F, G](r, right))
-      case alg: Skip[G, ?, ?]                  => costForStep[F, G](alg.compute, right)
-      case alg: First[G, ?, ?, ?]              => costForStep[F, G](alg.step, right)
-      case Batch(_, _) | EmbedEffect(_) | EmbedStream(_) =>
+      case Lift(_) | EmbedError() | GetMeta(_) => F.unit
+      case Compose(l, r)                       => costForStep[F, G](l) *> costForStep[F, G](r)
+      case alg: Choose[G, ?, ?, ?, ?]          => goParallel(alg.fac, alg.fbc)
+      case alg: First[G, ?, ?, ?]              => costForStep[F, G](alg.step)
+      case Batch(_, _) | EmbedEffect(_) | EmbedStream(_, _) =>
         val name = step match {
-          case Batch(id, _)        => s"batch_$id"
-          case EmbedEffect(cursor) => cursor.asString
-          case EmbedStream(cursor) => cursor.asString
-          case _                   => ???
+          case Batch(id, _)           => s"batch_$id"
+          case EmbedEffect(cursor)    => cursor.asString
+          case EmbedStream(_, cursor) => cursor.asString
+          case _                      => ???
         }
 
         val costF = stats
@@ -91,26 +118,20 @@ object Planner {
           .map(_.getOrElse(Statistics.Stats(100d, 5d)))
 
         costF.flatMap { cost =>
-          S.inspect(_.currentCost).flatMap { currentCost =>
-            val end = currentCost + cost.initialCost
-            S.modify(_.copy(currentCost = end)) >> {
-              right.flatMap { children =>
-                getId[F].map { id =>
-                  List(
-                    Node(
-                      id,
-                      name,
-                      end,
-                      cost.initialCost,
-                      cost.extraElementCost,
-                      children,
-                      step match {
-                        case Batch(batcherId, uniqueNodeId) => Some(BatchRef(batcherId, uniqueNodeId))
-                        case _                              => None
-                      }
-                    )
-                  )
-                }
+          getId[F].flatMap { id =>
+            S.inspect(_.parents).flatMap { parentIds =>
+              addNode {
+                Node(
+                  id,
+                  name,
+                  cost.initialCost,
+                  cost.extraElementCost,
+                  parentIds,
+                  step match {
+                    case Batch(batcherId, uniqueNodeId) => Some(BatchRef(batcherId, uniqueNodeId))
+                    case _                              => None
+                  }
+                )
               }
             }
           }
@@ -122,13 +143,11 @@ object Planner {
       F: Monad[F],
       stats: Statistics[F],
       S: Stateful[F, TraversalState]
-  ): F[List[Node]] = {
-    prepared.toList.flatTraverse { pf =>
-      scopeCost {
-        pf match {
-          case PreparedDataField(_, _, cont)          => costForCont[F, G](cont.edges, cont.cont)
-          case PreparedSpecification(_, _, selection) => costForFields[F, G](selection)
-        }
+  ): F[Unit] = {
+    prepared.toList.traverse_ { pf =>
+      pf match {
+        case PreparedDataField(_, _, cont)          => costForCont[F, G](cont.edges, cont.cont)
+        case PreparedSpecification(_, _, selection) => costForFields[F, G](selection)
       }
     }
   }
@@ -136,10 +155,10 @@ object Planner {
   def costForPrepared[F[_]: Statistics, G[_]](p: Prepared[G, ?])(implicit
       F: Monad[F],
       S: Stateful[F, TraversalState]
-  ): F[List[Node]] =
+  ): F[Unit] =
     p match {
-      case PreparedLeaf(_, _)          => F.pure(Nil)
-      case Selection(fields)           => costForFields[F, G](fields).map(_.toList)
+      case PreparedLeaf(_, _)          => F.unit
+      case Selection(fields)           => costForFields[F, G](fields)
       case l: PreparedList[G, ?, ?, ?] => costForCont[F, G](l.of.edges, l.of.cont)
       case o: PreparedOption[G, ?, ?]  => costForCont[F, G](o.of.edges, o.of.cont)
     }
@@ -147,57 +166,62 @@ object Planner {
   def costForCont[F[_]: Statistics: Monad, G[_]](
       edges: PreparedStep[G, ?, ?],
       cont: Prepared[G, ?]
-  )(implicit S: Stateful[F, TraversalState]): F[List[Node]] =
-    costForStep[F, G](edges, costForPrepared[F, G](cont))
+  )(implicit S: Stateful[F, TraversalState]): F[Unit] =
+    costForStep[F, G](edges) *> costForPrepared[F, G](cont)
 
   type H[F[_], A] = StateT[F, TraversalState, A]
   def liftStatistics[F[_]: Applicative](stats: Statistics[F]): Statistics[H[F, *]] =
     stats.mapK(StateT.liftK[F, TraversalState])
 
   def runCostAnalysisFor[F[_]: Monad, A](f: Statistics[H[F, *]] => H[F, A])(implicit stats: Statistics[F]): F[A] =
-    f(liftStatistics[F](stats)).runA(TraversalState(1, 0d))
+    f(liftStatistics[F](stats)).runA(TraversalState(1, Set.empty, Chain.empty))
 
-  def runCostAnalysis[F[_]: Monad: Statistics](f: Statistics[H[F, *]] => H[F, List[Node]]): F[NodeTree] =
-    runCostAnalysisFor[F, List[Node]](f).map(NodeTree(_))
+  def runCostAnalysis[F[_]: Monad: Statistics, A](f: Statistics[H[F, *]] => H[F, A]): F[NodeTree] =
+    runCostAnalysisFor[F, List[Node]](s => f(s).get.map(_.nodes.toList)).map(NodeTree.simple(_))
 
   def apply[F[_]](implicit F: Applicative[F]) = new Planner[F] {
     def plan(tree: NodeTree): F[NodeTree] = {
-      tree.root.toNel match {
-        case None => F.pure(tree.set(tree.root))
+      tree.roots.toNel match {
+        case None => F.pure(tree.copy(source = Some(tree)))
         case Some(_) =>
-          def findMax(ns: List[Node], current: Double): Eval[Double] = Eval.defer {
-            ns.foldLeftM(current) { case (cur, n) =>
-              findMax(n.children, cur max n.end)
-            }
-          }
-          val maxEnd = findMax(tree.root, 0d).value
+          val baseEnds = tree.endTimes
+          val childrenV = tree.childrenLookup
+          val lookupV = tree.lookup
+
+          val maxEnd = baseEnds.values.maxOption.get
 
           // Move as far down as we can
-          def moveDown(n: Node): Eval[Node] = Eval.defer {
-            n.children
-              .traverse(moveDown)
-              .map { movedChildren =>
-                // This end is the minimum end of all children
-                val thisEnd = movedChildren.foldLeft(maxEnd)((z, c) => z min c.end)
-                n.copy(end = thisEnd, children = movedChildren)
-              }
-          }
+          def moveDown(id: NodeId): State[EndTimes, Double] =
+            State.inspect((a: EndTimes) => a.get(id)).flatMap {
+              case Some(d) => State.pure(d)
+              case None =>
+                val children = childrenV.get(id).toList.flatMap(_.toList)
+                // Find the maximum end time of all children
+                children
+                  .traverse(moveDown)
+                  .map(_.maxOption.getOrElse(maxEnd))
+                  .flatMap { newEnd =>
+                    State.modify[EndTimes](_ + (id -> newEnd)) as newEnd
+                  }
+            }
 
-          val movedDown = tree.root.traverse(moveDown).value
+          val movedDown = tree.roots.map(_.id).traverse_(moveDown).runS(Map.empty).value
 
           // Run though orderd by end time (smallest first)
           // Then move up to furthest batchable neighbour
           // If no such neighbour, move up as far as possible
-          def moveUp(ns: List[Node]): Map[Int, Double] =
+          def moveUp(ns: List[NodeId]): Map[NodeId, Double] =
             ns.mapAccumulate(
               (
-                // When a parent has been moved, it adds a reference for every children to their parent's end time
-                Map.empty[Int, Double],
+                // Map of node id to NEW end time
+                Map.empty[NodeId, Double],
                 // When a node has been visited and is batchable, it is added here
                 Map.empty[Step.BatchKey[?, ?], TreeSet[Double]]
               )
-            ) { case ((parentEnds, batchMap), n) =>
-              val minEnd = parentEnds.getOrElse(n.id, 0d) + n.cost
+            ) { case ((ends, batchMap), id) =>
+              val n = lookupV(id)
+              // We may move up to the maximum parent end time
+              val minEnd = n.parents.map(ends(_)).maxOption.getOrElse(0d)
               val (newEnd, newMap) = n.batchId match {
                 // No batching here, move up as far as possible
                 case None => (minEnd, batchMap)
@@ -216,61 +240,64 @@ object Planner {
                   }
               }
 
-              val newParentEnds = parentEnds ++ n.children.map(c => c.id -> newEnd)
-              ((newParentEnds, newMap), (n.id, newEnd))
+              val newEnds = ends + (id -> newEnd)
+              ((newEnds, newMap), (n.id, newEnd))
             }._2
               .toMap
 
-          val ordered = NodeTree(movedDown).flattened.sortBy(_.end)
+          val ordered = movedDown.toList.sortBy { case (_, d) => d }.map { case (id, _) => id }
 
           val movedUp = moveUp(ordered)
 
-          def reConstruct(ns: List[Node]): Eval[List[Node]] = Eval.defer {
-            ns.traverse { n =>
-              reConstruct(n.children).map(cs => n.copy(end = movedUp(n.id), children = cs))
-            }
-          }
-
-          F.pure(tree.set(reConstruct(tree.root).value))
+          F.pure(tree.set(movedUp))
       }
     }
   }
+
+  type EndTimes = Map[NodeId, Double]
+
   final case class NodeTree(
-      root: List[Node],
+      all: List[Node],
+      endTimes: EndTimes,
       source: Option[NodeTree] = None
   ) {
-    def set(newRoot: List[Node]): NodeTree =
-      NodeTree(newRoot, Some(this))
+    def set(endTimes: EndTimes): NodeTree =
+      NodeTree(all, endTimes, Some(this))
 
-    lazy val flattened: List[Node] = {
-      def go(xs: List[Node]): Eval[List[Node]] = Eval.defer {
-        xs.flatTraverse {
-          case n @ Node(_, _, _, _, _, Nil, _) => Eval.now(List(n))
-          case n @ Node(_, _, _, _, _, xs, _)  => go(xs).map(n :: _)
-        }
-      }
+    lazy val lookup: Map[NodeId, Node] =
+      all.map(n => n.id -> n).toMap
 
-      go(root).value
+    lazy val childrenLookup: SortedMap[NodeId, NonEmptyChain[NodeId]] =
+      all
+        .flatMap(n => n.parents.map(p => p -> n.id))
+        .groupByNec { case (p, _) => p }
+        .fmap(_.map { case (_, c) => c })
+
+    lazy val roots = all.filter(_.parents.isEmpty)
+
+    // If a node has children, it is not a leaf
+    lazy val leaves = {
+      val childrenV = childrenLookup
+      all.filter(n => !childrenV.contains(n.id))
     }
 
-    lazy val batches: List[(Step.BatchKey[?, ?], NonEmptyChain[BatchRef[?, ?]])] =
-      flattened
+    lazy val batches: List[(Step.BatchKey[?, ?], NonEmptyChain[BatchRef[?, ?]])] = {
+      val endTimesV = endTimes
+      all
         .map(n => (n.batchId, n))
         .collect { case (Some(batcherKey), node) => (batcherKey, node) }
-        .groupByNec { case (_, node) => node.end }
+        .groupByNec { case (_, node) => endTimesV(node.id) }
         .toList
         .flatMap { case (_, endGroup) =>
-          endGroup
-            .groupBy { case (batcherKey, _) => batcherKey.batcherId.id }
-            .toSortedMap
-            .toList
-            .map { case (batcherKey, batch) =>
-              Step.BatchKey(batcherKey) -> batch.map { case (br, _) => br }
-            }
+          endGroup.toList
+            .groupBy { case (batcherKey, _) => batcherKey.batcherId }
+            .map { case (batcherKey, batch) => batcherKey -> NonEmptyChain.fromSeq(batch.map { case (br, _) => br }) }
+            .collect { case (k, Some(vs)) => k -> vs }
         }
+    }
 
-    def totalCost: Double = {
-      val thisFlat = flattened
+    lazy val totalCost: Double = {
+      val thisFlat = all
       val thisBatches = batches.filter { case (_, edges) => edges.size > 1 }
       val batchCostMap: Map[Step.BatchKey[?, ?], Double] =
         thisFlat.mapFilter(n => n.batchId.map(br => br.batcherId -> n.cost)).toMap
@@ -294,7 +321,9 @@ object Planner {
           }
         else (this, None)
 
-      val maxEnd = displaced.getOrElse(default).flattened.maxByOption(_.end).map(_.end).getOrElse(0d)
+      val nt = displaced.getOrElse(default)
+
+      val maxEnd = nt.all.map(n => nt.endTimes(n.id)).maxOption.getOrElse(0d)
 
       val (red, green, blue, reset) =
         if (ansiColors) (AnsiColor.RED_B, AnsiColor.GREEN_B, AnsiColor.BLUE_B, AnsiColor.RESET)
@@ -312,33 +341,66 @@ object Planner {
 
       val per = math.max((maxEnd / 40d), 1)
 
-      def go(default: List[Node], displacement: Map[Int, Node]): String = {
-        default
+      def go(nodes: List[NodeId]): String = {
+        nodes
           .sortBy(_.id)
-          .map { n =>
-            val disp = displacement.get(n.id)
-            val basePrefix = " " * (n.start / per).toInt
+          .map { n0 =>
+            val n = lookup(n0)
+            val nEnd = endTimes(n.id)
+            val nStart = nEnd - n.cost
+            val disp = nt.lookup.get(n.id)
+            val basePrefix = " " * (nStart / per).toInt
             val showDisp = disp
-              .filter(_.end.toInt != n.end.toInt)
+              .filter(d => nt.endTimes(d.id) != nEnd.toInt)
               .map { d =>
-                val pushedPrefix = blue + ">" * ((d.start - n.start) / per).toInt + green
-                s"$basePrefix${pushedPrefix}name: ${d.name}, cost: ${d.cost}, end: ${d.end}$reset"
+                val dEnd = nt.endTimes(d.id)
+                val dStart = dEnd - d.cost
+                val pushedPrefix = blue + ">" * ((dStart - nStart) / per).toInt + green
+                s"$basePrefix${pushedPrefix}name: ${d.name}, cost: ${d.cost}, end: ${dEnd}$reset"
               }
             val showHere =
-              s"$basePrefix${if (showDisp.isDefined) red else ""}name: ${n.name}, cost: ${n.cost}, end: ${n.end}$reset"
+              s"$basePrefix${if (showDisp.isDefined) red else ""}name: ${n.name}, cost: ${n.cost}, end: ${nEnd}$reset"
 
             val all = showHere + showDisp.map("\n" + _).mkString
-            val children = go(n.children, disp.map(_.children.map(x => x.id -> x).toMap).getOrElse(Map.empty))
+            val children = go(childrenLookup.get(n.id).map(_.toList).getOrElse(Nil))
             all + "\n" + children
           }
           .mkString("")
       }
 
-      prefix +
-        go(default.root, displaced.map(_.root.map(x => x.id -> x).toMap).getOrElse(Map.empty))
+      prefix + go(default.roots.map(_.id))
     }
   }
   object NodeTree {
+    def computeNewEndTimes(nt: NodeTree) = {
+      // lazy val optimization
+      val lookupV = nt.lookup
+
+      // we start from the leaves since that fixes the diamond problem
+
+      def getEndTime(n: Node): State[EndTimes, Double] =
+        State.inspect((a: EndTimes) => a.get(n.id)).flatMap {
+          case Some(d) => State.pure(d)
+          case None    =>
+            // find the max end time of all parents and add the cost
+            n.parents.toList
+              .traverse(p => getEndTime(lookupV(p)))
+              .map(_.combineAll)
+              .flatMap { parentEnd =>
+                val end = parentEnd + n.cost
+                State.modify[EndTimes](_ + (n.id -> end)) as end
+              }
+        }
+
+      nt.leaves.traverse_(getEndTime).runS(Map.empty).value
+    }
+
+    def simple(nodes: List[Node]): NodeTree = {
+      val base = NodeTree(nodes, Map.empty)
+      val ends = computeNewEndTimes(base)
+      NodeTree(nodes, ends)
+    }
+
     implicit lazy val showForNodeTree: Show[NodeTree] = Show.show[NodeTree](_.show(showImprovement = true))
   }
 }

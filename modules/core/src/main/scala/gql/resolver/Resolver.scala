@@ -50,11 +50,8 @@ final class Resolver[+F[_], -I, +O](private[gql] val underlying: Step[F, I, O]) 
   def meta: Resolver[F, I, (Meta, O)] =
     this andThen Resolver.meta[F, O].tupleIn
 
-  def stream[F2[x] >: F[x], O2](f: O => fs2.Stream[F2, O2]): Resolver[F2, I, O2] =
+  def streamMap[F2[x] >: F[x], O2](f: O => fs2.Stream[F2, O2]): Resolver[F2, I, O2] =
     this andThen Resolver.stream(f)
-
-  def skippable[O1 >: O]: Resolver[F, Either[I, O1], O1] =
-    new Resolver(Step.skip(this.underlying))
 }
 
 object Resolver extends ResolverInstances {
@@ -103,6 +100,15 @@ object Resolver extends ResolverInstances {
   }
 
   implicit class InvariantOps[F[_], I, O](private val self: Resolver[F, I, O]) extends AnyVal {
+    def choose[I2, O2](that: Resolver[F, I2, O2]): Resolver[F, Either[I, I2], Either[O, O2]] =
+      new Resolver(Step.choose(self.underlying, that.underlying))
+
+    def choice[I2](that: Resolver[F, I2, O]): Resolver[F, Either[I, I2], O] =
+      choose[I2, O](that).map(_.merge)
+
+    def skippable: Resolver[F, Either[I, O], O] =
+      this.choice(Resolver.id[F, O])
+
     def skipThis[I2](verify: Resolver[F, I2, Either[I, O]]): Resolver[F, I2, O] =
       verify andThen self.skippable
 
@@ -132,11 +138,22 @@ object Resolver extends ResolverInstances {
     def skipThatWith(f: Resolver[F, I2, I2] => Resolver[F, I2, O]): Resolver[F, I, O] =
       skipThat(f(Resolver.id[F, I2]))
   }
+
+  implicit class StreamOps[F[_], I, O](private val self: Resolver[F, I, fs2.Stream[F, O]]) extends AnyVal {
+    def embedStream: Resolver[F, I, O] =
+      self andThen new Resolver(Step.embedStream)
+
+    def embedSequentialStream: Resolver[F, I, O] =
+      self andThen new Resolver(Step.embedStreamFull(signal = false))
+  }
 }
 
 trait ResolverInstances {
   import cats.arrow._
-  implicit def arrowForResolver[F[_]]: Arrow[Resolver[F, *, *]] = new Arrow[Resolver[F, *, *]] {
+  implicit def arrowChoiceForResolver[F[_]]: ArrowChoice[Resolver[F, *, *]] = new ArrowChoice[Resolver[F, *, *]] {
+    override def choose[A, B, C, D](f: Resolver[F, A, C])(g: Resolver[F, B, D]): Resolver[F, Either[A, B], Either[C, D]] =
+      f.choose(g)
+
     override def compose[A, B, C](f: Resolver[F, B, C], g: Resolver[F, A, B]): Resolver[F, A, C] =
       f.compose(g)
 

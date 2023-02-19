@@ -26,7 +26,10 @@ object Step {
 
     final case class EmbedEffect[F[_], I]() extends AnyRef with Step[F, F[I], I]
 
-    final case class EmbedStream[F[_], I]() extends AnyRef with Step[F, fs2.Stream[F, I], I]
+    final case class EmbedStream[F[_], I](
+        signal: Boolean
+    ) extends AnyRef
+        with Step[F, fs2.Stream[F, I], I]
 
     final case class EmbedError[I]() extends AnyRef with Step[Nothing, Ior[String, I], I]
 
@@ -34,7 +37,7 @@ object Step {
 
     final case class Compose[F[_], I, A, O](left: Step[F, I, A], right: Step[F, A, O]) extends Step[F, I, O]
 
-    final case class Skip[F[_], I, O](compute: Step[F, I, O]) extends Step[F, Either[I, O], O]
+    final case class Choose[F[_], A, B, C, D](fac: Step[F, A, C], fab: Step[F, B, D]) extends Step[F, Either[A, B], Either[C, D]]
 
     final case class GetMeta[I]() extends Step[Nothing, I, Meta]
 
@@ -52,8 +55,11 @@ object Step {
   def embedError[F[_], I]: Step[F, Ior[String, I], I] =
     Alg.EmbedError()
 
+  def embedStreamFull[F[_], I, O](signal: Boolean): Step[F, fs2.Stream[F, I], I] =
+    Alg.EmbedStream(signal)
+
   def embedStream[F[_], I, O]: Step[F, fs2.Stream[F, I], I] =
-    Alg.EmbedStream()
+    embedStreamFull(signal = true)
 
   def argument[F[_], A](arg: Arg[A]): Step[F, Any, A] =
     Alg.Argument(arg)
@@ -61,8 +67,8 @@ object Step {
   def compose[F[_], I, A, O](left: Step[F, I, A], right: Step[F, A, O]): Step[F, I, O] =
     Alg.Compose(left, right)
 
-  def skip[F[_], I, O](compute: Step[F, I, O]): Step[F, Either[I, O], O] =
-    Alg.Skip(compute)
+  def choose[F[_], A, B, C, D](fac: Step[F, A, C], fab: Step[F, B, D]): Step[F, Either[A, B], Either[C, D]] =
+    Alg.Choose(fac, fab)
 
   def getMeta[F[_]]: Step[F, Any, Meta] =
     Alg.GetMeta()
@@ -80,7 +86,10 @@ object Step {
     }
 
   import cats.arrow._
-  implicit def arrowForStep[F[_]]: Arrow[Step[F, *, *]] = new Arrow[Step[F, *, *]] {
+  implicit def arrowChoiceForStep[F[_]]: ArrowChoice[Step[F, *, *]] = new ArrowChoice[Step[F, *, *]] {
+    override def choose[A, B, C, D](f: Step[F, A, C])(g: Step[F, B, D]): Step[F, Either[A, B], Either[C, D]] =
+      Step.choose(f, g)
+
     override def compose[A, B, C](f: Step[F, B, C], g: Step[F, A, B]): Step[F, A, C] = Step.compose(g, f)
 
     override def first[A, B, C](fa: Step[F, A, B]): Step[F, (A, C), (B, C)] = Step.first(fa)

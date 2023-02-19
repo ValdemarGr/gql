@@ -17,6 +17,7 @@ package gql.interpreter
 
 import cats.data._
 import cats._
+import cats.implicits._
 
 sealed trait GraphArc
 object GraphArc {
@@ -52,19 +53,12 @@ object Cursor {
     override def combine(x: Cursor, y: Cursor): Cursor =
       Cursor(x.path ++ y.path)
   }
-}
 
-final case class EvalNode[+A](cursor: Cursor, value: A) {
-  def setValue[B](value: B): EvalNode[B] = copy(value = value)
-
-  def modify(f: Cursor => Cursor): EvalNode[A] = copy(cursor = f(cursor))
-
-  def succeed[B](value: B, f: Cursor => Cursor): EvalNode[B] =
-    EvalNode(f(cursor), value)
-
-  def succeed[B](value: B): EvalNode[B] = succeed(value, identity)
-}
-
-object EvalNode {
-  def empty[A](value: A) = EvalNode[A](Cursor.empty, value)
+  implicit lazy val showForCursor: Show[Cursor] = Show.show[Cursor] { c =>
+    val tl = c.path.map {
+      case GraphArc.Field(name) => s".$name"
+      case GraphArc.Index(i)    => s"[$i]"
+    }
+    s"root${tl.mkString_("")}"
+  }
 }

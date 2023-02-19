@@ -19,7 +19,8 @@ import cats._
 import cats.implicits._
 import io.circe._
 import cats.effect._
-import gql.interpreter.Interpreter
+import gql.interpreter.{Interpreter, DebugPrinter, PipeF}
+import scala.concurrent.duration._
 import cats.data._
 
 sealed trait CompilationError {
@@ -79,17 +80,29 @@ object Compiler { outer =>
         operationName: Option[String] = None,
         queryInput: F[Q] = F.unit,
         mutationInput: F[M] = F.unit,
-        subscriptionInput: F[S] = F.unit
-    ) = compileWith(schema, CompilerParameters(query, Some(variables), operationName), queryInput, mutationInput, subscriptionInput)
+        subscriptionInput: F[S] = F.unit,
+        pipeF: PipeF[F] = PipeF.groupWithin[F](128, 5.millis),
+        debug: DebugPrinter[F] = DebugPrinter.noop[F]
+    ) = compileWith(
+      schema,
+      CompilerParameters(query, Some(variables), operationName),
+      queryInput,
+      mutationInput,
+      subscriptionInput,
+      pipeF,
+      debug
+    )
 
     def compileWith[Q, M, S](
         schema: Schema[F, Q, M, S],
         cp: CompilerParameters,
         queryInput: F[Q] = F.unit,
         mutationInput: F[M] = F.unit,
-        subscriptionInput: F[S] = F.unit
+        subscriptionInput: F[S] = F.unit,
+        pipeF: PipeF[F] = PipeF.groupWithin[F](128, 5.millis),
+        debug: DebugPrinter[F] = DebugPrinter.noop[F]
     ): Outcome[F] =
-      parsePrep(schema, cp).map(compilePrepared(schema, _, queryInput, mutationInput, subscriptionInput))
+      parsePrep(schema, cp).map(compilePrepared(schema, _, queryInput, mutationInput, subscriptionInput, pipeF, debug))
 
     def parsePrep[Q, M, S](
         schema: Schema[F, Q, M, S],
@@ -109,7 +122,9 @@ object Compiler { outer =>
         ps: PreparedQuery.PrepResult[F, Q, M, S],
         queryInput: F[Q] = F.unit,
         mutationInput: F[M] = F.unit,
-        subscriptionInput: F[S] = F.unit
+        subscriptionInput: F[S] = F.unit,
+        pipeF: PipeF[F] = PipeF.groupWithin[F](128, 5.millis),
+        debug: DebugPrinter[F] = DebugPrinter.noop[F]
     ): Application[F] = {
       implicit val s = schema.statistics
       implicit val p = schema.planner
@@ -118,19 +133,21 @@ object Compiler { outer =>
         case PreparedQuery.PrepResult.Query(ps) =>
           Application.Query {
             queryInput.flatMap { qi =>
-              Interpreter.runSync(qi, ps, schema.state).map { case (e, d) => QueryResult(e, d) }
+              Interpreter.runSync(qi, ps, schema.state, debug).map { case (e, d) => QueryResult(e, d) }
             }
           }
         case PreparedQuery.PrepResult.Mutation(ps) =>
           Application.Mutation {
             mutationInput.flatMap { mi =>
-              Interpreter.runSync(mi, ps, schema.state).map { case (e, d) => QueryResult(e, d) }
+              Interpreter.runSync(mi, ps, schema.state, debug).map { case (e, d) => QueryResult(e, d) }
             }
           }
         case PreparedQuery.PrepResult.Subscription(ps) =>
           Application.Subscription {
             fs2.Stream.eval(subscriptionInput).flatMap { si =>
-              Interpreter.runStreamed(si, ps, schema.state).map { case (e, d) => QueryResult(e, d) }
+              Interpreter.runStreamed(si, ps, schema.state, pipeF, debug).map { case (e, d) =>
+                QueryResult(e, d)
+              }
             }
           }
       }

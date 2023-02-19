@@ -318,11 +318,10 @@ object Validation {
             (x, pv)
           }
           .traverse { case (a: ArgValue[a], pv) =>
-            PreparedQuery
-              .parseInput[PreparedQuery.H, a](pv, a.input.value, None, ambigiousEnum = false)
-              .run(PreparedQuery.Prep.empty)
-              .value
-              .value match {
+            PreparedQuery.runK {
+              PreparedQuery
+                .parseInput[PreparedQuery.H, a](pv, a.input.value, None, ambigiousEnum = false)
+            } match {
               case Left(errs) =>
                 errs.traverse_ { err =>
                   val suf = err.position.position
@@ -420,14 +419,14 @@ object Validation {
                           raise[F, G](Error.InterfaceImplementationMissingDefaultArg(ol.name, i.value.name, k, argName))
                         case (Some(ld), Some(rd)) =>
                           PreparedQuery
-                            .compareValues[PreparedQuery.H](
-                              PreparedQuery.valueToParserValue(ld),
-                              PreparedQuery.valueToParserValue(rd),
-                              None
-                            )
-                            .run(PreparedQuery.Prep.empty)
-                            .value
-                            .value
+                            .runK {
+                              PreparedQuery
+                                .compareValues[PreparedQuery.H](
+                                  PreparedQuery.valueToParserValue(ld),
+                                  PreparedQuery.valueToParserValue(rd),
+                                  None
+                                )
+                            }
                             .swap
                             .toOption
                             .traverse_(_.traverse_ { pe =>

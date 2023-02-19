@@ -1,7 +1,7 @@
 ---
 title: Resolvers
 ---
-Resolvers are at the core of gql; a resolver `Resolver[F, I, O]` takes an `I` to an `O` and operates in `F`.
+Resolvers are at the core of gql; a resolver `Resolver[F, I, O]` takes an `I` and produces an `O` in effect `F`.
 Resolvers are embedded in fields and act as continuations.
 When gql executes a query it first constructs a tree of continueations from your schema and the supplied GraphQL query.
 
@@ -24,7 +24,7 @@ If you are familiar with the relationship between `fs2.Stream` and `fs2.Pull`, t
 :::
 ### Lift
 The simplest `Resolver` type is `lift` which simply lifts a function `I => O` into `Resolver[F, I, O]`.
-`lift`'s method form is `map`, which for any resolver `Resolver[F, I, O]` produces a new resolver `Resolver[F, I, O2]` given a fucntion `O => O2`.
+`lift`'s method form is `map`, which for any resolver `Resolver[F, I, O]` produces a new resolver `Resolver[F, I, O2]` given a function `O => O2`.
 ```scala mdoc:nest
 val r = Resolver.lift[IO, Int](_.toLong)
 r.map(_.toString())
@@ -32,7 +32,7 @@ r.map(_.toString())
 
 ### LiftF
 Another simple resolver is `liftF` which lifts a function `I => F[O]` into `Resolver[F, I, O]`.
-`eval`'s method form is `evalMap`.
+`liftF`'s method form is `evalMap`.
 ```scala mdoc:nest
 val r = Resolver.liftF[IO, Int](i => IO(i.toLong))
 r.evalMap(l => IO(l.toString()))
@@ -45,14 +45,14 @@ Most resolvers are implemented or composed on by `lift`ing a function and compos
 
 ### Arguments
 Arguments in gql are provided through resolvers.
-A resolver `∀F, I. Resolver[F, I, A]` can be constructed from an argument `Arg[A]`, through either `argument` or `arg` in method form.
+A resolver `Resolver[F, I, A]` can be constructed from an argument `Arg[A]`, through either `argument` or `arg` in method form.
 ```scala mdoc:nest
 val r = Resolver.argument[IO, Nothing, String](arg[String]("name"))
 val r2 = r.arg(arg[Int]("age"))
 r2.map{ case (age, name) => s"$name is $age years old" }
 ```
 
-`Arg` also has an applicative defined for it, so sequential argument resolution can be simplified.
+`Arg` also has an applicative defined for it, so multi-argument resolution can be simplified to:
 ```scala mdoc:nest
 val r = Resolver.argument[IO, Nothing, (String, Int)]((arg[String]("name"), arg[Int]("age")).tupled)
 r.map{ case (age, name) => s"$name is $age years old" }
@@ -69,14 +69,14 @@ The `Ior` datatype's left side must be `String` and acts as an optional error th
 gql can return an error and a result for the same path, given that `Ior` has both left and right side defined.
 
 Errors are embedded into resolvers via `rethrow`.
-The extension method `rethrow` is present on any resolver of type `∀F, I, O. Resolver[F, I, Ior[String, O]]`:
+The extension method `rethrow` is present on any resolver of type `Resolver[F, I, Ior[String, O]]`:
 ```scala mdoc:nest
 val r = Resolver.lift[IO, Int](i => Ior.Both("I will be in the errors :)", i))
 r.rethrow
 ```
 
 ### First
-A `Resolver` also implements `first` (`∀C. Resolver[F, A, B] => Resolver[F, (A, C), (B, C)]`) which is very convinient since some `Resolver`s are constant functions (they throw away their arguments/`I`).
+A `Resolver` also implements `first` (`Resolver[F, A, B] => Resolver[F, (A, C), (B, C)]`) which is very convinient since some `Resolver`s are constant functions (they throw away their arguments/`I`).
 Since a `Resolver` does not form a `Monad`, `first` is necessary to implement non-trivial resolver compositions.
 For instance, resolving an argument will ignore the input of the resolver, which is not always the desired outcome.
 
@@ -245,64 +245,82 @@ In this example, every fields can (eventually through various side-effects) be r
 
 Notice that even if we had many more fields, the composition overhead remains constant.
 :::
-:::tip
-For instance, a `Person` has `name` which is pure, but it may also have `friends` which is a field derived from the `Person` structure.
-Most databases can query a person and their friends in one query instead of two via joins or something similar.
-We can solve this by instead of constructing a type for `Person`, we construct it for `PersonId` instead:
-INCOMPLETE
+
+#### Batchers from elsewhere
+Most batching implementations have compatible signatures and can be adapted into a gql batcher.
+
+For instance, converting `fetch` to gql:
 ```scala mdoc:nest
-/*case class Person(id: Int, name: String)
+import fetch._
 
-def getPerson(personId: Int): IO[Person] = ???
+case class PersonId(value: Int)
+case class Person(id: PersonId, data: String)
 
-def getPersonAndFriends(personId: Int): IO[(Person, List[Person])] = ???
+object People extends Data[PersonId, Person] {
+  def name = "People"
 
-sealed trait PersonKey {
-  def id: Int
-}
-object Personkey {
-  case class JustPerson(id: Int) extends PersonKey
-  case class FriendsOf(id: Int) extends PersonKey
-
-  implicit lazy val showMissingPersonId =
-    ShowMissingKeys.show[PersonKey](_.toString(), "not all people could be found")
+  def source: DataSource[IO, PersonId, Person] = ???
 }
 
-def pkBatch = Resolver.batch[IO, PersonKey, Person]{ keys => 
-  keys
-    .groupBy{
-      case PersonKey.JustPerson(id) => id
-      case PersonKey.FriendsOf(id) => id
-    }
-    .toList
-    .traverse{ case (k, values) => 
-      // ...
-      ???
-    }
-}
-
-pkBatch.map{ b => 
-  val purePersonFields = fields[IO, Person](
-    "name" -> lift(_.name)
-  )
-
-  val derivedPersonFields = fields[IO, PersonKey](
-    "friends" -> build.from(b.forceOne.contramap[PersonKey](pk => FriendsOf(pk.id)))
-  )
-}*/
+Resolver
+  .batch[IO, PersonId, Person](_.toList.toNel.traverse(People.source.batch).map(_.getOrElse(Map.empty)))
 ```
-TODO leftjoin with ids (applicative) + get some on document
-:::
-Check out planner at ...
 
-### Skip/Caching
-Sometimes
+### Choice
+Resolvers also implement `Choice` via `(Resolver[F, A, C], Resolver[F, B, D]) => Resolver[F, Either[A, B], Either[C, D]]`.
+On the surface, this combinator may have limited uses, but with a bit of composition we can perform tasks such as caching.
+
+For instance, a combinator derived from `Choice` is `skippable: Resolver[F, I, O] => Resolver[F, Either[I, O], O]`, which acts as a variant of "caching".
+If the right side is present we skip the underlying resolver (`Resolver[F, I, O]`) altogether.
+
+More refined variants of this combinator also exist:
+```scala mdoc:silent:nest
+case class PersonId(id: Int)
+
+case class Person(id: PersonId, data: String)
+
+def getPersonForId: Resolver[IO, PersonId, Person] = ???
+
+type CachedPerson = Either[PersonId, Person]
+def cachedPerson = tpe[IO, CachedPerson](
+  "Person",
+  "id" -> lift(_.map(_.id).merge.id),
+  "data" -> build[IO, CachedPerson](_.skipThat(getPersonForId).map(_.data))
+)
+```
+
+We can also use some of the `compose` tricks from the [batch resolver syntax section](#batch-resolver-syntax) if we have a lot of fields that depend on `Person`. 
+
+:::note
+The query planner treats the choice branches as parallel, such that for two instances of a choice, resolvers in the two branches may be batched together.
+:::
 
 ### Stream
+The stream resolver embeds an `fs2.Stream` and provides the ability to emit a stream of results for a graphql subscription.
+
+#### Stream semantics
+* When one or more streams emit, the interpreter will re-evaluate the query from the position that emitted.
+That is, only the sub-tree that changed will be re-interpreted.
+* If two streams emit and one occurs as a child of the other, the child will be ignored since it will be replaced.
+* By default, the interpreter will only respect the most-recent emitted data.
+This means that gql assumes that your query works in absolutes, not incrementals.
+For instance a schema designed like the following, emits incremental updates regarding likes for some object:
+```graphql
+enum LikeUpdate {
+  LIKED,
+  UNLIKED
+}
+
+type Subscription {
+  likesFor(id: ID!): LikeUpdate!
+}
+```
+
+The interpreter performs a global re-interpretation of your schema, when one or more streams emit.
 
 ## Steps
 A `Step` is the low-level algebra for a resolver, that describes a single step of evaluation for a query.
-The variants of `Step` are clearly listed in the source code, and are all orthogonal in what abilities they provide.
+The variants of `Step` are clearly listed in the source code. All variants of step provide orthogonal properties.
 
 :::warning
 this is not up to date
