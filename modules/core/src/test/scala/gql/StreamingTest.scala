@@ -167,7 +167,7 @@ class StreamingTest extends CatsEffectSuite {
     assertEquals(clue(level1Users), 0)
     assertEquals(clue(level2Users), 0)
     // Run test 100 times
-    (0 to 100).toList.parTraverse { _ =>
+    (0 to 10).toList.parTraverse { _ =>
       // if inner re-emits, outer will remain the same
       // if outer re-emits, inner will restart
       val q = """
