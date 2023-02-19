@@ -54,10 +54,10 @@ object Cursor {
       Cursor(x.path ++ y.path)
   }
 
-  implicit lazy val showForCursor = Show.show[Cursor]{ c =>
-    val tl = c.path.map{
+  implicit lazy val showForCursor: Show[Cursor] = Show.show[Cursor] { c =>
+    val tl = c.path.map {
       case GraphArc.Field(name) => s".$name"
-      case GraphArc.Index(i) =>  s"[$i]"
+      case GraphArc.Index(i)    => s"[$i]"
     }
     s"root${tl.mkString_("")}"
   }

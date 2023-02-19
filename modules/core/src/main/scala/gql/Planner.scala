@@ -43,7 +43,7 @@ object Planner {
   final case class NodeId(id: Int) extends AnyVal
 
   object NodeId {
-    implicit val ord = Order.by[NodeId, Int](_.id)
+    implicit val ord: Order[NodeId] = Order.by[NodeId, Int](_.id)
   }
 
   final case class Node(
@@ -107,10 +107,10 @@ object Planner {
       case alg: First[G, ?, ?, ?]              => costForStep[F, G](alg.step)
       case Batch(_, _) | EmbedEffect(_) | EmbedStream(_, _) =>
         val name = step match {
-          case Batch(id, _)        => s"batch_$id"
-          case EmbedEffect(cursor) => cursor.asString
+          case Batch(id, _)           => s"batch_$id"
+          case EmbedEffect(cursor)    => cursor.asString
           case EmbedStream(_, cursor) => cursor.asString
-          case _                   => ???
+          case _                      => ???
         }
 
         val costF = stats

@@ -140,10 +140,10 @@ object Resolver extends ResolverInstances {
   }
 
   implicit class StreamOps[F[_], I, O](private val self: Resolver[F, I, fs2.Stream[F, O]]) extends AnyVal {
-    def embedStream: Resolver[F, I, O] = 
+    def embedStream: Resolver[F, I, O] =
       self andThen new Resolver(Step.embedStream)
 
-    def embedSequentialStream: Resolver[F, I, O] = 
+    def embedSequentialStream: Resolver[F, I, O] =
       self andThen new Resolver(Step.embedStreamFull(signal = false))
   }
 }
@@ -151,7 +151,7 @@ object Resolver extends ResolverInstances {
 trait ResolverInstances {
   import cats.arrow._
   implicit def arrowChoiceForResolver[F[_]]: ArrowChoice[Resolver[F, *, *]] = new ArrowChoice[Resolver[F, *, *]] {
-    override def choose[A, B, C, D](f: Resolver[F,A,C])(g: Resolver[F,B,D]): Resolver[F,Either[A,B],Either[C,D]] = 
+    override def choose[A, B, C, D](f: Resolver[F, A, C])(g: Resolver[F, B, D]): Resolver[F, Either[A, B], Either[C, D]] =
       f.choose(g)
 
     override def compose[A, B, C](f: Resolver[F, B, C], g: Resolver[F, A, B]): Resolver[F, A, C] =

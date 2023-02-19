@@ -121,11 +121,6 @@ lazy val mdocExt = project
   .settings(sharedSettings)
   .enablePlugins(NoPublishPlugin)
 
-lazy val docGen = project
-  .in(file("modules/doc-gen"))
-  .settings(sharedSettings)
-  .enablePlugins(NoPublishPlugin)
-
 lazy val docs = project
   .in(file("modules/docs"))
   .settings(

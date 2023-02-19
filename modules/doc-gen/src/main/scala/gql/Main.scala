@@ -1,5 +1,0 @@
-package gql
-
-object Main {
-    
-}

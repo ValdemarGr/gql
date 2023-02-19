@@ -27,8 +27,9 @@ object Step {
     final case class EmbedEffect[F[_], I]() extends AnyRef with Step[F, F[I], I]
 
     final case class EmbedStream[F[_], I](
-      signal: Boolean,
-    ) extends AnyRef with Step[F, fs2.Stream[F, I], I]
+        signal: Boolean
+    ) extends AnyRef
+        with Step[F, fs2.Stream[F, I], I]
 
     final case class EmbedError[I]() extends AnyRef with Step[Nothing, Ior[String, I], I]
 
@@ -53,7 +54,7 @@ object Step {
 
   def embedError[F[_], I]: Step[F, Ior[String, I], I] =
     Alg.EmbedError()
-  
+
   def embedStreamFull[F[_], I, O](signal: Boolean): Step[F, fs2.Stream[F, I], I] =
     Alg.EmbedStream(signal)
 
@@ -86,7 +87,7 @@ object Step {
 
   import cats.arrow._
   implicit def arrowChoiceForStep[F[_]]: ArrowChoice[Step[F, *, *]] = new ArrowChoice[Step[F, *, *]] {
-    override def choose[A, B, C, D](f: Step[F,A,C])(g: Step[F,B,D]): Step[F,Either[A,B],Either[C,D]] = 
+    override def choose[A, B, C, D](f: Step[F, A, C])(g: Step[F, B, D]): Step[F, Either[A, B], Either[C, D]] =
       Step.choose(f, g)
 
     override def compose[A, B, C](f: Step[F, B, C], g: Step[F, A, B]): Step[F, A, C] = Step.compose(g, f)
