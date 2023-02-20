@@ -8,6 +8,7 @@ import cats.data._
 import cats._
 
 import gql.interpreter.BackpressureSignal
+import org.typelevel.paiges.Doc
 // Offers a flat representation of a scope tree of streams
 // It respects different consumption strategies such as "signal" and "sequential"
 trait SignalScopes[F[_], A] {
@@ -38,7 +39,7 @@ object SignalScopes {
    * A concurrent accumulation data structure with bounded size (backpressure when full)
    * Uncons all (unblock all blocked pushers)
    */
-  def apply[F[_], A: Doced](takeOne: Boolean, pipeF: PipeF[F], debug: DebugPrinter[F])(implicit
+  def apply[F[_], A: Doced](takeOne: Boolean, pipeF: PipeF[F], debug: DebugPrinter[F], root: Scope[F])(implicit
       F: Async[F]
   ): F[SignalScopes[F, A]] = {
 
@@ -48,10 +49,30 @@ object SignalScopes {
       def reserveDebugMapping(id: Unique.Token, name: Eval[String]): Resource[F, Unit] =
         Resource.make(debugState.update(_ + (id -> name)))(_ => debugState.update(_ - id))
 
-      def reserveShowMapping[A: Show](id: Unique.Token, a: A): Resource[F, Unit] =
+      def reserveShowMapping[A: Show](id: Unique.Token, a: => A): Resource[F, Unit] =
         reserveDebugMapping(id, Eval.later(a.show))
 
       val getPrintState = debugState.get.map(_.fmap(_.value))
+
+      def printTreeF = getPrintState >>= root.string
+
+      def printElems(xs: List[ResourceInfo[F, A]], D: Doced[A]): F[String] =
+        xs
+          .traverse(x => x.scope.isOpen tupleLeft x)
+          .flatMap { ys =>
+            getPrintState.map { lookup =>
+              DebugPrinter.Printer
+                .fields(
+                  ys.map { case (r, open) =>
+                    DebugPrinter.Printer.fields(
+                      DebugPrinter.Printer.resourceInfoDoced(open, lookup)(D).apply(r)
+                    )
+                  }: _*
+                )
+                .tightBracketBy(Doc.char('['), Doc.char(']'))
+                .render(80)
+            }
+          }
 
       BackpressureSignal[F, Map[Unique.Token, ResourceInfo[F, A]], ResourceInfo[F, A]](
         Map.empty,
@@ -65,49 +86,59 @@ object SignalScopes {
       )
         .map { bps =>
           def unconsRelevantEvents0 =
-            bps.uncons
-              .map(xs => Chunk.seq(xs.values.toList))
-              .evalTap { xs =>
-                /*
-                 * Consider the following pathelogical scope tree:
-                 *
-                 *                  stream1
-                 *               __/       \__
-                 *              /             \
-                 *             /               \
-                 *        resource1         resource2
-                 *       /        \
-                 *   stream2    stream3
-                 *      |          |___________
-                 *      |          |           |
-                 *  resource3  resource4   resource5
-                 *
-                 * Notice that "stream"s cannot enter the scope dynamically (concurrently);
-                 * They enter the scope tree when discovered during interpretation.
-                 *
-                 * Note that children of a "stream", resources, are homogenous, they are versions of the same datatype.
-                 * "Stream"s (children of resources) are heterogeneous, but their size is not statically known (graphql lists and such).
-                 *
-                 * A new version of a resource will close older resources of the same type (that is, all it's parent's children older than itself).
-                 */
-                // For all relevant events (resources), we must close old children of the parent scope (stream scope)
-                xs.parTraverse_ { ri =>
-                  // Children are always in reverse allocation order
-                  // We must drop everything older than the live child
-                  ri.parent.scope.children.flatMap { allChildren =>
-                    val oldChildren = allChildren.dropWhile(_.id =!= ri.scope.id).drop(1)
-                    oldChildren.map(_.id).toNel.traverse_(ri.parent.scope.releaseChildren)
+            debug.eval(printTreeF.map(tree => s"unconsing with current tree:\n$tree")) >>
+              bps.uncons
+                .map(xs => Chunk.seq(xs.values.toList))
+                .evalTap(cs => debug.eval(printElems(cs.toList, Doced[A]).map(s => s"unconsed:\n$s")))
+                .evalTap { xs =>
+                  /*
+                   * Consider the following pathelogical scope tree:
+                   *
+                   *                  stream1
+                   *               __/       \__
+                   *              /             \
+                   *             /               \
+                   *        resource1         resource2
+                   *       /        \
+                   *   stream2    stream3
+                   *      |          |___________
+                   *      |          |           |
+                   *  resource3  resource4   resource5
+                   *
+                   * Notice that "stream"s cannot enter the scope dynamically (concurrently);
+                   * They enter the scope tree when discovered during interpretation.
+                   *
+                   * Note that children of a "stream", resources, are homogenous, they are versions of the same datatype.
+                   * "Stream"s (children of resources) are heterogeneous, but their size is not statically known (graphql lists and such).
+                   *
+                   * A new version of a resource will close older resources of the same type (that is, all it's parent's children older than itself).
+                   */
+                  // For all relevant events (resources), we must close old children of the parent scope (stream scope)
+                  xs.parTraverse_ { ri =>
+                    // Children are always in reverse allocation order
+                    // We must drop everything older than the live child
+                    ri.parent.scope.children.flatMap { allChildren =>
+                      val oldChildren = allChildren.dropWhile(_.id =!= ri.scope.id).drop(1)
+                      oldChildren.map(_.id).toNel.traverse_(ri.parent.scope.releaseChildren)
+                    }
                   }
                 }
-              }
-              .evalMap(_.filterA(_.scope.isOpen))
-              .filter(_.nonEmpty)
-              .through(pipeF[ResourceInfo[F, A]])
-              .map(_.toNel)
-              .unNone
-              .head
-              .compile
-              .lastOrError
+                .evalMap(_.filterA(_.scope.isOpen))
+                .evalTap { cs =>
+                  debug.eval {
+                    printElems(cs.toList, Doced.from[A](_ => Doc.text("ditto")))
+                      .map(s => s"unconsed after removing old children:\n$s")
+                  }
+                }
+                .evalTap(_ => debug.eval(printTreeF.map(tree => s"tree after unconsing:\n$tree")))
+                .filter(_.nonEmpty)
+                .through(pipeF[ResourceInfo[F, A]])
+                .map(_.toNel)
+                .unNone
+                .evalTap(nel => debug(s"emitting ${nel.size} elements from uncons"))
+                .head
+                .compile
+                .lastOrError
 
           /*
            * A new scope must be reserved for the stream
@@ -161,7 +192,11 @@ object SignalScopes {
                     .parJoinUnbounded
                     .compile
                     .drain
-                    .background <* reserveShowMapping(parentScope.id, cursor)
+                    .background <*
+                    reserveShowMapping(
+                      parentScope.id,
+                      s"${cursor.show} (signal = $signal)"
+                    )
                 }
                 .flatMap {
                   case Some(_) => head.get

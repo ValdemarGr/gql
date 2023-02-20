@@ -85,7 +85,7 @@ class StreamingTest extends CatsEffectSuite {
   lazy val schema = Schema.simple(schemaShape).unsafeRunSync()
 
   def query(q: String, variables: Map[String, Json] = Map.empty): Stream[IO, JsonObject] =
-    Compiler[IO].compile(schema, q, variables = variables /*, debug= gql.interpreter.DebugPrinter[IO](IO.println)*/ ) match {
+    Compiler[IO].compile(schema, q, variables = variables , debug= gql.interpreter.DebugPrinter[IO](IO.println)) match {
       case Left(err)                          => Stream(err.asGraphQL)
       case Right(Application.Subscription(s)) => s.map(_.asGraphQL)
       case _                                  => ???

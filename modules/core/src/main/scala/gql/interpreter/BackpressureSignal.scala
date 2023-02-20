@@ -37,11 +37,11 @@ object BackpressureSignal {
 
           def unconsAll0: F[A] =
             sem.permit.surround {
-              F.deferred[Unit].flatMap { newPullDone =>
+              (F.deferred[Unit], F.deferred[Unit]).flatMapN { (newPullDone, newPushDone) =>
                 state.get.flatMap(_.pushDone.get) >>
                   state.modify { current =>
                     val fa = current.pullDone.complete(()).void
-                    current.copy(pullDone = newPullDone, value = initial) -> fa.as(current.value)
+                    State(newPullDone, newPushDone, initial) -> fa.as(current.value)
                   }.flatten
               }
             }

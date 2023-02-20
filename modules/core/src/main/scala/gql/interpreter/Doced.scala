@@ -14,4 +14,6 @@ object Doced {
   def doc[A](a: A)(implicit ev: Doced[A]): Doc = ev(a)
 
   def from[A](f: A => Doc): Doced[A] = f(_)
+
+  def empty[A]: Doced[A] = _ => Doc.empty
 }

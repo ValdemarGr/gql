@@ -40,7 +40,7 @@ object DebugPrinter {
   object Printer {
     def kv(k: String, v: Doc): Doc = Doc.text(k) + Doc.space + Doc.char('=') + Doc.space + v
 
-    def fields(ds: Doc*) = Doc.intercalate(Doc.char(',') + Doc.line, ds)
+    def fields(ds: Doc*): Doc = Doc.intercalate(Doc.char(',') + Doc.line, ds)
 
     def kvs(kvs: (String, Doc)*): Doc =
       fields(kvs.map { case (k, v) => kv(k, v) }: _*)
@@ -156,5 +156,22 @@ object DebugPrinter {
           "value" -> D(lv.value)
         )
       )
+
+    def resourceInfoDoced[F[_], A](isOpen: Boolean, names: Map[Unique.Token, String])(implicit
+        D: Doced[A]
+    ): Doced[SignalScopes.ResourceInfo[F, A]] = { ri =>
+      def makeName(id: Unique.Token): Doc =
+        Doc.text(names.get(id).getOrElse(id.toString()))
+
+      record(
+        "ResourceInfo",
+        kvs(
+          "parentName" -> makeName(ri.parent.scope.id),
+          "name" -> makeName(ri.scope.id),
+          "open" -> Doc.text(isOpen.toString()),
+          "value" -> D(ri.value)
+        )
+      )
+    }
   }
 }

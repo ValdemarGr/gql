@@ -142,7 +142,7 @@ object Interpreter {
   )(implicit F: Async[F], planner: Planner[F]): fs2.Stream[F, (Chain[EvalFailure], JsonObject)] = {
     fs2.Stream.resource(Scope[F](None)).flatMap { rootScope =>
       fs2.Stream
-        .eval(SignalScopes[F, StreamingData[F, ?, ?]](takeOne = !openTails, pipeF, debug))
+        .eval(SignalScopes[F, StreamingData[F, ?, ?]](takeOne = !openTails, pipeF, debug, rootScope))
         .flatMap { ss =>
           fs2.Stream.resource(Supervisor[F]).flatMap { sup =>
             val changeStream = fs2.Stream.repeatEval {
