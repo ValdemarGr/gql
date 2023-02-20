@@ -144,19 +144,6 @@ object DebugPrinter {
         )
       )
 
-    def leasedValueDoced[F[_], A](isOpen: Boolean, names: Map[Unique.Token, String])(implicit
-        D: Doced[A]
-    ): Doced[ConfiguredStreamScopes.LeasedValue[F, A]] = lv =>
-      record(
-        "LeasedValue",
-        kvs(
-          "name" -> Doc.text(names.get(lv.scope.id).getOrElse(lv.scope.id.toString())),
-          "signal" -> Doc.text(lv.signal.toString()),
-          "open" -> Doc.text(isOpen.toString()),
-          "value" -> D(lv.value)
-        )
-      )
-
     def resourceInfoDoced[F[_], A](isOpen: Boolean, names: Map[Unique.Token, String])(implicit
         D: Doced[A]
     ): Doced[SignalScopes.ResourceInfo[F, A]] = { ri =>
