@@ -20,14 +20,23 @@ import cats.implicits._
 import cats.effect.std._
 
 trait BackpressureSignal[F[_], A, B] {
-  def unconsAll: F[A]
-
-  def uncons: fs2.Stream[F, A] = fs2.Stream.repeatEval(unconsAll)
+  // The outer resource leases the state
+  // The inner effect can repeatedly pull the state during the lease
+  def listen: Resource[F, BackpressureSignal.Signal[F, A]]
 
   def publish(b: B): F[Unit]
 }
 
 object BackpressureSignal {
+  trait Signal[F[_], A] {
+    def awaitNonEmpty: F[Unit]
+
+    def uncons: F[A]
+
+    // Combination of awaitNonEmpty and uncons
+    def awaitUncons: F[A]
+  }
+
   final case class State[F[_], A](
       pullDone: Deferred[F, Unit],
       pushDone: Deferred[F, Unit],
@@ -50,21 +59,38 @@ object BackpressureSignal {
               }
             }.flatten
 
-          def unconsAll0: F[A] =
-            sem.permit.surround {
-              (F.deferred[Unit], F.deferred[Unit]).flatMapN { (newPullDone, newPushDone) =>
-                state.get.flatMap(_.pushDone.get) >>
-                  state.modify { current =>
-                    val fa = current.pullDone.complete(()).void
-                    State(newPullDone, newPushDone, initial) -> fa.as(current.value)
-                  }.flatten
+          // def unconsAll0: F[A] =
+          //   sem.permit.surround {
+          //     (F.deferred[Unit], F.deferred[Unit]).flatMapN { (newPullDone, newPushDone) =>
+          //       state.get.flatMap(_.pushDone.get) >>
+          //         state.modify { current =>
+          //           val fa = current.pullDone.complete(()).void
+          //           State(newPullDone, newPushDone, initial) -> fa.as(current.value)
+          //         }.flatten
+          //     }
+          //   }
+
+          def listen0: Resource[F, Signal[F, A]] =
+            sem.permit.as {
+              new Signal[F, A] {
+                def awaitNonEmpty: F[Unit] = state.get.flatMap(_.pushDone.get)
+
+                def uncons: F[A] =
+                  (F.deferred[Unit], F.deferred[Unit]).flatMapN { (newPullDone, newPushDone) =>
+                    state.modify { current =>
+                      val fa = current.pullDone.complete(()).void
+                      State(newPullDone, newPushDone, initial) -> fa.as(current.value)
+                    }.flatten
+                  }
+
+                def awaitUncons: F[A] = awaitNonEmpty >> uncons
               }
             }
 
           new BackpressureSignal[F, A, B] {
-            def publish(b: B): F[Unit] = publish0(b)
+            def listen = listen0
 
-            def unconsAll: F[A] = unconsAll0
+            def publish(b: B): F[Unit] = publish0(b)
           }
         }
     }

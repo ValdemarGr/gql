@@ -24,6 +24,7 @@ import cats._
 
 import gql.interpreter.BackpressureSignal
 import org.typelevel.paiges.Doc
+import scala.concurrent.duration.FiniteDuration
 // Offers a flat representation of a scope tree of streams
 // It respects different consumption strategies such as "signal" and "sequential"
 trait SignalScopes[F[_], A] {
@@ -54,7 +55,7 @@ object SignalScopes {
    * A concurrent accumulation data structure with bounded size (backpressure when full)
    * Uncons all (unblock all blocked pushers)
    */
-  def apply[F[_], A: Doced](takeOne: Boolean, pipeF: PipeF[F], debug: DebugPrinter[F], root: Scope[F])(implicit
+  def apply[F[_], A: Doced](takeOne: Boolean, debug: DebugPrinter[F], accumulate: Option[FiniteDuration], root: Scope[F])(implicit
       F: Async[F]
   ): F[SignalScopes[F, A]] = {
 
@@ -102,58 +103,63 @@ object SignalScopes {
         .map { bps =>
           def unconsRelevantEvents0 =
             debug.eval(printTreeF.map(tree => s"unconsing with current tree:\n$tree")) >>
-              bps.uncons
-                .map(xs => Chunk.seq(xs.values.toList))
-                .evalTap(cs => debug.eval(printElems(cs.toList, Doced[A]).map(s => s"unconsed:\n$s")))
-                .evalTap { xs =>
-                  /*
-                   * Consider the following pathelogical scope tree:
-                   *
-                   *                  stream1
-                   *               __/       \__
-                   *              /             \
-                   *             /               \
-                   *        resource1         resource2
-                   *       /        \
-                   *   stream2    stream3
-                   *      |          |___________
-                   *      |          |           |
-                   *  resource3  resource4   resource5
-                   *
-                   * Notice that "stream"s cannot enter the scope dynamically (concurrently);
-                   * They enter the scope tree when discovered during interpretation.
-                   *
-                   * Note that children of a "stream", resources, are homogenous, they are versions of the same datatype.
-                   * "Stream"s (children of resources) are heterogeneous, but their size is not statically known (graphql lists and such).
-                   *
-                   * A new version of a resource will close older resources of the same type (that is, all it's parent's children older than itself).
-                   */
-                  // For all relevant events (resources), we must close old children of the parent scope (stream scope)
-                  xs.parTraverse_ { ri =>
-                    // Children are always in reverse allocation order
-                    // We must drop everything older than the live child
-                    ri.parent.scope.children.flatMap { allChildren =>
-                      val oldChildren = allChildren.dropWhile(_.id =!= ri.scope.id).drop(1)
-                      oldChildren.map(_.id).toNel.traverse_(ri.parent.scope.releaseChildren)
-                    }
-                  }
+              bps.listen
+                .use { sig =>
+                  sig.awaitNonEmpty >>
+                    accumulate.traverse_(F.sleep(_)) >>
+                    fs2.Stream
+                      .repeatEval(sig.uncons)
+                      .map(xs => Chunk.seq(xs.values.toList))
+                      .evalTap(cs => debug.eval(printElems(cs.toList, Doced[A]).map(s => s"unconsed:\n$s")))
+                      .evalTap { xs =>
+                        /*
+                         * Consider the following pathelogical scope tree:
+                         *
+                         *                  stream1
+                         *               __/       \__
+                         *              /             \
+                         *             /               \
+                         *        resource1         resource2
+                         *       /        \
+                         *   stream2    stream3
+                         *      |          |___________
+                         *      |          |           |
+                         *  resource3  resource4   resource5
+                         *
+                         * Notice that "stream"s cannot enter the scope dynamically (concurrently);
+                         * They enter the scope tree when discovered during interpretation.
+                         *
+                         * Note that children of a "stream", resources, are homogenous, they are versions of the same datatype.
+                         * "Stream"s (children of resources) are heterogeneous, but their size is not statically known (graphql lists and such).
+                         *
+                         * A new version of a resource will close older resources of the same type (that is, all it's parent's children older than itself).
+                         */
+                        // For all relevant events (resources), we must close old children of the parent scope (stream scope)
+                        xs.parTraverse_ { ri =>
+                          // Children are always in reverse allocation order
+                          // We must drop everything older than the live child
+                          ri.parent.scope.children.flatMap { allChildren =>
+                            val oldChildren = allChildren.dropWhile(_.id =!= ri.scope.id).drop(1)
+                            oldChildren.map(_.id).toNel.traverse_(ri.parent.scope.releaseChildren)
+                          }
+                        }
+                      }
+                      .evalMap(_.filterA(_.scope.isOpen))
+                      .evalTap { cs =>
+                        debug.eval {
+                          printElems(cs.toList, Doced.from[A](_ => Doc.text("ditto")))
+                            .map(s => s"unconsed after removing old children:\n$s")
+                        }
+                      }
+                      .evalTap(_ => debug.eval(printTreeF.map(tree => s"tree after unconsing:\n$tree")))
+                      .filter(_.nonEmpty)
+                      .map(_.toNel)
+                      .unNone
+                      .evalTap(nel => debug(s"emitting ${nel.size} elements from uncons"))
+                      .head
+                      .compile
+                      .lastOrError
                 }
-                .evalMap(_.filterA(_.scope.isOpen))
-                .evalTap { cs =>
-                  debug.eval {
-                    printElems(cs.toList, Doced.from[A](_ => Doc.text("ditto")))
-                      .map(s => s"unconsed after removing old children:\n$s")
-                  }
-                }
-                .evalTap(_ => debug.eval(printTreeF.map(tree => s"tree after unconsing:\n$tree")))
-                .filter(_.nonEmpty)
-                .through(pipeF[ResourceInfo[F, A]])
-                .map(_.toNel)
-                .unNone
-                .evalTap(nel => debug(s"emitting ${nel.size} elements from uncons"))
-                .head
-                .compile
-                .lastOrError
 
           /*
            * A new scope must be reserved for the stream

@@ -137,12 +137,12 @@ object Interpreter {
       rootSel: NonEmptyList[PreparedField[F, A]],
       schemaState: SchemaState[F],
       openTails: Boolean,
-      pipeF: PipeF[F],
-      debug: DebugPrinter[F]
+      debug: DebugPrinter[F],
+      accumulate: Option[FiniteDuration]
   )(implicit F: Async[F], planner: Planner[F]): fs2.Stream[F, (Chain[EvalFailure], JsonObject)] = {
     fs2.Stream.resource(Scope[F](None)).flatMap { rootScope =>
       fs2.Stream
-        .eval(SignalScopes[F, StreamingData[F, ?, ?]](takeOne = !openTails, pipeF, debug, rootScope))
+        .eval(SignalScopes[F, StreamingData[F, ?, ?]](takeOne = !openTails, debug, accumulate, rootScope))
         .flatMap { ss =>
           fs2.Stream.resource(Supervisor[F]).flatMap { sup =>
             val changeStream = fs2.Stream.repeatEval {
@@ -232,10 +232,10 @@ object Interpreter {
       rootInput: A,
       rootSel: NonEmptyList[PreparedField[F, A]],
       schemaState: SchemaState[F],
-      pipeF: PipeF[F],
-      debug: DebugPrinter[F]
+      debug: DebugPrinter[F],
+      accumulate: Option[FiniteDuration]
   )(implicit F: Async[F]): fs2.Stream[F, (Chain[EvalFailure], JsonObject)] =
-    constructStream[F, A](rootInput, rootSel, schemaState, true, pipeF, debug)
+    constructStream[F, A](rootInput, rootSel, schemaState, true, debug, accumulate)
 
   def runSync[F[_]: Async: Statistics: Planner, A](
       rootInput: A,
@@ -243,7 +243,7 @@ object Interpreter {
       schemaState: SchemaState[F],
       debug: DebugPrinter[F]
   ): F[(Chain[EvalFailure], JsonObject)] =
-    constructStream[F, A](rootInput, rootSel, schemaState, false, PipeF.identity[F], debug).take(1).compile.lastOrError
+    constructStream[F, A](rootInput, rootSel, schemaState, false, debug, None).take(1).compile.lastOrError
 }
 
 final case class EvalNode[F[_], +A](cursor: Cursor, value: A, scope: Scope[F]) {

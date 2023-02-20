@@ -19,9 +19,9 @@ import cats._
 import cats.implicits._
 import io.circe._
 import cats.effect._
-import gql.interpreter.{Interpreter, DebugPrinter, PipeF}
-import scala.concurrent.duration._
+import gql.interpreter.{Interpreter, DebugPrinter}
 import cats.data._
+import scala.concurrent.duration._
 
 sealed trait CompilationError {
   def asGraphQL: JsonObject
@@ -81,16 +81,16 @@ object Compiler { outer =>
         queryInput: F[Q] = F.unit,
         mutationInput: F[M] = F.unit,
         subscriptionInput: F[S] = F.unit,
-        pipeF: PipeF[F] = PipeF.groupWithin[F](128, 5.millis),
-        debug: DebugPrinter[F] = DebugPrinter.noop[F]
+        debug: DebugPrinter[F] = DebugPrinter.noop[F],
+        accumulate: Option[FiniteDuration] = Some(5.millis)
     ) = compileWith(
       schema,
       CompilerParameters(query, Some(variables), operationName),
       queryInput,
       mutationInput,
       subscriptionInput,
-      pipeF,
-      debug
+      debug,
+      accumulate
     )
 
     def compileWith[Q, M, S](
@@ -99,10 +99,11 @@ object Compiler { outer =>
         queryInput: F[Q] = F.unit,
         mutationInput: F[M] = F.unit,
         subscriptionInput: F[S] = F.unit,
-        pipeF: PipeF[F] = PipeF.groupWithin[F](128, 5.millis),
-        debug: DebugPrinter[F] = DebugPrinter.noop[F]
+        debug: DebugPrinter[F] = DebugPrinter.noop[F],
+        accumulate: Option[FiniteDuration] = Some(5.millis)
     ): Outcome[F] =
-      parsePrep(schema, cp).map(compilePrepared(schema, _, queryInput, mutationInput, subscriptionInput, pipeF, debug))
+      parsePrep(schema, cp)
+        .map(compilePrepared(schema, _, queryInput, mutationInput, subscriptionInput, debug, accumulate))
 
     def parsePrep[Q, M, S](
         schema: Schema[F, Q, M, S],
@@ -123,8 +124,8 @@ object Compiler { outer =>
         queryInput: F[Q] = F.unit,
         mutationInput: F[M] = F.unit,
         subscriptionInput: F[S] = F.unit,
-        pipeF: PipeF[F] = PipeF.groupWithin[F](128, 5.millis),
-        debug: DebugPrinter[F] = DebugPrinter.noop[F]
+        debug: DebugPrinter[F] = DebugPrinter.noop[F],
+        accumulate: Option[FiniteDuration] = Some(5.millis)
     ): Application[F] = {
       implicit val s = schema.statistics
       implicit val p = schema.planner
@@ -145,7 +146,7 @@ object Compiler { outer =>
         case PreparedQuery.PrepResult.Subscription(ps) =>
           Application.Subscription {
             fs2.Stream.eval(subscriptionInput).flatMap { si =>
-              Interpreter.runStreamed(si, ps, schema.state, pipeF, debug).map { case (e, d) =>
+              Interpreter.runStreamed(si, ps, schema.state, debug, accumulate).map { case (e, d) =>
                 QueryResult(e, d)
               }
             }
