@@ -191,10 +191,10 @@ object SignalScopes {
                     .evalMap { case (a, i) =>
                       F.deferred[Unit].flatMap { d =>
                         parentScope
-                          .openChild(_ =>
+                          .openChild { scope =>
                             Resource.onFinalize(d.complete(()).void) >>
                               reserveShowMapping(scope.id, s"resource-$i")
-                          )
+                          }
                           .flatMap { o =>
                             o match {
                               // This is totally legal, maybe someone shut us down while we are emitting
