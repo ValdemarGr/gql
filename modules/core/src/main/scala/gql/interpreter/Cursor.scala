@@ -44,6 +44,14 @@ final case class Cursor(path: Chain[GraphArc]) {
   def uncons = path.uncons.map { case (p, tl) => (p, Cursor(tl)) }
 
   def dropInit = Cursor(Chain.fromOption(path.initLast).flatMap { case (c, _) => c })
+
+  lazy val asString = {
+    val tl = path.map {
+      case GraphArc.Field(name) => s".$name"
+      case GraphArc.Index(i)    => s"[$i]"
+    }
+    s"root${tl.mkString_("")}"
+  }
 }
 
 object Cursor {
@@ -54,11 +62,6 @@ object Cursor {
       Cursor(x.path ++ y.path)
   }
 
-  implicit lazy val showForCursor: Show[Cursor] = Show.show[Cursor] { c =>
-    val tl = c.path.map {
-      case GraphArc.Field(name) => s".$name"
-      case GraphArc.Index(i)    => s"[$i]"
-    }
-    s"root${tl.mkString_("")}"
-  }
+  implicit lazy val showForCursor: Show[Cursor] =
+    Show.show[Cursor](_.asString)
 }
