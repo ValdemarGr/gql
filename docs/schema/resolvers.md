@@ -47,14 +47,17 @@ Most resolvers are implemented or composed on by `lift`ing a function and compos
 Arguments in gql are provided through resolvers.
 A resolver `Resolver[F, I, A]` can be constructed from an argument `Arg[A]`, through either `argument` or `arg` in method form.
 ```scala mdoc:nest
+val ageArg = arg[Int]("age")
 val r = Resolver.argument[IO, Nothing, String](arg[String]("name"))
-val r2 = r.arg(arg[Int]("age"))
+val r2 = r.arg(ageArg)
 r2.map{ case (age, name) => s"$name is $age years old" }
 ```
 
 `Arg` also has an applicative defined for it, so multi-argument resolution can be simplified to:
 ```scala mdoc:nest
-val r = Resolver.argument[IO, Nothing, (String, Int)]((arg[String]("name"), arg[Int]("age")).tupled)
+val r = Resolver.argument[IO, Nothing, (String, Int)](
+  (arg[String]("name"), arg[Int]("age")).tupled
+)
 r.map{ case (age, name) => s"$name is $age years old" }
 ```
 
@@ -63,7 +66,10 @@ The `meta` resolver provides metadata regarding query execution, such as the pos
 
 ### Errors
 Well formed errors are returned in an `cats.data.Ior`.
+
+:::info
 An `Ior` is a non-exclusive `Either`.
+:::
 
 The `Ior` datatype's left side must be `String` and acts as an optional error that will be present in the query result.
 gql can return an error and a result for the same path, given that `Ior` has both left and right side defined.
@@ -78,9 +84,9 @@ r.rethrow
 ### First
 A `Resolver` also implements `first` (`Resolver[F, A, B] => Resolver[F, (A, C), (B, C)]`) which is very convinient since some `Resolver`s are constant functions (they throw away their arguments/`I`).
 Since a `Resolver` does not form a `Monad`, `first` is necessary to implement non-trivial resolver compositions.
-For instance, resolving an argument will ignore the input of the resolver, which is not always the desired outcome.
+For instance, resolving an argument will ignore the input of the resolver, which is not always the desired semantics.
 
-Lets assume we'd like to implement a resolver given a name can get a list of friends for the person with that name:
+Lets assume we'd like to implement a resolver, that when given a name, can get a list of friends of the person with that name:
 ```scala mdoc
 type PersonId = Int
 
@@ -98,10 +104,11 @@ getPersonResolver andThen
   limitResolver.first[Person].contramap[Person](p => (p, p)) andThen
   Resolver.liftF{ case (limit, p) => getFriends(p.id, limit) }
 ```
-The above example might be a bit tough to follow, but there methods available to make such formulations less verbose.
+The above example might be a bit tough to follow, but there methods available to make such formulations less gruesome.
 ```scala mdoc:nest
+val limitArg = arg[Int]("limit")
 getPersonResolver
-  .arg(arg[Int]("limit"))
+  .arg(limitArg)
   .evalMap{ case (limit, p) => getFriends(p.id, limit) }
 ```
 
@@ -128,7 +135,8 @@ Resolver.batch[IO, Int, Person]{ keys =>
 
 Whenever gql sees this resolver in any composition, it will look for similar resolvers during query planning.
 
-Note however that the you should only declare each batch resolver variant **once**, that is, you should build your schema in `State`. gql consideres different batch instantiations incompatible regardless of any type information.
+Note, however, that you should only declare each batch resolver variant **once**, that is, you should build your schema in `State`. 
+gql consideres different batch instantiations incompatible regardless of any type information.
 
 State has `Monad` (and transitively `Applicative`) defined for it, so it composes well.
 Here is an example of multiple batchers:
@@ -165,6 +173,9 @@ pb.force[List]
 
 // Maybe there is one value for one key?
 pb.optional
+
+// Same as optional
+pb.optionals[cats.Id]
 
 // There is always one value for one key
 pb.forceOne
@@ -303,20 +314,51 @@ The stream resolver embeds an `fs2.Stream` and provides the ability to emit a st
 That is, only the sub-tree that changed will be re-interpreted.
 * If two streams emit and one occurs as a child of the other, the child will be ignored since it will be replaced.
 * By default, the interpreter will only respect the most-recent emitted data.
-This means that gql assumes that your query works in absolutes, not incrementals.
-For instance a schema designed like the following, emits incremental updates regarding likes for some object:
+
+This means that by default, gql assumes that your stream should behave like a signal, not sequentially.
+However, gql can also sequential semantics.
+
+For instance a schema designed like the following, emits incremental updates regarding the price for some symbol:
 ```graphql
-enum LikeUpdate {
-  LIKED,
-  UNLIKED
+type PriceChange {
+  difference: Float!
 }
 
 type Subscription {
-  likesFor(id: ID!): LikeUpdate!
+  priceChanges(symbolId: ID!): PriceChange!
 }
 ```
 
+And here is a schema that represents an api that emits updates regarding the current price of a symbol:
+```graphql
+type SymbolState {
+  price: Float!
+}
+
+type Subscription {
+  price(symbolId: ID!): SymbolState!
+}
+```
+
+Consider the following example where two different evaluation semantics are displayed:
+```scala mdoc:silent:nest
+case class PriceCahnge(difference: Float)
+def priceChanges(symbolId: String): fs2.Stream[IO, PriceChange] = ???
+
+case class SymbolState(price: Float)
+def price(symbolId: String): fs2.Stream[IO, SymbolState] = ???
+
+def priceChangesResolver = build[IO, String](_.sequentialStreamMap(priceChanges))
+
+def priceResolver = build[IO, String](_.streamMap(price))
+```
+
+If your stream is sequential, gql will only pull elements when they are needed.
+
 The interpreter performs a global re-interpretation of your schema, when one or more streams emit.
+That is, the interpreter cycles through the following two phases:
+* Interpret for the current values.
+* Await new values.
 
 ## Steps
 A `Step` is the low-level algebra for a resolver, that describes a single step of evaluation for a query.

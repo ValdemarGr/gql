@@ -24,7 +24,9 @@ trait BackpressureSignal[F[_], A, B] {
   // The inner effect can repeatedly pull the state during the lease
   def listen: Resource[F, BackpressureSignal.Signal[F, A]]
 
-  def publish(b: B): F[Unit]
+  // The outer F is the effect of publishing
+  // The inner F is the effect of waiting for the element to be consumed
+  def publish(b: B): F[F[Unit]]
 }
 
 object BackpressureSignal {
@@ -51,11 +53,11 @@ object BackpressureSignal {
       (F.deferred[Unit], F.deferred[Unit])
         .flatMapN((pull, push) => F.ref(State(pull, push, initial)))
         .map { state =>
-          def publish0(b: B): F[Unit] =
+          def publish0(b: B): F[F[Unit]] =
             state.modify { current =>
               tryPublish(current.value, b) match {
                 case None    => (current, current.pullDone.get >> publish0(b))
-                case Some(a) => current.copy(value = a) -> current.pushDone.complete(()).void
+                case Some(a) => current.copy(value = a) -> current.pushDone.complete(()).void.as(current.pullDone.get)
               }
             }.flatten
 
@@ -90,7 +92,7 @@ object BackpressureSignal {
           new BackpressureSignal[F, A, B] {
             def listen = listen0
 
-            def publish(b: B): F[Unit] = publish0(b)
+            def publish(b: B): F[F[Unit]] = publish0(b)
           }
         }
     }

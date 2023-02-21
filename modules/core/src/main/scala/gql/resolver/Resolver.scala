@@ -51,7 +51,10 @@ final class Resolver[+F[_], -I, +O](private[gql] val underlying: Step[F, I, O]) 
     this andThen Resolver.meta[F, O].tupleIn
 
   def streamMap[F2[x] >: F[x], O2](f: O => fs2.Stream[F2, O2]): Resolver[F2, I, O2] =
-    this andThen Resolver.stream(f)
+    this.map(f).embedStream
+
+  def sequentialStreamMap[F2[x] >: F[x], O2](f: O => fs2.Stream[F2, O2]): Resolver[F2, I, O2] =
+    this.map(f).embedSequentialStream
 }
 
 object Resolver extends ResolverInstances {

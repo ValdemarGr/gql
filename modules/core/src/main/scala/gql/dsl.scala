@@ -67,7 +67,7 @@ object dsl {
     def scalar[A](value: A)(implicit tpe: => Scalar[A]) =
       tpe.encoder(value)
 
-    def fromEnum[F[_], A](value: A)(implicit tpe: => Enum[A]) =
+    def fromEnum[A](value: A)(implicit tpe: => Enum[A]) =
       tpe.revm.get(value).map(enumValue)
 
     def enumValue(value: String) = Value.EnumValue(value)

@@ -112,7 +112,7 @@ Type[IO, Domain](
 )
 ```
 
-`Type`'s look very rough, but are significantly easier to define with the `dsl`:
+`Type`s look very rough, but are significantly easier to define with the `dsl`:
 ```scala mdoc
 tpe[IO, Domain](
   "Domain",
@@ -148,11 +148,7 @@ union[IO, Animal]("Animal")
   .variant{ case x: Dog => x }
   .subtype[Cat]
 ```
-:::note
-A curious reader might cosider the possibilty of using a total function form the unifying type to the subtypes.
-This would also allow the scala compiler to catch non-exhaustive matches.
-This is not possible, since the gql type needs to be available at the time of schema construction, and the specification function acts in query time.
-:::
+
 :::caution
 Defining instances for `Animal` that are not referenced in the gql type is mostly safe, since any spread will simple give no fields.
 Most GraphQL clients also handle this case gracefully, for backwards compatibility reasons.
@@ -256,9 +252,9 @@ gql discovers types by traversing the schema types.
 This also means that even if you have a type declared it must occur in the ast to be respected.
 
 You might want to declare types that are not yet queryable.
-Or maybe you only expose an interface, but not the implementing types, thus the implementations won't be discovered.
+Or maybe you only expose an interface, but there re no reachable references to any implementing types, thus the implementations won't be discovered.
 
-The schema lets you declare "extra" types that should occur in introspection, rendering and evaluation (if possible):
+The schema lets you declare "extra" types that should occur in introspection, rendering and evaluation:
 ```scala mdoc
 def getNode: Node = Company("gql", "1")
 
