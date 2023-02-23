@@ -6,6 +6,10 @@ const darkCodeTheme = require('prism-react-renderer/themes/dracula');
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
+  themes: ['@docusaurus/theme-mermaid'],
+  markdown: {
+    mermaid: true
+  },
   title: 'gql',
   tagline: 'A functional GraphQL implementation for Scala',
   url: 'https://github.com',

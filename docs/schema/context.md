@@ -54,39 +54,34 @@ Statistics[IO].flatMap{ stats =>
 ## Working in a specific effect
 If you are working in a specific effect, you most likely have more tools to work with.
 For instance, if you are using `IO`, you can use `IOLocal` to wire context through your application.
-:::note
-For the case of `IOLocal`, I don't think it is possible to provide a context implementation without a bit of unsafe code or other compromises, since `IOLocal` must have a default value.
+
 ```scala mdoc:silent
-sealed trait ContextLocal {
-  def get: IO[Context]
-  
-  def set(ctx: Context): IO[Unit]
+
+trait Authorized {
+  def getAuth: IO[Ior[String, Context]]
 }
 
-object ContextLocal {
-  def make: IO[ContextLocal] = IOLocal[Option[Context]](None).map { local =>
-    new ContextLocal {
-      def get: IO[Context] = local.get.flatMap {
-        case Some(ctx) => IO.pure(ctx)
-        case None => IO.raiseError(new RuntimeException("Context not set"))
-      }
-      
-      def set(ctx: Context): IO[Unit] = local.set(Some(ctx))
+object Authorized {
+  def fromIOLocal(iol: IOLocal[Option[Context]]) = new Authorized {
+    def getAuth = iol.get.map{
+      case None => Ior.Left("You must authorize to perform this action")
+      case Some(c) => Ior.Right(c)
     }
   }
 }
 
-def makeSchema(implicit loc: ContextLocal): Schema[IO, Unit, Unit, Unit] = ???
+def makeSchema(implicit auth: Authorized): Schema[IO, Unit, Unit, Unit] = ???
 
-ContextLocal.make.flatMap{ implicit loc =>
+IOLocal[Option[Context]](None).flatMap{ implicit loc =>
+  implicit val auth = Authorized.fromIOLocal(loc)
+  
   def s = makeSchema
   
   def runQueryWithSchema: IO[Unit] = ???
   
   def runAuthorizedQuery(userId: String): IO[Unit] =
-    loc.set(Context(userId)) >> runQueryWithSchema
+    loc.set(Some(Context(userId))) >> runQueryWithSchema
     
   runAuthorizedQuery("john_doe")
 }
 ```
-:::

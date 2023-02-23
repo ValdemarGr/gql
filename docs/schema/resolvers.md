@@ -317,7 +317,7 @@ That is, only the sub-tree that changed will be re-interpreted.
 * By default, the interpreter will only respect the most-recent emitted data.
 
 This means that by default, gql assumes that your stream should behave like a signal, not sequentially.
-However, gql can also sequential semantics.
+However, gql can also adhere sequential semantics.
 
 For instance a schema designed like the following, emits incremental updates regarding the price for some symbol:
 ```graphql
@@ -403,6 +403,19 @@ def schema = SchemaShape.make[IO](
 Schema.simple(schema)
   .map(Compiler[IO].compile(_, query))
   .flatMap { case Right(Application.Subscription(stream)) => stream.take(4).compile.drain }
+  .unsafeRunSync()
+```
+
+gql also allows the user to specify how much time the interpreter may await more stream updates:
+```scala mdoc:silent
+Schema.simple(schema).map(Compiler[IO].compile(_, query, accumulate=Some(10.millis)))
+```
+
+furthermore, gql can also emit interpreter information if you want to look into what gql is doing:
+```scala mdoc
+Schema.simple(schema)
+  .map(Compiler[IO].compile(_, query, debug=gql.interpreter.DebugPrinter[IO](s => IO(println(s)))))
+  .flatMap { case Right(Application.Subscription(stream)) => stream.take(3).compile.drain }
   .unsafeRunSync()
 ```
 

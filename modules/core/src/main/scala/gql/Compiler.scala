@@ -67,7 +67,7 @@ final case class CompilerParameters(
     operationName: Option[String]
 )
 
-object Compiler { outer =>
+object Compiler {
   type Outcome[F[_]] = Either[CompilationError, Application[F]]
 
   final class PartiallyAppliedCompiler[F[_]](val F: Async[F]) extends AnyVal {

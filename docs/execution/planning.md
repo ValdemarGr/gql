@@ -32,6 +32,13 @@ Then the planner assigns weights to every edge/field, and optionally labels them
 For information on how the planner assigns weights, check out the [statistics](./statistics).
 :::
 
+```mermaid
+graph TD;
+    A-->B;
+    A-->C;
+    B-->D;
+    C-->D;
+```
 ![Graph1](./graph.gv.svg)
 
 Now all the structure/grouping of fields is dropped and only the edges/relations are kept.

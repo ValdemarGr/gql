@@ -10,11 +10,10 @@ These are for instance caused by duplicate field names or invalid typenames.
 
 ## Execution
 Error handling in gql can be performed in two ways, it can be returned explicitly or raised in `F`.
-For instance, the `EffectResolver[F, I, A]` wraps the function `I => F[Ior[String, A]]`.
 
 ## Examples
 Let's setup the scene:
-```scala
+```scala mdoc
 import gql.ast._
 import gql.dsl._
 import gql.dsl.value._
@@ -27,11 +26,11 @@ import cats.effect.unsafe.implicits.global
 def multifailSchema = 
   tpe[IO, Unit](
     "Query", 
-    "field" -> fallible(arg[Int]("i", scalar(10))){ 
-      case (_, 0) => IO.pure(Ior.left("fail gracefully"))
-      case (_, 1) => IO.raiseError(new Exception("fail hard"))
-      case (_, i) => IO.pure(Ior.right(i))
-    }
+    "field" -> build.from(arged(arg[Int]("i", scalar(10))).evalMap{ 
+      case 0 => IO.pure(Ior.left("fail gracefully"))
+      case 1 => IO.raiseError(new Exception("fail hard"))
+      case i => IO.pure(Ior.right(i))
+    }.rethrow)
   )
 
 def go(query: String, tpe: Type[IO, Unit] = multifailSchema) = 
@@ -49,22 +48,22 @@ go("query { field }")
 ```
 
 A query can fail gracefully by returning `Ior.left`:
-```scala
+```scala mdoc
 go("query { field(i: 0) }")
 ```
 
 A query can fail hard by raising an exception:
-```scala
+```scala mdoc
 go("query { field(i: 1) }")
 ```
 
 A query can also fail before even evaluating the query:
-```scala
+```scala mdoc
 go("query { nonExisting }")
 ```
 
 And finally, it can fail if it isn't parsable:
-```scala
+```scala mdoc
 def largerQuery = """
   query {
     field1
@@ -85,7 +84,7 @@ Parser errors also look nice in ANSI terminals:
 
 ### Exception trick
 If for whatever reason you wish to pass information through exceptions, that is also possible:
-```scala
+```scala mdoc
 final case class MyException(msg: String, data: Int) extends Exception(msg)
 
 val res = 
@@ -100,7 +99,7 @@ val res =
     }
   }.unsafeRunSync()
   
-res.errors.headOption.flatMap(_.exception) match {
+res.errors.headOption.flatMap(_.error.swap.toOption) match {
   case Some(MyException(_, data)) => println(s"Got data: $data")
   case _ => println("No data")
 }

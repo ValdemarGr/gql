@@ -7,7 +7,7 @@ The `SchemaShape` also contains extra types that should occur in the schema but 
 
 The `SchemaShape` also has derived information embedded in it.
 For instance, one can render the schema:
-```scala
+```scala mdoc
 import cats.effect._
 import cats.implicits._
 import gql._
@@ -17,7 +17,7 @@ import gql.dsl._
 def ss = SchemaShape.make[IO](
   tpe[IO, Unit](
     "Query",
-    "4hello" -> pure(_ => "world")
+    "4hello" -> lift(_ => "world")
   )
 )
 
@@ -26,7 +26,7 @@ println(ss.render)
 
 ### Validation
 Validation of the shape is also derived information:
-```scala
+```scala mdoc
 println(ss.validate)
 ```
 Running validation is completely optional, but is highly recommended.
@@ -43,17 +43,17 @@ Validation also reports other non-critical issues such as cases of ambiguity.
 For instance, if a cyclic type is defined with `def`, validation cannot determine if the type is truely valid.
 Solving this would require an infinite amount of time.
 An exmaple follows:
-```scala
+```scala mdoc
 final case class A()
 
 def cyclicType(i: Int): Type[IO, A] = {
   if (i < 10000) tpe[IO, A](
     "A",
-    "a" -> pure((_: A) => A())(cyclicType(i + 1))
+    "a" -> lift((_: A) => A())(cyclicType(i + 1))
   )
   else tpe[IO, A](
     "A",
-    "a" -> pure(_ => "now I'm a string :)")
+    "a" -> lift(_ => "now I'm a string :)")
   )
 }
 
@@ -62,7 +62,7 @@ implicit lazy val cyclic: Type[IO, A] = cyclicType(0)
 def recursiveSchema = SchemaShape.make[IO](
   tpe[IO, Unit](
     "Query",
-    "a" -> pure(_ => A())
+    "a" -> lift(_ => A())
   )
 )
 
@@ -71,9 +71,9 @@ recursiveSchema.validate.toList.mkString("\n")
 After `10000` iterations the type is no longer unifyable.
 
 One can also choose to simply ignore some of the validation errors:
-```scala
+```scala mdoc
 recursiveSchema.validate.filter{
-  case SchemaShape.Problem(SchemaShape.ValidationError.CyclicDivergingTypeReference("A"), _) => false
+  case Validation.Problem(Validation.Error.CyclicDivergingTypeReference("A"), _) => false
   case _ => true
 }
 ```

@@ -1,14 +1,11 @@
 ---
 title: Compiler
 ---
-:::warning
-not up to date
-:::
-A `Compiler` is an abstraction for combining multiple parts of `gql` into a single executable.
+The `Compiler` is a utility for combining multiple parts of `gql` into a single executable.
 
-An instance `Compiler` has the task of parsing, preparing (validating) and construction an executable version of a GraphQL query.
+The `Compiler` utility has the task of parsing, preparing (validating) and construction an executable version of a GraphQL query.
 The output of query compilation is either an error or an `Application`; an executable version of the query that closes over all required inputs:
-```scala
+```scala mdoc
 import gql._
 
 sealed trait Application[F[_]]
@@ -19,12 +16,12 @@ object Application {
 }
 ```
 
-For most non-trivial applications the implementation of `Compiler` will usually be a bit more complex than only performing query execution related tasks.
+For most non-trivial applications a compiler will usually be a bit more complex than only performing query execution related tasks.
 For instance production deployments do usually implement additional features such as caching, logging, metrics, tracing, authorization, to name a few.
-The parts of `gql` that the default `Compiler` instance composes (parsing, preparing and assembling an application), are exposed as functions such that any need can be implemented with ease.
+The parts of `gql` that the compiler utility composes (parsing, preparing and assembling an application), are exposed as seperate functions such that any need can be composed with ease.
 
-For instance, say that we would like to modify a compiler such that it logs the query that is being executed, if it is too slow:
-```scala
+For instance, say that we would like to modify a phase in query compilation, such that the final executable logs queries that are too slow:
+```scala mdoc
 import gql._
 import cats.implicits._
 import cats.effect._
@@ -37,17 +34,17 @@ trait Logger[F[_]] {
 
 def lg: Logger[IO] = ???
 
-def logSlowQueries(compiler: Compiler[IO]): Compiler[IO] = cp =>
-  compiler.compile(cp).map{
-    case Right(Application.Query(fa)) => 
-      Right {
-        Application.Query {
-          fa.timed.flatMap{ case (dur, a) =>
-            if (dur > 1.second) lg.warn(s"Slow query: ${cp.query}") as a
-            else IO.pure(a)
-          }
+def logSlowQueries(
+  compiler: CompilerParameters => Application[IO]
+): CompilerParameters => Application[IO] = cp => 
+  compiler(cp) match {
+    case Application.Query(fa) => 
+      Application.Query {
+        fa.timed.flatMap{ case (dur, a) =>
+          if (dur > 1.second) lg.warn(s"Slow query: ${cp.query}") as a
+          else IO.pure(a)
         }
       }
     case x => x
-}
+  }
 ```
