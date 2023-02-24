@@ -60,6 +60,14 @@ const config = {
   themeConfig:
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
     ({
+      /*mermaid: {
+        options: {
+          flowchart: {
+            useMaxWidth: true,
+            useWidth: 100
+          }
+        }
+      },*/
       navbar: {
         title: 'gql',
         items: [

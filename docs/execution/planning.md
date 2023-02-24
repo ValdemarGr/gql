@@ -33,14 +33,237 @@ For information on how the planner assigns weights, check out the [statistics](.
 :::
 
 ```mermaid
-graph TD;
-    A-->B;
-    A-->C;
-    B-->D;
-    C-->D;
-```
-![Graph1](./graph.gv.svg)
+flowchart LR
+    Query((Query)) ---> a(a<br/>batch: z<br/>cost: 2)
+    a --> A((A))
 
+      A --> d(d<br/>batch: y<br/>cost: 1)
+      d --> D((D))
+
+      A ---> e(e<br/>batch: x<br/>cost: 2)
+      e --> E((E))
+
+    Query --> b(b<br/>batch: z<br/>cost: 1)
+    b --> B((B))
+
+    Query --> c(c<br/>batch: x<br/>cost: 1)
+    c --> C((C))
+
+      C -------> f(f<br/>batch: y<br/>cost: 6)
+      f --> F((F))
+```
+
+We drop all type information from this graph, so only the edges (resolvers) remain.
+
+```mermaid
+flowchart LR
+  root
+    a(a<br/>batch: z<br/>cost: 2)
+    root ---> a
+
+      d(d<br/>batch: y<br/>cost: 1)
+      a --> d
+
+      e(e<br/>batch: x<br/>cost: 2)
+      a ---> e
+
+
+    b(b<br/>batch: z<br/>cost: 1)
+    root --> b
+
+    c(c<br/>batch: x<br/>cost: 1)
+    root --> c
+
+      f(f<br/>batch: y<br/>cost: 6)
+      c -------> f
+```
+
+Then we compute the end times for all nodes:
+```mermaid
+flowchart LR
+  root
+    a(a<br/>batch: z<br/>cost: 2<br/>end:2)
+    root ---> a
+
+      d(d<br/>batch: y<br/>cost: 1<br/>end:3)
+      a --> d
+
+      e(e<br/>batch: x<br/>cost: 2<br/>end:4)
+      a ---> e
+
+
+    b(b<br/>batch: z<br/>cost: 1<br/>end:1)
+    root --> b
+
+    c(c<br/>batch: x<br/>cost: 1<br/>end:q)
+    root --> c
+
+      f(f<br/>batch: y<br/>cost: 6<br/>end:7)
+      c -------> f
+```
+
+Let the `maxEnd` to be `7`, since node `f` has end `7`.
+
+The next step is to move every node as far down as possible.
+We start in the leaves, and work our way up.
+A can move no further than the smallest start (end - cost) of its children.
+```mermaid
+flowchart LR
+  root
+    a(a<br/>batch: z<br/>cost: 2<br/>end:5)
+    root ------> a
+
+      d(d<br/>batch: y<br/>cost: 1<br/>end:7)
+      a ---> d
+
+      e(e<br/>batch: x<br/>cost: 2<br/>end:7)
+      a ---> e
+
+
+    b(b<br/>batch: z<br/>cost: 1<br/>end:7)
+    root --------> b
+
+    c(c<br/>batch: x<br/>cost: 1<br/>end:q)
+    root --> c
+
+      f(f<br/>batch: y<br/>cost: 6<br/>end:7)
+      c -------> f
+```
+
+Now we run through every node, sorted by end time, and move to up to either the smallest batch possibility (same batch name), or as far up as possible, if not batching opportunity can be discovered.
+```mermaid
+flowchart LR
+  root
+    a(a<br/>batch: z<br/>cost: 2<br/>end:5)
+    root ------> a
+
+      d(d<br/>batch: y<br/>cost: 1<br/>end:7)
+      a ---> d
+
+      e(e<br/>batch: x<br/>cost: 2<br/>end:7)
+      a ---> e
+
+
+    b(b<br/>batch: z<br/>cost: 1<br/>end:7)
+    root --------> b
+
+    c(c<br/>batch: x<br/>cost: 1<br/>end:q)
+    root --> c
+
+      f(f<br/>batch: y<br/>cost: 6<br/>end:7)
+      c -------> f
+
+style c stroke:#f66,stroke-dasharray: 5 5
+```
+c cannot be moved, thus it must remain where it is.
+```mermaid
+flowchart LR
+  root
+    a(a<br/>batch: z<br/>cost: 2<br/>end:5)
+    root ---> a
+
+      d(d<br/>batch: y<br/>cost: 1<br/>end:7)
+      a ------> d
+
+      e(e<br/>batch: x<br/>cost: 2<br/>end:7)
+      a ------> e
+
+
+    b(b<br/>batch: z<br/>cost: 1<br/>end:7)
+    root --------> b
+
+    c(c<br/>batch: x<br/>cost: 1<br/>end:q)
+    root --> c
+
+      f(f<br/>batch: y<br/>cost: 6<br/>end:7)
+      c -------> f
+
+style a stroke:#f66,stroke-dasharray: 5 5
+```
+A has no batching opportunity, so it is moved up to `2`.
+```mermaid
+flowchart LR
+  root
+    a(a<br/>batch: z<br/>cost: 2<br/>end:5)
+    root ---> a
+
+      d(d<br/>batch: y<br/>cost: 1<br/>end:7)
+      a ------> d
+
+      e(e<br/>batch: x<br/>cost: 2<br/>end:7)
+      a ------> e
+
+
+    b(b<br/>batch: z<br/>cost: 1<br/>end:7)
+    root --------> b
+
+    c(c<br/>batch: x<br/>cost: 1<br/>end:q)
+    root --> c
+
+      f(f<br/>batch: y<br/>cost: 6<br/>end:7)
+      c -------> f
+
+style d stroke:#f66,stroke-dasharray: 5 5
+style f stroke:#393,stroke-dasharray: 5 5
+```
+`d`'s best batching opportunity is `f`, so it remains.
+```mermaid
+flowchart LR
+  root
+    a(a<br/>batch: z<br/>cost: 2<br/>end:5)
+    root ---> a
+
+      d(d<br/>batch: y<br/>cost: 1<br/>end:7)
+      a ------> d
+
+      e(e<br/>batch: x<br/>cost: 2<br/>end:7)
+      a ------> e
+
+
+    b(b<br/>batch: z<br/>cost: 1<br/>end:7)
+    root --------> b
+
+    c(c<br/>batch: x<br/>cost: 1<br/>end:q)
+    root --> c
+
+      f(f<br/>batch: y<br/>cost: 6<br/>end:7)
+      c -------> f
+
+style d stroke:#fc6,stroke-dasharray: 5 5
+style f stroke:#fc6,stroke-dasharray: 5 5
+
+style e stroke:#f66,stroke-dasharray: 5 5
+```
+`e` cannot move up, since it's parent's (`a`) end (`5`) is the same as `e`'s start (`7 - 2 = 5`).
+```mermaid
+flowchart LR
+  root
+    a(a<br/>batch: z<br/>cost: 2<br/>end:5)
+    root ---> a
+
+      d(d<br/>batch: y<br/>cost: 1<br/>end:7)
+      a ------> d
+
+      e(e<br/>batch: x<br/>cost: 2<br/>end:7)
+      a ------> e
+
+
+    b(b<br/>batch: z<br/>cost: 1<br/>end:4)
+    root ---> b
+
+    c(c<br/>batch: x<br/>cost: 1<br/>end:q)
+    root --> c
+
+      f(f<br/>batch: y<br/>cost: 6<br/>end:7)
+      c -------> f
+
+style d stroke:#fc6,stroke-dasharray: 5 5
+style f stroke:#fc6,stroke-dasharray: 5 5
+
+style b stroke:#f66,stroke-dasharray: 5 5
+```
+
+![Graph1](./graph.gv.svg)
 Now all the structure/grouping of fields is dropped and only the edges/relations are kept.
 Furthermore every edge has it's end-time computed, which is the sum of the costs of all the edges that are traversed to get to that edge.
 

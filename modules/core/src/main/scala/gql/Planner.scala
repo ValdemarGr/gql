@@ -196,10 +196,11 @@ object Planner {
               case Some(d) => State.pure(d)
               case None =>
                 val children = childrenV.get(id).toList.flatMap(_.toList)
-                // Find the maximum end time of all children
+                // Find the minimum start time of all children
+                // That is as far down as we can go
                 children
-                  .traverse(moveDown)
-                  .map(_.maxOption.getOrElse(maxEnd))
+                  .traverse(n => moveDown(n).map(newEnd => newEnd - lookupV(n).cost))
+                  .map(_.minOption.getOrElse(maxEnd))
                   .flatMap { newEnd =>
                     State.modify[EndTimes](_ + (id -> newEnd)) as newEnd
                   }
@@ -213,7 +214,7 @@ object Planner {
           def moveUp(ns: List[NodeId]): Map[NodeId, Double] =
             ns.mapAccumulate(
               (
-                // Map of node id to NEW end time
+                // Map of node id to NEW start time
                 Map.empty[NodeId, Double],
                 // When a node has been visited and is batchable, it is added here
                 Map.empty[Step.BatchKey[?, ?], TreeSet[Double]]
@@ -385,7 +386,7 @@ object Planner {
             // find the max end time of all parents and add the cost
             n.parents.toList
               .traverse(p => getEndTime(lookupV(p)))
-              .map(_.combineAll)
+              .map(_.maxOption.getOrElse(0d))
               .flatMap { parentEnd =>
                 val end = parentEnd + n.cost
                 State.modify[EndTimes](_ + (n.id -> end)) as end
