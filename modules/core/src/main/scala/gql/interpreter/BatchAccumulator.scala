@@ -33,7 +33,7 @@ trait BatchAccumulator[F[_]] {
 }
 
 object BatchAccumulator {
-  def apply[F[_]](schemaState: SchemaState[F], plan: Planner.NodeTree)(implicit
+  def apply[F[_]](schemaState: SchemaState[F], plan: Planner.PlannedNodeTree)(implicit
       F: Async[F],
       stats: Statistics[F]
   ): F[BatchAccumulator[F]] = {
