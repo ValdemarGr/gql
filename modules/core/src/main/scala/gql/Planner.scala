@@ -209,15 +209,15 @@ object Planner {
           def moveUp(ns: List[NodeId]): Map[NodeId, Double] =
             ns.mapAccumulate(
               (
-                // Map of node id to NEW start time
+                // Map of node id to NEW end time
                 Map.empty[NodeId, Double],
                 // When a node has been visited and is batchable, it is added here
                 Map.empty[Step.BatchKey[?, ?], TreeSet[Double]]
               )
             ) { case ((ends, batchMap), id) =>
               val n = lookupV(id)
-              // We may move up to the maximum parent end time
-              val minEnd = n.parents.map(ends(_)).maxOption.getOrElse(0d)
+              // Our min end is the maximum of all parents + our cost
+              val minEnd = n.parents.map(ends(_)).maxOption.getOrElse(0d) + n.cost
               val (newEnd, newMap) = n.batchId match {
                 // No batching here, move up as far as possible
                 case None => (minEnd, batchMap)
@@ -225,7 +225,7 @@ object Planner {
                   batchMap.get(bn.batcherId) match {
                     case None    => (minEnd, batchMap + (bn.batcherId -> TreeSet(minEnd)))
                     case Some(s) =>
-                      // This is a possible batch possibility
+                      // This is a batch possibility
                       val o = if (s.contains(minEnd)) Some(minEnd) else s.minAfter(minEnd)
                       // If a batch is found, then we can move up to the batch and don't need to modify the set
                       // If no batch is found, then we move up to the minimum end and add this to the set

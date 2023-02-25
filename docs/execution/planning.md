@@ -43,13 +43,19 @@ flowchart LR
       A ---> e(e<br/>batch: x<br/>cost: 2)
       e --> E((E))
 
-    Query --> b(b<br/>batch: z<br/>cost: 1)
-    b --> B((B))
+    Query --> g(g<br/>cost: 1)
+    g --> G((G))
+    
+      G ---> b(b<br/>batch: z<br/>cost: 2)
+      b --> B((B))
 
     Query --> c(c<br/>batch: x<br/>cost: 1)
     c --> C((C))
+    
+      C ------> h(h<br/>cost: 5)
+      h --> H((H))
 
-      C -------> f(f<br/>batch: y<br/>cost: 6)
+      H --> f(f<br/>batch: y<br/>cost: 1)
       f --> F((F))
 ```
 
@@ -130,7 +136,7 @@ flowchart LR
       c -------> f
 ```
 
-Now we run through every node, sorted by end time, and move to up to either the smallest batch possibility (same batch name), or as far up as possible, if not batching opportunity can be discovered.
+Now we run through every node, sorted by end time, and move it up to either the smallest batch possibility (same batch name), or as far up as possible, if not batching opportunity can be discovered.
 ```mermaid
 flowchart LR
   root
@@ -235,6 +241,13 @@ style f stroke:#fc6,stroke-dasharray: 5 5
 style e stroke:#f66,stroke-dasharray: 5 5
 ```
 `e` cannot move up, since it's parent's (`a`) end (`5`) is the same as `e`'s start (`7 - 2 = 5`).
+:::note
+Planning in end time is easier than planning in start time.
+However converting one to the other is trivial (subtract or add the cost).
+
+If two nodes have the same batch name, they will always have the same cost.
+That is, if two nodes with the same batch name and end-time, they will also have the same start time.
+:::
 ```mermaid
 flowchart LR
   root
@@ -261,6 +274,7 @@ style d stroke:#fc6,stroke-dasharray: 5 5
 style f stroke:#fc6,stroke-dasharray: 5 5
 
 style b stroke:#f66,stroke-dasharray: 5 5
+style a stroke:#393,stroke-dasharray: 5 5
 ```
 
 ![Graph1](./graph.gv.svg)
