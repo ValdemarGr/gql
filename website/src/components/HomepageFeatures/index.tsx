@@ -3,7 +3,14 @@ import clsx from 'clsx';
 import styles from './styles.module.css';
 import CodeBlock from '@theme/CodeBlock';
 
-const FeatureList = [
+type Feature = {
+  title: string,
+  description: JSX.Element,
+  code: JSX.Element, 
+  Svg?: React.FunctionComponent<React.SVGProps<SVGSVGElement>>
+}
+
+const FeatureList: Feature[] = [
   /*{
     title: 'Declarative',
     Svg: require('@site/static/img/undraw_docusaurus_mountain.svg').default,
@@ -123,7 +130,7 @@ const FeatureList = [
   },
 ];
 
-function Feature({ Svg, title, description, code }) {
+function Feature({ Svg, title, description, code }: Feature) {
   const showSvg = Svg === undefined ? <></> : <Svg className={styles.featureSvg} role="img" />;
   return (
     <div className={clsx('col col--4')}>

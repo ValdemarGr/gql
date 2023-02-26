@@ -32,6 +32,110 @@ Then the planner assigns weights to every edge/field, and optionally labels them
 For information on how the planner assigns weights, check out the [statistics](./statistics).
 :::
 
+import Treemap from '@site/src/components/Treemap';
+
+<Treemap
+  root={"root"}
+  nodes={[
+    {
+      id: "root",
+      name: "root node",
+      cost: 1,
+      batchName: "a",
+      children: ["c1", "b1", "h1"]
+    },
+      {
+        id: "c1",
+        name: "c1",
+        cost: 1,
+        batchName: "c"
+      },
+      {
+        id: "b1",
+        name: "b1",
+        cost: 2,
+        batchName: "b",
+        children: ["a1"]
+      },
+        {
+          id: "a1",
+          name: "a1",
+          cost: 2,
+          batchName: "a",
+          children: ["d1", "d2"]
+        },
+          {
+            id: "d1",
+            name: "d1",
+            cost: 2,
+            batchName: "d"
+          },
+          {
+            id: "d2",
+            name: "d2",
+            cost: 2,
+            batchName: "d"
+          },
+      {
+        id: "h1",
+        name: "h1",
+        cost: 8,
+        batchName: "h"
+      }
+  ]}
+/>
+
+
+<Treemap
+  root={"root"}
+  nodes={[
+    {
+      id: "root",
+      name: "root node",
+      cost: 1,
+      batchName: "root",
+      children: ["c1", "a1", "b1"]
+    },
+      {
+        id: "c1",
+        name: "c1",
+        cost: 8,
+        batchName: "c1"
+      },
+      {
+        id: "a1",
+        name: "a1",
+        cost: 2,
+        batchName: "a1",
+        children: ["b2"]
+      },
+        {
+          id: "b2",
+          name: "b2",
+          cost: 2,
+          batchName: "b2"
+        },
+      {
+        id: "b1",
+        name: "b1",
+        cost: 2,
+        batchName: "b1",
+        children: ["a2"]
+      },
+        {
+          id: "a2",
+          name: "a2",
+          cost: 2,
+          batchName: "a2"
+        }
+  ]}
+/>
+hey
+
+hey
+
+hey
+
 ```mermaid
 flowchart LR
     Query((Query)) ---> a(a<br/>batch: z<br/>cost: 2)
@@ -363,10 +467,10 @@ If we explicitly invoke the planner on our schema, we can ask to see a rendered 
 ```scala mdoc
 def loggedSchema = schemaF.map{ schema =>
   schema.copy(planner = new Planner[IO] {
-    def plan(naive: Planner.NodeTree): IO[Planner.NodeTree] =
+    def plan(naive: Planner.NodeTree): IO[Planner.PlannedNodeTree] =
       schema.planner.plan(naive).map { output =>
-        println(output.show(showImprovement = true, ansiColors = false))
-        println(s"naive: ${naive.totalCost}")
+        println(naive.show(ansiColors = false, plan=Some(output.plan)))
+        println(s"naive: ${naive.naiveCost}")
         println(s"optimized: ${output.totalCost}")
         output
       }
