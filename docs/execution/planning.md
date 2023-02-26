@@ -35,54 +35,22 @@ For information on how the planner assigns weights, check out the [statistics](.
 import Treemap from '@site/src/components/Treemap';
 
 <Treemap
-  root={"root"}
-  nodes={[
-    {
-      id: "root",
-      name: "root node",
-      cost: 1,
-      batchName: "a",
-      children: ["c1", "b1", "h1"]
-    },
-      {
-        id: "c1",
-        name: "c1",
-        cost: 1,
-        batchName: "c"
-      },
-      {
-        id: "b1",
-        name: "b1",
-        cost: 2,
-        batchName: "b",
-        children: ["a1"]
-      },
-        {
-          id: "a1",
-          name: "a1",
-          cost: 2,
-          batchName: "a",
-          children: ["d1", "d2"]
-        },
-          {
-            id: "d1",
-            name: "d1",
-            cost: 2,
-            batchName: "d"
-          },
-          {
-            id: "d2",
-            name: "d2",
-            cost: 2,
-            batchName: "d"
-          },
-      {
-        id: "h1",
-        name: "h1",
-        cost: 8,
-        batchName: "h"
-      }
-  ]}
+    root = {"root"}
+    height = {800}
+    nodes = {[
+    { id: "root", info: { name: "root node" }, cost: 1, children: ["c1fill", "b1", "h1"] },
+    { id: "c1fill", cost: 7, children: ["c1"] },
+    { id: "c1", info: { name: "c1" }, cost: 1, },
+    { id: "c1", info: { name: "c1" }, cost: 1, },
+    { id: "b1", info: { name: "b1" }, cost: 2, children: ["a1"] },
+    { id: "a1", info: { name: "a1" }, cost: 2, children: ["d1", "d2", "d3"] },
+    { id: "d1", info: { name: "d1" }, cost: 2, children: ["i1"] },
+    { id: "i1", info: { name: "i1" }, cost: 3, },
+    { id: "d2", info: { name: "d2" }, cost: 2, },
+    { id: "d3", info: { name: "d3" }, cost: 1, },
+    { id: "h1", info: { name: "h1" }, cost: 8, children: ["g1"] },
+    { id: "g1", info: { name: "g1" }, cost: 2, }
+    ]}
 />
 
 
@@ -91,42 +59,36 @@ import Treemap from '@site/src/components/Treemap';
   nodes={[
     {
       id: "root",
-      name: "root node",
+      info: { name: "root node" },
       cost: 1,
-      batchName: "root",
       children: ["c1", "a1", "b1"]
     },
       {
         id: "c1",
-        name: "c1",
+        info: { name: "c1" },
         cost: 8,
-        batchName: "c1"
       },
       {
         id: "a1",
-        name: "a1",
+        info: { name: "a1" },
         cost: 2,
-        batchName: "a1",
         children: ["b2"]
       },
         {
           id: "b2",
-          name: "b2",
+          info: { name: "b2" },
           cost: 2,
-          batchName: "b2"
         },
       {
         id: "b1",
-        name: "b1",
+        info: { name: "b1" },
         cost: 2,
-        batchName: "b1",
         children: ["a2"]
       },
         {
           id: "a2",
-          name: "a2",
+          info: { name: "a2" },
           cost: 2,
-          batchName: "a2"
         }
   ]}
 />

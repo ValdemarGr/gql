@@ -1,17 +1,22 @@
 import * as d3 from 'd3';
 import React from 'react';
 
+type NodeInfo = {
+    name: string,
+    batchName?: string,
+}
+
 type Node = {
     id: string,
-    name: string,
+    info?: NodeInfo,
     cost: number,
-    batchName: string,
     children?: string[]
 }
 
 type Props = {
     root: string,
     nodes: Node[],
+    height?: number
 }
 
 function getWidths(n: Node, all: Record<string, Node>): Record<string, number> {
@@ -57,51 +62,77 @@ type ShowProps = {
 
 function ShowNode(p: ShowProps) {
     const padded = padChildren((p.n.children || []).map(c => p.all[c]), p.leftPad, p.widths)
-    const width = ((p.widths[p.n.id] / p.maxWidth) * 100).toString() + "%"
-    const height = p.n.cost * p.heightPerCost
-    const x = ((p.leftPad / p.maxWidth) * 100)
-    const y = p.currentCost * p.heightPerCost
-    return (
-        <>
-            <g>
-                <rect
-                    width={width}
-                    height={height}
-                    x={x.toString() + "%"}
-                    y={y}
-                    // random color
-                    fill={"rgb(" + ((p.currentCost / p.maxCost) * 128 / 2 + 32).toString() + ", 32, 32)"}
-                    style={{
-                        'strokeWidth': 6,
-                        stroke: "rgb(128,128,128)"
-                    }}
-                />
-                <text
-                    x={(x + 1).toString() + "%"}
-                    y={y + height / 2}
-                    style={{
-                        'fontSize': 20,
-                        'fill': 'white',
-                        'textAnchor': 'start',
-                        'alignmentBaseline': 'middle'
-                    }}
-                >{p.n.name}</text>
-            </g>
-            {padded.map(c => {
-                const [c0, leftPad] = c
-                return <ShowNode
-                    n={c0}
-                    leftPad={leftPad}
-                    currentCost={p.currentCost + p.n.cost}
-                    heightPerCost={p.heightPerCost}
-                    all={p.all}
-                    widths={p.widths}
-                    maxCost={p.maxCost}
-                    maxWidth={p.maxWidth}
-                />
-            })}
-        </>
-    );
+
+    const children = padded.map(c => {
+        const [c0, leftPad] = c
+        return <ShowNode
+            n={c0}
+            leftPad={leftPad}
+            currentCost={p.currentCost + p.n.cost}
+            heightPerCost={p.heightPerCost}
+            all={p.all}
+            widths={p.widths}
+            maxCost={p.maxCost}
+            maxWidth={p.maxWidth}
+        />
+    })
+
+    if (!p.n.info) {
+        return <>{children}</>
+    } else {
+        const width = ((p.widths[p.n.id] / p.maxWidth) * 100).toString() + "%"
+        const height = p.n.cost * p.heightPerCost
+        const x = ((p.leftPad / p.maxWidth) * 100)
+        const y = p.currentCost * p.heightPerCost
+
+        const txt =
+            <text
+                x={(x + 1).toString() + "%"}
+                y={y + height / 2}
+                style={{
+                    'fontSize': 20,
+                    'fill': 'white',
+                    'textAnchor': 'start',
+                    'alignmentBaseline': 'middle'
+                }}
+            >{p.n.info.name}</text>;
+
+        const fill = "rgb(" + ((p.currentCost / p.maxCost) * 128 / 2 + 32).toString() + ", 32, 32)"
+        const style = {
+            'strokeWidth': 6,
+            stroke: "rgb(128,128,128)"
+        }
+
+        return (
+            <>
+                <g>
+                    <rect
+                        width={width}
+                        height={height}
+                        x={x.toString() + "%"}
+                        y={y}
+                        // random color
+                        fill={fill}
+                        style={style}
+                    />
+                    {txt}
+                </g>
+                {padded.map(c => {
+                    const [c0, leftPad] = c
+                    return <ShowNode
+                        n={c0}
+                        leftPad={leftPad}
+                        currentCost={p.currentCost + p.n.cost}
+                        heightPerCost={p.heightPerCost}
+                        all={p.all}
+                        widths={p.widths}
+                        maxCost={p.maxCost}
+                        maxWidth={p.maxWidth}
+                    />
+                })}
+            </>
+        );
+    }
 }
 
 type State = {
@@ -116,18 +147,19 @@ export default function Treemap(p: Props) {
         const lookup = p.nodes.reduce((acc, next) => ({ ...acc, [next.id]: next }), {})
         const root = lookup[p.root]
         return {
-        lookup: lookup,
-        root: root,
-        widths: getWidths(root, lookup),
-        lp: longestPath(root, 0, lookup)
-    }
-}, [])
+            lookup: lookup,
+            root: root,
+            widths: getWidths(root, lookup),
+            lp: longestPath(root, 0, lookup)
+        }
+    }, [])
 
+    const h = p.height || 500;
 
-    const heightPerCost = 500 / lp;
+    const heightPerCost = h / lp;
 
     return (
-        <svg width="100%" height="520px">
+        <svg width="100%" height={(h + 20).toString() + "px"}>
             <ShowNode
                 n={root}
                 leftPad={0}
