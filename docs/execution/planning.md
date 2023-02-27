@@ -15,13 +15,18 @@ case class Query(a: A, b: B, c: C)
 
 def q = """
   query {
-    a {
-      d
-      e
-    }
-    b
-    c {
-      f
+    house(id: ID) {
+      owner {
+        name
+        netWorth
+      }
+      remainingMortgage
+      info {
+        residents {
+          name
+        }
+      }
+      constructionYear
     }
   }
 """
@@ -35,68 +40,41 @@ For information on how the planner assigns weights, check out the [statistics](.
 import Treemap from '@site/src/components/Treemap';
 
 <Treemap
-    root = {"root"}
+    root = {"house"}
     height = {800}
     nodes = {[
-    { id: "root", info: { name: "root node" }, cost: 1, children: ["c1fill", "b1", "h1"] },
-    { id: "c1fill", cost: 7, children: ["c1"] },
-    { id: "c1", info: { name: "c1" }, cost: 1, },
-    { id: "c1", info: { name: "c1" }, cost: 1, },
-    { id: "b1", info: { name: "b1" }, cost: 2, children: ["a1"] },
-    { id: "a1", info: { name: "a1" }, cost: 2, children: ["d1", "d2", "d3"] },
-    { id: "d1", info: { name: "d1" }, cost: 2, children: ["i1"] },
-    { id: "i1", info: { name: "i1" }, cost: 3, },
-    { id: "d2", info: { name: "d2" }, cost: 2, },
-    { id: "d3", info: { name: "d3" }, cost: 1, },
-    { id: "h1", info: { name: "h1" }, cost: 8, children: ["g1"] },
-    { id: "g1", info: { name: "g1" }, cost: 2, }
+    { id: "house", info: { text: "house" }, cost: 1, children: ["owner", "mortgage", "info", "constructionyear"] },
+      { id: "owner", info: { text: ["owner", "cost: 2", "batch: person_db"] }, cost: 2, children: ["ownername", "ownernetworth"]},
+        { id: "ownername", info: { text: ["name", "cost: 1"] }, cost: 1, },
+        { id: "ownernetworth", info: { text: ["netWorth", "cost: 3", "batch: banking"] }, cost: 3, },
+      { id: "mortgage", info: { text: ["remainingMortgage", "cost: 3", "batch: banking"] }, cost: 3, },
+      { id: "info", info: { text: ["info", "cost: 2", "batch: house_db"] }, cost: 2, children: ["residents"] },
+        { id: "residents", info: { text: ["residents", "cost: 2", "batch: person_db"] }, cost: 2, children: ["residentsname"]},
+          { id: "residentsname", info: { text: ["name", "cost: 1"] }, cost: 1, },
+      { id: "constructionyear", info: { text: ["constructionYear", "cost: 9"] }, cost: 9, },
     ]}
 />
 
-
 <Treemap
-  root={"root"}
-  nodes={[
-    {
-      id: "root",
-      info: { name: "root node" },
-      cost: 1,
-      children: ["c1", "a1", "b1"]
-    },
-      {
-        id: "c1",
-        info: { name: "c1" },
-        cost: 8,
-      },
-      {
-        id: "a1",
-        info: { name: "a1" },
-        cost: 2,
-        children: ["b2"]
-      },
-        {
-          id: "b2",
-          info: { name: "b2" },
-          cost: 2,
-        },
-      {
-        id: "b1",
-        info: { name: "b1" },
-        cost: 2,
-        children: ["a2"]
-      },
-        {
-          id: "a2",
-          info: { name: "a2" },
-          cost: 2,
-        }
-  ]}
+    root = {"house"}
+    height = {800}
+    nodes = {[
+    { id: "house", info: { text: "house" }, cost: 1, children: ["owner_pad", "mortgage_pad", "info_pad", "constructionyear"] },
+      { id: "owner_pad", cost: 4, info: { text: ["banking: 1"], hide:true }, children: ["owner"]},
+        { id: "owner", info: { text: ["owner", "cost: 2", "batch: person_db"] }, cost: 2, children: ["ownername_pad", "ownernetworth"]},
+          { id: "ownername_pad", cost: 2, children:["ownername"] },
+            { id: "ownername", info: { text: ["name", "cost: 1"] }, cost: 1, },
+          { id: "ownernetworth", info: { text: ["netWorth", "cost: 3", "batch: banking"] }, cost: 3, },
+      { id: "mortgage_pad", cost: 6, children:["mortgage"] },
+        { id: "mortgage", info: { text: ["remainingMortgage", "cost: 3", "batch: banking"] }, cost: 3, },
+      { id: "info_pad", cost: 4, info: { text: ["person_db: 1"], hide:true }, children: ["info"] },
+        { id: "info", info: { text: ["info", "cost: 2", "batch: house_db"] }, cost: 2, children: ["residents"] },
+          { id: "residents", info: { text: ["residents", "cost: 2", "batch: person_db"] }, cost: 2, children: ["residentsname"]},
+            { id: "residentsname", info: { text: ["name", "cost: 1"] }, cost: 1, },
+        { id: "constructionyear", info: { text: ["constructionYear", "cost: 9"] }, cost: 9, },
+    ]}
 />
-hey
 
-hey
-
-hey
 
 ```mermaid
 flowchart LR

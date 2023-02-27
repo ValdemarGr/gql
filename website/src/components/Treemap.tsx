@@ -2,8 +2,9 @@ import * as d3 from 'd3';
 import React from 'react';
 
 type NodeInfo = {
-    name: string,
-    batchName?: string,
+    text?: JSX.Element | JSX.Element[],
+    hide?: boolean,
+    widthMul?: number
 }
 
 type Node = {
@@ -63,76 +64,79 @@ type ShowProps = {
 function ShowNode(p: ShowProps) {
     const padded = padChildren((p.n.children || []).map(c => p.all[c]), p.leftPad, p.widths)
 
-    const children = padded.map(c => {
-        const [c0, leftPad] = c
-        return <ShowNode
-            n={c0}
-            leftPad={leftPad}
-            currentCost={p.currentCost + p.n.cost}
-            heightPerCost={p.heightPerCost}
-            all={p.all}
-            widths={p.widths}
-            maxCost={p.maxCost}
-            maxWidth={p.maxWidth}
-        />
-    })
+    const mkRect = () => {
+        if (p.n.info && !(p.n.info.hide ?? false)) {
+            const width = ((p.widths[p.n.id] / p.maxWidth) * 100 * (p.n.info.widthMul || 1)).toString() + "%"
+            const height = p.n.cost * p.heightPerCost
+            const x = ((p.leftPad / p.maxWidth) * 100)
+            const y = p.currentCost * p.heightPerCost
 
-    if (!p.n.info) {
-        return <>{children}</>
-    } else {
-        const width = ((p.widths[p.n.id] / p.maxWidth) * 100).toString() + "%"
-        const height = p.n.cost * p.heightPerCost
-        const x = ((p.leftPad / p.maxWidth) * 100)
-        const y = p.currentCost * p.heightPerCost
 
-        const txt =
-            <text
-                x={(x + 1).toString() + "%"}
-                y={y + height / 2}
-                style={{
-                    'fontSize': 20,
-                    'fill': 'white',
-                    'textAnchor': 'start',
-                    'alignmentBaseline': 'middle'
-                }}
-            >{p.n.info.name}</text>;
+            const fill = "rgb(" + ((p.currentCost / p.maxCost) * 128 / 2 + 32).toString() + ", 32, 32)"
+            const style = {
+                'strokeWidth': 6,
+                stroke: "rgb(128,128,128)"
+            }
 
-        const fill = "rgb(" + ((p.currentCost / p.maxCost) * 128 / 2 + 32).toString() + ", 32, 32)"
-        const style = {
-            'strokeWidth': 6,
-            stroke: "rgb(128,128,128)"
+            return <rect
+                width={width}
+                height={height}
+                x={x.toString() + "%"}
+                y={y}
+                // random color
+                fill={fill}
+                style={style}
+            />
+        } else {
+            return <></>
         }
-
-        return (
-            <>
-                <g>
-                    <rect
-                        width={width}
-                        height={height}
-                        x={x.toString() + "%"}
-                        y={y}
-                        // random color
-                        fill={fill}
-                        style={style}
-                    />
-                    {txt}
-                </g>
-                {padded.map(c => {
-                    const [c0, leftPad] = c
-                    return <ShowNode
-                        n={c0}
-                        leftPad={leftPad}
-                        currentCost={p.currentCost + p.n.cost}
-                        heightPerCost={p.heightPerCost}
-                        all={p.all}
-                        widths={p.widths}
-                        maxCost={p.maxCost}
-                        maxWidth={p.maxWidth}
-                    />
-                })}
-            </>
-        );
     }
+
+    const height = p.n.cost * p.heightPerCost
+    const x = ((p.leftPad / p.maxWidth) * 100)
+    const y = p.currentCost * p.heightPerCost
+
+    const txts = p.n.info ? (p.n.info.text instanceof Array ? p.n.info.text : [p.n.info.text]): []
+
+    const txtX = (x + 1).toString() + "%"
+
+    const txt = <text
+        x={txtX}
+        y={y + height / 2}
+        style={{
+            'fontSize': 20,
+            'fill': 'white',
+            'textAnchor': 'start',
+            'alignmentBaseline': 'middle'
+        }}
+    >
+        {txts.map((e, i) => {
+            const dy = i === 0 ? (("-" + (txts.length / 2 - 0.7) * 1.5).toString() + "em") : "1.5em"
+            return <tspan x={txtX} dy={dy}>{e}</tspan>
+        })}
+    </text>;
+
+    return (
+        <>
+            <g>
+                {mkRect()}
+                {txt}
+            </g>
+            {padded.map(c => {
+                const [c0, leftPad] = c
+                return <ShowNode
+                    n={c0}
+                    leftPad={leftPad}
+                    currentCost={p.currentCost + p.n.cost}
+                    heightPerCost={p.heightPerCost}
+                    all={p.all}
+                    widths={p.widths}
+                    maxCost={p.maxCost}
+                    maxWidth={p.maxWidth}
+                />
+            })}
+        </>
+    );
 }
 
 type State = {
@@ -144,7 +148,7 @@ type State = {
 
 export default function Treemap(p: Props) {
     const { lookup, root, widths, lp } = React.useMemo<State>(() => {
-        const lookup = p.nodes.reduce((acc, next) => ({ ...acc, [next.id]: next }), {})
+        const lookup: Record<string, Node> = p.nodes.reduce((acc, next) => ({ ...acc, [next.id]: next }), {})
         const root = lookup[p.root]
         return {
             lookup: lookup,
