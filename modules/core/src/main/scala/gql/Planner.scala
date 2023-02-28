@@ -23,8 +23,6 @@ import cats._
 import scala.io.AnsiColor
 import cats.mtl.Stateful
 import gql.resolver.Step
-import scala.collection.immutable.SortedMap
-import scala.collection.immutable.SortedSet
 
 trait Planner[F[_]] { self =>
   def plan(naive: Planner.NodeTree): F[Planner.PlannedNodeTree]
@@ -46,15 +44,11 @@ object Planner {
   final case class Node(
       id: NodeId,
       name: String,
-      //end: Double,
       cost: Double,
       elemCost: Double,
-      //children: List[Node],
       parents: Set[NodeId],
       batchId: Option[BatchRef[?, ?]]
-  ) //{
-  //lazy val start = end - cost
-  //}
+  )
 
   final case class TraversalState(
       id: Int,
@@ -203,6 +197,23 @@ object Planner {
 
           val movedDown = tree.roots.map(_.id).traverse_(moveDown).runS(Plan.empty).value
 
+          case class PlannerState(
+            moved: Map[NodeId, Double],
+            batches: Map[Step.BatchKey[?, ?], TreeSet[Double]]
+          )
+
+          def computeParentDistanceScore(id: NodeId, compatible: TreeSet[Double], moved: Map[NodeId, Double]) = {
+            val n = lookupV(id)
+            val closestParent = n.parents.map(moved(_)).maxOption.getOrElse(0d)
+            val closestCompatible = compatible.minAfter(closestParent) orElse Some(closestParent).filter(compatible.contains)
+            val score = closestCompatible.map(d => movedDown.lookup(id) - d).getOrElse(0d)
+            score
+          }
+
+          def moveUp2(id: NodeId, topNodes: NonEmptyList[NodeId], state: Plan) = {
+            // Greedily compute what node we want to move up
+          }
+
           // Run though orderd by end time (smallest first)
           // Then move up to furthest batchable neighbour
           // If no such neighbour, move up as far as possible
@@ -250,19 +261,30 @@ object Planner {
     }
   }
 
-  final case class Plan(
-    lookup: Map[NodeId, Double]
-  ) {
+  final case class Plan(lookup: Map[NodeId, Double]) {
     def apply(id: NodeId): Double = lookup(id)
 
     def get(id: NodeId): Option[Double] = lookup.get(id)
 
-    def +(kv: (NodeId, Double)): Plan =
-      Plan(lookup + kv)
+    def +(kv: (NodeId, Double)): Plan = Plan(lookup + kv)
   }
 
   object Plan {
     val empty = Plan(Map.empty)
+  }
+
+  final case class Children(
+      immidiateChildren: Set[NodeId],
+      allChildren: Set[NodeId]
+  )
+
+  object Children {
+    implicit val monoid = new Monoid[Children] {
+      override def empty: Children = Children(Set.empty, Set.empty)
+
+      override def combine(x: Children, y: Children): Children =
+        Children(x.immidiateChildren ++ y.immidiateChildren, x.allChildren ++ y.allChildren)
+    }
   }
 
   final case class NodeTree(all: List[Node]) {
@@ -272,7 +294,7 @@ object Planner {
     lazy val childrenLookup: Map[NodeId, NonEmptyList[NodeId]] =
       all
         .flatMap(n => n.parents.map(p => p -> n.id))
-        .groupBy{ case (p, _) => p }
+        .groupBy { case (p, _) => p }
         .mapFilter(_.toNel)
         .fmap(_.map { case (_, c) => c })
 
@@ -304,11 +326,42 @@ object Planner {
       leaves.traverse_(getEndTime).runS(Plan.empty).value
     }
 
+    // Maps from a node to all of it's batch children; that is, children if we only consider batchable nodes
+    lazy val childBatches: Map[NodeId, Children] = {
+      val lookupV = lookup
+
+      def go(id: NodeId): State[Map[NodeId, Children], Children] =
+        State
+          .inspect((m: Map[NodeId, Children]) => m.get(id))
+          .flatMap {
+            // We have already computed this node
+            case Some(x) => State.pure(x)
+            case None =>
+              val cs = childrenLookup.get(id).map(_.toList).getOrElse(Nil)
+              cs
+                .foldMapA(go)
+                .flatTap {
+                  case c if lookupV(id).batchId.isDefined => State.modify(_ + (id -> c))
+                  case _                                  => State.pure(())
+                }
+                .map(c => Children(Set(id), c.allChildren + id))
+          }
+
+      roots.traverse(x => go(x.id)).runEmptyS.value
+    }
+
+    lazy val parentBatches: Map[NodeId, Set[NodeId]] = 
+      childBatches
+        .toList
+        .flatMap{ case (id, cs) => cs.immidiateChildren.toList.map(_ -> id) }
+        .groupMap{ case (c, _) => c }{ case (_, p) => p }
+        .fmap(_.toSet)
+
     lazy val naiveCost: Double = all.foldMap(_.cost)
 
     def show(ansiColors: Boolean = false, plan: Option[Plan] = None) = {
       val maxEnd = (
-        plan.getOrElse(Plan.empty).lookup.values.toList.maxOption.toList ++ 
+        plan.getOrElse(Plan.empty).lookup.values.toList.maxOption.toList ++
           endTimes.lookup.values.toList.maxOption.toList
       ).maxOption.getOrElse(0d)
 
@@ -363,8 +416,8 @@ object Planner {
   }
 
   final case class PlannedNodeTree(
-    tree: NodeTree,
-    plan: Plan
+      tree: NodeTree,
+      plan: Plan
   ) {
     lazy val batches: List[(Step.BatchKey[?, ?], NonEmptyChain[BatchRef[?, ?]])] = {
       tree.all
@@ -398,7 +451,7 @@ object Planner {
   }
 
   object PlannedNodeTree {
-    implicit lazy val showForPlannedNodeTree: Show[PlannedNodeTree] = Show.show[PlannedNodeTree]{ x =>
+    implicit lazy val showForPlannedNodeTree: Show[PlannedNodeTree] = Show.show[PlannedNodeTree] { x =>
       x.tree.show(plan = Some(x.plan))
     }
   }
