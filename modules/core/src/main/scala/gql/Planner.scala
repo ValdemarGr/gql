@@ -202,13 +202,30 @@ object Planner {
             batches: Map[Step.BatchKey[?, ?], TreeSet[Double]]
           )
 
-          def computeParentDistanceScore(id: NodeId, compatible: TreeSet[Double], moved: Map[NodeId, Double]) = {
+          final case class NodeState(
+            moveUpperbound: Double,
+            batchUpperbound: Option[Double],
+            currentCost: Double
+          )
+
+          def computeNodeState(id: NodeId, state: PlannerState): NodeState = {
             val n = lookupV(id)
-            val closestParent = n.parents.map(moved(_)).maxOption.getOrElse(0d)
-            val closestCompatible = compatible.minAfter(closestParent) orElse Some(closestParent).filter(compatible.contains)
-            val score = closestCompatible.map(d => movedDown.lookup(id) - d).getOrElse(0d)
-            score
+            val closestParent = n.parents.map(state.moved(_)).maxOption.getOrElse(0d)
+            val closestCompatible = n.batchId
+              .flatMap(k => state.batches.get(k.batcherId))
+              .flatMap(prevs => prevs.minAfter(closestParent) orElse Some(closestParent).filter(prevs.contains))
+            NodeState(closestParent, closestCompatible, movedDown(id))
           }
+
+          // The distance between best batch we can move up to and the furthest move will determine the score
+          // The smaller the distance, the closer to an locally optimal move
+          // Score ranges from 0 to 1
+          def greedyMoveScore(id: NodeId, state: NodeState): Double = 
+            state.batchUpperbound.map { d =>
+              val deltaBatch = state.currentCost - d
+              val deltaFull = state.currentCost - state.moveUpperbound
+              deltaBatch / deltaFull
+            }.getOrElse(0d)
 
           def moveUp2(id: NodeId, topNodes: NonEmptyList[NodeId], state: Plan) = {
             // Greedily compute what node we want to move up
