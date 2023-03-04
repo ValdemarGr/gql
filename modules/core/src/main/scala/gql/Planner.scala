@@ -197,9 +197,10 @@ object Planner {
 
           val movedDown = tree.roots.map(_.id).traverse_(moveDown).runS(Plan.empty).value
 
-          case class PlannerState(
+          final case class PlannerState(
             moved: Map[NodeId, Double],
-            batches: Map[Step.BatchKey[?, ?], TreeSet[Double]]
+            batches: Map[Step.BatchKey[?, ?], TreeSet[Double]],
+            remainingBatches: Map[Step.BatchKey[?, ?], Int]
           )
 
           final case class NodeState(
