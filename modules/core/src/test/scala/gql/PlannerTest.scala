@@ -3,6 +3,7 @@ package gql
 import munit.CatsEffectSuite
 import cats.implicits._
 import scala.collection.immutable.TreeSet
+import cats.kernel.Semigroup
 
 class PlannerTest extends CatsEffectSuite {
   type Id = Int
@@ -16,7 +17,7 @@ class PlannerTest extends CatsEffectSuite {
       arcs.toList
         .flatMap { case (parent, children) => children tupleRight parent }
         .groupMap { case (child, _) => child } { case (_, parent) => parent }
-      
+
     val familyMap: Map[Id, Family] =
       families.zipWithIndex.flatMap { case (ids, family) => ids tupleRight family }.toMap
 
@@ -30,6 +31,20 @@ class PlannerTest extends CatsEffectSuite {
       batches: Map[Family, TreeSet[StartTime]],
       lookup: Map[Id, EndTime]
   )
+  object PlannerState {
+    implicit def monoidForPlannerState: cats.Monoid[PlannerState] = new cats.Monoid[PlannerState] {
+      implicit def semigroupForTreeSet[A] = new Semigroup[TreeSet[A]] {
+        def combine(x: TreeSet[A], y: TreeSet[A]): TreeSet[A] = x ++ y
+      }
+
+      def empty: PlannerState = PlannerState(Map.empty, Map.empty)
+      def combine(x: PlannerState, y: PlannerState): PlannerState =
+        PlannerState(
+          x.batches |+| y.batches,
+          x.lookup ++ y.lookup
+        )
+    }
+  }
 
   test("blah") {
     var i = 0
@@ -41,8 +56,18 @@ class PlannerTest extends CatsEffectSuite {
 
       //val maxEnd = roots.map(findMaxEnd).max
 
-      def round(id: Id, state: PlannerState): List[PlannerState] = {
-        // One of three things can happen for every node
+      case class PlannerStateDiff(state: PlannerState)
+
+      sealed trait Round { def states: List[PlannerStateDiff] }
+      case class TryAll(states: List[PlannerStateDiff]) extends Round
+      case class FurthestMoveIsBatch(state: PlannerStateDiff) extends Round {
+        def states = List(state)
+      }
+      case class FurthestMove(state: PlannerStateDiff) extends Round {
+        def states = List(state)
+      }
+      def round(id: Id, state: PlannerState): Round = {
+        // One of the following:
         // 1. It moves as far up as possible
         // 2. It moves up to the furthest batch
 
@@ -55,31 +80,83 @@ class PlannerTest extends CatsEffectSuite {
 
         val family = problem.familyMap(id)
         val familyBatches = state.batches.get(family).getOrElse(TreeSet.empty[EndTime])
-        val bestBatch = Some(furthest).filter(_ => familyBatches.contains(furthest)) orElse familyBatches.minAfter(furthest)
 
-        // We can prune option1 if bestBatch == furthest
-        val batchMove = bestBatch.map(b => state.copy(lookup = state.lookup + (id -> (b + problem.costs(family)))))
-
-        lazy val furthestMove = state.copy(
-          lookup = state.lookup + (id -> (furthest + problem.costs(family))),
-          batches = state.batches + (family -> (familyBatches + furthest))
+        lazy val furthestMove = PlannerStateDiff(
+          PlannerState(
+            lookup = Map(id -> (furthest + problem.costs(family))),
+            batches = Map(family -> (familyBatches + furthest))
+          )
         )
 
-        if (bestBatch.contains(furthest)) batchMove.toList
-        else furthestMove :: batchMove.toList
+        lazy val subOptimalBatch = familyBatches.minAfter(furthest)
+        if (familyBatches.contains(furthest)) {
+          FurthestMoveIsBatch(furthestMove)
+        } else
+          subOptimalBatch match {
+            case None => FurthestMove(furthestMove)
+            case Some(b) =>
+              TryAll(
+                List(
+                  furthestMove,
+                  PlannerStateDiff(PlannerState(batches = Map.empty, lookup = state.lookup + (id -> (b + problem.costs(family)))))
+                )
+              )
+          }
       }
 
       def enumerateRounds(currentRoots: Set[Id], state: PlannerState): LazyList[PlannerState] = {
         if (currentRoots.isEmpty) LazyList(state)
-        else
-          LazyList.from(currentRoots).flatMap { id =>
-            // we move id
-            val newStates = round(id, state)
-            i = i + newStates.size
-            val freedChildren = problem.arcs.getOrElse(id, Nil)
-            val newTop = (currentRoots - id) ++ freedChildren
-            LazyList.from(newStates).flatMap(enumerateRounds(newTop, _))
+        else {
+          def merge(xs: List[Round]): PlannerState =
+            xs.foldMap(_.states.foldMap(_.state))
+
+          def runFor(xs: List[(Set[Id], PlannerState)], remainingRoots: Set[Id]): LazyList[PlannerState] = {
+            LazyList.from(xs).flatMap { case (consumed, merged) =>
+              val newState = state |+| merged
+              val freedChildren = consumed.flatMap(problem.arcs.getOrElse(_, Nil).toSet)
+              enumerateRounds((remainingRoots ++ freedChildren) -- consumed, newState)
+            }
           }
+
+          def run(xs: List[(Id, Round)], remainingRoots: Set[Id]): LazyList[PlannerState] =
+            runFor(List((xs.map { case (id, _) => id }.toSet, merge(xs.map { case (_, r) => r }))), remainingRoots)
+
+          def prune(runNow: => (List[(Id, Round)], List[Id])): Option[LazyList[PlannerState]] = {
+            val (r, w) = runNow
+            if (r.isEmpty) None
+            else Some(run(r, w.toSet))
+          }
+
+          prune {
+            // 1. If a node moved all the way, it is always the best move
+            currentRoots.toList.partitionMap { id =>
+              round(id, state) match {
+                case fm: FurthestMoveIsBatch => Left((id, fm))
+                case _                       => Right(id)
+              }
+            }
+          } orElse prune {
+            // 2. If a node doesn't have any family in other sub-trees it is always the best move
+            def scanFamilies(x: Id): Set[Family] =
+              problem.arcs.getOrElse(x, Nil).flatMap(scanFamilies).toSet ++ problem.familyMap.get(x).toList
+            currentRoots.toList.partitionMap { id =>
+              round(id, state) match {
+                case fm: FurthestMove =>
+                  val rest = currentRoots - id
+                  val otherNodeFamilies = rest.flatMap(scanFamilies)
+                  if (otherNodeFamilies.contains(problem.familyMap(id))) Right(id)
+                  else Left((id, fm))
+                case _ => Right(id)
+              }
+            }
+          } getOrElse {
+            LazyList.from(currentRoots).flatMap { id =>
+              // we move id
+              val r = round(id, state)
+              runFor(r.states.map(_.state).map(s => (Set(id), s)), currentRoots)
+            }
+          }
+        }
       }
 
       enumerateRounds(roots.toSet, PlannerState(Map.empty, Map.empty))
@@ -175,27 +252,36 @@ Problem(
       }.sum
     }
     val best = plans.maxBy(savings)
-    val uniques = plans.distinctBy{ state =>
-            val fams = state.batches.toList
-            fams.flatMap{ case (fam, _) =>
-              val famNodes = problem.reverseFamilyMap(fam)
-              val timesForNodes: Map[EndTime,List[Id]] = famNodes.groupBy(state.lookup(_))
-              timesForNodes.toList
-            }.groupBy{ case (t, _) => t }.toList.sortBy{ case (t, _) => t }.map{ case (_, ids) => ids.sortBy{ case (t, _) => t }.map{ case (_, xs) => xs.sorted } }
-          }
+    val uniques = plans.distinctBy { state =>
+      val fams = state.batches.toList
+      fams
+        .flatMap { case (fam, _) =>
+          val famNodes = problem.reverseFamilyMap(fam)
+          val timesForNodes: Map[EndTime, List[Id]] = famNodes.groupBy(state.lookup(_))
+          timesForNodes.toList
+        }
+        .groupBy { case (t, _) => t }
+        .toList
+        .sortBy { case (t, _) => t }
+        .map { case (_, ids) => ids.sortBy { case (t, _) => t }.map { case (_, xs) => xs.sorted } }
+    }
 
     def showPlan(state: PlannerState) = {
       s"""|batches
-          |${state.batches.toList.map{ case (fam, times) => "  " + familyNames(fam) + " -> " + times.map(_.toString()).toList.foldSmash("{", ",", "}")}.mkString_("\n")}
+          |${state.batches.toList
+        .map { case (fam, times) => "  " + familyNames(fam) + " -> " + times.map(_.toString()).toList.foldSmash("{", ",", "}") }
+        .mkString_("\n")}
           |times
-          |${state.lookup.toList.map{ case (id, time) => "  " + names(id) + " -> " + time.toString() }.mkString_("\n")}""".stripMargin
+          |${state.lookup.toList.map { case (id, time) => "  " + names(id) + " -> " + time.toString() }.mkString_("\n")}""".stripMargin
     }
-    println{
+    println {
       s"""|savings
           |${savings(best)}
           |best:
           |${showPlan(best)}
           |$i rounds
+          |visited:
+          |${plans.size}
           |#unique plans
           |${uniques.size}
           |unique plans:

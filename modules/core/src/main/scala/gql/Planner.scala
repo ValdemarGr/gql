@@ -178,6 +178,7 @@ object Planner {
           val baseEnds = tree.endTimes
           val childrenV = tree.childrenLookup
           val lookupV = tree.lookup
+          val childBatchesV = tree.childBatches
 
           val maxEnd = baseEnds.lookup.values.maxOption.get
 
@@ -198,15 +199,24 @@ object Planner {
           val movedDown = tree.roots.map(_.id).traverse_(moveDown).runS(Plan.empty).value
 
           final case class PlannerState(
-            moved: Map[NodeId, Double],
-            batches: Map[Step.BatchKey[?, ?], TreeSet[Double]],
-            remainingBatches: Map[Step.BatchKey[?, ?], Int]
+              moved: Map[NodeId, Double],
+              batches: Map[Step.BatchKey[?, ?], TreeSet[Double]]
           )
 
           final case class NodeState(
-            moveUpperbound: Double,
-            batchUpperbound: Option[Double],
-            currentCost: Double
+              moveUpperbound: Double,
+              batchUpperbound: Option[Double],
+              currentCost: Double
+          )
+
+          case class TetrisState(
+            
+          )
+
+          case class NodeSubtreeStats(
+            id: NodeId,
+            batch: Step.BatchKey[?, ?],
+            subtree: Children
           )
 
           def computeNodeState(id: NodeId, state: PlannerState): NodeState = {
@@ -221,12 +231,22 @@ object Planner {
           // The distance between best batch we can move up to and the furthest move will determine the score
           // The smaller the distance, the closer to an locally optimal move
           // Score ranges from 0 to 1
-          def greedyMoveScore(id: NodeId, state: NodeState): Double = 
+          def greedyMoveScore(id: NodeId, state: NodeState): Option[Double] =
             state.batchUpperbound.map { d =>
               val deltaBatch = state.currentCost - d
               val deltaFull = state.currentCost - state.moveUpperbound
               deltaBatch / deltaFull
-            }.getOrElse(0d)
+            }
+
+          def waitingScore(families: Map[Step.BatchKey[?, ?], List[NodeId]]): Map[Step.BatchKey[?, ?], Set[Step.BatchKey[?, ?]]] =
+            families.map { case (k, xs) =>
+              k -> xs
+                .map(id => childBatchesV.get(id).map(_.allChildren).getOrElse(Set.empty))
+                .flatMap(_.toList.flatMap(lookupV(_).batchId.toList.map(_.batcherId)))
+                .toSet
+            }
+          
+          //def waitingScores(topNodes: Set[(NodeId, )], )
 
           def moveUp2(id: NodeId, topNodes: NonEmptyList[NodeId], state: Plan) = {
             // Greedily compute what node we want to move up
@@ -368,11 +388,10 @@ object Planner {
       roots.traverse(x => go(x.id)).runEmptyS.value
     }
 
-    lazy val parentBatches: Map[NodeId, Set[NodeId]] = 
-      childBatches
-        .toList
-        .flatMap{ case (id, cs) => cs.immidiateChildren.toList.map(_ -> id) }
-        .groupMap{ case (c, _) => c }{ case (_, p) => p }
+    lazy val parentBatches: Map[NodeId, Set[NodeId]] =
+      childBatches.toList
+        .flatMap { case (id, cs) => cs.immidiateChildren.toList.map(_ -> id) }
+        .groupMap { case (c, _) => c } { case (_, p) => p }
         .fmap(_.toSet)
 
     lazy val naiveCost: Double = all.foldMap(_.cost)
