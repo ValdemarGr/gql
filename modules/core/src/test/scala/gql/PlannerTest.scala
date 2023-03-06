@@ -67,6 +67,7 @@ class PlannerTest extends CatsEffectSuite {
         def states = List(state)
       }
       def round(id: Id, state: PlannerState): Round = {
+        i = i + 1
         // One of the following:
         // 1. It moves as far up as possible
         // 2. It moves up to the furthest batch
@@ -104,9 +105,14 @@ class PlannerTest extends CatsEffectSuite {
           }
       }
 
+      import scala.collection.mutable.{Set => MSet}
+      var symmetryBreaker: MSet[(Set[Id], PlannerState)] = MSet.empty
       def enumerateRounds(currentRoots: Set[Id], state: PlannerState): LazyList[PlannerState] = {
-        if (currentRoots.isEmpty) LazyList(state)
+        if (symmetryBreaker.contains((currentRoots, state))) LazyList.empty
+        else if (currentRoots.isEmpty) LazyList(state)
         else {
+          symmetryBreaker += ((currentRoots, state))
+          //println(s"running for {${currentRoots.toList.sorted.map(names(_)).mkString(",")}}")
           def merge(xs: List[Round]): PlannerState =
             xs.foldMap(_.states.foldMap(_.state))
 
@@ -127,6 +133,9 @@ class PlannerTest extends CatsEffectSuite {
             else Some(run(r, w.toSet))
           }
 
+          def scanFamilies(x: Id): Set[Family] =
+            problem.arcs.getOrElse(x, Nil).flatMap(scanFamilies).toSet ++ problem.familyMap.get(x).toList
+
           prune {
             // 1. If a node moved all the way, it is always the best move
             currentRoots.toList.partitionMap { id =>
@@ -137,8 +146,6 @@ class PlannerTest extends CatsEffectSuite {
             }
           } orElse prune {
             // 2. If a node doesn't have any family in other sub-trees it is always the best move
-            def scanFamilies(x: Id): Set[Family] =
-              problem.arcs.getOrElse(x, Nil).flatMap(scanFamilies).toSet ++ problem.familyMap.get(x).toList
             currentRoots.toList.partitionMap { id =>
               round(id, state) match {
                 case fm: FurthestMove =>
@@ -150,6 +157,8 @@ class PlannerTest extends CatsEffectSuite {
               }
             }
           } getOrElse {
+            currentRoots.map(id => id -> scanFamilies(id))
+            // n^2 <= (n - 1)^2 + (n - 2)
             LazyList.from(currentRoots).flatMap { id =>
               // we move id
               val r = round(id, state)
@@ -195,7 +204,7 @@ Problem(
   ]
 )
      */
-    val names = Array(
+    lazy val names = Array(
       "r1",
       "c1",
       "a1",
@@ -244,7 +253,6 @@ Problem(
     )
     val plans = solve(problem)
 
-    //println(s"${plans.size} plans")
     def savings(state: PlannerState) = {
       state.batches.toList.map { case (fam, times) =>
         val original = problem.families(fam).size
@@ -285,7 +293,7 @@ Problem(
           |#unique plans
           |${uniques.size}
           |unique plans:
-          |${uniques.map(showPlan).mkString_("\n\nplan:\n")}
+          |${""}//uniques.map(showPlan).mkString_("\n\nplan:\n")}
           |""".stripMargin
     }
     fail("die")
