@@ -317,7 +317,7 @@ object Planner {
   )
 
   object Children {
-    implicit val monoid = new Monoid[Children] {
+    implicit val monoid: Monoid[Children] = new Monoid[Children] {
       override def empty: Children = Children(Set.empty, Set.empty)
 
       override def combine(x: Children, y: Children): Children =
