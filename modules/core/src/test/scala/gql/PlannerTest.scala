@@ -33,7 +33,7 @@ class PlannerTest extends CatsEffectSuite {
   )
   object PlannerState {
     implicit def monoidForPlannerState: cats.Monoid[PlannerState] = new cats.Monoid[PlannerState] {
-      implicit def semigroupForTreeSet[A] = new Semigroup[TreeSet[A]] {
+      implicit def semigroupForTreeSet[A]: Semigroup[TreeSet[A]] = new Semigroup[TreeSet[A]] {
         def combine(x: TreeSet[A], y: TreeSet[A]): TreeSet[A] = x ++ y
       }
 
