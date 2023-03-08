@@ -72,6 +72,12 @@ lazy val core = project
   .settings(sharedSettings)
   .settings(name := "gql-core"/*, tlFatalWarnings := true*/)
 
+lazy val client = project
+  .in(file("modules/client"))
+  .settings(sharedSettings)
+  .settings(name := "gql-client"/*, tlFatalWarnings := true*/)
+  .dependsOn(core)
+
 lazy val natchez = project
   .in(file("modules/natchez"))
   .settings(sharedSettings)
