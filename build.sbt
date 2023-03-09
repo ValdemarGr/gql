@@ -55,6 +55,8 @@ lazy val sharedSettings = Seq(
     "org.typelevel" %% "cats-effect" % "3.3.14",
     "org.typelevel" %% "cats-collections-core" % "0.9.4",
     "org.typelevel" %% "cats-mtl" % "1.3.0",
+    "org.typelevel" %% "cats-core" % "2.9.0",
+    "org.typelevel" %% "cats-free" % "2.9.0",
     "co.fs2" %% "fs2-core" % "3.2.14",
     "co.fs2" %% "fs2-io" % "3.2.14",
     "org.typelevel" %% "cats-parse" % "0.3.8",
