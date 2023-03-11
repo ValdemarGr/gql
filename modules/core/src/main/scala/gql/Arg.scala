@@ -58,8 +58,3 @@ final case class ArgValue[A](
 
   def default(value: Value) = copy(defaultValue = Some(value))
 }
-
-object ArgValue {
-  def make[A](name: String, default: Option[Value] = None, description: Option[String] = None)(implicit in: => In[A]): ArgValue[A] =
-    ArgValue(name, Eval.later(in), default, description)
-}

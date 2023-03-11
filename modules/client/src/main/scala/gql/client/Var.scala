@@ -8,7 +8,13 @@ import cats.data._
 final case class VariableClosure[A, V](
     variables: Var.Impl[V],
     query: SelectionSet[A]
-)
+) {
+  def ~[C, D](that: VariableClosure[C, D]): VariableClosure[(A, C), (V, D)] =
+    VariableClosure(
+      Var.Impl((variables.variables, that.variables.variables).tupled),
+      (query, that.query).tupled
+    )
+}
 
 // Don't construct such an instance directly
 final case class VariableName[A](name: String) extends AnyVal
