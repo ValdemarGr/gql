@@ -20,6 +20,7 @@ import cats.effect._
 import cats.implicits._
 import fs2.{Chunk, Stream}
 import cats.data._
+import gql._
 import cats._
 
 import gql.interpreter.BackpressureSignal

@@ -112,7 +112,7 @@ object Compiler {
       gql.parser.parse(cp.query) match {
         case Left(pe) => Left(CompilationError.Parse(pe))
         case Right(q) =>
-          PreparedQuery.prepare(q, schema, cp.variables.getOrElse(Map.empty), cp.operationName) match {
+          PreparedQuery.prepare(q, schema.shape, cp.variables.getOrElse(Map.empty), cp.operationName) match {
             case Left(pe) => Left(CompilationError.Preparation(pe))
             case Right(x) => Right(x)
           }

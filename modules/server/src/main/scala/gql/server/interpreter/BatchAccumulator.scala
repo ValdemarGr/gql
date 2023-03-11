@@ -18,12 +18,9 @@ package gql.interpreter
 import cats.effect.implicits._
 import cats.implicits._
 import cats.effect._
-import gql.Planner
+import gql._
 import cats.data._
-import gql.SchemaState
-import gql.Statistics
 import gql.resolver.Step
-import gql.PreparedQuery
 
 trait BatchAccumulator[F[_]] {
   // Emits the whole result of the batch, so the calle must filter

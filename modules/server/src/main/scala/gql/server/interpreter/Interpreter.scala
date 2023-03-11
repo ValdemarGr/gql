@@ -18,6 +18,7 @@ package gql.interpreter
 import gql.resolver._
 import cats.data._
 import gql.PreparedQuery._
+import gql._
 import cats.implicits._
 import cats.effect._
 import cats.effect.implicits._
@@ -26,7 +27,6 @@ import io.circe.syntax._
 import cats.effect.std.Supervisor
 import scala.concurrent.duration._
 import cats._
-import gql._
 
 trait Interpreter[F[_]] {
   type W[A] = WriterT[F, Chain[EvalFailure], A]

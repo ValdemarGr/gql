@@ -99,36 +99,28 @@ object PreparedQuery {
     def apply(name: String): UniqueEdgeCursor = UniqueEdgeCursor(NonEmptyChain.one(name))
   }
 
-  final case class PositionalError(position: PrepCursor, caret: List[Caret], message: String) {
+  final case class PositionalError(position: Cursor, caret: List[Caret], message: String) {
     lazy val asGraphQL: JsonObject = {
       import io.circe.syntax._
       Map(
         "message" -> Some(message.asJson),
         "locations" -> caret.map(c => Json.obj("line" -> c.line.asJson, "column" -> c.col.asJson)).toNel.map(_.asJson),
-        "path" -> NonEmptyChain.fromChain(position.position.map(_.name)).map(_.asJson)
+        "path" -> NonEmptyChain.fromChain(position.path.map(_.asString)).map(_.asJson)
       ).collect { case (k, Some(v)) => k -> v }.asJsonObject
     }
   }
 
-  final case class PrepCursor(position: Chain[Validation.Edge]) {
-    def add(edge: Validation.Edge): PrepCursor = PrepCursor(position append edge)
-  }
-
-  object PrepCursor {
-    val empty: PrepCursor = PrepCursor(Chain.empty)
-  }
-
   final case class Prep(
       cycleSet: Set[String],
-      cursor: PrepCursor
+      cursor: Cursor
   ) {
-    def addEdge(edge: Validation.Edge): Prep = copy(cursor = cursor add edge)
+    def addEdge(edge: GraphArc): Prep = copy(cursor = cursor add edge)
 
     def addCycle(s: String): Prep = copy(cycleSet = cycleSet + s)
   }
 
   object Prep {
-    val empty: Prep = Prep(Set.empty, PrepCursor.empty)
+    val empty: Prep = Prep(Set.empty, Cursor.empty)
   }
 
   type UsedArgs = Set[String]
@@ -223,20 +215,14 @@ object PreparedQuery {
       case Right(value) => F.pure(value)
     }
 
-  def ambientEdge[F[_], A](edge: Validation.Edge)(fa: F[A])(implicit L: Local[F, Prep]): F[A] =
+  def ambientEdge[F[_], A](edge: GraphArc)(fa: F[A])(implicit L: Local[F, Prep]): F[A] =
     L.local(fa)(_ addEdge edge)
 
   def ambientField[F[_], A](name: String)(fa: F[A])(implicit L: Local[F, Prep]): F[A] =
-    ambientEdge[F, A](Validation.Edge.Field(name))(fa)
-
-  def ambientArg[F[_], A](name: String)(fa: F[A])(implicit L: Local[F, Prep]): F[A] =
-    ambientEdge[F, A](Validation.Edge.Arg(name))(fa)
+    ambientEdge[F, A](GraphArc.Field(name))(fa)
 
   def ambientIndex[F[_], A](i: Int)(fa: F[A])(implicit L: Local[F, Prep]): F[A] =
-    ambientEdge[F, A](Validation.Edge.Index(i))(fa)
-
-  def ambientInputType[F[_], A](name: String)(fa: F[A])(implicit L: Local[F, Prep]): F[A] =
-    ambientEdge[F, A](Validation.Edge.InputType(name))(fa)
+    ambientEdge[F, A](GraphArc.Index(i))(fa)
 
   def modifyError[F[_], A](f: PositionalError => PositionalError)(fa: F[A])(implicit F: MonadError[F, NonEmptyChain[PositionalError]]) =
     F.adaptError(fa)(_.map(f))
@@ -301,7 +287,7 @@ object PreparedQuery {
       args: Option[P.Arguments],
       tpe: SimplifiedType[G],
       caret: Caret,
-      path: PrepCursor
+      path: Cursor
   ) {
     lazy val outputName: String = alias.getOrElse(name)
   }
@@ -458,7 +444,7 @@ object PreparedQuery {
             (amap align bmap).toList.parTraverse_ {
               case (k, Ior.Left(_))    => raise[F, Unit](s"Key '$k' is missing in object.", caret)
               case (k, Ior.Right(_))   => raise[F, Unit](s"Key '$k' is missing in object.", caret)
-              case (k, Ior.Both(l, r)) => ambientArg(k)(compareValues[F](l, r, caret))
+              case (k, Ior.Both(l, r)) => ambientField(k)(compareValues[F](l, r, caret))
             }
           }
         }
@@ -487,7 +473,7 @@ object PreparedQuery {
           raise[F, Unit](s"Field $name is already selected with argument '$k', but no argument was given here.", caret)
         case (k, Ior.Right(_)) =>
           raise[F, Unit](s"Field $name is already selected without argument '$k', but an argument was given here.", caret)
-        case (k, Ior.Both(l, r)) => ambientArg(k)(compareValues[F](l.value, r.value, caret))
+        case (k, Ior.Both(l, r)) => ambientField(k)(compareValues[F](l.value, r.value, caret))
       }
     }
   }
@@ -650,7 +636,7 @@ object PreparedQuery {
       selections: List[SelectionInfo[G]],
       // TODO these two should probably be lists
       caret: Caret,
-      path: PrepCursor
+      path: Cursor
   )
   final case class PairedFieldSelection[G[_], A](
       info: MergedFieldInfo[G],
@@ -1023,7 +1009,7 @@ object PreparedQuery {
             }
         }
       case (e @ Enum(name, _, _), v) =>
-        ambientInputType(name) {
+        ambientField(name) {
           val fa: F[String] = v match {
             case P.Value.EnumValue(s)                    => F.pure(s)
             case P.Value.StringValue(s) if ambigiousEnum => F.pure(s)
@@ -1043,11 +1029,11 @@ object PreparedQuery {
           }
         }
       case (Scalar(name, _, decoder, _), x) =>
-        ambientInputType(name) {
+        ambientField(name) {
           parserValueToValue[F](x).flatMap(x => raiseEither(decoder(x), None))
         }
       case (Input(name, fields, _), o: P.Value.ObjectValue) =>
-        ambientInputType(name) {
+        ambientField(name) {
           parseInputObj[F, A](o, fields, variableMap, ambigiousEnum)
         }
       case (arr: InArr[a, c], P.Value.ListValue(xs)) =>
@@ -1087,7 +1073,7 @@ object PreparedQuery {
         }
     }
 
-    ambientArg(a.name) {
+    ambientField(a.name) {
       fa.flatMap(ap => parseInput[F, A](ap.value, a.input.value, variableMap, ambigiousEnum).map(x => ap.copy(value = x)))
     }
   }
@@ -1195,7 +1181,7 @@ object PreparedQuery {
   def prepareParts[F[_]: Parallel, G[_]: Applicative, Q, M, S](
       op: P.OperationDefinition,
       frags: List[Pos[P.FragmentDefinition]],
-      schema: Schema[G, Q, M, S],
+      schema: SchemaShape[G, Q, M, S],
       variableMap: Map[String, Json]
   )(implicit
       L: Local[F, Prep],
@@ -1331,22 +1317,22 @@ object PreparedQuery {
           selection,
           vm,
           frags.map(f => f.value.name -> f).toMap,
-          schema.shape.discover
+          schema.discover
         )
 
       ot match {
         // We sneak the introspection query in here
         case P.OperationType.Query =>
-          val i: NonEmptyList[(String, Field[G, Unit, ?])] = schema.shape.introspection
-          val q = schema.shape.query
+          val i: NonEmptyList[(String, Field[G, Unit, ?])] = schema.introspection
+          val q = schema.query
           val full = q.copy(fields = i.map { case (k, v) => k -> v.contramap[G, Q](_ => ()) } concatNel q.fields)
           runWith[Q](full).map(PrepResult.Query(_))
         case P.OperationType.Mutation =>
-          raiseOpt(schema.shape.mutation, "No `Mutation` type defined in this schema.", None)
+          raiseOpt(schema.mutation, "No `Mutation` type defined in this schema.", None)
             .flatMap(runWith[M])
             .map(PrepResult.Mutation(_))
         case P.OperationType.Subscription =>
-          raiseOpt(schema.shape.subscription, "No `Subscription` type defined in this schema.", None)
+          raiseOpt(schema.subscription, "No `Subscription` type defined in this schema.", None)
             .flatMap(runWith[S])
             .map(PrepResult.Subscription(_))
       }
@@ -1367,7 +1353,7 @@ object PreparedQuery {
 
   def prepare[F[_]: Applicative, Q, M, S](
       executabels: NonEmptyList[P.ExecutableDefinition],
-      schema: Schema[F, Q, M, S],
+      schema: SchemaShape[F, Q, M, S],
       variableMap: Map[String, Json],
       operationName: Option[String]
   ): EitherNec[PositionalError, PrepResult[F, Q, M, S]] = {
@@ -1377,7 +1363,7 @@ object PreparedQuery {
     }
 
     getOperationDefinition[Either[(String, List[Caret]), *]](ops, operationName) match {
-      case Left((e, carets)) => Left(NonEmptyChain.one(PositionalError(PrepCursor.empty, carets, e)))
+      case Left((e, carets)) => Left(NonEmptyChain.one(PositionalError(Cursor.empty, carets, e)))
       case Right(op) =>
         runK {
           prepareParts[H, F, Q, M, S](op, frags, schema, variableMap)

@@ -91,7 +91,7 @@ lazy val client = project
   .settings(sharedSettings)
   .settings(name := "gql-client"/*, tlFatalWarnings := true*/)
   .dependsOn(core)
-
+/*
 lazy val natchez = project
   .in(file("modules/natchez"))
   .settings(sharedSettings)
@@ -102,13 +102,14 @@ lazy val natchez = project
       "org.tpolecat" %% "natchez-noop" % "0.1.4"
     )
   )
-  .dependsOn(core)
+  .dependsOn(core)*/
 
 lazy val graphqlWs = project
   .in(file("modules/graphql-ws"))
   .settings(sharedSettings)
   .settings(name := "gql-graphqlws")
   .dependsOn(core)
+  .dependsOn(server)
 
 lazy val goi = project
   .in(file("modules/goi"))
@@ -123,6 +124,7 @@ lazy val goi = project
 lazy val http4s = project
   .in(file("modules/http4s"))
   .dependsOn(core % "compile->compile;test->test")
+  .dependsOn(server % "compile->compile;test->test")
   .dependsOn(graphqlWs)
   .settings(sharedSettings)
   .settings(
@@ -135,6 +137,7 @@ lazy val http4s = project
       "org.http4s" %% "http4s-client" % "1.0.0-M36" % Test
     )
   )
+  .dependsOn(server)
 
 lazy val mdocExt = project
   .in(file("modules/mdoc-ext"))
@@ -154,6 +157,7 @@ lazy val docs = project
     ),
     tlFatalWarnings := false
   )
+  .dependsOn(server % "compile->compile;test->test")
   .dependsOn(core % "compile->compile;compile->test")
   .dependsOn(http4s)
   .dependsOn(graphqlWs)

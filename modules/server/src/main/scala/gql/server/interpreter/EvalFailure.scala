@@ -17,6 +17,7 @@ package gql.interpreter
 
 import io.circe._
 import cats.data._
+import gql._
 import cats.implicits._
 
 trait EvalFailure {

@@ -17,7 +17,7 @@ package gql.resolver
 
 import gql._
 import gql.parser.{QueryParser => P}
-import gql.interpreter.Cursor
+import gql.Cursor
 
 final case class Meta(
     cursor: Cursor,
