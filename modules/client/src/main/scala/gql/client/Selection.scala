@@ -24,13 +24,13 @@ object SubQuery {
 
 final case class Terminal[A](decoder: io.circe.Decoder[A]) extends SubQuery[A]
 
-final case class Query[A](impl: Query.Impl[?, A]) extends SubQuery[A] {
-  def vmap[B](f: A => ValidatedNec[String, B]): Query[B] = Query(impl.vmap(f))
+final case class SelectionSet[A](impl: SelectionSet.Impl[?, A]) extends SubQuery[A] {
+  def vmap[B](f: A => ValidatedNec[String, B]): SelectionSet[B] = SelectionSet(impl.vmap(f))
 
-  def emap[B](f: A => Either[String, B]): Query[B] = Query(impl.emap(f))
+  def emap[B](f: A => Either[String, B]): SelectionSet[B] = SelectionSet(impl.emap(f))
 }
 
-object Query {
+object SelectionSet {
   final case class Impl[A, B](
       underlying: FreeApply[Selection, A],
       emap: A => ValidatedNec[String, B]
@@ -41,18 +41,18 @@ object Query {
       copy(emap = emap.andThen(_.toEither.flatMap(f(_).leftMap(NonEmptyChain.one(_))).toValidated))
   }
 
-  def lift[A](sel: Selection[A]): Query[A] =
-    Query(Impl[A, A](FreeApply.lift(sel), _.validNec))
+  def lift[A](sel: Selection[A]): SelectionSet[A] =
+    SelectionSet(Impl[A, A](FreeApply.lift(sel), _.validNec))
 
-  implicit val applyForQuery: Apply[Query] = {
-    new Apply[Query] {
-      override def map[A, B](fa: Query[A])(f: A => B): Query[B] = Query {
+  implicit val applyForQuery: Apply[SelectionSet] = {
+    new Apply[SelectionSet] {
+      override def map[A, B](fa: SelectionSet[A])(f: A => B): SelectionSet[B] = SelectionSet {
         fa.impl match {
           case g: Impl[a, A] => Impl[a, B](g.underlying, g.emap.andThen(_.map(f)))
         }
       }
 
-      override def ap[A, B](ff: Query[A => B])(fa: Query[A]): Query[B] = Query {
+      override def ap[A, B](ff: SelectionSet[A => B])(fa: SelectionSet[A]): SelectionSet[B] = SelectionSet {
         (ff.impl, fa.impl) match {
           case (g1: Impl[a1, A => B], g2: Impl[a2, A]) =>
             Impl[ValidatedNec[String, B], B](
@@ -73,8 +73,8 @@ final case class Arg(
 /*
  * A selection occurs in a query and covers the following cases:
  *  - a field { name }
- *  - a fragment { ..}
- *  - an inline fragment
+ *  - a fragment { ...Frag }
+ *  - an inline fragment { ... on Type { name } }
  */
 sealed trait Selection[A]
 
@@ -90,12 +90,12 @@ object Selection {
       name: String,
       on: String,
       matchAlso: Chain[String],
-      subSelection: Query[A]
+      subSelection: SelectionSet[A]
   ) extends Selection[Option[A]]
 
   final case class InlineFragment[A](
       on: String,
       matchAlso: Chain[String],
-      subSelection: Query[A]
+      subSelection: SelectionSet[A]
   ) extends Selection[Option[A]]
 }

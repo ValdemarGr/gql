@@ -7,7 +7,7 @@ import cats.data._
 
 final case class VariableClosure[A, V](
     variables: Var.Impl[V],
-    query: Query[A]
+    query: SelectionSet[A]
 )
 
 // Don't construct such an instance directly
@@ -23,7 +23,7 @@ final case class Var[V, B](
       (variableNames, that.variableNames)
     )
 
-  def introduce[A](f: B => Query[A]): VariableClosure[A, V] =
+  def introduce[A](f: B => SelectionSet[A]): VariableClosure[A, V] =
     VariableClosure(impl, f(variableNames))
 
   def flatIntroduce[A, V2](f: B => VariableClosure[A, V2]): VariableClosure[A, (V, V2)] = {
@@ -41,7 +41,7 @@ object Var {
   final case class One[A](
       name: VariableName[A],
       tpe: String,
-      default: Option[gql.Value],
+      default: Option[gql.parser.QueryParser.Value],
       encoder: io.circe.Encoder[A]
   )
 
@@ -54,7 +54,7 @@ object Var {
   final case class QueryVariable(
       name: String,
       tpe: String,
-      default: Option[gql.Value]
+      default: Option[gql.parser.QueryParser.Value]
   )
   type C[A] = Const[NonEmptyChain[QueryVariable], A]
   val queryVariablesCompiler: One ~> C = new (One ~> C) {
@@ -62,7 +62,7 @@ object Var {
       Const(NonEmptyChain.one(QueryVariable(fa.name.name, fa.tpe, fa.default)))
   }
 
-  def apply[A](name: String, tpe: String, default: Option[gql.Value] = None)(implicit
+  def apply[A](name: String, tpe: String, default: Option[gql.parser.QueryParser.Value] = None)(implicit
       encoder: io.circe.Encoder[A]
   ): Var[A, VariableName[A]] = {
     val vn = VariableName[A](name)

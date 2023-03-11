@@ -438,9 +438,9 @@ object PreparedQuery {
         } else
           raise[F, Unit](s"Lists are not af same size. Found list of length ${al.length} versus list of length ${bl.length}.", caret)
       case (P.Value.ObjectValue(ao), P.Value.ObjectValue(bo)) =>
-        if (ao.length =!= bo.length)
+        if (ao.size =!= bo.size)
           raise[F, Unit](
-            s"Objects are not af same size. Found object of length ${ao.length} versus object of length ${bo.length}.",
+            s"Objects are not af same size. Found object of length ${ao.size} versus object of length ${bo.size}.",
             caret
           )
         else {

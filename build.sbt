@@ -69,10 +69,22 @@ lazy val sharedSettings = Seq(
   )
 )
 
+lazy val parser = project
+  .in(file("modules/parser"))
+  .settings(sharedSettings)
+  .settings(name := "gql-parser"/*, tlFatalWarnings := true*/)
+
 lazy val core = project
   .in(file("modules/core"))
   .settings(sharedSettings)
   .settings(name := "gql-core"/*, tlFatalWarnings := true*/)
+  .dependsOn(parser)
+
+lazy val server = project
+  .in(file("modules/server"))
+  .settings(sharedSettings)
+  .settings(name := "gql-server"/*, tlFatalWarnings := true*/)
+  .dependsOn(core)
 
 lazy val client = project
   .in(file("modules/client"))
