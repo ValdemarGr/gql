@@ -69,16 +69,16 @@ lazy val sharedSettings = Seq(
   )
 )
 
-lazy val core = project
-  .in(file("modules/core"))
+lazy val server = project
+  .in(file("modules/server"))
   .settings(sharedSettings)
-  .settings(name := "gql-core"/*, tlFatalWarnings := true*/)
+  .settings(name := "gql-server"/*, tlFatalWarnings := true*/)
 
 lazy val client = project
   .in(file("modules/client"))
   .settings(sharedSettings)
   .settings(name := "gql-client"/*, tlFatalWarnings := true*/)
-  .dependsOn(core)
+  .dependsOn(server)
 
 lazy val natchez = project
   .in(file("modules/natchez"))
@@ -90,13 +90,13 @@ lazy val natchez = project
       "org.tpolecat" %% "natchez-noop" % "0.1.4"
     )
   )
-  .dependsOn(core)
+  .dependsOn(server)
 
 lazy val graphqlWs = project
   .in(file("modules/graphql-ws"))
   .settings(sharedSettings)
   .settings(name := "gql-graphqlws")
-  .dependsOn(core)
+  .dependsOn(server)
 
 lazy val goi = project
   .in(file("modules/goi"))
@@ -105,12 +105,12 @@ lazy val goi = project
     name := "gql-goi",
     libraryDependencies ++= Seq("com.beachape" %% "enumeratum" % "1.7.2")
   )
-  .dependsOn(core)
+  .dependsOn(server)
   .enablePlugins(NoPublishPlugin)
 
 lazy val http4s = project
   .in(file("modules/http4s"))
-  .dependsOn(core % "compile->compile;test->test")
+  .dependsOn(server % "compile->compile;test->test")
   .dependsOn(graphqlWs)
   .settings(sharedSettings)
   .settings(
@@ -142,7 +142,7 @@ lazy val docs = project
     ),
     tlFatalWarnings := false
   )
-  .dependsOn(core % "compile->compile;compile->test")
+  .dependsOn(server % "compile->compile;compile->test")
   .dependsOn(http4s)
   .dependsOn(graphqlWs)
   /* .dependsOn(goi) */

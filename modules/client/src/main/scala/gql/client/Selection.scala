@@ -9,7 +9,7 @@ import gql.std.FreeApply
  * A SubQuery is either:
  *  - a terminal scalar/enum decoder
  *  - a collection of selections (called Query)
- * 
+ *
  * Think of it as what can occur on the right hand side of a field
  * { fieldname SubQuery }
  * For instance if it is terminal
@@ -65,6 +65,11 @@ object Query {
   }
 }
 
+final case class Arg(
+    name: String,
+    value: gql.parser.QueryParser.Value
+)
+
 /*
  * A selection occurs in a query and covers the following cases:
  *  - a field { name }
@@ -77,6 +82,7 @@ object Selection {
   final case class Field[A](
       fieldname: String,
       alias: Option[String],
+      args: List[Arg],
       subQuery: SubQuery[A]
   ) extends Selection[A]
 

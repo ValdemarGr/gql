@@ -4,8 +4,8 @@ import cats.data._
 import cats.implicits._
 
 object dsl {
-    def sel[A](fieldName: String, alias: Option[String] = None)(implicit cont: FieldCont[A]): Query[A] =
-    Query.lift(Selection.Field(fieldName, alias, cont))
+    def sel[A](fieldName: String, alias: Option[String] = None)(implicit sq: SubQuery[A]): Query[A] =
+    Query.lift(Selection.Field(fieldName, alias, Nil, sq))
 
   def inlineFrag[A](on: String, matchAlso: String*)(implicit q: Query[A]): Query[Option[A]] =
     Query.lift(Selection.InlineFragment(on, Chain.fromSeq(matchAlso), q))
