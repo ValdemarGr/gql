@@ -4,6 +4,8 @@ import munit.CatsEffectSuite
 import cats.implicits._
 import scala.collection.immutable.TreeSet
 import cats.kernel.Semigroup
+import scala.collection.immutable.SortedMap
+import cats.Monoid
 
 class PlannerTest extends CatsEffectSuite {
   type Id = Int
@@ -282,20 +284,240 @@ Problem(
           |times
           |${state.lookup.toList.map { case (id, time) => "  " + names(id) + " -> " + time.toString() }.mkString_("\n")}""".stripMargin
     }
-    println {
-      s"""|savings
-          |${savings(best)}
-          |best:
-          |${showPlan(best)}
-          |$i rounds
-          |visited:
-          |${plans.size}
-          |#unique plans
-          |${uniques.size}
-          |unique plans:
-          |${""}//uniques.map(showPlan).mkString_("\n\nplan:\n")}
-          |""".stripMargin
-    }
+    // println {
+    //   s"""|savings
+    //       |${savings(best)}
+    //       |best:
+    //       |${showPlan(best)}
+    //       |$i rounds
+    //       |visited:
+    //       |${plans.size}
+    //       |#unique plans
+    //       |${uniques.size}
+    //       |unique plans:
+    //       |${""}//uniques.map(showPlan).mkString_("\n\nplan:\n")}
+    //       |""".stripMargin
+    // }
+    // fail("die")
+
+    println(Planner.run)
     fail("die")
+  }
+
+}
+
+object Planner {
+  type NodeId = Int
+  type FamilyId = Int
+
+  final case class Family(
+      cost: Int,
+      nodes: Set[NodeId]
+  )
+  final case class Problem(
+      families: Array[Family],
+      arcs: Map[NodeId, Set[NodeId]]
+  ) {
+    val all: Array[NodeId] = families.flatMap(_.nodes.toArray)
+
+    val reverseArcs: Map[NodeId, Set[NodeId]] =
+      arcs.toList
+        .flatMap { case (parent, children) => children.map(_ -> parent) }
+        .groupMap { case (child, _) => child } { case (_, parent) => parent }
+        .fmap(_.toSet)
+
+    val familyMap: Map[NodeId, FamilyId] =
+      families.zipWithIndex.flatMap { case (fam, id) => fam.nodes.map(_ -> id) }.toMap
+  }
+
+  type BatchId = Int
+  type EndTime = Int
+
+  final case class State(
+      batch: Map[BatchId, EndTime],
+      visited: Map[NodeId, BatchId],
+      forbidden: Set[Set[NodeId]]
+  )
+
+  object State {
+    implicit val monoidForState = new Monoid[State] {
+      override def combine(x: State, y: State): State =
+        State(
+          batch = x.batch ++ y.batch,
+          visited = x.visited ++ y.visited,
+          forbidden = x.forbidden ++ y.forbidden
+        )
+
+      override def empty: State =
+        State(
+          batch = Map.empty,
+          visited = Map.empty,
+          forbidden = Set.empty
+        )
+    }
+  }
+
+  var batchId = 0
+  def nextId = {
+    batchId += 1
+    batchId
+  }
+  def go(problem: Problem, state: State): LazyList[State] = {
+    def scanFamilies(x: NodeId): Set[FamilyId] =
+      problem.arcs.getOrElse(x, Nil).flatMap(scanFamilies).toSet ++ problem.familyMap.get(x).toList
+
+    val interesting: Set[NodeId] = problem.all.filter { id =>
+      (problem.reverseArcs.getOrElse(id, Set.empty) subsetOf state.visited.keySet) &&
+      !state.visited.contains(id)
+    }.toSet
+
+    // println(state)
+    // println(interesting)
+
+    val grouped: Map[FamilyId, Set[NodeId]] = interesting.groupBy(problem.familyMap(_))
+
+    val pruneable: List[NodeId] = grouped.values.toList
+      .mapFilter(s => s.headOption.filter(_ => s.size == 1))
+      .mapFilter { id =>
+        val rest = interesting - id
+        val otherFamilies = rest.flatMap(scanFamilies)
+        if (otherFamilies.contains(problem.familyMap(id))) None
+        else Some(id)
+      }
+
+    pruneable.toNel match {
+      case Some(p) =>
+        val news = p.toList.mapFilter { n =>
+          if (state.forbidden.contains(Set(n))) None
+          else {
+            val parents = problem.reverseArcs.getOrElse(n, Set.empty)
+            val maxParentEnd: EndTime = parents
+              .map(p => state.batch(state.visited(p)))
+              .maxOption
+              .getOrElse(0)
+            val thisEnd = maxParentEnd + problem.families(problem.familyMap(n)).cost
+            val bid = nextId
+            Some((bid -> thisEnd, n -> bid))
+          }
+        }
+        LazyList(
+          State(
+            batch = state.batch ++ news.map(_._1).toList,
+            visited = state.visited ++ news.map(_._2).toList,
+            forbidden = state.forbidden
+          )
+        )
+      case None =>
+        val m = grouped.toList.map(_._2.size).maxOption.getOrElse(0)
+        val o: LazyList[Set[NodeId]] = LazyList
+          .from((1 to m).reverse)
+          .flatMap { size =>
+            val relevantHere = grouped.values.filter(_.size >= size).toList
+            LazyList.from(relevantHere).flatMap(_.toSeq.combinations(size))
+          }
+          .map(_.toSet)
+          .filter(s => !state.forbidden.contains(s))
+
+        o.mapAccumulate(state.forbidden) { case (verboten, batch) =>
+          val batchEndTime = batch
+            .flatMap { x =>
+              val parents = problem.reverseArcs.getOrElse(x, Set.empty)
+              parents.map(y => state.batch(state.visited(y)))
+            }
+            .maxOption
+            .getOrElse(0)
+          val thisEnd = batchEndTime + problem.families(problem.familyMap(batch.head)).cost
+          val bid = nextId
+          val `verboten'` = verboten + batch
+          `verboten'` -> State(
+            state.batch + (bid -> thisEnd),
+            state.visited ++ batch.map(_ -> bid),
+            verboten + batch
+          )
+        }._2
+    }
+  }
+
+  def run: String = {
+    val problem = Problem(
+      families = Array(
+        Family(1, Set(0)),
+        Family(13, Set(1)),
+        Family(1, Set(2, 6, 8)),
+        Family(1, Set(3, 9)),
+        Family(1, Set(5, 7)),
+        Family(1, Set(4, 10))
+      ),
+      arcs = Map(
+        0 -> Set(1, 2, 3, 4),
+        2 -> Set(5),
+        5 -> Set(8),
+        3 -> Set(6, 7),
+        6 -> Set(9),
+        7 -> Set(10)
+      )
+    )
+
+    lazy val names = Array(
+      "r1",
+      "c1",
+      "a1",
+      "b1",
+      "h1",
+      "p1",
+      "a2",
+      "p2",
+      "a3",
+      "b2",
+      "h2"
+    )
+
+    def showPlan(state: State) = {
+      s"""|batches
+          |${state.batch.toList
+        .map { case (bid, time) => "  " + bid.toString() + " -> " + time }
+        .mkString_("\n")}
+          |times
+          |${state.visited.toList.map { case (id, bid) => "  " + names(id) + " -> " + bid }.mkString_("\n")}""".stripMargin
+    }
+
+    val xs = go(problem, Monoid[State].empty).toList
+
+    xs.map(showPlan).mkString_("\n\nplan:\n")
+
+    val next = xs.flatMap(s => go(problem, s)).toList
+
+    next.map(showPlan).mkString_("\n\nplan:\n")
+
+    val next2 = next.flatMap(s => go(problem, s)).toList
+
+    next2.map(showPlan).mkString_("\n\nplan:\n")
+
+    val next3 = next2.flatMap(s => go(problem, s)).toList
+    val next4 = next3.flatMap(s => go(problem, s)).toList
+    val next5 = next4.flatMap(s => go(problem, s)).toList
+    val next6 = next5.flatMap(s => go(problem, s)).toList
+    val next7 = next6.flatMap(s => go(problem, s)).toList
+    val next8 = next7.flatMap(s => go(problem, s)).toList
+    val next9 = next8.flatMap(s => go(problem, s)).toList
+
+    next3.map(showPlan).mkString_("\n\nplan:\n")
+
+    val allFinished = (next ++ next2 ++ next3 ++ next4 ++ next5 ++ next6 ++ next7 ++ next8 ++ next9)
+      .filter(_.visited.size == problem.all.size)
+
+    val u = allFinished
+      .groupBy { s =>
+        s.visited
+          .groupMap { case (_, bid) => bid } { case (k, _) => k }
+          .fmap(_.toSet)
+          .values
+          .toSet
+      }
+      .map { case (plan, states) => plan -> states.size }
+      .filter { case (plan, count) => count > 1 }
+
+    s"num plans: ${allFinished.size}\n" +
+      u.toList.mkString("\n").toString()
   }
 }
