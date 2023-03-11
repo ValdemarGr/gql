@@ -127,20 +127,20 @@ class ValidationTest extends CatsEffectSuite {
     }.mkString("\n")): Unit*/
 
     val err = errors.collect { case (Validation.Error.CyclicDivergingTypeReference("MutuallyRecursive1"), path) =>
-      path.toList
+      path.path.toList
     }
 
     assert(clue(err).size == 1)
     val s = err.toSet
     assert(clue(s).contains {
-      Validation.Edge.OutputType("Query") ::
-        Validation.Edge.Field("duplicateUnion") ::
-        Validation.Edge.OutputType("MutRecUnion") ::
-        Validation.Edge.OutputType("MutuallyRecursive1") ::
-        Validation.Edge.Field("two") ::
-        Validation.Edge.OutputType("MutuallyRecursive2") ::
-        Validation.Edge.Field("one") ::
-        Validation.Edge.OutputType("MutuallyRecursive1") ::
+      GraphArc.Field("Query") ::
+        GraphArc.Field("duplicateUnion") ::
+        GraphArc.Field("MutRecUnion") ::
+        GraphArc.Field("MutuallyRecursive1") ::
+        GraphArc.Field("two") ::
+        GraphArc.Field("MutuallyRecursive2") ::
+        GraphArc.Field("one") ::
+        GraphArc.Field("MutuallyRecursive1") ::
         Nil
     })
     // assert(clue(s).contains {

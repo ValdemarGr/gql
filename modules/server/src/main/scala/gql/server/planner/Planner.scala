@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package gql
+package gql.planner
 
 import cats.implicits._
 import cats.data._
@@ -23,6 +23,8 @@ import cats._
 import scala.io.AnsiColor
 import cats.mtl.Stateful
 import gql.resolver.Step
+import gql._
+
 
 trait Planner[F[_]] { self =>
   def plan(naive: Planner.NodeTree): F[Planner.PlannedNodeTree]

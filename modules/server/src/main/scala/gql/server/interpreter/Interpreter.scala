@@ -18,6 +18,7 @@ package gql.interpreter
 import gql.resolver._
 import cats.data._
 import gql.PreparedQuery._
+import gql.planner._
 import gql._
 import cats.implicits._
 import cats.effect._

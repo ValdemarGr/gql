@@ -20,6 +20,7 @@ import cats.implicits._
 import cats.data._
 import cats._
 import gql.ast._
+import gql.planner._
 
 final case class Schema[F[_], Q, M, S](
     shape: SchemaShape[F, Q, M, S],

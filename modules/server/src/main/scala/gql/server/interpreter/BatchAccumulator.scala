@@ -20,6 +20,7 @@ import cats.implicits._
 import cats.effect._
 import gql._
 import cats.data._
+import gql.planner._
 import gql.resolver.Step
 
 trait BatchAccumulator[F[_]] {
