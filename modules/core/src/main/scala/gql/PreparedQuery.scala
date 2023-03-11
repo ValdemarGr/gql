@@ -180,19 +180,10 @@ object PreparedQuery {
       case _                      => Chain.empty
     }
 
-  def friendlyName[G[_], A](ot: Out[G, A], inOption: Boolean = false): String = {
-    val suffix = if (inOption) "" else "!"
-    val prefix = (ot: @unchecked) match {
-      case Scalar(name, _, _, _)    => name
-      case Enum(name, _, _)         => name
-      case Type(name, _, _, _)      => name
-      case Union(name, _, _)        => name
-      case Interface(name, _, _, _) => name
-      case OutOpt(of, _)            => friendlyName(of, inOption = true)
-      case OutArr(of, _, _)         => s"[${friendlyName(of)}]"
-    }
-    prefix + suffix
-  }
+  def friendlyName[G[_], A](ot: Out[G, A]): String = 
+    ModifierStack
+      .fromOut(ot)
+      .show(_.name)
 
   def raise[F[_], A](s: String, caret: Option[Caret])(implicit
       L: Local[F, Prep],
@@ -952,17 +943,10 @@ object PreparedQuery {
       case VariableValue(_)     => "variable"
     }
 
-  def inName[A](in: In[A], inOption: Boolean = false): String = {
-    val suffix = if (inOption) "" else "!"
-    val rec = (in: @unchecked) match {
-      case InArr(of, _)          => s"[${inName(of)}]"
-      case Enum(name, _, _)      => name
-      case Scalar(name, _, _, _) => name
-      case InOpt(of)             => s"${inName(of, inOption = true)}"
-      case Input(name, _, _)     => name
-    }
-    rec + suffix
-  }
+  def inName[A](in: In[A]): String = 
+    ModifierStack
+      .fromIn(in)
+      .show(_.name)
 
   def parseInputObj[F[_]: Parallel, A](
       v: P.Value.ObjectValue,

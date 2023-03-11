@@ -2,6 +2,7 @@ package gql.client
 
 import cats.data._
 import cats.implicits._
+import gql.ModifierStack
 
 object dsl {
   def sel[A](fieldName: String, alias: Option[String] = None)(implicit sq: SubQuery[A]): SelectionSet[A] =
@@ -22,6 +23,25 @@ object dsl {
         if (hd.length > 1) Left("More than one sub-SelectionSet matched")
         else Right(hd.headOption)
       }
+
+  //def variable[A](name: String)
+
+  final case class Typename[A](stack: List[Typename.Modifier], inner: String) {
+    def push[B](m: Typename.Modifier): Typename[B] = Typename(m :: stack, inner)
+  }
+  object Typename {
+    sealed trait Modifier
+    object Modifier {
+      case object List extends Modifier
+      case object Nullable extends Modifier
+    }
+
+    implicit def typenameStackForList[A](implicit ta: Typename[A]): Typename[List[A]] = 
+      ta.push(Modifier.List)
+    
+    implicit def typenameStackForOption[A](implicit ta: Typename[A]): Typename[Option[A]] =
+      ta.push(Modifier.Nullable)
+  }
 
   implicit class SyntaxForOptionalSelectionSet[A](q: SelectionSet[Option[A]]) {
     def required: SelectionSet[A] =
