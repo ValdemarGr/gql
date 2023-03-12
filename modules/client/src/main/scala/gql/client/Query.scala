@@ -30,14 +30,37 @@ final case class ParameterizedQuery[A, V](
 }
 
 object Query {
+  final case class Error(
+      mesage: String,
+      path: List[String],
+      original: JsonObject
+  )
+
   final case class Compiled[A](
       decoder: Decoder[A],
       query: String,
       variables: Option[Json]
   )
 
-  def renderSelectionSet(ss: SelectionSet[?]): String =
-    Render.renderSelectionSet(ss).render(100)
+  def renderQuery(sq: SimpleQuery[?], name: Option[String] = None, variables: List[Var.One[?]] = Nil): String = {
+    val main =
+      Render.renderOperationType(sq.operationType) +
+        name.fold(Doc.empty)(n => Doc.space + Doc.text(n)) +
+        variables.toNel.fold(Doc.empty) { xs =>
+          Doc.intercalate(Doc.comma + Doc.line, xs.map(Render.renderVar(_)).toList).bracketBy(Doc.char('('), Doc.char(')'))
+        } +
+        Doc.space + Render.renderSelectionSet(sq.selectionSet)
+
+    val frags = Doc.intercalate(
+      Doc.hardLine + Doc.hardLine,
+      findFragments(sq.selectionSet).map(Render.renderFragment)
+    )
+
+    (main + frags).render(100)
+  }
+
+  def queryDecoder[A](ss: SelectionSet[A]): Decoder[A] =
+    Dec.decoderForSelectionSet(ss)
 
   def findFragments(ss: SelectionSet[?]): List[Fragment[?]] = {
     val discoveryCompiler = new (Selection ~> Const[List[Fragment[?]], *]) {
@@ -172,8 +195,9 @@ object Query {
     }
 
     def renderFragment(frag: Fragment[?]): Doc =
-      Doc.text(frag.name) + Doc.space + Doc.text("on") +
-        Doc.space + Doc.text(frag.on) + Doc.space +
+      Doc.text("fragment") + Doc.space +
+        Doc.text(frag.name) + Doc.space +
+        Doc.text("on") + Doc.space + Doc.text(frag.on) + Doc.space +
         renderSelectionSet(frag.subSelection)
   }
 }
