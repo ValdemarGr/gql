@@ -14,11 +14,17 @@ final case class SimpleQuery[A](
     operationType: P.OperationType,
     selectionSet: SelectionSet[A]
 ) {
-  def compile: Query.Compiled[A] = ???
+  def compile: Query.Compiled[A] = Query.Compiled(
+    Query.queryDecoder(selectionSet),
+    Query.renderQuery(this)
+  )
 }
 
 final case class NamedQuery[A](name: String, query: SimpleQuery[A]) {
-  def compile: Query.Compiled[A] = ???
+  def compile: Query.Compiled[A] = Query.Compiled(
+    Query.queryDecoder(query.selectionSet),
+    Query.renderQuery(query, name.some)
+  )
 }
 
 final case class ParameterizedQuery[A, V](
@@ -26,7 +32,11 @@ final case class ParameterizedQuery[A, V](
     query: SimpleQuery[A],
     variables: Var.Impl[V]
 ) {
-  def compile(variables: V): Query.Compiled[A] = ???
+  def compile(v: V): Query.Compiled[A] = Query.Compiled(
+    Query.queryDecoder(query.selectionSet),
+    Query.renderQuery(query, name.some, variables.written.map(_.toList)),
+    variables.value.apply(v).some
+  )
 }
 
 object Query {
@@ -39,8 +49,21 @@ object Query {
   final case class Compiled[A](
       decoder: Decoder[A],
       query: String,
-      variables: Option[Json]
+      variables: Option[Json] = None
   )
+
+  def simple[A](operationType: P.OperationType, selectionSet: SelectionSet[A]): SimpleQuery[A] =
+    SimpleQuery(operationType, selectionSet)
+
+  def named[A](operationType: P.OperationType, name: String, selectionSet: SelectionSet[A]): NamedQuery[A] =
+    NamedQuery(name, simple(operationType, selectionSet))
+
+  def parameterized[A, V](
+      operationType: P.OperationType,
+      name: String,
+      vc: VariableClosure[A, V]
+  ): ParameterizedQuery[A, V] =
+    ParameterizedQuery(name, simple(operationType, vc.query), vc.variables)
 
   def renderQuery(sq: SimpleQuery[?], name: Option[String] = None, variables: List[Var.One[?]] = Nil): String = {
     val main =
