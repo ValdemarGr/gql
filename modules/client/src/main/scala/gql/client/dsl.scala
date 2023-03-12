@@ -4,6 +4,7 @@ import cats.data._
 import cats.implicits._
 import gql._
 import gql.client.{Arg => CArg}
+import io.circe.Json
 
 object dsl {
   def sel[A](fieldName: String, alias: Option[String] = None)(implicit sq: SubQuery[A]): SelectionSet[A] =
@@ -46,6 +47,9 @@ object dsl {
   def arg(name: String, value: gql.parser.QueryParser.Value): CArg =
     CArg(name, value)
 
+  def arg(name: String, vn: VariableName[?]): CArg =
+    CArg(name, vn.asValue)
+
   def arg[A](name: String, a: A)(implicit enc: io.circe.Encoder[A]): CArg =
     CArg(name, value(a))
 
@@ -76,4 +80,22 @@ object dsl {
     def required: SelectionSet[A] =
       q.emap(_.toRight("Required field was null"))
   }
+
+  val vc: VariableClosure[(String, String), Option[String]] = variable[Option[String]]("id").introduce { id =>
+    (
+      sel[String]("userName", arg("id", id)),
+      sel[String]("email", arg("id", id))
+    ).tupled
+  }
+
+  val q: ParameterizedQuery[(String, String), Option[String]] =
+    Query.parameterized(gql.parser.QueryParser.OperationType.Query, "coolQuery", vc)
+
+  val cq: Query.Compiled[(String, String)] = q.compile(Some("42"))
+
+  val str = cq.query
+
+  val vars: Option[Json] = cq.variables
+
+  val dec: io.circe.Decoder[(String, String)] = cq.decoder
 }

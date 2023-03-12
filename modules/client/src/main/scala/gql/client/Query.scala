@@ -40,12 +40,6 @@ final case class ParameterizedQuery[A, V](
 }
 
 object Query {
-  final case class Error(
-      mesage: String,
-      path: List[String],
-      original: JsonObject
-  )
-
   final case class Compiled[A](
       decoder: Decoder[A],
       query: String,
