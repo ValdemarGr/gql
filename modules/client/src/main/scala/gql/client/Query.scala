@@ -44,7 +44,14 @@ object Query {
       decoder: Decoder[A],
       query: String,
       variables: Option[Json] = None
-  )
+  ) {
+    def request: JsonObject = JsonObject.fromMap(
+      Map(
+        "query" -> Some(Json.fromString(query)),
+        "variables" -> variables
+      ).collect { case (k, Some(v)) => k -> v }
+    )
+  }
 
   def simple[A](operationType: P.OperationType, selectionSet: SelectionSet[A]): SimpleQuery[A] =
     SimpleQuery(operationType, selectionSet)
