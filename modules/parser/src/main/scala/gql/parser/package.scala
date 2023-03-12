@@ -20,19 +20,21 @@ import cats._
 import cats.data._
 import cats.implicits._
 import io.circe._
+import io.circe.syntax._
 
 package object parser {
   final case class ParseError(
       caret: Caret,
       prettyError: Eval[String]
-  ) {
-    lazy val asGraphQL = {
-      import io.circe.syntax._
-      JsonObject(
+  )
+
+  object ParseError {
+    implicit val encoder = Encoder.AsObject.instance[ParseError] { err =>
+      Map(
         "message" -> "could not parse query".asJson,
-        "locations" -> Json.arr(Json.obj("line" -> caret.line.asJson, "column" -> caret.col.asJson)),
-        "error" -> prettyError.value.asJson
-      )
+        "locations" -> List(Map("line" -> err.caret.line.asJson, "column" -> err.caret.col.asJson)).asJson,
+        "error" -> err.prettyError.value.asJson
+      ).asJsonObject
     }
   }
 

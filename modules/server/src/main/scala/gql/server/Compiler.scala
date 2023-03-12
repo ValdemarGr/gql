@@ -22,16 +22,26 @@ import cats.effect._
 import gql.interpreter.{Interpreter, DebugPrinter}
 import cats.data._
 import scala.concurrent.duration._
+import io.circe.syntax._
 
-sealed trait CompilationError {
-  def asGraphQL: JsonObject
-}
+sealed trait CompilationError
 object CompilationError {
-  final case class Parse(error: gql.parser.ParseError) extends CompilationError {
-    lazy val asGraphQL: JsonObject = JsonObject("errors" -> Json.arr(Json.fromJsonObject(error.asGraphQL)))
+  final case class Parse(error: gql.parser.ParseError) extends CompilationError
+  object Parse {
+    implicit val encoder = Encoder.AsObject.instance[Parse] { err =>
+      Map("errors" -> List(err.error)).asJsonObject
+    }
   }
-  final case class Preparation(error: NonEmptyChain[gql.PreparedQuery.PositionalError]) extends CompilationError {
-    lazy val asGraphQL: JsonObject = JsonObject("errors" -> Json.arr(error.map(x => Json.fromJsonObject(x.asGraphQL)).toList: _*))
+  final case class Preparation(error: NonEmptyChain[gql.PreparedQuery.PositionalError]) extends CompilationError
+  object Preparation {
+    implicit val encoder = Encoder.AsObject.instance[Preparation] { err =>
+      Map("errors" -> err.error).asJsonObject
+    }
+  }
+
+  implicit val encoder = Encoder.AsObject.instance[CompilationError] {
+    case err: Parse       => err.asJsonObject
+    case err: Preparation => err.asJsonObject
   }
 }
 
@@ -61,12 +71,6 @@ object Application {
   }
 }
 
-final case class CompilerParameters(
-    query: String,
-    variables: Option[Map[String, Json]],
-    operationName: Option[String]
-)
-
 object Compiler {
   type Outcome[F[_]] = Either[CompilationError, Application[F]]
 
@@ -85,7 +89,7 @@ object Compiler {
         accumulate: Option[FiniteDuration] = Some(5.millis)
     ) = compileWith(
       schema,
-      CompilerParameters(query, Some(variables), operationName),
+      QueryParameters(query, Some(variables), operationName),
       queryInput,
       mutationInput,
       subscriptionInput,
@@ -95,7 +99,7 @@ object Compiler {
 
     def compileWith[Q, M, S](
         schema: Schema[F, Q, M, S],
-        cp: CompilerParameters,
+        cp: QueryParameters,
         queryInput: F[Q] = F.unit,
         mutationInput: F[M] = F.unit,
         subscriptionInput: F[S] = F.unit,
@@ -107,7 +111,7 @@ object Compiler {
 
     def parsePrep[Q, M, S](
         schema: Schema[F, Q, M, S],
-        cp: CompilerParameters
+        cp: QueryParameters
     ): Either[CompilationError, PreparedQuery.PrepResult[F, Q, M, S]] =
       gql.parser.parse(cp.query) match {
         case Left(pe) => Left(CompilationError.Parse(pe))
@@ -134,20 +138,20 @@ object Compiler {
         case PreparedQuery.PrepResult.Query(ps) =>
           Application.Query {
             queryInput.flatMap { qi =>
-              Interpreter.runSync(qi, ps, schema.state, debug).map { case (e, d) => QueryResult(e, d) }
+              Interpreter.runSync(qi, ps, schema.state, debug).map { case (e, d) => QueryResult(d, e.flatMap(_.asResult)) }
             }
           }
         case PreparedQuery.PrepResult.Mutation(ps) =>
           Application.Mutation {
             mutationInput.flatMap { mi =>
-              Interpreter.runSync(mi, ps, schema.state, debug).map { case (e, d) => QueryResult(e, d) }
+              Interpreter.runSync(mi, ps, schema.state, debug).map { case (e, d) => QueryResult(d, e.flatMap(_.asResult)) }
             }
           }
         case PreparedQuery.PrepResult.Subscription(ps) =>
           Application.Subscription {
             fs2.Stream.eval(subscriptionInput).flatMap { si =>
               Interpreter.runStreamed(si, ps, schema.state, debug, accumulate).map { case (e, d) =>
-                QueryResult(e, d)
+                QueryResult(d, e.flatMap(_.asResult))
               }
             }
           }

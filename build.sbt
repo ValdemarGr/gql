@@ -91,6 +91,22 @@ lazy val client = project
   .settings(sharedSettings)
   .settings(name := "gql-client"/*, tlFatalWarnings := true*/)
   .dependsOn(core)
+
+
+lazy val http4sClient = project
+  .in(file("modules/client-http4s"))
+  .dependsOn(core)
+  .dependsOn(client)
+  .settings(sharedSettings)
+  .settings(
+    name := "gql-client-http4s",
+    libraryDependencies ++= Seq(
+      "org.http4s" %% "http4s-circe" % "1.0.0-M36",
+      "org.http4s" %% "http4s-dsl" % "1.0.0-M36",
+      "org.http4s" %% "http4s-client" % "1.0.0-M36"
+    )
+  )
+
 /*
 lazy val natchez = project
   .in(file("modules/natchez"))
@@ -109,26 +125,33 @@ lazy val graphqlWs = project
   .settings(sharedSettings)
   .settings(name := "gql-graphqlws")
   .dependsOn(core)
+
+lazy val serverGraphqlWs = project
+  .in(file("modules/server-graphql-ws"))
+  .settings(sharedSettings)
+  .settings(name := "gql-server-graphqlws")
+  .dependsOn(core)
+  .dependsOn(graphqlWs)
   .dependsOn(server)
 
-lazy val goi = project
-  .in(file("modules/goi"))
+lazy val serverGoi = project
+  .in(file("modules/server-goi"))
   .settings(sharedSettings)
   .settings(
-    name := "gql-goi",
+    name := "gql-server--goi",
     libraryDependencies ++= Seq("com.beachape" %% "enumeratum" % "1.7.2")
   )
   .dependsOn(core)
-  .enablePlugins(NoPublishPlugin)
+  .dependsOn(server)
 
-lazy val http4s = project
-  .in(file("modules/http4s"))
+lazy val serverHttp4s = project
+  .in(file("modules/server-http4s"))
   .dependsOn(core % "compile->compile;test->test")
   .dependsOn(server % "compile->compile;test->test")
-  .dependsOn(graphqlWs)
+  .dependsOn(serverGraphqlWs)
   .settings(sharedSettings)
   .settings(
-    name := "gql-http4s",
+    name := "gql-server-http4s",
     libraryDependencies ++= Seq(
       "org.http4s" %% "http4s-server" % "1.0.0-M36",
       "org.http4s" %% "http4s-blaze-server" % "1.0.0-M36",
@@ -159,8 +182,8 @@ lazy val docs = project
   )
   .dependsOn(server % "compile->compile;test->test")
   .dependsOn(core % "compile->compile;compile->test")
-  .dependsOn(http4s)
-  .dependsOn(graphqlWs)
+  .dependsOn(serverHttp4s)
+  .dependsOn(serverGraphqlWs)
   /* .dependsOn(goi) */
   .dependsOn(mdocExt)
   .enablePlugins(MdocPlugin, DocusaurusPlugin, NoPublishPlugin)

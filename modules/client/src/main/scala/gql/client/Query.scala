@@ -45,7 +45,7 @@ object Query {
       query: String,
       variables: Option[Json] = None
   ) {
-    def request: JsonObject = JsonObject.fromMap(
+    def toJson: JsonObject = JsonObject.fromMap(
       Map(
         "query" -> Some(Json.fromString(query)),
         "variables" -> variables

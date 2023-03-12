@@ -15,7 +15,6 @@
  */
 package gql.interpreter
 
-import io.circe._
 import cats.data._
 import gql._
 import cats.implicits._
@@ -31,15 +30,15 @@ trait EvalFailure {
       case _           => this
     }
 
-  def asGraphQL: Chain[JsonObject] =
+  def asResult: Chain[QueryResult.Error] =
     paths.map { path =>
       val filteredPath = path.path.mapFilter {
-        case GraphArc.Field(name) => Some(Json.fromString(name))
-        case GraphArc.Index(idx)  => Some(Json.fromInt(idx))
+        case GraphArc.Field(name) => Some(name)
+        case GraphArc.Index(idx)  => Some(idx.toString())
       }
-      JsonObject(
-        "message" -> Json.fromString(error.getOrElse("internal error")),
-        "path" -> Json.arr(filteredPath.toList: _*)
+      QueryResult.Error(
+        error.getOrElse("internal error"),
+        filteredPath
       )
     }
 }

@@ -18,17 +18,31 @@ package gql
 import io.circe._
 import cats.data._
 import cats.implicits._
-import gql.interpreter._
+import io.circe.syntax._
 
 final case class QueryResult(
-    errors: Chain[EvalFailure],
-    data: JsonObject
-) {
-  lazy val asGraphQL: JsonObject = {
-    import io.circe.syntax._
+    data: JsonObject,
+    errors: Chain[QueryResult.Error]
+)
+
+object QueryResult {
+  final case class Error(
+      message: String,
+      path: Chain[String]
+  )
+
+  object Error {
+    implicit val encoder = Encoder.instance[Error] { err =>
+      Map(
+        "message" -> Some(err.message.asJson),
+        "path" -> NonEmptyChain.fromChain(err.path).map(_.asJson)
+      ).collect { case (k, Some(v)) => k -> v }.asJson
+    }
+  }
+  implicit val encoder = Encoder.instance[QueryResult] { r =>
     Map(
-      "errors" -> errors.map(_.asGraphQL).toList.flatMap(_.toList).toNel.map(_.asJson),
-      "data" -> Some(data).filter(_.nonEmpty).map(_.asJson)
-    ).collect { case (k, Some(v)) => k -> v }.asJsonObject
+      "data" -> Some(r.data).filter(_.nonEmpty).map(_.asJson),
+      "errors" -> r.errors.toList.toNel.map(_.asJson)
+    ).collect { case (k, Some(v)) => k -> v }.asJson
   }
 }

@@ -25,21 +25,22 @@ import org.http4s.server.websocket.WebSocketBuilder
 import gql.graphqlws.GraphqlWS
 import org.http4s.websocket.WebSocketFrame
 import org.typelevel.ci._
+import gql.graphqlws.GraphqlWSServer
 
 final case class Http4sCompilerParametes(
-    compilerParameters: CompilerParameters,
+    queryParameters: QueryParameters,
     headers: Headers
 )
 
 object Http4sRoutes {
-  implicit protected lazy val cd: Decoder[CompilerParameters] =
-    io.circe.generic.semiauto.deriveDecoder[CompilerParameters]
-  implicit protected def ed[F[_]: Concurrent]: EntityDecoder[F, CompilerParameters] =
-    org.http4s.circe.jsonOf[F, CompilerParameters]
+  implicit protected lazy val cd: Decoder[QueryParameters] =
+    io.circe.generic.semiauto.deriveDecoder[QueryParameters]
+  implicit protected def ed[F[_]: Concurrent]: EntityDecoder[F, QueryParameters] =
+    org.http4s.circe.jsonOf[F, QueryParameters]
 
   type SC[F[_], A] = F[Either[Response[F], A]]
 
-  def syncFull[F[_]](full: Headers => SC[F, CompilerParameters => SC[F, Compiler.Outcome[F]]], path: String = "graphql")(implicit
+  def syncFull[F[_]](full: Headers => SC[F, QueryParameters => SC[F, Compiler.Outcome[F]]], path: String = "graphql")(implicit
       F: Concurrent[F]
   ): HttpRoutes[F] = {
     val d = new Http4sDsl[F] {}
@@ -52,11 +53,11 @@ object Http4sRoutes {
       F.flatMap(fa) {
         case Left(resp) => F.pure(resp)
         case Right(f) =>
-          r.as[CompilerParameters].flatMap { params =>
+          r.as[QueryParameters].flatMap { params =>
             F.flatMap(f(params)) {
               case Left(resp)                                    => F.pure(resp)
-              case Right(Left(pe: CompilationError.Parse))       => Ok(pe.asGraphQL.asJson)
-              case Right(Left(pe: CompilationError.Preparation)) => Ok(pe.asGraphQL.asJson)
+              case Right(Left(pe: CompilationError.Parse))       => Ok(pe.asJson)
+              case Right(Left(pe: CompilationError.Preparation)) => Ok(pe.asJson)
               case Right(Right(app)) =>
                 val fa = app match {
                   case Application.Mutation(run)     => run
@@ -64,7 +65,7 @@ object Http4sRoutes {
                   case Application.Subscription(run) => run.take(1).compile.lastOrError
                 }
 
-                fa.flatMap(qr => Ok(qr.asGraphQL.asJson))
+                fa.flatMap(qr => Ok(qr.asJson))
             }
           }
       }
@@ -72,12 +73,12 @@ object Http4sRoutes {
   }
 
   def syncSimple[F[_]](
-      compile: CompilerParameters => F[Either[Response[F], Compiler.Outcome[F]]],
+      compile: QueryParameters => F[Either[Response[F], Compiler.Outcome[F]]],
       path: String = "graphql"
   )(implicit F: Concurrent[F]) = syncFull[F]({ _ => F.pure(Right(compile)) }, path)
 
   def ws[F[_]](
-      getCompiler: GraphqlWS.GetCompiler[F],
+      getCompiler: GraphqlWSServer.GetCompiler[F],
       wsb: WebSocketBuilder[F],
       path: String = "ws"
   )(implicit F: Async[F]): HttpRoutes[F] = {
@@ -86,14 +87,14 @@ object Http4sRoutes {
     import io.circe.syntax._
 
     HttpRoutes.of[F] { case GET -> Root / `path` =>
-      GraphqlWS[F](getCompiler).allocated.flatMap { case ((toClient, fromClient), close) =>
+      GraphqlWSServer[F](getCompiler).allocated.flatMap { case ((toClient, fromClient), close) =>
         wsb
           .withOnClose(close)
           .withFilterPingPongs(true)
           .withHeaders(Headers(Header.Raw(ci"Sec-WebSocket-Protocol", "graphql-transport-ws")))
           .build(
             toClient.evalMap[F, WebSocketFrame] {
-              case Left(te) => F.fromEither(WebSocketFrame.Close(te.code, te.message))
+              case Left(te) => F.fromEither(WebSocketFrame.Close(te.code.code, te.message))
               case Right(x) => F.pure(WebSocketFrame.Text(x.asJson.noSpaces))
             },
             _.evalMap[F, Option[String]] {
