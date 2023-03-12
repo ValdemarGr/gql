@@ -18,11 +18,20 @@ import gql.std.FreeApply
  * { fieldname { subfield1, subfield2 } }
  */
 sealed trait SubQuery[A]
-object SubQuery {
-  implicit def terminalDecoder[A](implicit decoder: io.circe.Decoder[A]): SubQuery[A] = Terminal(decoder)
+object SubQuery extends  LowPrioritySubQueryImplicits {
+  implicit def listForSubQuery[A](implicit subQuery: SubQuery[A]): SubQuery[List[A]] = ListModifier(subQuery)
+
+  implicit def optionForSubQuery[A](implicit subQuery: SubQuery[A]): SubQuery[Option[A]] = OptionModifier(subQuery)
+}
+trait LowPrioritySubQueryImplicits {
+  implicit def terminalForCirceDecoder[A](implicit decoder: io.circe.Decoder[A]): SubQuery[A] = Terminal(decoder)
 }
 
 final case class Terminal[A](decoder: io.circe.Decoder[A]) extends SubQuery[A]
+
+final case class ListModifier[A](subQuery: SubQuery[A]) extends SubQuery[List[A]]
+
+final case class OptionModifier[A](subQuery: SubQuery[A]) extends SubQuery[Option[A]]
 
 final case class SelectionSet[A](impl: SelectionSet.Impl[?, A]) extends SubQuery[A] {
   def vmap[B](f: A => ValidatedNec[String, B]): SelectionSet[B] = SelectionSet(impl.vmap(f))
@@ -80,7 +89,7 @@ sealed trait Selection[A]
 
 object Selection {
   final case class Field[A](
-      fieldname: String,
+      fieldName: String,
       alias: Option[String],
       args: List[Arg],
       subQuery: SubQuery[A]
@@ -91,11 +100,15 @@ object Selection {
       on: String,
       matchAlso: Chain[String],
       subSelection: SelectionSet[A]
-  ) extends Selection[Option[A]]
+  ) extends Selection[Option[A]] {
+    val matchAlsoSet: Set[String] = matchAlso.toList.toSet
+  }
 
   final case class InlineFragment[A](
       on: String,
       matchAlso: Chain[String],
       subSelection: SelectionSet[A]
-  ) extends Selection[Option[A]]
+  ) extends Selection[Option[A]] {
+    val matchAlsoSet: Set[String] = matchAlso.toList.toSet
+  }
 }

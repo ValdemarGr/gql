@@ -21,6 +21,10 @@ object dsl {
   def fragment[A](name: String, on: String, matchAlso: String*)(implicit q: SelectionSet[A]): SelectionSet[Option[A]] =
     SelectionSet.lift(Selection.Fragment(name, on, Chain.fromSeq(matchAlso), q))
 
+  def list[A](implicit sq: SubQuery[A]): SubQuery[List[A]] = ListModifier(sq)
+
+  def opt[A](implicit sq: SubQuery[A]): SubQuery[Option[A]] = OptionModifier(sq)
+
   def oneOf[A](hd: SelectionSet[Option[A]], tl: SelectionSet[Option[A]]*) =
     NonEmptyChain
       .of(hd, tl: _*)

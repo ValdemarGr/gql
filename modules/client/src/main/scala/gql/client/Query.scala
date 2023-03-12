@@ -8,6 +8,7 @@ import cats.implicits._
 import cats._
 import gql.client.Selection.Fragment
 import gql.client.Selection.InlineFragment
+import gql.std.FreeApply
 
 final case class SimpleQuery[A](
     operationType: P.OperationType,
@@ -30,10 +31,63 @@ final case class ParameterizedQuery[A, V](
 
 object Query {
   final case class Compiled[A](
-      decoder: A => EitherNec[String, A],
+      decoder: Decoder[A],
       query: String,
       variables: Option[Json]
   )
+
+  def renderSelectionSet(ss: SelectionSet[?]): String =
+    Render.renderSelectionSet(ss).render(100)
+
+  def findFragments(ss: SelectionSet[?]): List[Fragment[?]] = {
+    val discoveryCompiler = new (Selection ~> Const[List[Fragment[?]], *]) {
+      override def apply[A](fa: Selection[A]): Const[List[Fragment[?]], A] = Const {
+        fa match {
+          case f: Fragment[?] => f :: findFragments(f.subSelection)
+          case _              => Nil
+        }
+      }
+    }
+    ss.impl.underlying.foldMap(discoveryCompiler).getConst
+  }
+
+  object Dec {
+    def decoderForSubQuery[A](sq: SubQuery[A]): Decoder[A] = sq match {
+      case Terminal(decoder)     => decoder
+      case lm: ListModifier[a]   => Decoder.decodeList(decoderForSubQuery(lm.subQuery))
+      case om: OptionModifier[a] => Decoder.decodeOption(decoderForSubQuery(om.subQuery))
+      case ss: SelectionSet[A]   => decoderForSelectionSet(ss)
+    }
+
+    def decoderForFragment[A](on: String, also: Set[String], ss: SelectionSet[A]): Decoder[Option[A]] = {
+      Decoder.instance { cursor =>
+        cursor.get[String]("__typename").flatMap { tn =>
+          if (on === tn || also.contains(tn)) cursor.as(decoderForSelectionSet(ss)).map(_.some)
+          else cursor.as(Decoder.const(None))
+        }
+      }
+    }
+
+    def decoderForSelectionSet[A](ss: SelectionSet[A]): Decoder[A] = {
+      val compiler = new (Selection ~> Decoder) {
+        override def apply[A](fa: Selection[A]): Decoder[A] = {
+          fa match {
+            case f: Selection.Field[a] =>
+              val name = f.alias.getOrElse(f.fieldName)
+              Decoder.instance(_.get(name)(decoderForSubQuery(f.subQuery)))
+            case f: Fragment[a]       => decoderForFragment(f.on, f.matchAlsoSet, f.subSelection)
+            case f: InlineFragment[a] => decoderForFragment(f.on, f.matchAlsoSet, f.subSelection)
+          }
+        }
+      }
+
+      ss.impl match {
+        case impl: SelectionSet.Impl[a, b] =>
+          val fa: FreeApply[Selection, a] = impl.underlying
+          fa.foldMap(compiler).emap(a => impl.emap(a).toEither.leftMap(_.intercalate(", ")))
+      }
+    }
+  }
 
   object Render {
     def renderOperationType(op: P.OperationType): Doc =
@@ -73,8 +127,8 @@ object Query {
       Doc.text(s"$$${v.name}") + Doc.space + Doc.char(':') + Doc.space + Doc.text(v.tpe) + default
     }
 
-    def renderArg(a: Arg): Doc = 
-        Doc.text(a.name) + Doc.char(':') + Doc.space + renderValue(a.value)
+    def renderArg(a: Arg): Doc =
+      Doc.text(a.name) + Doc.char(':') + Doc.space + renderValue(a.value)
 
     def renderSelectionSet(ss: SelectionSet[?]): Doc = {
       type C[A] = Const[List[Doc], A]
@@ -100,10 +154,13 @@ object Query {
                     Doc.intercalate(Doc.comma + Doc.line, args.map(renderArg).toList).bracketBy(Doc.char('('), Doc.char(')'))
                 }
 
-                val rhs = sq match {
-                  case Terminal(_)         => Doc.empty
-                  case ss: SelectionSet[?] => Doc.space + renderSelectionSet(ss)
+                def renderSubQuery(sq: SubQuery[?]): Doc = sq match {
+                  case Terminal(_)              => Doc.empty
+                  case ss: SelectionSet[?]      => Doc.space + renderSelectionSet(ss)
+                  case ListModifier(subQuery)   => renderSubQuery(subQuery)
+                  case OptionModifier(subQuery) => renderSubQuery(subQuery)
                 }
+                val rhs = renderSubQuery(sq)
 
                 lhs + argsDoc + rhs
             }
@@ -111,7 +168,12 @@ object Query {
         }
       }
       val docs = ss.impl.underlying.foldMap(compiler)
-      Doc.intercalate(Doc.comma + Doc.line, docs.getConst).bracketBy(Doc.char('{'), Doc.char('}'))
+      Doc.intercalate(Doc.comma + Doc.line, Doc.text("__typename") :: docs.getConst).bracketBy(Doc.char('{'), Doc.char('}'))
     }
+
+    def renderFragment(frag: Fragment[?]): Doc =
+      Doc.text(frag.name) + Doc.space + Doc.text("on") +
+        Doc.space + Doc.text(frag.on) + Doc.space +
+        renderSelectionSet(frag.subSelection)
   }
 }
