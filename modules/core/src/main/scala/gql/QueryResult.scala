@@ -28,21 +28,21 @@ final case class QueryResult(
 object QueryResult {
   final case class Error(
       message: String,
-      path: Chain[String]
+      path: Chain[Json]
   )
 
   object Error {
-    implicit val encoder = Encoder.instance[Error] { err =>
+    implicit val encoder = Encoder.AsObject.instance[Error] { err =>
       Map(
         "message" -> Some(err.message.asJson),
         "path" -> NonEmptyChain.fromChain(err.path).map(_.asJson)
-      ).collect { case (k, Some(v)) => k -> v }.asJson
+      ).collect { case (k, Some(v)) => k -> v }.asJsonObject
     }
   }
-  implicit val encoder = Encoder.instance[QueryResult] { r =>
+  implicit val encoder = Encoder.AsObject.instance[QueryResult] { r =>
     Map(
       "data" -> Some(r.data).filter(_.nonEmpty).map(_.asJson),
       "errors" -> r.errors.toList.toNel.map(_.asJson)
-    ).collect { case (k, Some(v)) => k -> v }.asJson
+    ).collect { case (k, Some(v)) => k -> v }.asJsonObject
   }
 }

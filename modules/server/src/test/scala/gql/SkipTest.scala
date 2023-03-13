@@ -19,6 +19,7 @@ import munit.CatsEffectSuite
 import gql.ast._
 import cats.effect.IO
 import io.circe._
+import io.circe.syntax._
 import gql.dsl._
 
 class SkipTest extends CatsEffectSuite {
@@ -44,8 +45,8 @@ class SkipTest extends CatsEffectSuite {
 
   def query(q: String, variables: Map[String, Json] = Map.empty): IO[JsonObject] =
     Compiler[IO].compile(schema, q, variables = variables) match {
-      case Left(err)                   => IO.pure(err.asGraphQL)
-      case Right(Application.Query(q)) => q.map(_.asGraphQL)
+      case Left(err)                   => IO.pure(err.asJsonObject)
+      case Right(Application.Query(q)) => q.map(_.asJsonObject)
       case _                           => ???
     }
 

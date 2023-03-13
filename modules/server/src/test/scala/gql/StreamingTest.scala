@@ -17,6 +17,7 @@ package gql
 
 import cats.implicits._
 import io.circe._
+import io.circe.syntax._
 import fs2.{Stream, Pull}
 import munit.CatsEffectSuite
 import gql._
@@ -86,8 +87,8 @@ class StreamingTest extends CatsEffectSuite {
 
   def query(q: String, variables: Map[String, Json] = Map.empty): Stream[IO, JsonObject] =
     Compiler[IO].compile(schema, q, variables = variables /* , debug= gql.interpreter.DebugPrinter[IO](IO.println)*/ ) match {
-      case Left(err)                          => Stream(err.asGraphQL)
-      case Right(Application.Subscription(s)) => s.map(_.asGraphQL)
+      case Left(err)                          => Stream(err.asJsonObject)
+      case Right(Application.Subscription(s)) => s.map(_.asJsonObject)
       case _                                  => ???
     }
 

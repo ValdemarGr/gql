@@ -18,6 +18,7 @@ package gql.interpreter
 import cats.data._
 import gql._
 import cats.implicits._
+import io.circe.syntax._
 
 trait EvalFailure {
   def paths: Chain[Cursor]
@@ -33,8 +34,8 @@ trait EvalFailure {
   def asResult: Chain[QueryResult.Error] =
     paths.map { path =>
       val filteredPath = path.path.mapFilter {
-        case GraphArc.Field(name) => Some(name)
-        case GraphArc.Index(idx)  => Some(idx.toString())
+        case GraphArc.Field(name) => Some(name.asJson)
+        case GraphArc.Index(idx)  => Some(idx.asJson)
       }
       QueryResult.Error(
         error.getOrElse("internal error"),

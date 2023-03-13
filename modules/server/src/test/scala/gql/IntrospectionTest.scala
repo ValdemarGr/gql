@@ -18,14 +18,15 @@ package gql
 import munit.CatsEffectSuite
 import cats.effect._
 import io.circe._
+import io.circe.syntax._
 
 class IntrospectionTest extends CatsEffectSuite {
   val schema = StarWarsSchema.schema.unsafeRunSync()
 
   def query(q: String, variables: Map[String, Json] = Map.empty): IO[JsonObject] =
     Compiler[IO].compile(schema, q, variables = variables) match {
-      case Left(err)                   => IO.pure(err.asGraphQL)
-      case Right(Application.Query(q)) => q.map(_.asGraphQL)
+      case Left(err)                   => IO.pure(err.asJsonObject)
+      case Right(Application.Query(q)) => q.map(_.asJsonObject)
       case _                           => ???
     }
 

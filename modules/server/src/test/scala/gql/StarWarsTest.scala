@@ -18,6 +18,8 @@ package gql
 import cats.effect._
 import munit.CatsEffectSuite
 import io.circe._
+import io.circe.syntax._
+import munit.Location
 
 // https://github.com/graphql/graphql-js/blob/main/src/__tests__/starWarsData.ts
 class StarWarsTest extends CatsEffectSuite {
@@ -25,12 +27,12 @@ class StarWarsTest extends CatsEffectSuite {
 
   def query(q: String, variables: Map[String, Json] = Map.empty): IO[JsonObject] =
     Compiler[IO].compile(schema, q, variables = variables) match {
-      case Left(err)                   => IO.pure(err.asGraphQL)
-      case Right(Application.Query(q)) => q.map(_.asGraphQL)
+      case Left(err)                   => IO.pure(err.asJsonObject)
+      case Right(Application.Query(q)) => q.map(_.asJsonObject)
       case _                           => ???
     }
 
-  def assertJsonIO(actual: IO[JsonObject])(expected: String): IO[Unit] =
+  def assertJsonIO(actual: IO[JsonObject])(expected: String)(implicit loc: Location): IO[Unit] =
     actual.map { jo =>
       val p = io.circe.parser.parse(expected)
       assert(clue(p).isRight)
