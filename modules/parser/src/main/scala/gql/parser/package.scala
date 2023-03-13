@@ -38,9 +38,8 @@ package object parser {
     }
   }
 
-  def parseQuery(str: String): Either[ParseError, NonEmptyList[QueryAst.ExecutableDefinition]] = {
-    QueryParser.executableDefinition.rep
-      .parseAll(str)
+  def parseFor[A](str: String, p: cats.parse.Parser[A]): Either[ParseError, A] =
+    p.parseAll(str)
       .leftMap { err =>
         val offset = err.failedAtOffset
         val left = str.take(offset)
@@ -53,5 +52,10 @@ package object parser {
           Eval.later(ParserUtil.errorMessage(str, err))
         )
       }
-  }
+
+  def parseQuery(str: String): Either[ParseError, NonEmptyList[QueryAst.ExecutableDefinition]] =
+    parseFor(str, QueryParser.executableDefinition.rep)
+
+  def parseSchema(str: String): Either[ParseError, NonEmptyList[TypeSystemAst.TypeDefinition]] =
+    parseFor(str, TypeSystemParser.typeDefinition.rep)
 }
