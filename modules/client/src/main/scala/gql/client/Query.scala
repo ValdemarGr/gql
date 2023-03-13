@@ -8,7 +8,6 @@ import cats.implicits._
 import cats._
 import gql.client.Selection.Fragment
 import gql.client.Selection.InlineFragment
-import gql.std.FreeApply
 
 final case class SimpleQuery[A](
     operationType: P.OperationType,
@@ -97,7 +96,7 @@ object Query {
         }
       }
     }
-    ss.impl.underlying.foldMap(discoveryCompiler).getConst
+    ss.impl.foldMap(discoveryCompiler).getConst
   }
 
   object Dec {
@@ -130,11 +129,7 @@ object Query {
         }
       }
 
-      ss.impl match {
-        case impl: SelectionSet.Impl[a, b] =>
-          val fa: FreeApply[Selection, a] = impl.underlying
-          fa.foldMap(compiler).emap(a => impl.emap(a).toEither.leftMap(_.intercalate(", ")))
-      }
+      ss.impl.foldMap(compiler).emap(_.toEither.leftMap(_.intercalate(", ")))
     }
   }
 
@@ -152,7 +147,7 @@ object Query {
         case IntValue(v)     => Doc.text(v.toString)
         case StringValue(v)  => Doc.text(s""""$v"""")
         case FloatValue(v)   => Doc.text(v.toString)
-        case NullValue()       => Doc.text("null")
+        case NullValue()     => Doc.text("null")
         case BooleanValue(v) => Doc.text(v.toString)
         case ListValue(v) =>
           Doc.intercalate(Doc.comma + Doc.line, v.map(renderValue)).tightBracketBy(Doc.char('['), Doc.char(']'))
@@ -216,7 +211,7 @@ object Query {
           }
         }
       }
-      val docs = ss.impl.underlying.foldMap(compiler)
+      val docs = ss.impl.foldMap(compiler)
       Doc.intercalate(Doc.comma + Doc.line, Doc.text("__typename") :: docs.getConst).bracketBy(Doc.char('{'), Doc.char('}'))
     }
 

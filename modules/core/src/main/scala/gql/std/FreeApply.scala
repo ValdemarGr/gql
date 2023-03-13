@@ -3,7 +3,7 @@ package gql.std
 import cats._
 
 sealed abstract class FreeApply[F[_], +A] extends Product with Serializable {
-  def foldMap[G[_], B >: A](fk: F ~> G)(implicit G: Applicative[G]): G[B] = this match {
+  def foldMap[G[_], B >: A](fk: F ~> G)(implicit G: Apply[G]): G[B] = this match {
     case FreeApply.Lift(fa)    => G.map(fk(fa))(x => x)
     case FreeApply.Ap(ff, fa)  => G.map(G.ap(ff.foldMap(fk))(fa.foldMap(fk)))(x => x)
     case FreeApply.Fmap(fa, f) => G.map(fa.foldMap(fk))(f)

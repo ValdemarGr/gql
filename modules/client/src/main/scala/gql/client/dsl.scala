@@ -5,6 +5,8 @@ import cats.implicits._
 import gql._
 import io.circe.Json
 import gql.parser.{Value => V, QueryAst => P}
+import java.util.UUID
+import java.time.LocalDate
 
 object dsl {
   type V = gql.parser.Value[gql.parser.AnyValue]
@@ -70,11 +72,17 @@ object dsl {
     implicit lazy val typenameForInt: Typename[Int] =
       Typename(InverseModifierStack(Nil, "Int"))
 
+    implicit lazy val typenameForUUID: Typename[UUID] =
+      Typename(InverseModifierStack(Nil, "UUID"))
+
     implicit lazy val typenameForFloat: Typename[Float] =
       Typename(InverseModifierStack(Nil, "Float"))
 
     implicit lazy val typenameForBoolean: Typename[Boolean] =
       Typename(InverseModifierStack(Nil, "Boolean"))
+
+    implicit lazy val typenameForLocalDate: Typename[LocalDate] =
+      Typename(InverseModifierStack(Nil, "String"))
   }
 
   implicit class SyntaxForOptionalSelectionSet[A](q: SelectionSet[Option[A]]) {
@@ -99,4 +107,33 @@ object dsl {
   val vars: Option[Json] = cq.variables
 
   val dec: io.circe.Decoder[(String, String)] = cq.decoder
+
+  val contractbookingErrorsFrag =
+    fragment("ContractBookingErrorsFragment", "LoanAndLeaseStructuredBookingErrorType") {
+      (
+        sel[String]("__typename"),
+        inlineFrag("LoanAndLeaseBookingParamsNotNewestError") {
+          sel("contract") {
+            sel[UUID]("contractId")
+          }
+        }
+      ).tupled
+    }
+
+  val subVars = variable[String]("org") ~ variable[UUID]("contractId") ~ variable[Option[LocalDate]]("date")
+
+  val sub: VariableClosure[(String, Option[(String, Option[UUID])]), ((String, UUID), Option[LocalDate])] = subVars.introduce {
+    case ((o, cid), ld) =>
+      sel("loanAndLeasePreviewBooking", arg("org", o), arg("contractId", cid), arg("date", ld)) {
+        (
+          sel[String]("__typename"),
+          contractbookingErrorsFrag
+        ).tupled
+      }
+  }
+
+  val q0: ParameterizedQuery[(String, Option[(String, Option[UUID])]), ((String, UUID), Option[LocalDate])] =
+    Query.parameterized(P.OperationType.Subscription, "coolSub", sub)
+
+  val cq0: Query.Compiled[(String, Option[(String, Option[UUID])])] = q0.compile((("acme", UUID.randomUUID()), None))
 }

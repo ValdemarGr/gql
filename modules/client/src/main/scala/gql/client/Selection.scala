@@ -19,7 +19,7 @@ import gql.parser.{QueryAst => P}
  * { fieldname { subfield1, subfield2 } }
  */
 sealed trait SubQuery[A]
-object SubQuery extends  LowPrioritySubQueryImplicits {
+object SubQuery extends LowPrioritySubQueryImplicits {
   implicit def listForSubQuery[A](implicit subQuery: SubQuery[A]): SubQuery[List[A]] = ListModifier(subQuery)
 
   implicit def optionForSubQuery[A](implicit subQuery: SubQuery[A]): SubQuery[Option[A]] = OptionModifier(subQuery)
@@ -34,45 +34,28 @@ final case class ListModifier[A](subQuery: SubQuery[A]) extends SubQuery[List[A]
 
 final case class OptionModifier[A](subQuery: SubQuery[A]) extends SubQuery[Option[A]]
 
-final case class SelectionSet[A](impl: SelectionSet.Impl[?, A]) extends SubQuery[A] {
-  def vmap[B](f: A => ValidatedNec[String, B]): SelectionSet[B] = SelectionSet(impl.vmap(f))
+final case class SelectionSet[A](impl: FreeApply[Selection, ValidatedNec[String, A]]) extends SubQuery[A] {
+  def vmap[B](f: A => ValidatedNec[String, B]): SelectionSet[B] = SelectionSet(impl.map(_.andThen(f)))
 
-  def emap[B](f: A => Either[String, B]): SelectionSet[B] = SelectionSet(impl.emap(f))
+  def emap[B](f: A => Either[String, B]): SelectionSet[B] =
+    SelectionSet(impl.map(_.andThen(f(_).toValidatedNec)))
 }
 
 object SelectionSet {
-  final case class Impl[A, B](
-      underlying: FreeApply[Selection, A],
-      emap: A => ValidatedNec[String, B]
-  ) {
-    def vmap[C](f: B => ValidatedNec[String, C]): Impl[A, C] = copy(emap = emap.andThen(_ andThen f))
-
-    def emap[C](f: B => Either[String, C]): Impl[A, C] =
-      copy(emap = emap.andThen(_.toEither.flatMap(f(_).leftMap(NonEmptyChain.one(_))).toValidated))
-  }
-
-  def lift[A](sel: Selection[A]): SelectionSet[A] =
-    SelectionSet(Impl[A, A](FreeApply.lift(sel), _.validNec))
-
-  implicit val applyForQuery: Apply[SelectionSet] = {
+  implicit val applyForSelectionSet: Apply[SelectionSet] = {
     new Apply[SelectionSet] {
       override def map[A, B](fa: SelectionSet[A])(f: A => B): SelectionSet[B] = SelectionSet {
-        fa.impl match {
-          case g: Impl[a, A] => Impl[a, B](g.underlying, g.emap.andThen(_.map(f)))
-        }
+        fa.impl.map(_.map(f))
       }
 
       override def ap[A, B](ff: SelectionSet[A => B])(fa: SelectionSet[A]): SelectionSet[B] = SelectionSet {
-        (ff.impl, fa.impl) match {
-          case (g1: Impl[a1, A => B], g2: Impl[a2, A]) =>
-            Impl[ValidatedNec[String, B], B](
-              (g1.underlying.map(g1.emap), g2.underlying.map(g2.emap)).mapN((_, _).mapN(_(_))),
-              x => x
-            )
-        }
+        (fa.impl, ff.impl).mapN(_ ap _)
       }
     }
   }
+
+  def lift[A](sel: Selection[A]): SelectionSet[A] =
+    SelectionSet(FreeApply.lift(sel).map(_.validNec))
 }
 
 /*
