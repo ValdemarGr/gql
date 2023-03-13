@@ -24,7 +24,6 @@ import gql.parser.{QueryAst => P, Value => V, NonVar, Type => T, Pos, AnyValue, 
 import gql.ast._
 import gql.resolver._
 import cats.parse.Caret
-import gql.parser.QueryParser
 
 object PreparedQuery {
   sealed trait PreparedField[F[_], A] extends Product with Serializable

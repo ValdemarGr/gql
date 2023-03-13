@@ -19,11 +19,9 @@ import cats.implicits._
 import cats.parse.{Parser => P}
 import cats.parse.Rfc5234
 import cats.parse.Numbers
-import cats.data.NonEmptyList
 
 // https://spec.graphql.org/June2018/#sec-Source-Text
 object GraphqlParser {
-  import QueryAst._
   val whiteSpace = Rfc5234.wsp
 
   val lineTerminator = Rfc5234.lf | Rfc5234.crlf | Rfc5234.cr

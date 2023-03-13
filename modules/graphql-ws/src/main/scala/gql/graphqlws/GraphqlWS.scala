@@ -15,14 +15,11 @@
  */
 package gql.graphqlws
 
-import cats.effect._
-import cats.effect.implicits._
 import cats.implicits._
 import io.circe._
 import io.circe.syntax._
 import gql._
 import cats.data._
-import cats.effect.std._
 
 object GraphqlWS {
   sealed trait Bidirectional extends FromClient with FromServer
