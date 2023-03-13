@@ -21,6 +21,7 @@ import cats.implicits._
 import cats.mtl._
 import gql.ast._
 import gql.parser.QueryParser
+import gql.parser.GraphqlParser
 
 object Validation {
   sealed trait Error {
@@ -252,13 +253,13 @@ object Validation {
       .traverse_(name => raise(f(name)))
 
   def validateTypeName[F[_], G[_]](name: String)(implicit G: Monad[G], S: Stateful[G, ValidationState[F]]): G[Unit] =
-    QueryParser.name.parseAll(name) match {
+    GraphqlParser.name.parseAll(name) match {
       case Left(_)  => raise(InvalidTypeName(name))
       case Right(_) => G.unit
     }
 
   def validateFieldName[F[_], G[_]](name: String)(implicit G: Monad[G], S: Stateful[G, ValidationState[F]]): G[Unit] =
-    QueryParser.name.parseAll(name) match {
+    GraphqlParser.name.parseAll(name) match {
       case Left(_)  => raise(InvalidFieldName(name))
       case Right(_) => G.unit
     }

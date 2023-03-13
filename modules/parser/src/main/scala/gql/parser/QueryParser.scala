@@ -16,36 +16,11 @@
 package gql.parser
 
 import cats.parse.{Parser => P}
-import cats.parse.Rfc5234
-import cats.parse.Numbers
 
 // https://spec.graphql.org/June2018/#sec-Source-Text
 object QueryParser {
   import QueryAst._
   import GraphqlParser._
-  val whiteSpace = Rfc5234.wsp
-
-  val lineTerminator = Rfc5234.lf | Rfc5234.crlf | Rfc5234.cr
-
-  val sep = lineTerminator | whiteSpace | P.char(',')
-  val seps0 = sep.rep0.void
-
-  def p[A](p: P[A]): P[A] = p <* sep.rep0.void
-  def t(c: Char): P[Unit] = p(P.char(c))
-  def s(s: String): P[Unit] = p(P.string(s))
-
-  // if this is slow, use charWhile
-  val sourceCharacter: P[Char] =
-    P.charIn(('\u0020' to '\uFFFF') :+ '\u0009' :+ '\u000A' :+ '\u000D')
-
-  lazy val name: P[String] = p {
-    val rng = ('a' to 'z') :++ ('A' to 'Z') :+ '_'
-    val begin = P.charIn(rng)
-
-    val tl = begin | Numbers.digit
-
-    (begin ~ tl.rep0).map { case (c, s) => s"$c${s.mkString}" }
-  }
 
   lazy val executableDefinition = seps0.with1 *> {
     import ExecutableDefinition._
