@@ -20,7 +20,6 @@ import cats._
 import cats.implicits._
 import cats.mtl._
 import gql.ast._
-import gql.parser.QueryParser
 import gql.parser.GraphqlParser
 
 object Validation {

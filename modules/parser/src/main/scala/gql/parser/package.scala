@@ -39,7 +39,7 @@ package object parser {
   }
 
   def parseFor[A](str: String, p: cats.parse.Parser[A]): Either[ParseError, A] =
-    p.parseAll(str)
+    (GraphqlParser.seps0.with1 *> p).parseAll(str)
       .leftMap { err =>
         val offset = err.failedAtOffset
         val left = str.take(offset)

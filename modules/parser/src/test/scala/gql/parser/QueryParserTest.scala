@@ -13,12 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package gql
+package gql.parser
 
 import cats.implicits._
 import munit.CatsEffectSuite
 
-class ParserTest extends CatsEffectSuite {
+class QueryParserTest extends CatsEffectSuite {
   queries.zipWithIndex.map { case (q, i) =>
     test(s"parsing query $i should work as expected") {
       assert(clue(gql.parser.parseQuery(q).leftMap(_.prettyError.value)).isRight)

@@ -22,7 +22,7 @@ object QueryParser {
   import QueryAst._
   import GraphqlParser._
 
-  lazy val executableDefinition = seps0.with1 *> {
+  lazy val executableDefinition = {
     import ExecutableDefinition._
     Pos.pos(fragmentDefinition).map(Fragment(_)) |
       Pos.pos(operationDefinition).map(Operation(_))
