@@ -40,6 +40,8 @@ final case class ParameterizedQuery[A, V](
 }
 
 object Query {
+  type V = gql.parser.Value[gql.parser.AnyValue]
+
   final case class Compiled[A](
       decoder: Decoder[A],
       query: String,
@@ -150,7 +152,7 @@ object Query {
         case IntValue(v)     => Doc.text(v.toString)
         case StringValue(v)  => Doc.text(s""""$v"""")
         case FloatValue(v)   => Doc.text(v.toString)
-        case NullValue       => Doc.text("null")
+        case NullValue()       => Doc.text("null")
         case BooleanValue(v) => Doc.text(v.toString)
         case ListValue(v) =>
           Doc.intercalate(Doc.comma + Doc.line, v.map(renderValue)).tightBracketBy(Doc.char('['), Doc.char(']'))

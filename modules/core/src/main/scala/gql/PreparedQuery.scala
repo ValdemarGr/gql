@@ -20,13 +20,14 @@ import cats.data._
 import cats.mtl._
 import cats._
 import io.circe._
-import gql.parser.{QueryAst => P, Value => V, Pos}
+import gql.parser.{QueryAst => P, Value => V, Type => T, Pos}
 import gql.ast._
 import gql.resolver._
 import cats.parse.Caret
 import gql.parser.QueryParser
 
 object PreparedQuery {
+  type V = gql.parser.Value[gql.parser.AnyValue]
   sealed trait PreparedField[F[_], A] extends Product with Serializable
 
   sealed trait PreparedStep[F[_], -I, +O] extends Product with Serializable
@@ -409,7 +410,7 @@ object PreparedQuery {
       case (V.EnumValue(ae), V.EnumValue(be)) =>
         if (ae === be) F.unit
         else raise[F, Unit](s"Enum '$ae' and '$be' are not equal.", caret)
-      case (V.NullValue, V.NullValue) => F.unit
+      case (V.NullValue(), V.NullValue()) => F.unit
       case (V.ListValue(al), V.ListValue(bl)) =>
         if (al.length === bl.length) {
           al.zip(bl).zipWithIndex.parTraverse_ { case ((a, b), i) => ambientIndex(i)(compareValues[F](a, b, caret)) }
@@ -939,7 +940,7 @@ object PreparedQuery {
       case ListValue(_)         => "list"
       case V.EnumValue(_) => "enum"
       case BooleanValue(_)      => "boolean"
-      case NullValue            => "null"
+      case NullValue()            => "null"
       case FloatValue(_)        => "float"
       case IntValue(_)          => "int"
       case VariableValue(_)     => "variable"
@@ -952,7 +953,7 @@ object PreparedQuery {
       .show(_.name)
 
   def parseInputObj[F[_]: Parallel, A](
-      v: V.ObjectValue,
+      v: V.ObjectValue[gql.parser.AnyValue],
       fields: Arg[A],
       variableMap: Option[VariableMap],
       ambigiousEnum: Boolean
@@ -1019,7 +1020,7 @@ object PreparedQuery {
         ambientField(name) {
           parserValueToValue[F](x).flatMap(x => raiseEither(decoder(x), None))
         }
-      case (Input(name, fields, _), o: V.ObjectValue) =>
+      case (Input(name, fields, _), o: V.ObjectValue[v]) =>
         ambientField(name) {
           parseInputObj[F, A](o, fields, variableMap, ambigiousEnum)
         }
@@ -1031,7 +1032,7 @@ object PreparedQuery {
             }
           }
           .flatMap(arr.fromSeq(_).fold(raise(_, None), F.pure(_)))
-      case (_: InOpt[a], V.NullValue) => F.pure(Option.empty[a])
+      case (_: InOpt[a], V.NullValue()) => F.pure(Option.empty[a])
       case (opt: InOpt[a], x)               => parseInput[F, a](x, opt.of, variableMap, ambigiousEnum).map(Some(_))
       case (i, _)                           => raise(s"Expected type `${inName(i)}`, but got value ${pValueName(v)}.", None)
     }
@@ -1053,7 +1054,7 @@ object PreparedQuery {
           case Some(dv) => F.pure(ArgParam(defaulted = true, valueToParserValue(dv)))
           case None =>
             a.input.value match {
-              case InOpt(_) => F.pure(ArgParam(defaulted = false, V.NullValue))
+              case InOpt(_) => F.pure(ArgParam(defaulted = false, V.NullValue()))
               case _ =>
                 raise[F, ArgParam[V]](s"Required input for field '${a.name}' was not provided and has no default value.", None)
             }
@@ -1093,7 +1094,7 @@ object PreparedQuery {
   ): F[Value] = {
     import V._
     v match {
-      case NullValue            => F.pure(Value.NullValue)
+      case NullValue()            => F.pure(Value.NullValue)
       case FloatValue(v)        => F.pure(Value.FloatValue(v))
       case V.EnumValue(v) => F.pure(Value.EnumValue(v))
       case ListValue(v) =>
@@ -1117,7 +1118,7 @@ object PreparedQuery {
       case Value.ObjectValue(fields) => V.ObjectValue(fields.toList.map { case (k, v) => k -> valueToParserValue(v) })
       case Value.ArrayValue(v)       => V.ListValue(v.toList.map(valueToParserValue))
       case Value.EnumValue(v)        => V.EnumValue(v)
-      case Value.NullValue           => V.NullValue
+      case Value.NullValue           => V.NullValue()
       case Value.FloatValue(v)       => V.FloatValue(v)
     }
 
@@ -1186,17 +1187,17 @@ object PreparedQuery {
         vdsO.toList
           .flatMap(_.nel.toList)
           .parTraverse { case Pos(caret, vd) =>
-            val defaultWithFallback = vd.defaultValue.orElse(vd.tpe match {
-              case P.Type.NonNull(_) => None
-              case _                 => Some(V.NullValue)
+            val defaultWithFallback: Option[V] = vd.defaultValue.orElse(vd.tpe match {
+              case T.NonNull(_) => None
+              case _                 => Some(V.NullValue())
             })
 
-            def printType(t: P.Type, inOption: Boolean = false): String = {
+            def printType(t: T, inOption: Boolean = false): String = {
               val suffix = if (inOption) "" else "!"
               val prefix = t match {
-                case P.Type.List(of)    => s"[${printType(of)}]"
-                case P.Type.Named(n)    => n
-                case P.Type.NonNull(of) => printType(of, inOption = true)
+                case T.List(of)    => s"[${printType(of)}]"
+                case T.Named(n)    => n
+                case T.NonNull(of) => printType(of, inOption = true)
               }
               prefix + suffix
             }
@@ -1211,16 +1212,16 @@ object PreparedQuery {
                 )
             }
 
-            def verify(currentType: P.Type, currentValue: Either[V, Json], inOption: Boolean): F[Unit] = {
+            def verify(currentType: T, currentValue: Either[V, Json], inOption: Boolean): F[Unit] = {
               (currentType, currentValue) match {
-                case (P.Type.Named(name), v) =>
+                case (T.Named(name), v) =>
                   v match {
                     case Left(V.ListValue(_)) =>
                       raise(
                         s"Expected a value of type `$name` when checking the default value of '$$${vd.name}', found list instead.",
                         Some(caret)
                       )
-                    case Left(V.NullValue) if !inOption =>
+                    case Left(V.NullValue()) if !inOption =>
                       raise(
                         s"Expected a non-nullable value of type `$name` when checking the default value of '$$${vd.name}', found null instead.",
                         Some(caret)
@@ -1238,7 +1239,7 @@ object PreparedQuery {
                       )
                     case _ => F.unit
                   }
-                case (P.Type.List(of), v) =>
+                case (T.List(of), v) =>
                   v match {
                     case Left(V.ListValue(vs)) =>
                       vs.zipWithIndex.parTraverse { case (v, i) =>
@@ -1246,7 +1247,7 @@ object PreparedQuery {
                           verify(of, Left(v), inOption = true)
                         }
                       }.void
-                    case Left(V.NullValue) =>
+                    case Left(V.NullValue()) =>
                       if (inOption) F.unit
                       else
                         raise(
@@ -1282,7 +1283,7 @@ object PreparedQuery {
                         }
                       }
                   }
-                case (P.Type.NonNull(of), v) => verify(of, v, inOption = false)
+                case (T.NonNull(of), v) => verify(of, v, inOption = false)
               }
             }
 

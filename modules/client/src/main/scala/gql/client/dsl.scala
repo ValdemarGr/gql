@@ -7,6 +7,7 @@ import io.circe.Json
 import gql.parser.{Value => V, QueryAst => P}
 
 object dsl {
+  type V = gql.parser.Value[gql.parser.AnyValue]
   def sel[A](fieldName: String, alias: Option[String] = None)(implicit sq: SubQuery[A]): SelectionSet[A] =
     SelectionSet.lift(Selection.Field(fieldName, alias, Nil, sq))
 

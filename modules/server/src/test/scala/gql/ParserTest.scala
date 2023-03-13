@@ -560,6 +560,11 @@ query ($foo: TestType = { a: 123 }) { id }
     query {
       field(arg: 0.03)
     }
+  """,
+  """
+  query Test($arg: Data = { a: 1, b: { c: 2 } }) {
+    field(arg: { a: 1, b: { c: $arg } })
+  }
   """
   )
 

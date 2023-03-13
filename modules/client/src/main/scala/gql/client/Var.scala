@@ -27,7 +27,7 @@ object VariableClosure {
 
 // Don't construct such an instance directly
 final case class VariableName[A](name: String) extends AnyVal {
-  def asValue: V = V.VariableValue(name)
+  def asValue: gql.parser.Value[gql.parser.AnyValue] = V.VariableValue(name)
 }
 
 final case class Var[V, B](
@@ -47,6 +47,8 @@ final case class Var[V, B](
 }
 
 object Var {
+  type V = gql.parser.Value[gql.parser.AnyValue]
+
   type Impl[A] = Writer[NonEmptyChain[One[?]], Encoder.AsObject[A]]
   object Impl {
     def product[A, B](fa: Impl[A], fb: Impl[B]): Impl[(A, B)] =

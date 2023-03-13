@@ -47,7 +47,7 @@ object QueryAst {
 
   final case class Arguments(nel: NonEmptyList[Argument])
 
-  final case class Argument(name: String, value: V)
+  final case class Argument(name: String, value: V[AnyValue])
 
   final case class FragmentSpread(fragmentName: String)
 
@@ -61,12 +61,5 @@ object QueryAst {
 
   final case class VariableDefinitions(nel: NonEmptyList[Pos[VariableDefinition]])
 
-  final case class VariableDefinition(name: String, tpe: Type, defaultValue: Option[V])
-
-  sealed trait Type
-  object Type {
-    final case class Named(name: String) extends Type
-    final case class List(of: Type) extends Type
-    final case class NonNull(of: Type) extends Type
-  }
+  final case class VariableDefinition(name: String, tpe: Type, defaultValue: Option[V[gql.parser.Const]])
 }

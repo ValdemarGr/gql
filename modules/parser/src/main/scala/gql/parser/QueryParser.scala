@@ -24,6 +24,7 @@ import cats.data.NonEmptyList
 // https://spec.graphql.org/June2018/#sec-Source-Text
 object QueryParser {
   import QueryAst._
+  import GraphqlParser._
   val whiteSpace = Rfc5234.wsp
 
   val lineTerminator = Rfc5234.lf | Rfc5234.crlf | Rfc5234.cr
@@ -60,7 +61,15 @@ object QueryParser {
       (operationType ~ name.? ~ variableDefinitions.? ~ selectionSet).map { case (((opt, name), vars), ss) =>
         Detailed(opt, name, vars, ss)
       }
+  }
 
+  lazy val variableDefinitions =
+    variableDefinition.rep
+      .between(t('('), t(')'))
+      .map(VariableDefinitions(_))
+
+  lazy val variableDefinition = Pos.pos {
+    (variable ~ (t(':') *> `type`) ~ defaultValue(constValue).?).map { case ((n, t), d) => VariableDefinition(n, t, d) }
   }
 
   lazy val operationType = {
@@ -112,96 +121,4 @@ object QueryParser {
 
   lazy val typeCondition: P[String] =
     s("on") *> name
-
-  lazy val value: P[Value] = P.defer {
-    import Value._
-    variable.map(VariableValue(_)) |
-      p(Numbers.jsonNumber).map { s =>
-        val n = BigDecimal(s)
-        if (n.scale <= 0) Value.IntValue(n.toBigInt)
-        else Value.FloatValue(n)
-      } |
-      stringValue.map(StringValue(_)) |
-      booleanValue.map(BooleanValue(_)) |
-      nullValue.as(NullValue) |
-      enumValue.map(EnumValue(_)) |
-      listValue.map(ListValue(_)) |
-      objectValue.map(ObjectValue(_))
-  }
-
-  lazy val booleanValue =
-    s("true").as(true) |
-      s("false").as(false)
-
-  lazy val nullValue: P[Unit] =
-    s("null")
-
-  lazy val enumValue: P[String] =
-    (!(booleanValue | nullValue)).with1 *> name
-
-  lazy val listValue = value.rep0.with1.between(t('['), t(']'))
-
-  lazy val objectValue = objectField.rep.between(t('{'), t('}')).map(_.toList)
-
-  lazy val objectField = name ~ (t(':') *> value)
-
-  lazy val variableDefinitions =
-    variableDefinition.rep
-      .between(t('('), t(')'))
-      .map(VariableDefinitions(_))
-
-  lazy val variableDefinition = Pos.pos {
-    (variable ~ (t(':') *> `type`) ~ defaultValue.?).map { case ((n, t), d) => VariableDefinition(n, t, d) }
-  }
-
-  lazy val variable =
-    t('$') *> name
-
-  lazy val defaultValue = t('=') *> value
-
-  lazy val namedType = name.map(Type.Named(_))
-
-  lazy val nonNullType: P[Type] =
-    namedType <* t('!') |
-      listType <* t('!')
-
-  lazy val description = stringValue
-
-  lazy val intValue: P[BigInt] = p(Numbers.bigInt)
-
-  lazy val floatValue: P[BigDecimal] = p(Numbers.jsonNumber).map(BigDecimal(_))
-
-  lazy val stringValue: P[String] = p {
-    val d = P.char('"')
-    d *> ((d.rep(2, 2) *> (blockStringCharacter.rep0.with1 <* d.rep(3, 3))) | (stringCharacter.rep0.with1 <* d))
-  }.map(_.mkString_(""))
-
-  lazy val stringCharacter: P[String] =
-    ((!(P.charIn('"', '\\') | lineTerminator)).with1 *> sourceCharacter.map(_.toString())) |
-      (P.string("\\u").as("\\u") ~ escapedUnicode).map { case (x, y) =>
-        x + y
-      } |
-      (P.charIn('\\') ~ escapedCharacter).map { case (x, y) => x.toString() + y }
-
-  lazy val escapedUnicode: P[String] =
-    P.charIn(('0' to '9') :++ ('a' to 'f') :++ ('A' to 'F')).rep(4, 4).map(_.mkString_(""))
-
-  lazy val escapedCharacter: P[Char] =
-    P.charIn('"', '\\', '/', 'b', 'f', 'n', 'r', 't')
-
-  lazy val blockStringCharacter: P[String] = {
-    val qs = P.string("\"\"\"")
-    (!(qs | (P.char('\\') *> qs))).with1 *> sourceCharacter
-  }.map(_.toString())
-
-  lazy val `type`: P[Type] = {
-    import Type._
-    (P.defer(namedType | listType.map(List(_))) ~ t('!').?).map {
-      case (x, Some(_)) => NonNull(x)
-      case (x, None)    => x
-    }
-  }
-
-  lazy val listType: P[Type] =
-    `type`.between(t('['), t(']'))
 }
