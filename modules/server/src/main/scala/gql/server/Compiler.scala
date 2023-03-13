@@ -113,7 +113,7 @@ object Compiler {
         schema: Schema[F, Q, M, S],
         cp: QueryParameters
     ): Either[CompilationError, PreparedQuery.PrepResult[F, Q, M, S]] =
-      gql.parser.parse(cp.query) match {
+      gql.parser.parseQuery(cp.query) match {
         case Left(pe) => Left(CompilationError.Parse(pe))
         case Right(q) =>
           PreparedQuery.prepare(q, schema.shape, cp.variables.getOrElse(Map.empty), cp.operationName) match {

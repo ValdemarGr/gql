@@ -4,6 +4,7 @@ import cats.data._
 import cats._
 import cats.implicits._
 import gql.std.FreeApply
+import gql.parser.{QueryAst => P}
 
 /*
  * A SubQuery is either:
@@ -74,11 +75,6 @@ object SelectionSet {
   }
 }
 
-final case class Arg(
-    name: String,
-    value: gql.parser.QueryParser.Value
-)
-
 /*
  * A selection occurs in a query and covers the following cases:
  *  - a field { name }
@@ -91,7 +87,7 @@ object Selection {
   final case class Field[A](
       fieldName: String,
       alias: Option[String],
-      args: List[Arg],
+      args: List[P.Argument],
       subQuery: SubQuery[A]
   ) extends Selection[A]
 

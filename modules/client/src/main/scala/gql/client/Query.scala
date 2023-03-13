@@ -1,7 +1,7 @@
 package gql.client
 
 import cats.data._
-import gql.parser.{QueryParser => P}
+import gql.parser.{QueryAst => P, Value => V}
 import io.circe._
 import org.typelevel.paiges._
 import cats.implicits._
@@ -144,8 +144,8 @@ object Query {
         case P.OperationType.Subscription => Doc.text("subscription")
       }
 
-    def renderValue(v: P.Value): Doc = {
-      import P.Value._
+    def renderValue(v: V): Doc = {
+      import V._
       v match {
         case IntValue(v)     => Doc.text(v.toString)
         case StringValue(v)  => Doc.text(s""""$v"""")
@@ -174,7 +174,7 @@ object Query {
       Doc.text(s"$$${v.name}") + Doc.space + Doc.char(':') + Doc.space + Doc.text(v.tpe) + default
     }
 
-    def renderArg(a: Arg): Doc =
+    def renderArg(a: P.Argument): Doc =
       Doc.text(a.name) + Doc.char(':') + Doc.space + renderValue(a.value)
 
     def renderSelectionSet(ss: SelectionSet[?]): Doc = {

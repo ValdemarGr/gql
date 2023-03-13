@@ -38,7 +38,7 @@ package object parser {
     }
   }
 
-  def parse(str: String): Either[ParseError, NonEmptyList[QueryParser.ExecutableDefinition]] = {
+  def parseQuery(str: String): Either[ParseError, NonEmptyList[QueryAst.ExecutableDefinition]] = {
     QueryParser.executableDefinition.rep
       .parseAll(str)
       .leftMap { err =>

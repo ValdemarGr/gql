@@ -21,7 +21,7 @@ import munit.CatsEffectSuite
 class ParserTest extends CatsEffectSuite {
   queries.zipWithIndex.map { case (q, i) =>
     test(s"parsing query $i should work as expected") {
-      assert(clue(gql.parser.parse(q).leftMap(_.prettyError.value)).isRight)
+      assert(clue(gql.parser.parseQuery(q).leftMap(_.prettyError.value)).isRight)
     }
   }
 

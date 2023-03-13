@@ -5,6 +5,7 @@ import cats.implicits._
 import cats.data._
 import io.circe._
 import cats.Contravariant
+import gql.parser.{ Value => V}
 
 final case class VariableClosure[A, V](
     variables: Var.Impl[V],
@@ -26,8 +27,7 @@ object VariableClosure {
 
 // Don't construct such an instance directly
 final case class VariableName[A](name: String) extends AnyVal {
-  def asValue: gql.parser.QueryParser.Value =
-    gql.parser.QueryParser.Value.VariableValue(name)
+  def asValue: V = V.VariableValue(name)
 }
 
 final case class Var[V, B](
@@ -70,10 +70,10 @@ object Var {
   final case class One[A](
       name: VariableName[A],
       tpe: String,
-      default: Option[gql.parser.QueryParser.Value]
+      default: Option[V]
   )
 
-  def apply[A](name: String, tpe: String, default: Option[gql.parser.QueryParser.Value] = None)(implicit
+  def apply[A](name: String, tpe: String, default: Option[V] = None)(implicit
       encoder: io.circe.Encoder[A]
   ): Var[A, VariableName[A]] = {
     val vn = VariableName[A](name)

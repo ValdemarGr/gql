@@ -20,7 +20,5 @@ object syntax {
         
         def fetch[F[_]: Concurrent](implicit client: Client[F]): F[A] = 
             fetch[F](client)
-
-        //def subscribe[F[_]](client: WSClient)
     }
 }
