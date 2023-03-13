@@ -43,7 +43,7 @@ object dsl {
   ): Var[A, VariableName[A]] = Var[A](name, tn.stack.invert.show(identity), default)
 
   def value[A](a: A)(implicit enc: io.circe.Encoder[A]) =
-    gql.PreparedQuery.valueToParserValue(gql.Value.fromJson(enc(a)))
+    V.fromJson(enc(a))
 
   def arg(name: String, value: V): P.Argument =
     P.Argument(name, value)

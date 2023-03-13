@@ -14,10 +14,12 @@
  * limitations under the License.
  */
 package gql
+
 import cats.data._
 import cats._
 import cats.implicits._
 import gql.ast._
+import gql.parser.{Value => V, Const}
 
 final case class Arg[+A](
     entries: NonEmptyChain[ArgValue[?]],
@@ -51,10 +53,10 @@ final case class ArgParam[A](
 final case class ArgValue[A](
     name: String,
     input: Eval[In[A]],
-    defaultValue: Option[Value],
+    defaultValue: Option[V[Const]],
     description: Option[String]
 ) {
   def document(description: String) = copy(description = Some(description))
 
-  def default(value: Value) = copy(defaultValue = Some(value))
+  def default(value: V[Const]) = copy(defaultValue = Some(value))
 }

@@ -21,6 +21,7 @@ import cats._
 import cats.data._
 import gql.resolver._
 import java.util.UUID
+import gql.parser.{Value => V, Const}
 
 object ast extends AstImplicits.Implicits {
   sealed trait Out[+F[_], A]
@@ -130,8 +131,8 @@ object ast extends AstImplicits.Implicits {
 
   final case class Scalar[A](
       name: String,
-      encoder: A => Value,
-      decoder: Value => Either[String, A],
+      encoder: A => V[Const],
+      decoder: V[Const] => Either[String, A],
       description: Option[String] = None
   ) extends OutToplevel[fs2.Pure, A]
       with InToplevel[A] {
@@ -211,16 +212,18 @@ object ast extends AstImplicits.Implicits {
   }
 
   object Scalar {
-    def fromCirce[A](name: String)(implicit enc: Encoder[A], dec: Decoder[A]): Scalar[A] =
+    def fromCirce[A](name: String)(implicit enc: Encoder[A], dec: Decoder[A]): Scalar[A] = {
+      import io.circe.syntax._
       Scalar(
         name,
-        a => Value.fromJson(enc(a)),
+        a => V.fromJson(enc(a)),
         value =>
           dec.decodeJson(value.asJson).leftMap { case df: io.circe.DecodingFailure =>
             val maybeAt = if (df.history.size > 1) s" at ${io.circe.CursorOp.opsToPath(df.history)}" else ""
             s"decoding failure for type $name$maybeAt with message ${df.message}"
           }
       )
+      }
 
     implicit lazy val invariantForScalar: Invariant[Scalar] = new Invariant[Scalar] {
       override def imap[A, B](fa: Scalar[A])(f: A => B)(g: B => A): Scalar[B] =

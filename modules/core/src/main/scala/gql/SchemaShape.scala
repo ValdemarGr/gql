@@ -21,6 +21,7 @@ import cats.mtl._
 import cats.data._
 import gql.ast._
 import org.typelevel.paiges.Doc
+import gql.parser.{Value => V, Const}
 
 final case class SchemaShape[F[_], Q, M, S](
     query: Type[F, Q],
@@ -170,15 +171,15 @@ object SchemaShape {
       .value
   }
 
-  def renderValueDoc(v: Value): Doc = {
-    import Value._
+  def renderValueDoc(v: V[Const]): Doc = {
+    import V._
     v match {
       case IntValue(v)     => Doc.text(v.toString)
       case StringValue(v)  => Doc.text(s""""$v"""")
       case FloatValue(v)   => Doc.text(v.toString)
-      case NullValue       => Doc.text("null")
+      case NullValue()       => Doc.text("null")
       case BooleanValue(v) => Doc.text(v.toString)
-      case ArrayValue(v) =>
+      case ListValue(v) =>
         Doc.intercalate(Doc.comma + Doc.line, v.map(renderValueDoc)).tightBracketBy(Doc.char('['), Doc.char(']'))
       case ObjectValue(fields) =>
         Doc

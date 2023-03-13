@@ -12,20 +12,21 @@ sealed trait Const extends AnyValue
  * Enums and Strings in GraphQL are for instance represented as strings, but a string which is provided as a GraphQL value
  * shouldn't be allowed as an enum value.
  */
-trait Value[+V >: Const <: AnyValue]
+sealed trait Value[+V <: AnyValue] extends Product with Serializable
+sealed trait NonVar extends Value[Const]
 object Value {
   // Const can safely be converted to AnyValue (With variable)
   // AnyValue cannot safely be converted to Const, since that would lose the variables
   // That is, Const is a subtype of AnyValue
   final case class VariableValue(v: String) extends Value[AnyValue]
-  final case class IntValue[+V >: Const <: AnyValue](v: BigInt) extends Value[V]
-  final case class FloatValue[+V >: Const <: AnyValue](v: BigDecimal) extends Value[V]
-  final case class StringValue[+V >: Const <: AnyValue](v: String) extends Value[V]
-  final case class BooleanValue[+V >: Const <: AnyValue](v: Boolean) extends Value[V]
-  final case class NullValue[+V >: Const <: AnyValue]() extends Value[V]
-  final case class EnumValue[+V >: Const <: AnyValue](v: String) extends Value[V]
-  final case class ListValue[+V >: Const <: AnyValue](v: List[Value[V]]) extends Value[V]
-  final case class ObjectValue[+V >: Const <: AnyValue](v: List[(String, Value[V])]) extends Value[V]
+  final case class IntValue(v: BigInt) extends NonVar
+  final case class FloatValue(v: BigDecimal) extends NonVar
+  final case class StringValue(v: String) extends NonVar
+  final case class BooleanValue(v: Boolean) extends NonVar
+  final case class NullValue() extends NonVar
+  final case class EnumValue(v: String) extends NonVar
+  final case class ListValue[+V <: AnyValue](v: List[Value[V]]) extends Value[V]
+  final case class ObjectValue[+V <: AnyValue](v: List[(String, Value[V])]) extends Value[V]
 
   def fromJson(j: Json): Value[Const] = j.fold(
     jsonNull = NullValue(),
@@ -39,12 +40,12 @@ object Value {
   implicit val decoder = Decoder.decodeJson.map(fromJson)
 
   implicit val encoder: Encoder[Value[Const]] = Encoder.instance[Value[Const]] {
-    case i: IntValue[Const]     => i.v.asJson
-    case f: FloatValue[Const]   => f.v.asJson
-    case s: StringValue[Const]  => s.v.asJson
-    case b: BooleanValue[Const] => b.v.asJson
+    case i: IntValue     => i.v.asJson
+    case f: FloatValue   => f.v.asJson
+    case s: StringValue  => s.v.asJson
+    case b: BooleanValue => b.v.asJson
     case NullValue()            => Json.Null
-    case e: EnumValue[Const]    => e.v.asJson
+    case e: EnumValue    => e.v.asJson
     case l: ListValue[Const]    => l.v.map(_.asJson).asJson
     case o: ObjectValue[Const]  => JsonObject.fromIterable(o.v.map { case (k, v) => k -> v.asJson }).asJson
   }

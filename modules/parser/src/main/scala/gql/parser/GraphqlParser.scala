@@ -50,17 +50,21 @@ object GraphqlParser {
 
   def constValueFields[A >: Const <: AnyValue](vp: => P[Value[A]]): P[Value[A]] = P.defer {
     import Value._
-    p(Numbers.jsonNumber).map { s =>
+    val p1: P[Value[Const]] = p(Numbers.jsonNumber).map { s =>
       val n = BigDecimal(s)
-      if (n.scale <= 0) Value.IntValue[A](n.toBigInt)
-      else Value.FloatValue[A](n)
+      if (n.scale <= 0) Value.IntValue(n.toBigInt)
+      else Value.FloatValue(n)
     } |
-      stringValue.map(StringValue[A](_)) |
-      booleanValue.map(BooleanValue[A](_)) |
-      nullValue.as(NullValue[A]()) |
-      enumValue.map(EnumValue[A](_)) |
+      stringValue.map(StringValue(_)) |
+      booleanValue.map(BooleanValue(_)) |
+      nullValue.as(NullValue()) |
+      enumValue.map(EnumValue(_))
+
+    val p2: P[Value[A]] = 
       listValue(vp).map(ListValue[A](_)) |
       objectValue(vp).map(ObjectValue[A](_))
+
+    p1 | p2
   }
 
   lazy val anyValueFields: P[Value[AnyValue]] = P.defer {
@@ -79,22 +83,22 @@ object GraphqlParser {
   lazy val nullValue: P[Unit] =
     s("null")
 
-  lazy val enumValue: P[String] =
+    lazy val enumValue: P[String] =
     (!(booleanValue | nullValue)).with1 *> name
 
-  def listValue[A >: Const <: AnyValue](vp: P[Value[A]]): P[List[Value[A]]] =
+  def listValue[A <: AnyValue](vp: P[Value[A]]): P[List[Value[A]]] =
     vp.rep0.with1.between(t('['), t(']'))
 
-  def objectValue[A >: Const <: AnyValue](vp: P[Value[A]]): P[List[(String, Value[A])]] =
+  def objectValue[A <: AnyValue](vp: P[Value[A]]): P[List[(String, Value[A])]] =
     objectField(vp).rep.between(t('{'), t('}')).map(_.toList)
 
-  def objectField[A >: Const <: AnyValue](vp: P[Value[A]]): P[(String, Value[A])] =
+  def objectField[A <: AnyValue](vp: P[Value[A]]): P[(String, Value[A])] =
     name ~ (t(':') *> vp)
 
   lazy val variable =
     t('$') *> name
 
-  def defaultValue[A >: Const <: AnyValue](p: => P[Value[A]]) = t('=') *> p
+  def defaultValue[A <: AnyValue](p: => P[Value[A]]) = t('=') *> p
 
   lazy val namedType = name.map(Type.Named(_))
 

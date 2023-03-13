@@ -293,12 +293,8 @@ object Validation {
       // We check the arg like we would in a user-supplied query
       // Except, we use default as the "input" such that it is verified against the arg
       val checkArgsF =
-        arg.entries
-          .map(x => x.defaultValue.tupleRight(x))
-          .collect { case Some((dv, x)) =>
-            val pv = PreparedQuery.valueToParserValue(dv)
-            (x, pv)
-          }
+        arg.entries.toChain
+          .mapFilter(x => x.defaultValue.tupleLeft(x))
           .traverse { case (a: ArgValue[a], pv) =>
             PreparedQuery.runK {
               PreparedQuery
@@ -401,14 +397,7 @@ object Validation {
                           raise[F, G](Error.InterfaceImplementationMissingDefaultArg(ol.name, i.value.name, k, argName))
                         case (Some(ld), Some(rd)) =>
                           PreparedQuery
-                            .runK {
-                              PreparedQuery
-                                .compareValues[PreparedQuery.H](
-                                  PreparedQuery.valueToParserValue(ld),
-                                  PreparedQuery.valueToParserValue(rd),
-                                  None
-                                )
-                            }
+                            .runK(PreparedQuery.compareValues[PreparedQuery.H](ld, rd, None))
                             .swap
                             .toOption
                             .traverse_(_.traverse_ { pe =>

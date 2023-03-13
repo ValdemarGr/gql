@@ -20,14 +20,13 @@ import cats.data._
 import cats.mtl._
 import cats._
 import io.circe._
-import gql.parser.{QueryAst => P, Value => V, Type => T, Pos}
+import gql.parser.{QueryAst => P, Value => V, NonVar, Type => T, Pos, AnyValue, Const}
 import gql.ast._
 import gql.resolver._
 import cats.parse.Caret
 import gql.parser.QueryParser
 
 object PreparedQuery {
-  type V = gql.parser.Value[gql.parser.AnyValue]
   sealed trait PreparedField[F[_], A] extends Product with Serializable
 
   sealed trait PreparedStep[F[_], -I, +O] extends Product with Serializable
@@ -387,7 +386,7 @@ object PreparedQuery {
   def fieldName[G[_]](f: FieldInfo[G]): String =
     s"'${f.alias.getOrElse(f.name)}'${f.alias.map(x => s" (alias for '$x')").mkString}"
 
-  def compareValues[F[_]: Parallel](av: V, bv: V, caret: Option[Caret])(implicit
+  def compareValues[F[_]: Parallel](av: V[AnyValue], bv: V[AnyValue], caret: Option[Caret])(implicit
       F: MonadError[F, NonEmptyChain[PositionalError]],
       L: Local[F, Prep]
   ): F[Unit] = {
@@ -423,12 +422,12 @@ object PreparedQuery {
             caret
           )
         else {
-          def checkUniqueness(xs: List[(String, V)]) =
+          def checkUniqueness(xs: List[(String, V[AnyValue])]) =
             xs.groupMap { case (k, _) => k } { case (_, v) => v }
               .toList
               .parTraverse {
                 case (k, v :: Nil) => F.pure(k -> v)
-                case (k, _)        => raise[F, (String, V)](s"Key '$k' is not unique in object.", caret)
+                case (k, _)        => raise[F, (String, V[AnyValue])](s"Key '$k' is not unique in object.", caret)
               }
               .map(_.toMap)
 
@@ -805,6 +804,7 @@ object PreparedQuery {
         case (e: Enum[a], None) =>
           Used[F].pure(PreparedLeaf(e.name, x => Json.fromString(e.revm(x))))
         case (s: Scalar[a], None) =>
+          import io.circe.syntax._
           Used[F].pure(PreparedLeaf(s.name, x => s.encoder(x).asJson))
         case (o, Some(_)) =>
           Used.liftF(raise(s"Type `${friendlyName(o)}` cannot have selections.", Some(selCaret)))
@@ -873,7 +873,7 @@ object PreparedQuery {
     }
   }
 
-  type VariableMap = Map[String, Either[V, Json]]
+  type VariableMap = Map[String, Either[V[Const], Json]]
 
   def matchType[F[_], G[_]](
       name: String,
@@ -932,7 +932,7 @@ object PreparedQuery {
       }
     }
 
-  def pValueName(v: V): String = {
+  def pValueName(v: V[AnyValue]): String = {
     import V._
     v match {
       case ObjectValue(_)       => "object"
@@ -975,7 +975,7 @@ object PreparedQuery {
     tooMuchF >> parseArg[F, A](fields, m, variableMap, ambigiousEnum)
   }
 
-  def parseInput[F[_]: Parallel, A](v: V, tpe: In[A], variableMap: Option[VariableMap], ambigiousEnum: Boolean)(implicit
+  def parseInput[F[_]: Parallel, A](v: V[AnyValue], tpe: In[A], variableMap: Option[VariableMap], ambigiousEnum: Boolean)(implicit
       F: MonadError[F, NonEmptyChain[PositionalError]],
       L: Local[F, Prep]
   ): F[A] =
@@ -992,11 +992,11 @@ object PreparedQuery {
                 )
               case Some(Left(pval)) => parseInput[F, A](pval, tpe, None, ambigiousEnum = false)
               case Some(Right(j)) =>
-                val asPVal = valueToParserValue(Value.fromJson(j))
+                val asPVal = V.fromJson(j)
                 parseInput[F, A](asPVal, tpe, None, ambigiousEnum = true)
             }
         }
-      case (e @ Enum(name, _, _), v) =>
+        case (e @ Enum(name, _, _), v) =>
         ambientField(name) {
           val fa: F[String] = v match {
             case V.EnumValue(s)                    => F.pure(s)
@@ -1016,13 +1016,9 @@ object PreparedQuery {
             }
           }
         }
-      case (Scalar(name, _, decoder, _), x) =>
+      case (Scalar(name, _, decoder, _), x: NonVar) =>
         ambientField(name) {
-          parserValueToValue[F](x).flatMap(x => raiseEither(decoder(x), None))
-        }
-      case (Input(name, fields, _), o: V.ObjectValue[v]) =>
-        ambientField(name) {
-          parseInputObj[F, A](o, fields, variableMap, ambigiousEnum)
+          raiseEither(decoder(x), None)
         }
       case (arr: InArr[a, c], V.ListValue(xs)) =>
         xs.zipWithIndex
@@ -1035,28 +1031,28 @@ object PreparedQuery {
       case (_: InOpt[a], V.NullValue()) => F.pure(Option.empty[a])
       case (opt: InOpt[a], x)               => parseInput[F, a](x, opt.of, variableMap, ambigiousEnum).map(Some(_))
       case (i, _)                           => raise(s"Expected type `${inName(i)}`, but got value ${pValueName(v)}.", None)
-    }
+  }
 
   def parseArgValue[F[_]: Parallel, A](
       a: ArgValue[A],
-      input: Map[String, V],
+      input: Map[String, V[AnyValue]],
       variableMap: Option[VariableMap],
       ambigiousEnum: Boolean
   )(implicit
       F: MonadError[F, NonEmptyChain[PositionalError]],
       L: Local[F, Prep]
   ): F[ArgParam[A]] = {
-    val fa: F[ArgParam[V]] = input.get(a.name) match {
+    val fa: F[ArgParam[V[AnyValue]]] = input.get(a.name) match {
       case Some(x) => F.pure(ArgParam(defaulted = false, x))
       case None =>
         a.defaultValue match {
           // TODO this value being parsed can probably be cached, since the default is the same for every query
-          case Some(dv) => F.pure(ArgParam(defaulted = true, valueToParserValue(dv)))
+          case Some(dv) => F.pure(ArgParam(defaulted = true, dv))
           case None =>
             a.input.value match {
               case InOpt(_) => F.pure(ArgParam(defaulted = false, V.NullValue()))
               case _ =>
-                raise[F, ArgParam[V]](s"Required input for field '${a.name}' was not provided and has no default value.", None)
+                raise[F, ArgParam[V[AnyValue]]](s"Required input for field '${a.name}' was not provided and has no default value.", None)
             }
         }
     }
@@ -1066,7 +1062,7 @@ object PreparedQuery {
     }
   }
 
-  def parseArg[F[_]: Parallel, A](arg: Arg[A], input: Map[String, V], variableMap: Option[VariableMap], ambigiousEnum: Boolean)(
+  def parseArg[F[_]: Parallel, A](arg: Arg[A], input: Map[String, V[AnyValue]], variableMap: Option[VariableMap], ambigiousEnum: Boolean)(
       implicit
       F: MonadError[F, NonEmptyChain[PositionalError]],
       L: Local[F, Prep]
@@ -1087,40 +1083,6 @@ object PreparedQuery {
       .map(_.toList.toMap)
       .flatMap(arg.decode(_).fold(raise(_, None), F.pure(_)))
   }
-
-  def parserValueToValue[F[_]: Parallel](v: V)(implicit
-      F: MonadError[F, NonEmptyChain[PositionalError]],
-      L: Local[F, Prep]
-  ): F[Value] = {
-    import V._
-    v match {
-      case NullValue()            => F.pure(Value.NullValue)
-      case FloatValue(v)        => F.pure(Value.FloatValue(v))
-      case V.EnumValue(v) => F.pure(Value.EnumValue(v))
-      case ListValue(v) =>
-        v.toVector.parTraverse(parserValueToValue[F]).map(Value.ArrayValue(_))
-      case IntValue(v)      => F.pure(Value.IntValue(v))
-      case VariableValue(v) => raise[F, Value](s"Variable '$$$v' may not occur here.", None)
-      case ObjectValue(v) =>
-        v.parTraverse { case (k, v) =>
-          parserValueToValue[F](v).tupleLeft(k)
-        }.map(xs => Value.ObjectValue(xs.toMap))
-      case BooleanValue(v) => F.pure(Value.BooleanValue(v))
-      case StringValue(v)  => F.pure(Value.StringValue(v))
-    }
-}
-
-  def valueToParserValue(v: Value): V =
-    v match {
-      case Value.BooleanValue(v)     => V.BooleanValue(v)
-      case Value.StringValue(v)      => V.StringValue(v)
-      case Value.IntValue(v)         => V.IntValue(v)
-      case Value.ObjectValue(fields) => V.ObjectValue(fields.toList.map { case (k, v) => k -> valueToParserValue(v) })
-      case Value.ArrayValue(v)       => V.ListValue(v.toList.map(valueToParserValue))
-      case Value.EnumValue(v)        => V.EnumValue(v)
-      case Value.NullValue           => V.NullValue()
-      case Value.FloatValue(v)       => V.FloatValue(v)
-    }
 
   def getOperationDefinition[F[_]](
       ops: List[Pos[P.OperationDefinition]],
@@ -1187,7 +1149,7 @@ object PreparedQuery {
         vdsO.toList
           .flatMap(_.nel.toList)
           .parTraverse { case Pos(caret, vd) =>
-            val defaultWithFallback: Option[V] = vd.defaultValue.orElse(vd.tpe match {
+            val defaultWithFallback: Option[V[Const]] = vd.defaultValue.orElse(vd.tpe match {
               case T.NonNull(_) => None
               case _                 => Some(V.NullValue())
             })
@@ -1202,7 +1164,7 @@ object PreparedQuery {
               prefix + suffix
             }
 
-            val rootValueF: F[Either[V, Json]] = (variableMap.get(vd.name), defaultWithFallback) match {
+            val rootValueF: F[Either[V[Const], Json]] = (variableMap.get(vd.name), defaultWithFallback) match {
               case (None, Some(d)) => F.pure(Left(d))
               case (Some(x), _)    => F.pure(Right(x))
               case (None, None) =>
@@ -1212,7 +1174,7 @@ object PreparedQuery {
                 )
             }
 
-            def verify(currentType: T, currentValue: Either[V, Json], inOption: Boolean): F[Unit] = {
+            def verify(currentType: T, currentValue: Either[V[Const], Json], inOption: Boolean): F[Unit] = {
               (currentType, currentValue) match {
                 case (T.Named(name), v) =>
                   v match {
