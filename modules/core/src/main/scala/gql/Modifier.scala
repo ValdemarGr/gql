@@ -48,6 +48,8 @@ object ModifierStack {
 
   def fromIn(t: In[?]): ModifierStack[InToplevel[?]] =
     InverseModifierStack.fromIn(t).invert
+
+  def fromType(t: gql.parser.Type): ModifierStack[String] = ???
 }
 
 object InverseModifierStack {

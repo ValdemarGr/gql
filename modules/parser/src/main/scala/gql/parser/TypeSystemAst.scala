@@ -3,7 +3,7 @@ package gql.parser
 import cats.data.NonEmptyList
 
 object TypeSystemAst {
-  sealed trait TypeDefinition
+  sealed trait TypeDefinition { def name: String }
   object TypeDefinition {
     final case class ScalarTypeDefinition(description: Option[String], name: String) extends TypeDefinition
     final case class ObjectTypeDefinition(
@@ -19,7 +19,8 @@ object TypeSystemAst {
         fieldDefinitions: NonEmptyList[FieldDefinition]
     ) extends TypeDefinition
     final case class UnionTypeDefinition(description: Option[String], name: String, types: NonEmptyList[String]) extends TypeDefinition
-    final case class EnumTypeDefinition(description: Option[String], name: String, values: NonEmptyList[EnumValueDefinition]) extends TypeDefinition
+    final case class EnumTypeDefinition(description: Option[String], name: String, values: NonEmptyList[EnumValueDefinition])
+        extends TypeDefinition
     final case class InputObjectTypeDefinition(
         description: Option[String],
         name: String,
@@ -27,9 +28,19 @@ object TypeSystemAst {
     ) extends TypeDefinition
   }
 
-  final case class InputValueDefinition(description: Option[String], name: String, tpe: Type, defaultValue: Option[Value[Const]])
+  final case class InputValueDefinition(
+      description: Option[String],
+      name: String,
+      tpe: Type,
+      defaultValue: Option[Value[Const]]
+  )
 
-  final case class FieldDefinition(description: Option[String], name: String, argumentsDefinition: List[InputValueDefinition], tpe: Type)
+  final case class FieldDefinition(
+      description: Option[String],
+      name: String,
+      argumentsDefinition: List[InputValueDefinition],
+      tpe: Type
+  )
 
   final case class EnumValueDefinition(description: Option[String], name: String)
 }

@@ -92,6 +92,12 @@ lazy val client = project
   .settings(name := "gql-client"/*, tlFatalWarnings := true*/)
   .dependsOn(core)
 
+lazy val clientCodegen = project
+  .in(file("modules/client-codegen"))
+  .settings(sharedSettings)
+  .settings(name := "gql-client-codegen"/*, tlFatalWarnings := true*/)
+  .dependsOn(core)
+  .dependsOn(client)
 
 lazy val http4sClient = project
   .in(file("modules/client-http4s"))
