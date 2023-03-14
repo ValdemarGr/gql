@@ -4,12 +4,11 @@ import cats.data._
 import cats.implicits._
 import gql._
 import io.circe.Json
-import gql.parser.{Value => V, QueryAst => P}
+import gql.parser.{Value => V, QueryAst => P, AnyValue, Const}
 import java.util.UUID
 import java.time.LocalDate
 
 object dsl {
-  type V = gql.parser.Value[gql.parser.AnyValue]
   def sel[A](fieldName: String, alias: Option[String] = None)(implicit sq: SubQuery[A]): SelectionSet[A] =
     SelectionSet.lift(Selection.Field(fieldName, alias, Nil, sq))
 
@@ -39,15 +38,20 @@ object dsl {
         else Right(hd.headOption)
       }
 
-  def variable[A](name: String, default: Option[V] = None)(implicit
+  def variable[A](name: String)(implicit
       tn: Typename[A],
       encoder: io.circe.Encoder[A]
-  ): Var[A, VariableName[A]] = Var[A](name, tn.stack.invert.show(identity), default)
+  ): Var[A, VariableName[A]] = Var[A](name, tn.stack.invert.show(identity))
+
+  def variable[A](name: String, default: V[Const])(implicit
+      tn: Typename[A],
+      encoder: io.circe.Encoder[A]
+  ): Var[Option[A], VariableName[A]] = Var[A](name, tn.stack.invert.show(identity), default)
 
   def value[A](a: A)(implicit enc: io.circe.Encoder[A]) =
     V.fromJson(enc(a))
 
-  def arg(name: String, value: V): P.Argument =
+  def arg(name: String, value: V[AnyValue]): P.Argument =
     P.Argument(name, value)
 
   def arg(name: String, vn: VariableName[?]): P.Argument =
@@ -55,6 +59,8 @@ object dsl {
 
   def arg[A](name: String, a: A)(implicit enc: io.circe.Encoder[A]): P.Argument =
     P.Argument(name, value(a))
+
+  def embed[A](implicit ss: SelectionSet[A]): SelectionSet[A] = ss
 
   final case class Typename[A](stack: InverseModifierStack[String]) {
     def push[B](m: InverseModifier): Typename[B] = Typename(stack.push(m))
@@ -64,7 +70,7 @@ object dsl {
       ta.push(InverseModifier.List)
 
     implicit def typenameStackForOption[A](implicit ta: Typename[A]): Typename[Option[A]] =
-      ta.push(InverseModifier.Nullable)
+      ta.push(InverseModifier.Optional)
 
     implicit lazy val typenameForString: Typename[String] =
       Typename(InverseModifierStack(Nil, "String"))

@@ -8,37 +8,32 @@ object Modifier {
   case object NonNull extends Modifier
 }
 
-sealed trait InverseModifier
-object InverseModifier {
-  case object List extends InverseModifier
-  case object Nullable extends InverseModifier
-}
-
 final case class ModifierStack[+T](modifiers: List[Modifier], inner: T) {
   def push(m: Modifier): ModifierStack[T] =
     ModifierStack(m :: modifiers, inner)
+
+  // Base case is optional
+  def invert: InverseModifierStack[T] = {
+    def optional: InverseModifierStack[T] => InverseModifierStack[T] =
+      _.push(InverseModifier.Optional)
+
+    def go(
+        ms: List[Modifier],
+        parentOp: InverseModifierStack[T] => InverseModifierStack[T]
+    ): InverseModifierStack[T] =
+      ms match {
+        case Nil                      => parentOp(InverseModifierStack(Nil, inner))
+        case Modifier.List :: rest    => parentOp(go(rest, optional).push(InverseModifier.List))
+        case Modifier.NonNull :: rest => go(rest, identity)
+      }
+
+    go(modifiers, optional)
+  }
 
   def show(showInner: T => String): String = modifiers match {
     case Nil                      => showInner(inner)
     case Modifier.List :: rest    => s"[${ModifierStack(rest, inner).show(showInner)}]"
     case Modifier.NonNull :: rest => s"${ModifierStack(rest, inner).show(showInner)}!"
-  }
-}
-
-final case class InverseModifierStack[+T](modifiers: List[InverseModifier], inner: T) {
-  def push(m: InverseModifier): InverseModifierStack[T] =
-    InverseModifierStack(m :: modifiers, inner)
-
-  def invert: ModifierStack[T] = {
-    def go(ms: List[InverseModifier], inOption: Boolean): ModifierStack[T] = {
-      val out = ms match {
-        case Nil                              => ModifierStack(Nil, inner)
-        case InverseModifier.List :: rest     => go(rest, inOption = true).push(Modifier.List)
-        case InverseModifier.Nullable :: rest => go(rest, inOption = true)
-      }
-      if (inOption) out else out.push(Modifier.NonNull)
-    }
-    go(modifiers, inOption = false)
   }
 }
 
@@ -49,7 +44,54 @@ object ModifierStack {
   def fromIn(t: In[?]): ModifierStack[InToplevel[?]] =
     InverseModifierStack.fromIn(t).invert
 
-  def fromType(t: gql.parser.Type): ModifierStack[String] = ???
+  import gql.parser.Type
+  def fromType(t: Type): ModifierStack[String] = {
+    import Type._
+    t match {
+      case Named(name) => ModifierStack(Nil, name)
+      case List(of)    => fromType(of).push(Modifier.List)
+      case NonNull(of) => fromType(of).push(Modifier.NonNull)
+    }
+  }
+}
+
+sealed trait InverseModifier
+object InverseModifier {
+  case object List extends InverseModifier
+  case object Optional extends InverseModifier
+}
+
+final case class InverseModifierStack[+T](modifiers: List[InverseModifier], inner: T) {
+  def push(m: InverseModifier): InverseModifierStack[T] =
+    InverseModifierStack(m :: modifiers, inner)
+
+  // Converts from scala view to graphql view
+  // Note that nested options will be flattened
+  // Base case is non-null in the scala world
+  def invert: ModifierStack[T] = {
+    def nonNull: ModifierStack[T] => ModifierStack[T] =
+      _.push(Modifier.NonNull)
+
+    def go(
+        ms: List[InverseModifier],
+        parentOp: ModifierStack[T] => ModifierStack[T]
+    ): ModifierStack[T] = {
+      ms match {
+        case Nil                              => parentOp(ModifierStack(Nil, inner))
+        case InverseModifier.List :: rest     => parentOp(go(rest, nonNull).push(Modifier.List))
+        case InverseModifier.Optional :: rest => go(rest, identity)
+      }
+    }
+    go(modifiers, nonNull)
+  }
+
+  def showScala(showInner: T => String): String = modifiers match {
+    case Nil => showInner(inner)
+    case InverseModifier.List :: rest =>
+      s"List[${InverseModifierStack(rest, inner).showScala(showInner)}]"
+    case InverseModifier.Optional :: rest =>
+      s"Option[${InverseModifierStack(rest, inner).showScala(showInner)}]"
+  }
 }
 
 object InverseModifierStack {
@@ -57,13 +99,13 @@ object InverseModifierStack {
     t match {
       case t: OutToplevel[F, ?] => InverseModifierStack(Nil, t)
       case OutArr(of, _, _)     => fromOut(of).push(InverseModifier.List)
-      case o: OutOpt[F, ?, ?]   => fromOut(o.of).push(InverseModifier.Nullable)
+      case o: OutOpt[F, ?, ?]   => fromOut(o.of).push(InverseModifier.Optional)
     }
 
   def fromIn(t: In[?]): InverseModifierStack[InToplevel[?]] =
     t match {
       case t: InToplevel[?] => InverseModifierStack(Nil, t)
       case InArr(of, _)     => fromIn(of).push(InverseModifier.List)
-      case o: InOpt[?]      => fromIn(o.of).push(InverseModifier.Nullable)
+      case o: InOpt[?]      => fromIn(o.of).push(InverseModifier.Optional)
     }
 }

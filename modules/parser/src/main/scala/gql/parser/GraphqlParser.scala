@@ -58,9 +58,9 @@ object GraphqlParser {
       nullValue.as(NullValue()) |
       enumValue.map(EnumValue(_))
 
-    val p2: P[Value[A]] = 
+    val p2: P[Value[A]] =
       listValue(vp).map(ListValue[A](_)) |
-      objectValue(vp).map(ObjectValue[A](_))
+        objectValue(vp).map(ObjectValue[A](_))
 
     p1 | p2
   }
@@ -81,7 +81,7 @@ object GraphqlParser {
   lazy val nullValue: P[Unit] =
     s("null")
 
-    lazy val enumValue: P[String] =
+  lazy val enumValue: P[String] =
     (!(booleanValue | nullValue)).with1 *> name
 
   def listValue[A <: AnyValue](vp: P[Value[A]]): P[List[Value[A]]] =
@@ -98,9 +98,9 @@ object GraphqlParser {
 
   def defaultValue[A <: AnyValue](p: => P[Value[A]]) = t('=') *> p
 
-  lazy val namedType = name.map(Type.Named(_))
+  lazy val namedType: P[NonNullType] = name.map(Type.Named(_))
 
-  lazy val nonNullType: P[Type] =
+  lazy val nonNullType: P[NonNullType] =
     namedType <* t('!') |
       listType <* t('!')
 
@@ -135,13 +135,12 @@ object GraphqlParser {
 
   lazy val `type`: P[Type] = {
     import Type._
-    (P.defer(namedType | listType.map(List(_))) ~ t('!').?).map {
+    (P.defer(namedType | listType) ~ t('!').?).map {
       case (x, Some(_)) => NonNull(x)
       case (x, None)    => x
     }
   }
 
-  lazy val listType: P[Type] =
-    `type`.between(t('['), t(']'))
+  lazy val listType: P[NonNullType] =
+    `type`.between(t('['), t(']')).map(Type.List(_))
 }
-

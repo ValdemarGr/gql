@@ -8,8 +8,11 @@ import cats._
 import org.typelevel.paiges.Doc
 import cats.implicits._
 import gql.ModifierStack
+import gql.parser.Value.BooleanValue
+import gql.SchemaShape
+import gql.InverseModifierStack
 
-object Main {
+object Main extends App {
   /*
    * query MyQuery {
    *   name
@@ -113,64 +116,182 @@ object Main {
    *
    */
 
-  def toCaml(str: String): String = {
-    val hd = str.take(1).toLowerCase()
-    val tl = str.drop(1)
-    hd + tl
+  def modifyHead(f: Char => Char): String => String = { str =>
+    val hd = str.headOption.map(f(_).toString()).getOrElse("")
+    hd + str.drop(1)
   }
+
+  val toCaml: String => String =
+    modifyHead(_.toLower)
+
+  val toPascal: String => String =
+    modifyHead(_.toUpper)
 
   def scalaField(name: String, tpe: String): Doc =
     Doc.text(name) + Doc.char(':') + Doc.space + Doc.text(tpe)
 
-  def generateValue(v: V[AnyValue]): Doc = ???
+  def hardIntercalate(left: Doc, right: Doc, xs: List[Doc], sep: Doc = Doc.empty) = {
+    left +
+      (Doc.hardLine + Doc.intercalate(sep + Doc.hardLine, xs)).nested(2).grouped +
+      right
+  }
 
+  def hardIntercalateBracket(left: Char, sep: Doc = Doc.empty)(xs: List[Doc])(right: Char) =
+    hardIntercalate(Doc.char(left), Doc.hardLine + Doc.char(right), xs, sep)
+
+  def quoted(doc: Doc): Doc =
+    Doc.char('"') + doc + Doc.char('"')
+
+  def quoted(str: String): Doc = quoted(Doc.text(str))
+
+  def params(xs: List[Doc]): Doc =
+    Doc.intercalate(Doc.comma + Doc.space, xs).tightBracketBy(Doc.char('('), Doc.char(')'))
+
+  sealed trait ContextInfo
+  object ContextInfo {
+    final case class Fragment(
+        fragmentName: Option[String],
+        typeCnd: String,
+        extraMatches: List[String]
+    ) extends ContextInfo
+    final case class Operation(
+        op: OperationType,
+        variables: List[VariableDefinition]
+    ) extends ContextInfo
+  }
   final case class Part(
       name: String,
       typePart: NonEmptyList[Doc],
       subParts: List[Part],
-      codec: NonEmptyList[Doc]
-  )
+      codec: NonEmptyList[Doc],
+      contextInfo: Option[ContextInfo]
+  ) {
+    // Yes yes, it is a fold
+    def collapse: Doc = {
+      val tpe = Doc.text(s"final case class $name") + params(typePart.toList)
+
+      val codecSelection = hardIntercalateBracket('(', Doc.comma)(codec.toList)(')') +
+        Doc.char('.') +
+        (if (codec.size > 1) Doc.text("mapN") else Doc.text("map")) +
+        Doc.text("(apply)")
+
+      def codecImplicit: Doc =
+        Doc.text(s"implicit lazy val selectionSet: SelectionSet[$name] = ")
+
+      val fullCodec = contextInfo match {
+        case None => codecImplicit + codecSelection
+        case Some(fi: ContextInfo.Fragment) =>
+          val args = fi.fragmentName.toList ++ List(fi.typeCnd) ++ fi.extraMatches
+
+          val fragType = fi.fragmentName.as("fragment").getOrElse("inlineFragment")
+
+          val invocation = Doc.text(fragType) + params(args.map(quoted))
+
+          codecImplicit +
+            hardIntercalate(
+              Doc.empty,
+              Doc.empty,
+              List(
+                invocation + Doc.space + hardIntercalateBracket('{')(List(codecSelection))('}')
+              )
+            )
+        case Some(op: ContextInfo.Operation) =>
+          val operationType = op.op match {
+            case OperationType.Query        => "Query"
+            case OperationType.Mutation     => "Mutation"
+            case OperationType.Subscription => "Subscription"
+          }
+
+          val operationTypePath =
+            s"_root_.gql.parser.QueryAst.OperationType.${operationType}"
+
+          val vars = op.variables.map { v =>
+            val scalaType = ModifierStack.fromType(v.tpe).invert.showScala(identity)
+            val args = quoted(v.name) :: v.defaultValue.toList.map(generateValue)
+            Doc.text("variable") + Doc.char('[') + Doc.text(scalaType) + Doc.char(']') + params(args)
+          }
+
+          val expr = vars.toNel match {
+            case None => codecSelection
+            case Some(vars) =>
+              hardIntercalateBracket('(', Doc.text(" ~"))(vars.toList)(')') + Doc.text(".introduce ") +
+                hardIntercalate(Doc.text("{ _ =>"), Doc.hardLine + Doc.char('}'), List(codecSelection))
+          }
+
+          val queryExpr = Doc.text("val queryExpr = ") + expr
+
+          val queryPrefix =
+            if (vars.size == 0) Doc.text("named")
+            else Doc.text("parametrized")
+
+          val args = List(
+            Doc.text(operationTypePath),
+            Doc.text(name),
+            Doc.text("queryExpr")
+          )
+
+          val compiled = Doc.text("val query = ") +
+            Doc.text("Query.") + queryPrefix + hardIntercalateBracket('(', Doc.comma)(args)(')')
+
+          queryExpr +
+            Doc.hardLine +
+            Doc.hardLine +
+            compiled
+      }
+
+      val companionParts = subParts.map(_.collapse) ++ List(fullCodec)
+
+      val companion = Doc.text("object") + Doc.space + Doc.text(name) + Doc.space +
+        hardIntercalateBracket('{', Doc.hardLine)(companionParts)('}')
+
+      Doc.intercalate(Doc.hardLine + Doc.hardLine, List(tpe.grouped, companion.grouped))
+    }
+  }
+
+  def generateValue(v: V[AnyValue]): Doc =
+    SchemaShape.renderValueDoc(v)
 
   final case class FieldPart(
       typePart: Doc,
+      // local case class and companion object, not present if the field is a fragment or terminal
       subPart: Option[Part],
       codec: Doc
   )
   def generateField(
+      companionName: String,
       schema: Map[String, TypeDefinition],
       f: Field,
       fd: FieldDefinition
   ): FieldPart = {
     val ms = ModifierStack.fromType(fd.tpe)
-    val tpeText = ms.show(identity)
-    val tpe = Doc.text(tpeText)
+    val tpeText = ms.inner
 
     val subPart: Option[Part] = f.selectionSet.value
       .map(_.selections.map(_.value))
-      .map(generateTypeDef(schema, f.alias.getOrElse(f.name), ms.inner, _))
+      .map(generateTypeDef(schema, toPascal(f.alias.getOrElse(f.name)), ms.inner, _, None))
 
     val argPart = f.arguments.toList.flatMap(_.nel.toList).map { x =>
       Doc.text("arg") +
         (
-          Doc.text(x.name) + Doc.char(',') + Doc.space +
-            generateValue(x.value)
-        ).bracketBy(Doc.char('('), Doc.char(')'))
+          quoted(x.name) + Doc.char(',') + Doc.space + generateValue(x.value)
+        ).tightBracketBy(Doc.char('('), Doc.char(')'))
     }
 
     val clientSel = Doc.text("sel") +
-      tpe.bracketBy(Doc.char('['), Doc.char(']')) +
-      Doc
-        .intercalate(Doc.comma + Doc.line, Doc.text(fd.name) :: argPart)
-        .bracketBy(Doc.char('('), Doc.char(')'))
+      Doc.text(ms.invert.showScala(identity)).tightBracketBy(Doc.char('['), Doc.char(']')) +
+      params(quoted(fd.name) :: argPart)
 
-    FieldPart(scalaField(fd.name, tpeText), subPart, clientSel)
+    val scalaTypeName =
+      if (subPart.isDefined) s"${companionName}.${tpeText}"
+      else tpeText
+
+    val sf = scalaField(fd.name, scalaTypeName)
+
+    FieldPart(sf, subPart, clientSel)
   }
 
-  def generateFragmentSpread(
-      schema: Map[String, TypeDefinition]
-  ) = {}
-
   def generateSelection(
+      companionName: String,
       schema: Map[String, TypeDefinition],
       fieldMap: Map[String, FieldDefinition],
       sel: Selection
@@ -180,25 +301,25 @@ object Main {
         val f = fs.field
         fieldMap.get(f.name) match {
           case None    => ???
-          case Some(x) => generateField(schema, f, x)
+          case Some(x) => generateField(companionName, schema, f, x)
         }
       case frag: Selection.FragmentSpreadSelection =>
         val fs = frag.fragmentSpread
         FieldPart(
           scalaField(toCaml(fs.fragmentName), fs.fragmentName),
           None,
-          Doc.text(s"${fs.fragmentName}.frag")
+          Doc.text(s"embed[${fs.fragmentName}]")
         )
       case inlineFrag: Selection.InlineFragmentSelection =>
         val ilf = inlineFrag.inlineFragment
         val ss = ilf.selectionSet.selections.map(_.value)
         val cnd = ilf.typeCondition.get
         val name = s"Inline${cnd}"
-        val p = generateTypeDef(schema, name, cnd, ss)
+        val p = generateTypeDef(schema, name, cnd, ss, Some(ContextInfo.Fragment(None, cnd, Nil)))
         FieldPart(
           scalaField(toCaml(name), name),
           Some(p),
-          Doc.text(s"inlineFragment[${name}](${cnd})")
+          Doc.text(s"embed[${name}]")
         )
     }
   }
@@ -207,10 +328,11 @@ object Main {
       schema: Map[String, TypeDefinition],
       name: String,
       typename: String,
-      sels: NonEmptyList[Selection]
+      sels: NonEmptyList[Selection],
+      contextInfo: Option[ContextInfo]
   ): Part = {
     schema.get(typename) match {
-      case None => ???
+      case None => throw new Exception(s"Type $typename not found")
       case Some(td) =>
         val fieldMap = td match {
           case TypeDefinition.ObjectTypeDefinition(_, _, _, fds)    => fds.toList.map(f => f.name -> f).toMap
@@ -219,30 +341,136 @@ object Main {
           case _                                                    => ???
         }
 
-        val parts = sels.map(generateSelection(schema, fieldMap, _))
+        val parts = sels.map(generateSelection(name, schema, fieldMap, _))
 
         Part(
           name,
           parts.map(_.typePart),
           parts.toList.flatMap(_.subPart.toList),
-          parts.map(_.codec)
+          parts.map(_.codec),
+          contextInfo
         )
     }
   }
 
-  def generateForTypeDefinition(
-      schema: Map[String, TypeDefinition],
-      eds: NonEmptyList[ExecutableDefinition]
-  ) = {
-    val frags = eds
-      .collect { case ExecutableDefinition.Fragment(f) => f.value }
-      .map { f =>
-        Doc.text(s"final case class ${f.name}") +
-          Doc.intercalate(Doc.comma + Doc.line, Nil).bracketBy(Doc.char('('), Doc.char(')'))
+  val parsed = gql.parser.parseSchema(testSchema).fold(x => throw new Exception(x.toString()), identity)
 
-        f.selectionSet.selections.map(_.value)
-        f
+  val parsedQuery = gql.parser.parseQuery(testQuery).fold(x => throw new Exception(x.toString()), identity)
+
+  val m = parsed.map(td => td.name -> td).toList.toMap
+
+  val o2 = parsedQuery.map {
+    case ExecutableDefinition.Operation(o) =>
+      o.value match {
+        case d: OperationDefinition.Detailed =>
+          generateTypeDef(
+            m,
+            d.name.get,
+            "Query",
+            d.selectionSet.selections.map(_.value),
+            Some(
+              ContextInfo.Operation(
+                d.tpe,
+                d.variableDefinitions.toList.flatMap(_.nel.toList.map(_.value))
+              )
+            )
+          )
       }
+    case ExecutableDefinition.Fragment(f) => {
+      val f2 = f.value
+      generateTypeDef(
+        m,
+        f2.name,
+        f2.typeCnd,
+        f2.selectionSet.selections.map(_.value),
+        Some(ContextInfo.Fragment(Some(f2.name), f2.typeCnd, Nil))
+      )
+    }
   }
+
+  println(Doc.intercalate(Doc.hardLine + Doc.hardLine, o2.toList.map(_.collapse)).render(80))
+
+  def testQuery = """
+  query AlienQuery($name: String!, $id: ID!) {
+    dog {
+      ... DogFragment
+      ... on Dog {
+        name
+        barkVolume
+      }
+      owner {
+        name
+      }
+    }
+    findDog(searchBy: { name: "Barky" }) {
+      ... DogFragment
+    }
+  }
+
+  fragment DogFragment on Dog {
+    name,
+    barkVolume
+  }
+  """
+
+  def testSchema = """
+type Query {
+  dog: Dog
+  findDog(searchBy: FindDogInput): Dog
+}
+
+enum DogCommand {
+  SIT
+  DOWN
+  HEEL
+}
+
+type Dog implements Pet {
+  name: String!
+  nickname: String
+  barkVolume: Int
+  doesKnowCommand(dogCommand: DogCommand!): Boolean!
+  isHouseTrained(atOtherHomes: Boolean): Boolean!
+  owner: Human
+}
+
+interface Sentient {
+  name: String!
+}
+
+interface Pet {
+  name: String!
+}
+
+type Alien implements Sentient {
+  name: String!
+  homePlanet: String
+}
+
+type Human implements Sentient {
+  name: String!
+  pets: [Pet!]
+}
+
+enum CatCommand {
+  JUMP
+}
+
+type Cat implements Pet {
+  name: String!
+  nickname: String
+  doesKnowCommand(catCommand: CatCommand!): Boolean!
+  meowVolume: Int
+}
+
+union CatOrDog = Cat | Dog
+union DogOrHuman = Dog | Human
+union HumanOrAlien = Human | Alien
+
+input FindDogInput {
+  name: String
+  owner: String
+}
+"""
 }
 
