@@ -1,5 +1,7 @@
 package gql.client.codegen
 
+import cats.effect._
+import fs2.io.file._
 import gql.parser.TypeSystemAst._
 import gql.parser.QueryAst._
 import gql.parser.{Value => V, AnyValue}
@@ -7,15 +9,10 @@ import cats.data._
 import cats._
 import org.typelevel.paiges.Doc
 import cats.implicits._
-import gql.ModifierStack
-import gql.parser.Value.BooleanValue
-import gql.SchemaShape
-import gql.InverseModifierStack
+import gql._
 import cats.mtl.Local
-import gql.Cursor
-import gql.GraphArc
 
-object Main extends App {
+object Generator {
   /*
    * query MyQuery {
    *   name
@@ -254,10 +251,18 @@ object Main extends App {
   def generateValue(v: V[AnyValue]): Doc =
     SchemaShape.renderValueDoc(v)
 
-  type Path[F[_]] = Local[F, Chain[String]]
+  type CurrentPath[F[_]] = Local[F, Chain[String]]
 
-  def in[F[_], A](field: String)(fa: F[A])(implicit P: Path[F]): F[A] =
+  def in[F[_], A](field: String)(fa: F[A])(implicit P: CurrentPath[F]): F[A] =
     P.local(fa)(_ append field)
+
+  def raise[F[_], A](msg: String)(implicit
+      F: MonadError[F, NonEmptyChain[String]],
+      P: CurrentPath[F]
+  ) =
+    P.ask.flatMap { path =>
+      F.raiseError[A](NonEmptyChain.one(msg + s" at ${path.toList.mkString(".")}"))
+    }
 
   final case class FieldPart(
       typePart: Doc,
@@ -271,8 +276,8 @@ object Main extends App {
       f: Field,
       fd: FieldDefinition
   )(implicit
-      P: Path[F],
-      F: MonadError[F, String]
+      P: CurrentPath[F],
+      F: MonadError[F, NonEmptyChain[String]]
   ): F[FieldPart] = {
     val ms = ModifierStack.fromType(fd.tpe)
     val n = toPascal(f.alias.getOrElse(f.name))
@@ -308,14 +313,14 @@ object Main extends App {
       fieldMap: Map[String, FieldDefinition],
       sel: Selection
   )(implicit
-      P: Path[F],
-      F: MonadError[F, String]
+      P: CurrentPath[F],
+      F: MonadError[F, NonEmptyChain[String]]
   ): F[FieldPart] = {
     sel match {
       case fs: Selection.FieldSelection =>
         val f = fs.field
         fieldMap.get(f.name) match {
-          case None => F.raiseError(s"Field '${f.name}' not found in type '$companionName'")
+          case None => raise[F, FieldPart](s"Field '${f.name}' not found in type '$companionName'")
           case Some(x) =>
             in(f.name) {
               generateField[F](companionName, schema, f, x)
@@ -355,11 +360,11 @@ object Main extends App {
       sels: NonEmptyList[Selection],
       contextInfo: Option[ContextInfo]
   )(implicit
-      P: Path[F],
-      F: MonadError[F, String]
+      P: CurrentPath[F],
+      F: MonadError[F, NonEmptyChain[String]]
   ): F[Part] = {
     schema.get(typename) match {
-      case None => F.raiseError(s"Type `$typename` not found")
+      case None => raise[F, Part](s"Type `$typename` not found")
       case Some(td) =>
         in(s"type-definition-${typename}") {
           val fieldMapF: F[Map[String, FieldDefinition]] = td match {
@@ -367,7 +372,9 @@ object Main extends App {
             case TypeDefinition.InterfaceTypeDefinition(_, _, _, fds) => F.pure(fds.toList.map(f => f.name -> f).toMap)
             case TypeDefinition.UnionTypeDefinition(_, _, _)          => F.pure(Map.empty[String, FieldDefinition])
             case _ =>
-              F.raiseError(s"Type tried to perform selection on`$typename`, but it is not an object, interface or union")
+              raise[F, Map[String, FieldDefinition]](
+                s"Type tried to perform selection on`$typename`, but it is not an object, interface or union"
+              )
           }
 
           fieldMapF.flatMap { fm =>
@@ -391,14 +398,14 @@ object Main extends App {
       schema: Map[String, TypeDefinition],
       query: NonEmptyList[ExecutableDefinition]
   )(implicit
-      P: Path[F],
-      F: MonadError[F, String]
+      P: CurrentPath[F],
+      F: MonadError[F, NonEmptyChain[String]]
   ) = {
     val bodyF: F[NonEmptyList[Part]] = query.parTraverse {
       case ExecutableDefinition.Operation(o) =>
         o.value match {
           case OperationDefinition.Simple(_) =>
-            F.raiseError("Simple operations are not supported, please name all your operations")
+            raise[F, Part]("Simple operations are not supported, please name all your operations")
           case d: OperationDefinition.Detailed =>
             in(s"operation-${d.name.get}") {
               generateTypeDef[F](
@@ -448,19 +455,59 @@ object Main extends App {
   def generateFor(
       schema: Map[String, TypeDefinition],
       query: NonEmptyList[ExecutableDefinition]
-  ): Either[String, Doc] = {
-    type F[A] = EitherT[Reader[Chain[String], *], String, A]
-    generateExecutableDefs[F](schema, query).value.run(Chain.empty)
+  ): EitherNec[String, Doc] = {
+    type F[A] = EitherT[Kleisli[Eval, Chain[String], *], NonEmptyChain[String], A]
+    generateExecutableDefs[F](schema, query).value.run(Chain.empty).value
   }
 
   def generateWith(
       schema: Map[String, TypeDefinition],
       query: String
-  ): Either[String, Doc] =
-    gql.parser.parseQuery(query).leftMap(_.prettyError.value).flatMap(generateFor(schema, _))
+  ): EitherNec[String, Doc] =
+    gql.parser.parseQuery(query).leftFlatMap(_.prettyError.value.leftNec).flatMap(generateFor(schema, _))
 
   def getSchemaFrom(s: String): Either[String, Map[String, TypeDefinition]] =
     gql.parser.parseSchema(s).leftMap(_.prettyError.value).map(_.map(td => td.name -> td).toList.toMap)
+
+  final case class Input(
+      query: Path,
+      output: Path
+  )
+  final case class Output(
+      path: Path,
+      doc: Doc
+  )
+  def readAndGenerate[F[_]: Async](
+      schemaPath: Path
+  ): fs2.Pipe[F, Input, fs2.Stream[F, EitherNec[String, Output]]] = queryPaths =>
+    Files[F]
+      .readAll(schemaPath)
+      .through(fs2.text.utf8.decode[F])
+      .foldMonoid
+      .map(getSchemaFrom)
+      .map {
+        case Left(e) => fs2.Stream.emit(Left(NonEmptyChain.one(e)))
+        case Right(s) =>
+          queryPaths.flatMap { i =>
+            Files[F]
+              .readAll(i.query)
+              .through(fs2.text.utf8.decode[F])
+              .foldMonoid
+              .map(generateWith(s, _))
+              .map(_.map(doc => Output(i.output, doc)))
+          }
+      }
+
+  def readGenerateWrite[F[_]](schemaPath: Path)(implicit F: Async[F]): fs2.Pipe[F, Input, List[String]] =
+    readAndGenerate[F](schemaPath).andThen(_.flatMap(_.flatMap {
+      case Left(e) => fs2.Stream.emit(e.toList)
+      case Right(x) =>
+        fs2.Stream
+          .iterable(x.doc.renderStream(80))
+          .lift[F]
+          .through(fs2.text.utf8.encode)
+          .through(Files[F].writeAll(x.path))
+    }))
 
   val o = getSchemaFrom(testSchema).flatMap(generateWith(_, testQuery))
 
