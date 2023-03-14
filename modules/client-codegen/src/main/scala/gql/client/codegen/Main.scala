@@ -176,7 +176,7 @@ object Main extends App {
         Doc.text("(apply)")
 
       def codecImplicit: Doc =
-        Doc.text(s"implicit lazy val selectionSet: SelectionSet[$name] = ")
+        Doc.text(s"implicit val selectionSet: SelectionSet[$name] = ")
 
       val fullCodec = contextInfo match {
         case None => codecImplicit + codecSelection
@@ -226,12 +226,12 @@ object Main extends App {
 
           val args = List(
             Doc.text(operationTypePath),
-            Doc.text(name),
+            quoted(name),
             Doc.text("queryExpr")
           )
 
           val compiled = Doc.text("val query = ") +
-            Doc.text("Query.") + queryPrefix + hardIntercalateBracket('(', Doc.comma)(args)(')')
+            Doc.text("_root_.gql.client.Query.") + queryPrefix + hardIntercalateBracket('(', Doc.comma)(args)(')')
 
           queryExpr +
             Doc.hardLine +
@@ -264,11 +264,11 @@ object Main extends App {
       fd: FieldDefinition
   ): FieldPart = {
     val ms = ModifierStack.fromType(fd.tpe)
-    val tpeText = ms.inner
+    val n = toPascal(f.alias.getOrElse(f.name))
 
     val subPart: Option[Part] = f.selectionSet.value
       .map(_.selections.map(_.value))
-      .map(generateTypeDef(schema, toPascal(f.alias.getOrElse(f.name)), ms.inner, _, None))
+      .map(generateTypeDef(schema, n, ms.inner, _, None))
 
     val argPart = f.arguments.toList.flatMap(_.nel.toList).map { x =>
       Doc.text("arg") +
@@ -282,8 +282,8 @@ object Main extends App {
       params(quoted(fd.name) :: argPart)
 
     val scalaTypeName =
-      if (subPart.isDefined) s"${companionName}.${tpeText}"
-      else tpeText
+      if (subPart.isDefined) s"${companionName}.${n}"
+      else ms.inner
 
     val sf = scalaField(fd.name, scalaTypeName)
 
@@ -317,7 +317,7 @@ object Main extends App {
         val name = s"Inline${cnd}"
         val p = generateTypeDef(schema, name, cnd, ss, Some(ContextInfo.Fragment(None, cnd, Nil)))
         FieldPart(
-          scalaField(toCaml(name), name),
+          scalaField(toCaml(name), s"${companionName}.${name}"),
           Some(p),
           Doc.text(s"embed[${name}]")
         )
@@ -353,42 +353,60 @@ object Main extends App {
     }
   }
 
+  def generateFor(schema: Map[String, TypeDefinition], query: NonEmptyList[ExecutableDefinition]) = {
+    val body = query.map {
+      case ExecutableDefinition.Operation(o) =>
+        o.value match {
+          case OperationDefinition.Simple(_) => ???
+          case d: OperationDefinition.Detailed =>
+            generateTypeDef(
+              schema,
+              d.name.get,
+              "Query",
+              d.selectionSet.selections.map(_.value),
+              Some(
+                ContextInfo.Operation(
+                  d.tpe,
+                  d.variableDefinitions.toList.flatMap(_.nel.toList.map(_.value))
+                )
+              )
+            )
+        }
+      case ExecutableDefinition.Fragment(f) => {
+        val f2 = f.value
+        generateTypeDef(
+          schema,
+          f2.name,
+          f2.typeCnd,
+          f2.selectionSet.selections.map(_.value),
+          Some(ContextInfo.Fragment(Some(f2.name), f2.typeCnd, Nil))
+        )
+      }
+    }
+
+    val bodyDoc = Doc.intercalate(Doc.hardLine + Doc.hardLine, body.toList.map(_.collapse))
+
+    def imp(t: String) = Doc.text(s"import $t")
+    Doc.intercalate(
+      Doc.hardLine,
+      List(
+        Doc.text("package gql.client.generated"),
+        Doc.empty,
+        imp("_root_.gql.client._"),
+        imp("_root_.gql.client.dsl._")
+      )
+    ) + Doc.hardLine + Doc.hardLine + bodyDoc
+  }
+
   val parsed = gql.parser.parseSchema(testSchema).fold(x => throw new Exception(x.toString()), identity)
 
   val parsedQuery = gql.parser.parseQuery(testQuery).fold(x => throw new Exception(x.toString()), identity)
 
   val m = parsed.map(td => td.name -> td).toList.toMap
 
-  val o2 = parsedQuery.map {
-    case ExecutableDefinition.Operation(o) =>
-      o.value match {
-        case d: OperationDefinition.Detailed =>
-          generateTypeDef(
-            m,
-            d.name.get,
-            "Query",
-            d.selectionSet.selections.map(_.value),
-            Some(
-              ContextInfo.Operation(
-                d.tpe,
-                d.variableDefinitions.toList.flatMap(_.nel.toList.map(_.value))
-              )
-            )
-          )
-      }
-    case ExecutableDefinition.Fragment(f) => {
-      val f2 = f.value
-      generateTypeDef(
-        m,
-        f2.name,
-        f2.typeCnd,
-        f2.selectionSet.selections.map(_.value),
-        Some(ContextInfo.Fragment(Some(f2.name), f2.typeCnd, Nil))
-      )
-    }
-  }
+  val o = generateFor(m, parsedQuery)
 
-  println(Doc.intercalate(Doc.hardLine + Doc.hardLine, o2.toList.map(_.collapse)).render(80))
+  println(o.render(80))
 
   def testQuery = """
   query AlienQuery($name: String!, $id: ID!) {
