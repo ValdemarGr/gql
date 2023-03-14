@@ -72,32 +72,48 @@ lazy val sharedSettings = Seq(
 lazy val parser = project
   .in(file("modules/parser"))
   .settings(sharedSettings)
-  .settings(name := "gql-parser"/*, tlFatalWarnings := true*/)
+  .settings(name := "gql-parser" /*, tlFatalWarnings := true*/ )
 
 lazy val core = project
   .in(file("modules/core"))
   .settings(sharedSettings)
-  .settings(name := "gql-core"/*, tlFatalWarnings := true*/)
+  .settings(name := "gql-core" /*, tlFatalWarnings := true*/ )
   .dependsOn(parser)
 
 lazy val server = project
   .in(file("modules/server"))
   .settings(sharedSettings)
-  .settings(name := "gql-server"/*, tlFatalWarnings := true*/)
+  .settings(name := "gql-server" /*, tlFatalWarnings := true*/ )
   .dependsOn(core)
 
 lazy val client = project
   .in(file("modules/client"))
   .settings(sharedSettings)
-  .settings(name := "gql-client"/*, tlFatalWarnings := true*/)
+  .settings(name := "gql-client" /*, tlFatalWarnings := true*/ )
   .dependsOn(core)
 
 lazy val clientCodegen = project
   .in(file("modules/client-codegen"))
   .settings(sharedSettings)
-  .settings(name := "gql-client-codegen"/*, tlFatalWarnings := true*/)
+  .settings(name := "gql-client-codegen" /*, tlFatalWarnings := true*/ )
   .dependsOn(core)
   .dependsOn(client)
+
+lazy val clientCodegenSbt = project
+  .in(file("modules/client-codegen-sbt"))
+  /* .enablePlugins(BuildInfoPlugin) */
+  .enablePlugins(SbtPlugin)
+  .settings(
+    sbtPlugin := true,
+    scalaVersion := "2.12.17",
+    name := "gql-client-codegen-sbt",
+  )
+  /* .enablePlugins(NoPublishPlugin) */
+
+/* lazy val testProject = project */
+/*   .in(file("modules/client-codegen-sbt-test")) */
+/*   .settings(sharedSettings) */
+/*   .enablePlugins(clientCodegenSbt) */
 
 lazy val http4sClient = project
   .in(file("modules/client-http4s"))

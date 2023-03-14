@@ -1,0 +1,4 @@
+package gql
+
+object Main {
+}
