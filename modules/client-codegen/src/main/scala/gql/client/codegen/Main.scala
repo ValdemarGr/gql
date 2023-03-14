@@ -11,6 +11,9 @@ import gql.ModifierStack
 import gql.parser.Value.BooleanValue
 import gql.SchemaShape
 import gql.InverseModifierStack
+import cats.mtl.Local
+import gql.Cursor
+import gql.GraphArc
 
 object Main extends App {
   /*
@@ -251,162 +254,217 @@ object Main extends App {
   def generateValue(v: V[AnyValue]): Doc =
     SchemaShape.renderValueDoc(v)
 
+  type Path[F[_]] = Local[F, Chain[String]]
+
+  def in[F[_], A](field: String)(fa: F[A])(implicit P: Path[F]): F[A] =
+    P.local(fa)(_ append field)
+
   final case class FieldPart(
       typePart: Doc,
       // local case class and companion object, not present if the field is a fragment or terminal
       subPart: Option[Part],
       codec: Doc
   )
-  def generateField(
+  def generateField[F[_]: Parallel](
       companionName: String,
       schema: Map[String, TypeDefinition],
       f: Field,
       fd: FieldDefinition
-  ): FieldPart = {
+  )(implicit
+      P: Path[F],
+      F: MonadError[F, String]
+  ): F[FieldPart] = {
     val ms = ModifierStack.fromType(fd.tpe)
     val n = toPascal(f.alias.getOrElse(f.name))
 
-    val subPart: Option[Part] = f.selectionSet.value
+    f.selectionSet.value
       .map(_.selections.map(_.value))
-      .map(generateTypeDef(schema, n, ms.inner, _, None))
+      .parTraverse(generateTypeDef[F](schema, n, ms.inner, _, None))
+      .map { subPart =>
+        val argPart = f.arguments.toList.flatMap(_.nel.toList).map { x =>
+          Doc.text("arg") +
+            (
+              quoted(x.name) + Doc.char(',') + Doc.space + generateValue(x.value)
+            ).tightBracketBy(Doc.char('('), Doc.char(')'))
+        }
 
-    val argPart = f.arguments.toList.flatMap(_.nel.toList).map { x =>
-      Doc.text("arg") +
-        (
-          quoted(x.name) + Doc.char(',') + Doc.space + generateValue(x.value)
-        ).tightBracketBy(Doc.char('('), Doc.char(')'))
-    }
+        val clientSel = Doc.text("sel") +
+          Doc.text(ms.invert.showScala(identity)).tightBracketBy(Doc.char('['), Doc.char(']')) +
+          params(quoted(fd.name) :: argPart)
 
-    val clientSel = Doc.text("sel") +
-      Doc.text(ms.invert.showScala(identity)).tightBracketBy(Doc.char('['), Doc.char(']')) +
-      params(quoted(fd.name) :: argPart)
+        val scalaTypeName =
+          if (subPart.isDefined) s"${companionName}.${n}"
+          else ms.inner
 
-    val scalaTypeName =
-      if (subPart.isDefined) s"${companionName}.${n}"
-      else ms.inner
+        val sf = scalaField(fd.name, scalaTypeName)
 
-    val sf = scalaField(fd.name, scalaTypeName)
-
-    FieldPart(sf, subPart, clientSel)
+        FieldPart(sf, subPart, clientSel)
+      }
   }
 
-  def generateSelection(
+  def generateSelection[F[_]: Parallel](
       companionName: String,
       schema: Map[String, TypeDefinition],
       fieldMap: Map[String, FieldDefinition],
       sel: Selection
-  ): FieldPart = {
+  )(implicit
+      P: Path[F],
+      F: MonadError[F, String]
+  ): F[FieldPart] = {
     sel match {
       case fs: Selection.FieldSelection =>
         val f = fs.field
         fieldMap.get(f.name) match {
-          case None    => ???
-          case Some(x) => generateField(companionName, schema, f, x)
+          case None => F.raiseError(s"Field '${f.name}' not found in type '$companionName'")
+          case Some(x) =>
+            in(f.name) {
+              generateField[F](companionName, schema, f, x)
+            }
         }
       case frag: Selection.FragmentSpreadSelection =>
         val fs = frag.fragmentSpread
-        FieldPart(
-          scalaField(toCaml(fs.fragmentName), fs.fragmentName),
-          None,
-          Doc.text(s"embed[${fs.fragmentName}]")
-        )
+        F.pure {
+          FieldPart(
+            scalaField(toCaml(fs.fragmentName), fs.fragmentName),
+            None,
+            Doc.text(s"embed[${fs.fragmentName}]")
+          )
+        }
       case inlineFrag: Selection.InlineFragmentSelection =>
         val ilf = inlineFrag.inlineFragment
         val ss = ilf.selectionSet.selections.map(_.value)
         val cnd = ilf.typeCondition.get
         val name = s"Inline${cnd}"
-        val p = generateTypeDef(schema, name, cnd, ss, Some(ContextInfo.Fragment(None, cnd, Nil)))
-        FieldPart(
-          scalaField(toCaml(name), s"${companionName}.${name}"),
-          Some(p),
-          Doc.text(s"embed[${name}]")
-        )
+        in(s"inline-fragment-${cnd}") {
+          generateTypeDef[F](schema, name, cnd, ss, Some(ContextInfo.Fragment(None, cnd, Nil)))
+            .map { p =>
+              FieldPart(
+                scalaField(toCaml(name), s"${companionName}.${name}"),
+                Some(p),
+                Doc.text(s"embed[${name}]")
+              )
+            }
+        }
     }
   }
 
-  def generateTypeDef(
+  def generateTypeDef[F[_]: Parallel](
       schema: Map[String, TypeDefinition],
       name: String,
       typename: String,
       sels: NonEmptyList[Selection],
       contextInfo: Option[ContextInfo]
-  ): Part = {
+  )(implicit
+      P: Path[F],
+      F: MonadError[F, String]
+  ): F[Part] = {
     schema.get(typename) match {
-      case None => throw new Exception(s"Type $typename not found")
+      case None => F.raiseError(s"Type `$typename` not found")
       case Some(td) =>
-        val fieldMap = td match {
-          case TypeDefinition.ObjectTypeDefinition(_, _, _, fds)    => fds.toList.map(f => f.name -> f).toMap
-          case TypeDefinition.InterfaceTypeDefinition(_, _, _, fds) => fds.toList.map(f => f.name -> f).toMap
-          case TypeDefinition.UnionTypeDefinition(_, _, _)          => Map.empty[String, FieldDefinition]
-          case _                                                    => ???
+        in(s"type-definition-${typename}") {
+          val fieldMapF: F[Map[String, FieldDefinition]] = td match {
+            case TypeDefinition.ObjectTypeDefinition(_, _, _, fds)    => F.pure(fds.toList.map(f => f.name -> f).toMap)
+            case TypeDefinition.InterfaceTypeDefinition(_, _, _, fds) => F.pure(fds.toList.map(f => f.name -> f).toMap)
+            case TypeDefinition.UnionTypeDefinition(_, _, _)          => F.pure(Map.empty[String, FieldDefinition])
+            case _ =>
+              F.raiseError(s"Type tried to perform selection on`$typename`, but it is not an object, interface or union")
+          }
+
+          fieldMapF.flatMap { fm =>
+            sels
+              .parTraverse(generateSelection[F](name, schema, fm, _))
+              .map { parts =>
+                Part(
+                  name,
+                  parts.map(_.typePart),
+                  parts.toList.flatMap(_.subPart.toList),
+                  parts.map(_.codec),
+                  contextInfo
+                )
+              }
+          }
         }
-
-        val parts = sels.map(generateSelection(name, schema, fieldMap, _))
-
-        Part(
-          name,
-          parts.map(_.typePart),
-          parts.toList.flatMap(_.subPart.toList),
-          parts.map(_.codec),
-          contextInfo
-        )
     }
   }
 
-  def generateFor(schema: Map[String, TypeDefinition], query: NonEmptyList[ExecutableDefinition]) = {
-    val body = query.map {
+  def generateExecutableDefs[F[_]: Parallel](
+      schema: Map[String, TypeDefinition],
+      query: NonEmptyList[ExecutableDefinition]
+  )(implicit
+      P: Path[F],
+      F: MonadError[F, String]
+  ) = {
+    val bodyF: F[NonEmptyList[Part]] = query.parTraverse {
       case ExecutableDefinition.Operation(o) =>
         o.value match {
-          case OperationDefinition.Simple(_) => ???
+          case OperationDefinition.Simple(_) =>
+            F.raiseError("Simple operations are not supported, please name all your operations")
           case d: OperationDefinition.Detailed =>
-            generateTypeDef(
-              schema,
-              d.name.get,
-              "Query",
-              d.selectionSet.selections.map(_.value),
-              Some(
-                ContextInfo.Operation(
-                  d.tpe,
-                  d.variableDefinitions.toList.flatMap(_.nel.toList.map(_.value))
+            in(s"operation-${d.name.get}") {
+              generateTypeDef[F](
+                schema,
+                d.name.get,
+                "Query",
+                d.selectionSet.selections.map(_.value),
+                Some(
+                  ContextInfo.Operation(
+                    d.tpe,
+                    d.variableDefinitions.toList.flatMap(_.nel.toList.map(_.value))
+                  )
                 )
               )
-            )
+            }
         }
       case ExecutableDefinition.Fragment(f) => {
-        val f2 = f.value
-        generateTypeDef(
-          schema,
-          f2.name,
-          f2.typeCnd,
-          f2.selectionSet.selections.map(_.value),
-          Some(ContextInfo.Fragment(Some(f2.name), f2.typeCnd, Nil))
-        )
+        in(s"fragment-${f.value.name}") {
+          val f2 = f.value
+          generateTypeDef[F](
+            schema,
+            f2.name,
+            f2.typeCnd,
+            f2.selectionSet.selections.map(_.value),
+            Some(ContextInfo.Fragment(Some(f2.name), f2.typeCnd, Nil))
+          )
+        }
       }
     }
 
-    val bodyDoc = Doc.intercalate(Doc.hardLine + Doc.hardLine, body.toList.map(_.collapse))
+    bodyF.map { body =>
+      val bodyDoc = Doc.intercalate(Doc.hardLine + Doc.hardLine, body.toList.map(_.collapse))
 
-    def imp(t: String) = Doc.text(s"import $t")
-    Doc.intercalate(
-      Doc.hardLine,
-      List(
-        Doc.text("package gql.client.generated"),
-        Doc.empty,
-        imp("_root_.gql.client._"),
-        imp("_root_.gql.client.dsl._")
-      )
-    ) + Doc.hardLine + Doc.hardLine + bodyDoc
+      def imp(t: String) = Doc.text(s"import $t")
+      Doc.intercalate(
+        Doc.hardLine,
+        List(
+          Doc.text("package gql.client.generated"),
+          Doc.empty,
+          imp("_root_.gql.client._"),
+          imp("_root_.gql.client.dsl._")
+        )
+      ) + Doc.hardLine + Doc.hardLine + bodyDoc
+    }
   }
 
-  val parsed = gql.parser.parseSchema(testSchema).fold(x => throw new Exception(x.toString()), identity)
+  def generateFor(
+      schema: Map[String, TypeDefinition],
+      query: NonEmptyList[ExecutableDefinition]
+  ): Either[String, Doc] = {
+    type F[A] = EitherT[Reader[Chain[String], *], String, A]
+    generateExecutableDefs[F](schema, query).value.run(Chain.empty)
+  }
 
-  val parsedQuery = gql.parser.parseQuery(testQuery).fold(x => throw new Exception(x.toString()), identity)
+  def generateWith(
+      schema: Map[String, TypeDefinition],
+      query: String
+  ): Either[String, Doc] =
+    gql.parser.parseQuery(query).leftMap(_.prettyError.value).flatMap(generateFor(schema, _))
 
-  val m = parsed.map(td => td.name -> td).toList.toMap
+  def getSchemaFrom(s: String): Either[String, Map[String, TypeDefinition]] =
+    gql.parser.parseSchema(s).leftMap(_.prettyError.value).map(_.map(td => td.name -> td).toList.toMap)
 
-  val o = generateFor(m, parsedQuery)
+  val o = getSchemaFrom(testSchema).flatMap(generateWith(_, testQuery))
 
-  println(o.render(80))
+  println(o.map(_.render(80)))
 
   def testQuery = """
   query AlienQuery($name: String!, $id: ID!) {

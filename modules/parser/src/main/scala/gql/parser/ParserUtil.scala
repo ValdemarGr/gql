@@ -98,7 +98,7 @@ object ParserUtil {
     val niceError = showExpectations(e.expected)
 
     AnsiColor.BLUE +
-      s"failed at offset ${e.failedAtOffset} on line $ln with code ${conflictingCharacter.toInt}\n${niceError}\nin query:\n$msg" +
+      s"failed at offset ${e.failedAtOffset} on line $ln with code ${conflictingCharacter.toInt}\n${niceError}\nfor document:\n$msg" +
       AnsiColor.RESET
   }
 }
