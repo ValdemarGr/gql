@@ -30,7 +30,7 @@ object QueryResult {
   )
 
   object Error {
-    implicit val decoder = Decoder.instance[Error] { c =>
+    implicit val decoder: Decoder[Error] = Decoder.instance[Error] { c =>
       for {
         message <- c.downField("message").as[String]
         path <- c.downField("path").as[List[String]]
@@ -39,7 +39,7 @@ object QueryResult {
     }
   }
 
-  implicit def decoder[A: Decoder] = Decoder.instance[QueryResult[A]] { c =>
+  implicit def decoder[A: Decoder]: Decoder[QueryResult[A]] = Decoder.instance[QueryResult[A]] { c =>
     for {
       data <- c.downField("data").as[A]
       errors <- c.downField("errors").as[Option[List[Error]]]

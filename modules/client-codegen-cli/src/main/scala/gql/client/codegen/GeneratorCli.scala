@@ -60,14 +60,14 @@ object GeneratorCli
           Either.catchNonFatal(Path(str)).leftMap(_.getMessage)
         }
 
-        implicit val queryDec = Decoder.instance[Query] { c =>
+        implicit val queryDec: Decoder[Query] = Decoder.instance[Query] { c =>
           (
             c.downField("query").as[Path],
             c.downField("output").as[Option[Path]]
           ).mapN(Query.apply)
         }
 
-        implicit val inputDec = Decoder.instance[Input] { c =>
+        implicit val inputDec: Decoder[Input] = Decoder.instance[Input] { c =>
           (
             c.get[Path]("schema"),
             c.get[NonEmptyList[Query]]("queries")

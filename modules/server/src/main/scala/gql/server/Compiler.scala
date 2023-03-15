@@ -28,18 +28,18 @@ sealed trait CompilationError
 object CompilationError {
   final case class Parse(error: gql.parser.ParseError) extends CompilationError
   object Parse {
-    implicit val encoder = Encoder.AsObject.instance[Parse] { err =>
+    implicit val encoder: Encoder.AsObject[Parse] = Encoder.AsObject.instance[Parse] { err =>
       Map("errors" -> List(err.error)).asJsonObject
     }
   }
   final case class Preparation(error: NonEmptyChain[gql.PreparedQuery.PositionalError]) extends CompilationError
   object Preparation {
-    implicit val encoder = Encoder.AsObject.instance[Preparation] { err =>
+    implicit val encoder: Encoder.AsObject[Preparation] = Encoder.AsObject.instance[Preparation] { err =>
       Map("errors" -> err.error).asJsonObject
     }
   }
 
-  implicit val encoder = Encoder.AsObject.instance[CompilationError] {
+  implicit val encoder: Encoder.AsObject[CompilationError] = Encoder.AsObject.instance[CompilationError] {
     case err: Parse       => err.asJsonObject
     case err: Preparation => err.asJsonObject
   }

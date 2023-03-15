@@ -52,7 +52,7 @@ object Value {
     jsonObject = jo => ObjectValue(jo.toList.map { case (k, v) => k -> fromJson(v) })
   )
 
-  implicit val decoder = Decoder.decodeJson.map(fromJson)
+  implicit val decoder: Decoder[Value[Const]] = Decoder.decodeJson.map(fromJson)
 
   implicit val encoder: Encoder[Value[Const]] = Encoder.instance[Value[Const]] {
     case i: IntValue           => i.v.asJson

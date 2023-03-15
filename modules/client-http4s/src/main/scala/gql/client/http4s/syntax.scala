@@ -21,6 +21,7 @@ import org.http4s.circe._
 import io.circe.syntax._
 import org.http4s.client.Client
 import cats.effect._
+import org.http4s.EntityDecoder
 
 object syntax {
   implicit class Http4sCompiledQueryOps[A](private val c: Query.Compiled[A]) extends AnyVal {
@@ -28,8 +29,8 @@ object syntax {
       Request[F](method = org.http4s.Method.POST).withEntity(c.toJson.asJson)
 
     def fetch[F[_]: Concurrent](client: Client[F]): F[A] = {
-      implicit val dec = c.decoder
-      implicit val ed = org.http4s.circe.jsonOf[F, A]
+      implicit val dec: io.circe.Decoder[A] = c.decoder
+      implicit val ed: EntityDecoder[F, A] = org.http4s.circe.jsonOf[F, A]
       client.expect[A](c.http4sRequest[F])
     }
 

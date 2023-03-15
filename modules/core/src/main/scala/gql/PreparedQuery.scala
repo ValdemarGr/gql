@@ -101,7 +101,7 @@ object PreparedQuery {
 
   object PositionalError {
     import io.circe.syntax._
-    implicit val encoder = Encoder.AsObject.instance[PositionalError] { pe =>
+    implicit val encoder: Encoder.AsObject[PositionalError] = Encoder.AsObject.instance[PositionalError] { pe =>
       Map(
         "message" -> Some(pe.message.asJson),
         "locations" -> pe.caret.map(c => Json.obj("line" -> c.line.asJson, "column" -> c.col.asJson)).toNel.map(_.asJson),

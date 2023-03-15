@@ -63,10 +63,10 @@ final case class Cursor(path: Chain[GraphArc]) {
 object Cursor {
   val empty = Cursor(Chain.empty)
 
-  implicit val monoidForCursor = new Monoid[Cursor] {
+  implicit val monoidForCursor: Monoid[Cursor] = new Monoid[Cursor] {
     def empty = Cursor.empty
     def combine(x: Cursor, y: Cursor) = Cursor(x.path ++ y.path)
   }
 
-  implicit val showForCursor = Show.show[Cursor](_.formatted)
+  implicit val showForCursor: Show[Cursor] = Show.show[Cursor](_.formatted)
 }

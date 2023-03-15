@@ -29,7 +29,7 @@ package object parser {
   )
 
   object ParseError {
-    implicit val encoder = Encoder.AsObject.instance[ParseError] { err =>
+    implicit val encoder: Encoder.AsObject[ParseError] = Encoder.AsObject.instance[ParseError] { err =>
       Map(
         "message" -> "could not parse query".asJson,
         "locations" -> List(Map("line" -> err.caret.line.asJson, "column" -> err.caret.col.asJson)).asJson,
