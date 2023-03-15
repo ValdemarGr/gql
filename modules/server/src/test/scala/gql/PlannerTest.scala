@@ -355,7 +355,7 @@ object Planner {
   )
 
   object State {
-    implicit val monoidForState = new Monoid[State] {
+    implicit val monoidForState: Monoid[State] = new Monoid[State] {
       override def combine(x: State, y: State): State =
         State(
           batch = x.batch ++ y.batch,
