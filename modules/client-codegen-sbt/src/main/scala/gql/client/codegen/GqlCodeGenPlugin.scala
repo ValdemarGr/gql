@@ -42,10 +42,6 @@ object GqlCodeGenPlugin extends AutoPlugin {
 
       val findResources = taskKey[Seq[CustomResourceGroup]]("Find the resources")
 
-      // "Path to the code generator cli jar"
-      // val codeGenCli = taskKey[Attributed[File]]("Path to the code generator cli jar")
-      val coursierCmd = taskKey[String]("The coursier command to use")
-
       val invokeCodeGen = taskKey[Seq[File]]("Invoke the code generator")
     }
   }
@@ -100,48 +96,39 @@ object GqlCodeGenPlugin extends AutoPlugin {
 
         customs ++ default
       },
-      // libraryDependencies += "io.github.valdemargr" % "client-codegen-cli" % "0.1" % Runtime,
-      // Gql.codeGenCli := {
-      //   val xs = Classpaths.managedJars(Runtime, Set("jar"), update.value)
-      //   println(update.value)
-      //   println(xs.map(_.data))
-      //   println((Runtime / dependencyClasspath).value)
-      //   println((Runtime / libraryDependencies).value)
-      //   if (xs.size != 1) {
-      //     sys.error("Expected exactly one jar in the classpath")
-      //   } else {
-      //     xs.head
-      //   }
-      // },
-      Gql.coursierCmd := "coursier",
+      libraryDependencies += "io.github.valdemargr" % "gql-client-codegen-cli_2.13" % "0.1-305cbf3",
       Gql.invokeCodeGen := {
+        val cp = (Compile / externalDependencyClasspath).value
+
         val f = (Compile / sourceManaged).value / "gql"
         IO.createDirectory(f)
         val resources = Gql.findResources.value
         val cmd = resources.map { rg =>
           val queries = rg.files.map { in =>
-            val fn = f.name.replaceAll("\\.", "_")
+            val fn = in.name.replaceAll("\\.", "_")
             val outFile = f / s"${fn}.scala"
-            s"""{"query": "${in.absolutePath}", "output": "${outFile.absolutePath}.scala"}""" -> outFile
+            s"""{"query": "${in.absolutePath}", "output": "${outFile.absolutePath}"}""" -> outFile
           }
 
           s"""{"schema":"${rg.schemaPath.absolutePath}","queries":[${queries.map(_._1).mkString(",")}]}""" -> queries.map(_._2)
         }
-        // Run the code generator from coursier
-        val args = List(
-          Gql.coursierCmd.value,
-          "launch",
-          "io.github.valdemargr:client-codegen-cli:0.1",
-          "--main",
-          "gql.client.codegen.GeneratorCli",
-          "--",
-          "--input"
-        ) ++ cmd.map(_._1)
+
+        val log = streams.value.log
+
+        val args =
+          List(
+            "java",
+            "-cp"
+          ) ++ List(cp.map(_.data.toString()).mkString(":")) ++ List(
+            "gql.client.codegen.GeneratorCli",
+            "--input"
+          ) ++ cmd.map(_._1)
 
         scala.sys.process.Process(args, None).! match {
           case 0 => cmd.flatMap(_._2)
           case n => sys.error(s"Process exited with code $n")
         }
-      }
+      },
+      Compile / sourceGenerators += Gql.invokeCodeGen.taskValue
     )
 }
