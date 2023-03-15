@@ -222,7 +222,7 @@ object Generator {
 
           val vars = op.variables.map { v =>
             val scalaType = ModifierStack.fromType(v.tpe).invert.showScala(identity)
-            val args = quoted(v.name) :: v.defaultValue.toList.map(generateValue)
+            val args = quoted(v.name) :: v.defaultValue.toList.map(generateValue(_, anyValue = false))
             Doc.text("variable") + Doc.char('[') + Doc.text(scalaType) + Doc.char(']') + params(args)
           }
 
@@ -237,7 +237,7 @@ object Generator {
 
           val queryPrefix =
             if (vars.size == 0) Doc.text("named")
-            else Doc.text("parametrized")
+            else Doc.text("parameterized")
 
           val args = List(
             Doc.text(operationTypePath),
@@ -330,17 +330,18 @@ object Generator {
         val argPart = f.arguments.toList.flatMap(_.nel.toList).map { x =>
           Doc.text("arg") +
             (
-              quoted(x.name) + Doc.char(',') + Doc.space + generateValue(x.value)
+              quoted(x.name) + Doc.char(',') + Doc.space + generateValue(x.value, anyValue = true)
             ).tightBracketBy(Doc.char('('), Doc.char(')'))
         }
 
-        val clientSel = Doc.text("sel") +
-          Doc.text(ms.invert.showScala(identity)).tightBracketBy(Doc.char('['), Doc.char(']')) +
-          params(quoted(fd.name) :: argPart)
-
-        val scalaTypeName =
+        val scalaTypeName = ms.invert.copy(inner =
           if (subPart.isDefined) s"${companionName}.${n}"
           else ms.inner
+        ).showScala(identity)
+
+        val clientSel = Doc.text("sel") +
+          Doc.text(scalaTypeName).tightBracketBy(Doc.char('['), Doc.char(']')) +
+          params(quoted(fd.name) :: argPart)
 
         val sf = scalaField(fd.name, scalaTypeName)
 
@@ -487,8 +488,9 @@ object Generator {
           Doc.text("package gql.client.generated"),
           Doc.empty,
           imp("_root_.gql.client._"),
-          imp("_root_.gql.parser.{Value => V}"),
-          imp("_root_.gql.client.dsl._")
+          imp("_root_.gql.parser.{Value => V, AnyValue, Const}"),
+          imp("_root_.gql.client.dsl._"),
+          imp("cats.implicits._")
         )
       ) + Doc.hardLine + Doc.hardLine + bodyDoc
     }

@@ -69,6 +69,11 @@ object Query {
     )
   }
 
+  object Compiled {
+    implicit def enc[A]: io.circe.Encoder.AsObject[Query.Compiled[A]] = 
+      io.circe.Encoder.AsObject.instance[Query.Compiled[A]](_.toJson)
+  }
+
   def simple[A](operationType: P.OperationType, selectionSet: SelectionSet[A]): SimpleQuery[A] =
     SimpleQuery(operationType, selectionSet)
 
@@ -100,7 +105,7 @@ object Query {
   }
 
   def queryDecoder[A](ss: SelectionSet[A]): Decoder[A] =
-    Dec.decoderForSelectionSet(ss)
+    Decoder.instance(_.get[A]("data")(Dec.decoderForSelectionSet(ss)))
 
   def findFragments(ss: SelectionSet[?]): List[Fragment[?]] = {
     val discoveryCompiler = new (Selection ~> Const[List[Fragment[?]], *]) {
@@ -183,7 +188,7 @@ object Query {
         case None          => Doc.empty
         case Some(default) => Doc.space + Doc.char('=') + Doc.space + renderValue(default)
       }
-      Doc.text(s"$$${v.name}") + Doc.space + Doc.char(':') + Doc.space + Doc.text(v.tpe) + default
+      Doc.text(s"$$${v.name.name}") + Doc.space + Doc.char(':') + Doc.space + Doc.text(v.tpe) + default
     }
 
     def renderArg(a: P.Argument): Doc =
