@@ -1,3 +1,18 @@
+/*
+ * Copyright 2023 Valdemar Grange
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package gql.parser
 
 import io.circe._
@@ -40,13 +55,13 @@ object Value {
   implicit val decoder = Decoder.decodeJson.map(fromJson)
 
   implicit val encoder: Encoder[Value[Const]] = Encoder.instance[Value[Const]] {
-    case i: IntValue     => i.v.asJson
-    case f: FloatValue   => f.v.asJson
-    case s: StringValue  => s.v.asJson
-    case b: BooleanValue => b.v.asJson
-    case NullValue()            => Json.Null
-    case e: EnumValue    => e.v.asJson
-    case l: ListValue[Const]    => l.v.map(_.asJson).asJson
-    case o: ObjectValue[Const]  => JsonObject.fromIterable(o.v.map { case (k, v) => k -> v.asJson }).asJson
+    case i: IntValue           => i.v.asJson
+    case f: FloatValue         => f.v.asJson
+    case s: StringValue        => s.v.asJson
+    case b: BooleanValue       => b.v.asJson
+    case NullValue()           => Json.Null
+    case e: EnumValue          => e.v.asJson
+    case l: ListValue[Const]   => l.v.map(_.asJson).asJson
+    case o: ObjectValue[Const] => JsonObject.fromIterable(o.v.map { case (k, v) => k -> v.asJson }).asJson
   }
 }

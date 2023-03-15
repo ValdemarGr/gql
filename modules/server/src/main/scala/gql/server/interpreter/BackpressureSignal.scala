@@ -61,7 +61,6 @@ object BackpressureSignal {
               }
             }.flatten
 
-
           def listen0: Resource[F, Signal[F, A]] =
             sem.permit.as {
               new Signal[F, A] {

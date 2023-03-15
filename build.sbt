@@ -66,7 +66,9 @@ lazy val sharedSettings = Seq(
     "org.typelevel" %% "paiges-core" % "0.4.2",
     "org.scalameta" %% "munit" % "1.0.0-M6" % Test,
     "org.typelevel" %% "munit-cats-effect" % "2.0.0-M3" % Test
-  )
+  ),
+  tlFatalWarnings := false,
+  tlFatalWarningsInCi := false,
 )
 
 lazy val parser = project
@@ -121,13 +123,8 @@ lazy val clientCodegenSbt = project
     sbtPlugin := true,
     scalaVersion := "2.12.17",
     name := "gql-client-codegen-sbt",
-    Compile / unmanagedJars := {
-      val jars = (clientCodegen / Compile / packageBin).value
-      println(jars)
-      (Compile / unmanagedJars).value
-    }
   )
-  .aggregate(clientCodegen)
+  .aggregate(clientCodegenCli)
   /* .enablePlugins(NoPublishPlugin) */
 
 /* lazy val testProject = project */

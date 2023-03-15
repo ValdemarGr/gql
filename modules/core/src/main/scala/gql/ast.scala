@@ -223,7 +223,7 @@ object ast extends AstImplicits.Implicits {
             s"decoding failure for type $name$maybeAt with message ${df.message}"
           }
       )
-      }
+    }
 
     implicit lazy val invariantForScalar: Invariant[Scalar] = new Invariant[Scalar] {
       override def imap[A, B](fa: Scalar[A])(f: A => B)(g: B => A): Scalar[B] =

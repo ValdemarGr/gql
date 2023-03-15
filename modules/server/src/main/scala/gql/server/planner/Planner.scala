@@ -25,7 +25,6 @@ import cats.mtl.Stateful
 import gql.resolver.Step
 import gql._
 
-
 trait Planner[F[_]] { self =>
   def plan(naive: Planner.NodeTree): F[Planner.PlannedNodeTree]
 
@@ -212,13 +211,12 @@ object Planner {
           )
 
           case class TetrisState(
-            
           )
 
           case class NodeSubtreeStats(
-            id: NodeId,
-            batch: Step.BatchKey[?, ?],
-            subtree: Children
+              id: NodeId,
+              batch: Step.BatchKey[?, ?],
+              subtree: Children
           )
 
           def computeNodeState(id: NodeId, state: PlannerState): NodeState = {
@@ -247,7 +245,7 @@ object Planner {
                 .flatMap(_.toList.flatMap(lookupV(_).batchId.toList.map(_.batcherId)))
                 .toSet
             }
-          
+
           //def waitingScores(topNodes: Set[(NodeId, )], )
 
           def moveUp2(id: NodeId, topNodes: NonEmptyList[NodeId], state: Plan) = {

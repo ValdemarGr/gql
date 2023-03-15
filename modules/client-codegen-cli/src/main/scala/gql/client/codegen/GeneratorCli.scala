@@ -1,6 +1,20 @@
+/*
+ * Copyright 2023 Valdemar Grange
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package gql.client.codegen
 
-import cats._
 import cats.effect._
 import cats.implicits._
 import com.monovore.decline._
@@ -36,7 +50,7 @@ object GeneratorCli
   )
   val kvPairs =
     Opts.options[Input](
-      "files",
+      "input",
       help = """|Path to the GraphQL schemas and query files, given as json value.
                 |For instance: {"schema": "/my/schema", "queries": [{ "query": "/my/query", "output": "/my/Query.scala" }] }.
                 |Omitting "output" will generate the file beside the input query""".stripMargin

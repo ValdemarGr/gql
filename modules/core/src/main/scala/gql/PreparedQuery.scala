@@ -101,7 +101,7 @@ object PreparedQuery {
 
   object PositionalError {
     import io.circe.syntax._
-    implicit val encoder = Encoder.AsObject.instance[PositionalError]{ pe => 
+    implicit val encoder = Encoder.AsObject.instance[PositionalError] { pe =>
       Map(
         "message" -> Some(pe.message.asJson),
         "locations" -> pe.caret.map(c => Json.obj("line" -> c.line.asJson, "column" -> c.col.asJson)).toNel.map(_.asJson),
@@ -180,7 +180,7 @@ object PreparedQuery {
       case _                      => Chain.empty
     }
 
-  def friendlyName[G[_], A](ot: Out[G, A]): String = 
+  def friendlyName[G[_], A](ot: Out[G, A]): String =
     ModifierStack
       .fromOut(ot)
       .show(_.name)
@@ -934,19 +934,19 @@ object PreparedQuery {
   def pValueName(v: V[AnyValue]): String = {
     import V._
     v match {
-      case ObjectValue(_)       => "object"
-      case StringValue(_)       => "string"
-      case ListValue(_)         => "list"
-      case V.EnumValue(_) => "enum"
-      case BooleanValue(_)      => "boolean"
-      case NullValue()            => "null"
-      case FloatValue(_)        => "float"
-      case IntValue(_)          => "int"
-      case VariableValue(_)     => "variable"
+      case ObjectValue(_)   => "object"
+      case StringValue(_)   => "string"
+      case ListValue(_)     => "list"
+      case V.EnumValue(_)   => "enum"
+      case BooleanValue(_)  => "boolean"
+      case NullValue()      => "null"
+      case FloatValue(_)    => "float"
+      case IntValue(_)      => "int"
+      case VariableValue(_) => "variable"
     }
-    }
+  }
 
-  def inName[A](in: In[A]): String = 
+  def inName[A](in: In[A]): String =
     ModifierStack
       .fromIn(in)
       .show(_.name)
@@ -995,7 +995,7 @@ object PreparedQuery {
                 parseInput[F, A](asPVal, tpe, None, ambigiousEnum = true)
             }
         }
-        case (e @ Enum(name, _, _), v) =>
+      case (e @ Enum(name, _, _), v) =>
         ambientField(name) {
           val fa: F[String] = v match {
             case V.EnumValue(s)                    => F.pure(s)
@@ -1028,9 +1028,9 @@ object PreparedQuery {
           }
           .flatMap(arr.fromSeq(_).fold(raise(_, None), F.pure(_)))
       case (_: InOpt[a], V.NullValue()) => F.pure(Option.empty[a])
-      case (opt: InOpt[a], x)               => parseInput[F, a](x, opt.of, variableMap, ambigiousEnum).map(Some(_))
-      case (i, _)                           => raise(s"Expected type `${inName(i)}`, but got value ${pValueName(v)}.", None)
-  }
+      case (opt: InOpt[a], x)           => parseInput[F, a](x, opt.of, variableMap, ambigiousEnum).map(Some(_))
+      case (i, _)                       => raise(s"Expected type `${inName(i)}`, but got value ${pValueName(v)}.", None)
+    }
 
   def parseArgValue[F[_]: Parallel, A](
       a: ArgValue[A],
@@ -1150,7 +1150,7 @@ object PreparedQuery {
           .parTraverse { case Pos(caret, vd) =>
             val defaultWithFallback: Option[V[Const]] = vd.defaultValue.orElse(vd.tpe match {
               case T.NonNull(_) => None
-              case _                 => Some(V.NullValue())
+              case _            => Some(V.NullValue())
             })
 
             def printType(t: T, inOption: Boolean = false): String = {
