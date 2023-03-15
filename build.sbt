@@ -99,6 +99,20 @@ lazy val clientCodegen = project
   .dependsOn(core)
   .dependsOn(client)
 
+lazy val clientCodegenCli = project
+  .in(file("modules/client-codegen-cli"))
+  .settings(sharedSettings)
+  .settings(
+    name := "gql-client-codegen-cli" /*, tlFatalWarnings := true*/ ,
+    libraryDependencies ++= Seq(
+      "com.monovore" %% "decline" % "2.4.0",
+      "com.monovore" %% "decline-effect" % "2.4.0"
+    )
+  )
+  .dependsOn(core)
+  .dependsOn(client)
+  .dependsOn(clientCodegen)
+
 lazy val clientCodegenSbt = project
   .in(file("modules/client-codegen-sbt"))
   /* .enablePlugins(BuildInfoPlugin) */
@@ -107,7 +121,13 @@ lazy val clientCodegenSbt = project
     sbtPlugin := true,
     scalaVersion := "2.12.17",
     name := "gql-client-codegen-sbt",
+    Compile / unmanagedJars := {
+      val jars = (clientCodegen / Compile / packageBin).value
+      println(jars)
+      (Compile / unmanagedJars).value
+    }
   )
+  .aggregate(clientCodegen)
   /* .enablePlugins(NoPublishPlugin) */
 
 /* lazy val testProject = project */

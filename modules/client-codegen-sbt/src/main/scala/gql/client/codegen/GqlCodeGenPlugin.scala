@@ -51,13 +51,13 @@ object GqlCodeGenPlugin extends AutoPlugin {
           if (!schema.exists()) {
             log.err(
               s"""|A resource group had no schema at ${rg.schemaPath.getPath()}
-                  $hint""".stripMargin
+                  |$hint""".stripMargin
             )
             None
           } else if (queries.isEmpty) {
             log.err(
               s"""|Default resource group used but no queries found for ${(queries.map(_.getPath()).mkString(", "))}
-                  $hint""".stripMargin
+                  |$hint""".stripMargin
             )
             None
           } else Some(Gql.CustomResourceGroup(schema, queries))
@@ -70,7 +70,7 @@ object GqlCodeGenPlugin extends AutoPlugin {
           .collectFirst { case Gql.DefaultResourceGroup =>
             val r = (Compile / resourceDirectory).value
             val schema = r / "schema.graphql"
-            val queries = (r / "queries").listFiles().toList
+            val queries = Option((r / "queries").listFiles()).toList.flatMap(_.toList)
             val rg = Gql.CustomResourceGroup(schema, queries)
             verifyResourceGroup(rg)
           }
