@@ -190,8 +190,13 @@ object Generator {
         (if (codec.size > 1) Doc.text("mapN") else Doc.text("map")) +
         Doc.text("(apply)")
 
+      val tpeName = contextInfo match {
+        case Some(_: ContextInfo.Fragment) => s"Option[$name]"
+        case _                            => name
+      }
+
       def codecImplicit: Doc =
-        Doc.text(s"implicit val selectionSet: SelectionSet[$name] = ")
+        Doc.text(s"implicit val selectionSet: SelectionSet[$tpeName] = ")
 
       val fullCodec = contextInfo match {
         case None => codecImplicit + codecSelection
@@ -321,7 +326,8 @@ object Generator {
       F: MonadError[F, NonEmptyChain[String]]
   ): F[FieldPart] = {
     val ms = ModifierStack.fromType(fd.tpe)
-    val n = toPascal(f.alias.getOrElse(f.name))
+    val gqlName = f.alias.getOrElse(f.name)
+    val n = toPascal(gqlName)
 
     f.selectionSet.value
       .map(_.selections.map(_.value))
@@ -341,9 +347,9 @@ object Generator {
 
         val clientSel = Doc.text("sel") +
           Doc.text(scalaTypeName).tightBracketBy(Doc.char('['), Doc.char(']')) +
-          params(quoted(fd.name) :: argPart)
+          params(quoted(fd.name) :: f.alias.toList.map(quoted) ++ argPart)
 
-        val sf = scalaField(fd.name, scalaTypeName)
+        val sf = scalaField(gqlName, scalaTypeName)
 
         FieldPart(sf, subPart, clientSel)
       }
@@ -372,9 +378,9 @@ object Generator {
         val fs = frag.fragmentSpread
         F.pure {
           FieldPart(
-            scalaField(toCaml(fs.fragmentName), fs.fragmentName),
+            scalaField(toCaml(fs.fragmentName), s"Option[${fs.fragmentName}]"),
             None,
-            Doc.text(s"embed[${fs.fragmentName}]")
+            Doc.text(s"embed[Option[${fs.fragmentName}]]")
           )
         }
       case inlineFrag: Selection.InlineFragmentSelection =>
@@ -386,9 +392,9 @@ object Generator {
           generateTypeDef[F](schema, name, cnd, ss, Some(ContextInfo.Fragment(None, cnd, Nil)))
             .map { p =>
               FieldPart(
-                scalaField(toCaml(name), s"${companionName}.${name}"),
+                scalaField(toCaml(name), s"Option[${companionName}.${name}]"),
                 Some(p),
-                Doc.text(s"embed[${name}]")
+                Doc.text(s"embed[Option[${name}]]")
               )
             }
         }

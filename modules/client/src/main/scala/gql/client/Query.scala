@@ -22,6 +22,7 @@ import org.typelevel.paiges._
 import cats.implicits._
 import cats._
 import gql.client.Selection.Fragment
+import gql.client.Selection.Field
 import gql.client.Selection.InlineFragment
 
 final case class SimpleQuery[A](
@@ -70,7 +71,7 @@ object Query {
   }
 
   object Compiled {
-    implicit def enc[A]: io.circe.Encoder.AsObject[Query.Compiled[A]] = 
+    implicit def enc[A]: io.circe.Encoder.AsObject[Query.Compiled[A]] =
       io.circe.Encoder.AsObject.instance[Query.Compiled[A]](_.toJson)
   }
 
@@ -112,7 +113,17 @@ object Query {
       override def apply[A](fa: Selection[A]): Const[List[Fragment[?]], A] = Const {
         fa match {
           case f: Fragment[?] => f :: findFragments(f.subSelection)
-          case _              => Nil
+          case f: Field[?] =>
+            def unpackSubQuery(q: SubQuery[?]): List[Fragment[?]] =
+              q match {
+                case Terminal(_)              => Nil
+                case ListModifier(subQuery)   => unpackSubQuery(subQuery)
+                case OptionModifier(subQuery) => unpackSubQuery(subQuery)
+                case ss: SelectionSet[?]      => findFragments(ss)
+              }
+
+            unpackSubQuery(f.subQuery)
+          case f: InlineFragment[?] => findFragments(f.subSelection)
         }
       }
     }
@@ -201,7 +212,8 @@ object Query {
           List {
             fa match {
               // Fragments are floated to the top level and handled separately
-              case _: Fragment[?] => Doc.empty
+              case f: Fragment[?] =>
+                Doc.text(s"...${f.name}")
               case InlineFragment(on, _, subSelection) =>
                 Doc.text(s"...$on") + Doc.space + renderSelectionSet(subSelection)
               case Selection.Field(name, alias, args, sq) =>
