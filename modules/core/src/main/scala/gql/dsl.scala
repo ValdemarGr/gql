@@ -21,6 +21,7 @@ import gql.ast._
 import gql.resolver._
 import cats.data._
 import scala.reflect.ClassTag
+import gql.parser.{Value => V, Const}
 
 object dsl {
   type Fields[F[_], -A] = NonEmptyList[(String, Field[F, A, ?])]
@@ -53,10 +54,10 @@ object dsl {
   def arg[A](name: String, description: String)(implicit tpe: => In[A]): Arg[A] =
     Arg.make[A](ArgValue(name, Eval.later(tpe), None, Some(description)))
 
-  def arg[A](name: String, default: Value)(implicit tpe: => In[A]): Arg[A] =
+  def arg[A](name: String, default: V[Const])(implicit tpe: => In[A]): Arg[A] =
     Arg.make[A](ArgValue(name, Eval.later(tpe), Some(default), None))
 
-  def arg[A](name: String, default: Value, description: String)(implicit tpe: => In[A]): Arg[A] =
+  def arg[A](name: String, default: V[Const], description: String)(implicit tpe: => In[A]): Arg[A] =
     Arg.make[A](ArgValue(name, Eval.later(tpe), Some(default), Some(description)))
 
   def argFull[A] = new PartiallyAppliedArgFull[A]
@@ -70,13 +71,13 @@ object dsl {
     def fromEnum[A](value: A)(implicit tpe: => Enum[A]) =
       tpe.revm.get(value).map(enumValue)
 
-    def enumValue(value: String) = Value.EnumValue(value)
+    def enumValue(value: String) = V.EnumValue(value)
 
-    def arr(xs: Value*) = Value.ArrayValue(xs.toVector)
+    def arr(xs: V[Const]*) = V.ListValue(xs.toList)
 
-    def obj(xs: (String, Value)*) = Value.ObjectValue(xs.toMap)
+    def obj(xs: (String, V[Const])*) = V.ObjectValue(xs.toList)
 
-    def nullValue = Value.NullValue
+    def nullValue = V.NullValue()
   }
 
   def eff[I] = new PartiallyAppliedEff[I]
@@ -221,7 +222,7 @@ object dsl {
   }
 
   final case class PartiallyAppliedArgFull[A](private val dummy: Boolean = false) extends AnyVal {
-    def apply[B](name: String, default: Option[Value], description: Option[String])(
+    def apply[B](name: String, default: Option[V[Const]], description: Option[String])(
         f: ArgParam[A] => Either[String, B]
     )(implicit tpe: => In[A]): Arg[B] =
       Arg.makeFrom[A, B](ArgValue(name, Eval.later(tpe), default, description))(f)

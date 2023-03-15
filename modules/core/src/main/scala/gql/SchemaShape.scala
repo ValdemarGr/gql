@@ -21,6 +21,7 @@ import cats.mtl._
 import cats.data._
 import gql.ast._
 import org.typelevel.paiges.Doc
+import gql.parser.{Value => V, AnyValue}
 
 final case class SchemaShape[F[_], Q, M, S](
     query: Type[F, Q],
@@ -170,43 +171,15 @@ object SchemaShape {
       .value
   }
 
-  sealed trait Modifier
-  object Modifier {
-    case object List extends Modifier
-    case object NonNull extends Modifier
-  }
-  final case class ModifierStack[+T](modifiers: List[Modifier], inner: T)
-
-  def getOutputModifierStack[F[_]](t: Out[F, ?], optional: Boolean = false): ModifierStack[OutToplevel[F, ?]] = {
-    val optExtra = if (optional) Nil else List(Modifier.NonNull)
-    t match {
-      case t: OutToplevel[F, ?] => ModifierStack(optExtra, t)
-      case OutArr(of, _, _) =>
-        val inner = getOutputModifierStack[F](of, optional = false)
-        ModifierStack(optExtra ++ (Modifier.List :: inner.modifiers), inner.inner)
-      case o: OutOpt[F, ?, ?] => getOutputModifierStack[F](o.of, optional = true)
-    }
-  }
-  def getInputModifierStack(t: In[?], optional: Boolean = false): ModifierStack[InToplevel[?]] = {
-    val optExtra = if (optional) Nil else List(Modifier.NonNull)
-    t match {
-      case t: InToplevel[?] => ModifierStack(optExtra, t)
-      case InArr(of, _) =>
-        val inner = getInputModifierStack(of, optional = false)
-        ModifierStack(optExtra ++ (Modifier.List :: inner.modifiers), inner.inner)
-      case o: InOpt[?] => getInputModifierStack(o.of, optional = true)
-    }
-  }
-
-  def renderValueDoc(v: Value): Doc = {
-    import Value._
+  def renderValueDoc(v: V[AnyValue]): Doc = {
+    import V._
     v match {
       case IntValue(v)     => Doc.text(v.toString)
       case StringValue(v)  => Doc.text(s""""$v"""")
       case FloatValue(v)   => Doc.text(v.toString)
-      case NullValue       => Doc.text("null")
+      case NullValue()     => Doc.text("null")
       case BooleanValue(v) => Doc.text(v.toString)
-      case ArrayValue(v) =>
+      case ListValue(v) =>
         Doc.intercalate(Doc.comma + Doc.line, v.map(renderValueDoc)).tightBracketBy(Doc.char('['), Doc.char(']'))
       case ObjectValue(fields) =>
         Doc
@@ -215,7 +188,8 @@ object SchemaShape {
             fields.map { case (k, v) => Doc.text(k) + Doc.text(": ") + renderValueDoc(v) }
           )
           .bracketBy(Doc.char('{'), Doc.char('}'))
-      case EnumValue(v) => Doc.text(v)
+      case EnumValue(v)     => Doc.text(v)
+      case VariableValue(v) => Doc.text(v)
     }
   }
   def render[F[_]](shape: SchemaShape[F, ?, ?, ?]) = {
@@ -243,7 +217,7 @@ object SchemaShape {
     def renderArgValueDoc(av: ArgValue[?]): Doc = {
       val o = av.defaultValue.map(dv => Doc.text(" = ") + renderValueDoc(dv)).getOrElse(Doc.empty)
       doc(av.description) +
-        Doc.text(av.name) + Doc.text(": ") + renderModifierStack(getInputModifierStack(av.input.value)) + o
+        Doc.text(av.name) + Doc.text(": ") + renderModifierStack(ModifierStack.fromIn(av.input.value)) + o
     }
 
     def renderFieldDoc[G[_]](name: String, field: AbstractField[G, ?]): Doc = {
@@ -255,7 +229,7 @@ object SchemaShape {
         .getOrElse(Doc.empty)
 
       doc(field.description) +
-        Doc.text(name) + args + Doc.text(": ") + renderModifierStack(getOutputModifierStack(field.output.value))
+        Doc.text(name) + args + Doc.text(": ") + renderModifierStack(ModifierStack.fromOut(field.output.value))
     }
 
     lazy val discovery: DiscoveryState[F] = shape.discover
@@ -421,30 +395,30 @@ object SchemaShape {
         def asToplevel: Option[Toplevel[?]] = Some(t)
       }
 
-      final case class ModifierStack(modifiers: NonEmptyList[Modifier], inner: InnerTypeInfo) extends TypeInfo {
+      final case class NEModifierStack(modifiers: NonEmptyList[Modifier], inner: InnerTypeInfo) extends TypeInfo {
         def asToplevel = None
         def head = modifiers.head
         def next = Some {
           modifiers.tail match {
             case Nil    => inner
-            case h :: t => ModifierStack(NonEmptyList(h, t), inner)
+            case h :: t => NEModifierStack(NonEmptyList(h, t), inner)
           }
         }
       }
 
       def fromOutput(o: Out[F, ?]): TypeInfo = {
-        val ms = getOutputModifierStack[F](o)
+        val ms = ModifierStack.fromOut[F](o)
         ms.modifiers match {
           case Nil    => OutInfo(ms.inner)
-          case h :: t => ModifierStack(NonEmptyList(h, t), OutInfo(ms.inner))
+          case h :: t => NEModifierStack(NonEmptyList(h, t), OutInfo(ms.inner))
         }
       }
 
       def fromInput(i: In[?]): TypeInfo = {
-        val ms = getInputModifierStack(i)
+        val ms = ModifierStack.fromIn(i)
         ms.modifiers match {
           case Nil    => InInfo(ms.inner)
-          case h :: t => ModifierStack(NonEmptyList(h, t), InInfo(ms.inner))
+          case h :: t => NEModifierStack(NonEmptyList(h, t), InInfo(ms.inner))
         }
       }
     }
@@ -452,7 +426,7 @@ object SchemaShape {
     implicit lazy val __type: Type[F, TypeInfo] = tpe[F, TypeInfo](
       "__Type",
       "kind" -> lift {
-        case m: TypeInfo.ModifierStack =>
+        case m: TypeInfo.NEModifierStack =>
           m.head match {
             case Modifier.List    => __TypeKind.LIST
             case Modifier.NonNull => __TypeKind.NON_NULL

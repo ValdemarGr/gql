@@ -20,7 +20,7 @@ import cats._
 import cats.implicits._
 import cats.mtl._
 import gql.ast._
-import gql.parser.QueryParser
+import gql.parser.GraphqlParser
 
 object Validation {
   sealed trait Error {
@@ -148,41 +148,23 @@ object Validation {
     }
   }
 
-  sealed trait Edge {
-    def name: String
-  }
-  object Edge {
-    final case class Field(name: String) extends Edge
-    final case class OutputType(name: String) extends Edge
-    final case class Arg(name: String) extends Edge
-    final case class InputType(name: String) extends Edge
-    final case class Index(i: Int) extends Edge {
-      def name: String = i.toString
-    }
-  }
-
   final case class Problem(
       error: Error,
-      path: Chain[Edge]
+      path: Cursor
   ) {
     override def toString() =
-      s"${error.message} at ${path
-        .map {
-          case Edge.Field(name)      => s".$name"
-          case Edge.OutputType(name) => s"($name)"
-          case Edge.Arg(name)        => s".$name"
-          case Edge.InputType(name)  => s"($name)"
-          case Edge.Index(i)         => s"[$i]"
-        }
-        .mkString_("")}"
+      s"${error.message} at ${path.formatted}"
   }
 
   final case class ValidationState[F[_]](
       problems: Chain[Problem],
-      currentPath: Chain[Edge],
+      currentPath: Cursor,
       seenOutputs: Map[String, OutToplevel[F, ?]],
       seenInputs: Map[String, InToplevel[?]]
-  )
+  ) {
+    def addPath(arc: GraphArc): ValidationState[F] =
+      copy(currentPath = currentPath add arc)
+  }
   import Error._
 
   // TODO has really bad running time on some inputs
@@ -197,7 +179,7 @@ object Validation {
 
     Chain.fromSeq {
       (outs, ins).tupled
-        .runS(ValidationState(Chain.empty, Chain.empty, Map.empty, Map.empty))
+        .runS(ValidationState(Chain.empty, Cursor.empty, Map.empty, Map.empty))
         .value
         .problems
         .toList
@@ -205,16 +187,16 @@ object Validation {
     }
   }
 
-  def raise[F[_], G[_]](err: Error, suffix: Chain[Edge] = Chain.empty)(implicit
+  def raise[F[_], G[_]](err: Error, suffix: Cursor = Cursor.empty)(implicit
       S: Stateful[G, ValidationState[F]]
   ): G[Unit] =
-    S.modify(s => s.copy(problems = s.problems :+ Problem(err, s.currentPath ++ suffix)))
+    S.modify(s => s.copy(problems = s.problems :+ Problem(err, s.currentPath |+| suffix)))
 
-  def useEdge[F[_], G[_], A](edge: Edge)(
+  def useEdge[F[_], G[_], A](edge: GraphArc)(
       fa: G[A]
   )(implicit G: Monad[G], S: Stateful[G, ValidationState[F]]): G[A] =
     S.get.flatMap { s =>
-      S.set(s.copy(currentPath = s.currentPath :+ edge)) *>
+      S.set(s.copy(currentPath = s.currentPath add edge)) *>
         fa <*
         S.modify(_.copy(currentPath = s.currentPath))
     }
@@ -222,7 +204,7 @@ object Validation {
   def useOutputEdge[F[_], G[_]](sel: Selectable[F, ?], discovery: SchemaShape.DiscoveryState[F])(
       fa: G[Unit]
   )(implicit G: Monad[G], S: Stateful[G, ValidationState[F]]): G[Unit] =
-    useEdge(Edge.OutputType(sel.name)) {
+    useEdge(GraphArc.Field(sel.name)) {
       S.inspect(_.seenOutputs.get(sel.name)).flatMap {
         case Some(o) if o eq sel => G.unit
         case Some(_)             => raise(CyclicDivergingTypeReference(sel.name))
@@ -242,7 +224,7 @@ object Validation {
   def useInputEdge[F[_], G[_]](it: InToplevel[?], discovery: SchemaShape.DiscoveryState[F])(
       fa: G[Unit]
   )(implicit G: Monad[G], S: Stateful[G, ValidationState[F]]): G[Unit] =
-    useEdge(Edge.InputType(it.name)) {
+    useEdge(GraphArc.Field(it.name)) {
       S.inspect(_.seenInputs.get(it.name)).flatMap {
         case Some(i) if i eq it => G.unit
         case Some(_)            => raise(CyclicDivergingTypeReference(it.name))
@@ -270,13 +252,13 @@ object Validation {
       .traverse_(name => raise(f(name)))
 
   def validateTypeName[F[_], G[_]](name: String)(implicit G: Monad[G], S: Stateful[G, ValidationState[F]]): G[Unit] =
-    QueryParser.name.parseAll(name) match {
+    GraphqlParser.name.parseAll(name) match {
       case Left(_)  => raise(InvalidTypeName(name))
       case Right(_) => G.unit
     }
 
   def validateFieldName[F[_], G[_]](name: String)(implicit G: Monad[G], S: Stateful[G, ValidationState[F]]): G[Unit] =
-    QueryParser.name.parseAll(name) match {
+    GraphqlParser.name.parseAll(name) match {
       case Left(_)  => raise(InvalidFieldName(name))
       case Right(_) => G.unit
     }
@@ -311,12 +293,8 @@ object Validation {
       // We check the arg like we would in a user-supplied query
       // Except, we use default as the "input" such that it is verified against the arg
       val checkArgsF =
-        arg.entries
-          .map(x => x.defaultValue.tupleRight(x))
-          .collect { case Some((dv, x)) =>
-            val pv = PreparedQuery.valueToParserValue(dv)
-            (x, pv)
-          }
+        arg.entries.toChain
+          .mapFilter(x => x.defaultValue.tupleLeft(x))
           .traverse { case (a: ArgValue[a], pv) =>
             PreparedQuery.runK {
               PreparedQuery
@@ -324,7 +302,7 @@ object Validation {
             } match {
               case Left(errs) =>
                 errs.traverse_ { err =>
-                  val suf = err.position.position
+                  val suf = err.position
                   raise(InvalidInput(err), suf)
                 }
               case Right(_) => G.unit
@@ -333,7 +311,7 @@ object Validation {
 
       checkArgsF >>
         arg.entries.traverse_ { entry =>
-          useEdge(Edge.Arg(entry.name)) {
+          useEdge(GraphArc.Field(entry.name)) {
             validateFieldName[F, G](entry.name) >> validateInput[F, G](entry.input.value, discovery)
           }
         }
@@ -344,7 +322,7 @@ object Validation {
   ): G[Unit] =
     allUnique[F, G](DuplicateField.apply, fields.toList.map { case (name, _) => name }) >>
       fields.traverse_ { case (name, field) =>
-        useEdge(Edge.Field(name)) {
+        useEdge(GraphArc.Field(name)) {
           validateFieldName[F, G](name) >>
             field.arg.traverse_(validateArg[F, G](_, discovery)) >>
             validateOutput[F, G](field.output.value, discovery)
@@ -419,18 +397,11 @@ object Validation {
                           raise[F, G](Error.InterfaceImplementationMissingDefaultArg(ol.name, i.value.name, k, argName))
                         case (Some(ld), Some(rd)) =>
                           PreparedQuery
-                            .runK {
-                              PreparedQuery
-                                .compareValues[PreparedQuery.H](
-                                  PreparedQuery.valueToParserValue(ld),
-                                  PreparedQuery.valueToParserValue(rd),
-                                  None
-                                )
-                            }
+                            .runK(PreparedQuery.compareValues[PreparedQuery.H](ld, rd, None))
                             .swap
                             .toOption
                             .traverse_(_.traverse_ { pe =>
-                              val suf = pe.position.position
+                              val suf = pe.position
                               raise[F, G](
                                 Error.InterfaceImplementationDefaultArgDoesNotMatch(
                                   ol.name,

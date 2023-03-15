@@ -14,7 +14,7 @@ ThisBuild / licenses := List("Apache-2.0" -> url("http://www.apache.org/licenses
 ThisBuild / developers := List(
   Developer("valdemargr", "Valdemar Grange", "randomvald0069@gmail.com", url("https://github.com/valdemargr"))
 )
-ThisBuild / headerLicense := Some(HeaderLicense.Custom("Copyright (c) 2021 Valdemar Grange"))
+ThisBuild / headerLicense := Some(HeaderLicense.Custom("Copyright (c) 2023 Valdemar Grange"))
 ThisBuild / headerEmptyLine := false
 
 ThisBuild / githubWorkflowAddedJobs +=
@@ -55,6 +55,8 @@ lazy val sharedSettings = Seq(
     "org.typelevel" %% "cats-effect" % "3.3.14",
     "org.typelevel" %% "cats-collections-core" % "0.9.4",
     "org.typelevel" %% "cats-mtl" % "1.3.0",
+    "org.typelevel" %% "cats-core" % "2.9.0",
+    "org.typelevel" %% "cats-free" % "2.9.0",
     "co.fs2" %% "fs2-core" % "3.2.14",
     "co.fs2" %% "fs2-io" % "3.2.14",
     "org.typelevel" %% "cats-parse" % "0.3.8",
@@ -64,14 +66,87 @@ lazy val sharedSettings = Seq(
     "org.typelevel" %% "paiges-core" % "0.4.2",
     "org.scalameta" %% "munit" % "1.0.0-M6" % Test,
     "org.typelevel" %% "munit-cats-effect" % "2.0.0-M3" % Test
-  )
+  ),
+  tlFatalWarnings := false,
+  tlFatalWarningsInCi := false,
 )
+
+lazy val parser = project
+  .in(file("modules/parser"))
+  .settings(sharedSettings)
+  .settings(name := "gql-parser" /*, tlFatalWarnings := true*/ )
 
 lazy val core = project
   .in(file("modules/core"))
   .settings(sharedSettings)
-  .settings(name := "gql-core"/*, tlFatalWarnings := true*/)
+  .settings(name := "gql-core" /*, tlFatalWarnings := true*/ )
+  .dependsOn(parser)
 
+lazy val server = project
+  .in(file("modules/server"))
+  .settings(sharedSettings)
+  .settings(name := "gql-server" /*, tlFatalWarnings := true*/ )
+  .dependsOn(core)
+
+lazy val client = project
+  .in(file("modules/client"))
+  .settings(sharedSettings)
+  .settings(name := "gql-client" /*, tlFatalWarnings := true*/ )
+  .dependsOn(core)
+
+lazy val clientCodegen = project
+  .in(file("modules/client-codegen"))
+  .settings(sharedSettings)
+  .settings(name := "gql-client-codegen" /*, tlFatalWarnings := true*/ )
+  .dependsOn(core)
+  .dependsOn(client)
+
+lazy val clientCodegenCli = project
+  .in(file("modules/client-codegen-cli"))
+  .settings(sharedSettings)
+  .settings(
+    name := "gql-client-codegen-cli" /*, tlFatalWarnings := true*/ ,
+    libraryDependencies ++= Seq(
+      "com.monovore" %% "decline" % "2.4.0",
+      "com.monovore" %% "decline-effect" % "2.4.0"
+    )
+  )
+  .dependsOn(core)
+  .dependsOn(client)
+  .dependsOn(clientCodegen)
+
+lazy val clientCodegenSbt = project
+  .in(file("modules/client-codegen-sbt"))
+  /* .enablePlugins(BuildInfoPlugin) */
+  .enablePlugins(SbtPlugin)
+  .settings(
+    sbtPlugin := true,
+    scalaVersion := "2.12.17",
+    name := "gql-client-codegen-sbt",
+  )
+  .aggregate(clientCodegenCli)
+  /* .enablePlugins(NoPublishPlugin) */
+
+/* lazy val testProject = project */
+/*   .in(file("modules/client-codegen-sbt-test")) */
+/*   .settings(sharedSettings) */
+/*   .enablePlugins(clientCodegenSbt) */
+
+lazy val http4sClient = project
+  .in(file("modules/client-http4s"))
+  .dependsOn(core)
+  .dependsOn(client)
+  .settings(sharedSettings)
+  .settings(
+    name := "gql-client-http4s",
+    libraryDependencies ++= Seq(
+      "org.http4s" %% "http4s-circe" % "1.0.0-M36",
+      "org.http4s" %% "http4s-dsl" % "1.0.0-M36",
+      "org.http4s" %% "http4s-client" % "1.0.0-M36"
+    )
+  )
+
+/*
 lazy val natchez = project
   .in(file("modules/natchez"))
   .settings(sharedSettings)
@@ -82,7 +157,7 @@ lazy val natchez = project
       "org.tpolecat" %% "natchez-noop" % "0.1.4"
     )
   )
-  .dependsOn(core)
+  .dependsOn(core)*/
 
 lazy val graphqlWs = project
   .in(file("modules/graphql-ws"))
@@ -90,23 +165,32 @@ lazy val graphqlWs = project
   .settings(name := "gql-graphqlws")
   .dependsOn(core)
 
-lazy val goi = project
-  .in(file("modules/goi"))
+lazy val serverGraphqlWs = project
+  .in(file("modules/server-graphql-ws"))
+  .settings(sharedSettings)
+  .settings(name := "gql-server-graphqlws")
+  .dependsOn(core)
+  .dependsOn(graphqlWs)
+  .dependsOn(server)
+
+lazy val serverGoi = project
+  .in(file("modules/server-goi"))
   .settings(sharedSettings)
   .settings(
-    name := "gql-goi",
+    name := "gql-server--goi",
     libraryDependencies ++= Seq("com.beachape" %% "enumeratum" % "1.7.2")
   )
   .dependsOn(core)
-  .enablePlugins(NoPublishPlugin)
+  .dependsOn(server)
 
-lazy val http4s = project
-  .in(file("modules/http4s"))
+lazy val serverHttp4s = project
+  .in(file("modules/server-http4s"))
   .dependsOn(core % "compile->compile;test->test")
-  .dependsOn(graphqlWs)
+  .dependsOn(server % "compile->compile;test->test")
+  .dependsOn(serverGraphqlWs)
   .settings(sharedSettings)
   .settings(
-    name := "gql-http4s",
+    name := "gql-server-http4s",
     libraryDependencies ++= Seq(
       "org.http4s" %% "http4s-server" % "1.0.0-M36",
       "org.http4s" %% "http4s-blaze-server" % "1.0.0-M36",
@@ -115,6 +199,7 @@ lazy val http4s = project
       "org.http4s" %% "http4s-client" % "1.0.0-M36" % Test
     )
   )
+  .dependsOn(server)
 
 lazy val mdocExt = project
   .in(file("modules/mdoc-ext"))
@@ -134,9 +219,10 @@ lazy val docs = project
     ),
     tlFatalWarnings := false
   )
+  .dependsOn(server % "compile->compile;test->test")
   .dependsOn(core % "compile->compile;compile->test")
-  .dependsOn(http4s)
-  .dependsOn(graphqlWs)
+  .dependsOn(serverHttp4s)
+  .dependsOn(serverGraphqlWs)
   /* .dependsOn(goi) */
   .dependsOn(mdocExt)
   .enablePlugins(MdocPlugin, DocusaurusPlugin, NoPublishPlugin)
