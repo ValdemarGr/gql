@@ -190,8 +190,13 @@ object Generator {
         (if (codec.size > 1) Doc.text("mapN") else Doc.text("map")) +
         Doc.text("(apply)")
 
+      val tpeName = contextInfo match {
+        case Some(_: ContextInfo.Fragment) => s"Option[$name]"
+        case _                            => name
+      }
+
       def codecImplicit: Doc =
-        Doc.text(s"implicit val selectionSet: SelectionSet[$name] = ")
+        Doc.text(s"implicit val selectionSet: SelectionSet[$tpeName] = ")
 
       val fullCodec = contextInfo match {
         case None => codecImplicit + codecSelection
@@ -222,7 +227,7 @@ object Generator {
 
           val vars = op.variables.map { v =>
             val scalaType = ModifierStack.fromType(v.tpe).invert.showScala(identity)
-            val args = quoted(v.name) :: v.defaultValue.toList.map(generateValue)
+            val args = quoted(v.name) :: v.defaultValue.toList.map(generateValue(_, anyValue = false))
             Doc.text("variable") + Doc.char('[') + Doc.text(scalaType) + Doc.char(']') + params(args)
           }
 
@@ -237,7 +242,7 @@ object Generator {
 
           val queryPrefix =
             if (vars.size == 0) Doc.text("named")
-            else Doc.text("parametrized")
+            else Doc.text("parameterized")
 
           val args = List(
             Doc.text(operationTypePath),
@@ -321,7 +326,8 @@ object Generator {
       F: MonadError[F, NonEmptyChain[String]]
   ): F[FieldPart] = {
     val ms = ModifierStack.fromType(fd.tpe)
-    val n = toPascal(f.alias.getOrElse(f.name))
+    val gqlName = f.alias.getOrElse(f.name)
+    val n = toPascal(gqlName)
 
     f.selectionSet.value
       .map(_.selections.map(_.value))
@@ -330,19 +336,20 @@ object Generator {
         val argPart = f.arguments.toList.flatMap(_.nel.toList).map { x =>
           Doc.text("arg") +
             (
-              quoted(x.name) + Doc.char(',') + Doc.space + generateValue(x.value)
+              quoted(x.name) + Doc.char(',') + Doc.space + generateValue(x.value, anyValue = true)
             ).tightBracketBy(Doc.char('('), Doc.char(')'))
         }
 
-        val clientSel = Doc.text("sel") +
-          Doc.text(ms.invert.showScala(identity)).tightBracketBy(Doc.char('['), Doc.char(']')) +
-          params(quoted(fd.name) :: argPart)
-
-        val scalaTypeName =
+        val scalaTypeName = ms.invert.copy(inner =
           if (subPart.isDefined) s"${companionName}.${n}"
           else ms.inner
+        ).showScala(identity)
 
-        val sf = scalaField(fd.name, scalaTypeName)
+        val clientSel = Doc.text("sel") +
+          Doc.text(scalaTypeName).tightBracketBy(Doc.char('['), Doc.char(']')) +
+          params(quoted(fd.name) :: f.alias.toList.map(quoted) ++ argPart)
+
+        val sf = scalaField(gqlName, scalaTypeName)
 
         FieldPart(sf, subPart, clientSel)
       }
@@ -371,9 +378,9 @@ object Generator {
         val fs = frag.fragmentSpread
         F.pure {
           FieldPart(
-            scalaField(toCaml(fs.fragmentName), fs.fragmentName),
+            scalaField(toCaml(fs.fragmentName), s"Option[${fs.fragmentName}]"),
             None,
-            Doc.text(s"embed[${fs.fragmentName}]")
+            Doc.text(s"embed[Option[${fs.fragmentName}]]")
           )
         }
       case inlineFrag: Selection.InlineFragmentSelection =>
@@ -385,9 +392,9 @@ object Generator {
           generateTypeDef[F](schema, name, cnd, ss, Some(ContextInfo.Fragment(None, cnd, Nil)))
             .map { p =>
               FieldPart(
-                scalaField(toCaml(name), s"${companionName}.${name}"),
+                scalaField(toCaml(name), s"Option[${companionName}.${name}]"),
                 Some(p),
-                Doc.text(s"embed[${name}]")
+                Doc.text(s"embed[Option[${name}]]")
               )
             }
         }
@@ -487,8 +494,9 @@ object Generator {
           Doc.text("package gql.client.generated"),
           Doc.empty,
           imp("_root_.gql.client._"),
-          imp("_root_.gql.parser.{Value => V}"),
-          imp("_root_.gql.client.dsl._")
+          imp("_root_.gql.parser.{Value => V, AnyValue, Const}"),
+          imp("_root_.gql.client.dsl._"),
+          imp("cats.implicits._")
         )
       ) + Doc.hardLine + Doc.hardLine + bodyDoc
     }

@@ -24,8 +24,11 @@ import java.util.UUID
 import java.time.LocalDate
 
 object dsl {
-  def sel[A](fieldName: String, alias: Option[String] = None)(implicit sq: SubQuery[A]): SelectionSet[A] =
-    SelectionSet.lift(Selection.Field(fieldName, alias, Nil, sq))
+  def sel[A](fieldName: String, alias: String)(implicit sq: SubQuery[A]): SelectionSet[A] =
+    SelectionSet.lift(Selection.Field(fieldName, Some(alias), Nil, sq))
+
+  def sel[A](fieldName: String)(implicit sq: SubQuery[A]): SelectionSet[A] =
+    SelectionSet.lift(Selection.Field(fieldName, None, Nil, sq))
 
   def sel[A](fieldName: String, argHd: P.Argument, argTl: P.Argument*)(implicit sq: SubQuery[A]): SelectionSet[A] =
     SelectionSet.lift(Selection.Field(fieldName, None, argHd :: argTl.toList, sq))

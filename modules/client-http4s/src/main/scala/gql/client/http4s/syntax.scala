@@ -22,19 +22,25 @@ import io.circe.syntax._
 import org.http4s.client.Client
 import cats.effect._
 import org.http4s.EntityDecoder
+import org.http4s._
 
-object syntax {
-  implicit class Http4sCompiledQueryOps[A](private val c: Query.Compiled[A]) extends AnyVal {
-    def http4sRequest[F[_]]: Request[F] =
-      Request[F](method = org.http4s.Method.POST).withEntity(c.toJson.asJson)
+object implicits {
+  def gqlEntityDecoderInstance[F[_]: Concurrent, A](c: Query.Compiled[A]): EntityDecoder[F, A] = {
+    implicit val dec: io.circe.Decoder[A] = c.decoder
+    org.http4s.circe.jsonOf[F, A]
+  }
 
-    def fetch[F[_]: Concurrent](client: Client[F]): F[A] = {
-      implicit val dec: io.circe.Decoder[A] = c.decoder
-      implicit val ed: EntityDecoder[F, A] = org.http4s.circe.jsonOf[F, A]
-      client.expect[A](c.http4sRequest[F])
+  implicit def gqlEntityEncoderForQuery[A]: EntityEncoder.Pure[Query.Compiled[A]] = {
+    org.http4s.circe.jsonEncoderOf[Query.Compiled[A]]
+  }
+
+  implicit class GqlHttp4sRequestOps[F[_]](private val req: Request[F]) extends AnyVal {
+    def graphql[A](q: Query.Compiled[A], client: Client[F])(implicit F: Concurrent[F]): F[A] = {
+      implicit val ed: EntityDecoder[F, A] = gqlEntityDecoderInstance(q)
+      client.expect[A](req.withMethod(Method.POST).withEntity(q.toJson.asJson))
     }
 
-    def fetch[F[_]: Concurrent](implicit client: Client[F]): F[A] =
-      fetch[F](client)
+    def graphql[A](q: Query.Compiled[A])(implicit F: Concurrent[F], client: Client[F]): F[A] =
+      graphql[A](q, client)
   }
 }
