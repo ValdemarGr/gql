@@ -117,7 +117,7 @@ lazy val clientCodegenCli = project
 
 lazy val clientCodegenSbt = project
   .in(file("modules/client-codegen-sbt"))
-  /* .enablePlugins(BuildInfoPlugin) */
+  .enablePlugins(BuildInfoPlugin)
   .enablePlugins(SbtPlugin)
   .settings(
     sbtPlugin := true,

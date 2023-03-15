@@ -6,6 +6,7 @@ lazy val codegenTest = project
   .aggregate(pr)
   .settings(
     scalaVersion := "2.13.9",
+    Gql.libraryVersion := "0.1-305cbf3",
     Compile / Gql.resourceGroups += Gql.resourceGroup(
       file("./src/main/resources/schema.graphql"),
       file("./src/main/resources/query.graphql"),

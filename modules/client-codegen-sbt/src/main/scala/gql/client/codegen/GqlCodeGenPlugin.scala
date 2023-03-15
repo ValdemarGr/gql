@@ -17,6 +17,7 @@ package gql.client.codegen
 
 import sbt._
 import Keys._
+import buildinfo.BuildInfo
 
 object GqlCodeGenPlugin extends AutoPlugin {
   object autoImport {
@@ -42,7 +43,11 @@ object GqlCodeGenPlugin extends AutoPlugin {
 
       val findResources = taskKey[Seq[CustomResourceGroup]]("Find the resources")
 
+      val codeGenInput = taskKey[Seq[(String, Seq[File])]]("The code generator input")
+
       val invokeCodeGen = taskKey[Seq[File]]("Invoke the code generator")
+
+      val libraryVersion = settingKey[String]("The CLI library version")
     }
   }
 
@@ -96,14 +101,13 @@ object GqlCodeGenPlugin extends AutoPlugin {
 
         customs ++ default
       },
-      libraryDependencies += "io.github.valdemargr" % "gql-client-codegen-cli_2.13" % "0.1-305cbf3",
-      Gql.invokeCodeGen := {
-        val cp = (Compile / externalDependencyClasspath).value
-
+      Gql.libraryVersion := BuildInfo.version,
+      libraryDependencies += "io.github.valdemargr" %% "gql-client-codegen-cli" % Gql.libraryVersion.value,
+      Gql.codeGenInput := {
         val f = (Compile / sourceManaged).value / "gql"
         IO.createDirectory(f)
         val resources = Gql.findResources.value
-        val cmd = resources.map { rg =>
+        resources.map { rg =>
           val queries = rg.files.map { in =>
             val fn = in.name.replaceAll("\\.", "_")
             val outFile = f / s"${fn}.scala"
@@ -112,6 +116,11 @@ object GqlCodeGenPlugin extends AutoPlugin {
 
           s"""{"schema":"${rg.schemaPath.absolutePath}","queries":[${queries.map(_._1).mkString(",")}]}""" -> queries.map(_._2)
         }
+      },
+      Gql.invokeCodeGen := {
+        val cp = (Compile / externalDependencyClasspath).value
+
+        val cmd = Gql.codeGenInput.value
 
         val log = streams.value.log
 

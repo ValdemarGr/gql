@@ -263,8 +263,34 @@ object Generator {
     }
   }
 
-  def generateValue(v: V[AnyValue]): Doc =
-    SchemaShape.renderValueDoc(v)
+  def generateValue(v: V[AnyValue], anyValue: Boolean): Doc = {
+    import V._
+    val tpe = if (anyValue) "AnyValue" else "Const"
+    v match {
+      case IntValue(v)     => Doc.text(s"V.IntValue(${v.toString()})")
+      case StringValue(v)  => Doc.text(s"""V.StringValue("$v")""")
+      case FloatValue(v)   => Doc.text(s"""V.FloatValue("$v")""")
+      case NullValue()     => Doc.text(s"""V.NullValue()""")
+      case BooleanValue(v) => Doc.text(s"""V.BooleanValue(${v.toString()})""")
+      case ListValue(v) =>
+        Doc.text(s"V.ListValue[${tpe}](") +
+          Doc
+            .intercalate(Doc.comma + Doc.line, v.map(generateValue(_, anyValue)))
+            .tightBracketBy(Doc.text("List("), Doc.char(')')) +
+          Doc.text(")")
+      case ObjectValue(fields) =>
+        Doc.text(s"V.ObjectValue[${tpe}](") +
+          Doc
+            .intercalate(
+              Doc.comma + Doc.line,
+              fields.map { case (k, v) => Doc.text(k) + Doc.text(" -> ") + generateValue(v, anyValue) }
+            )
+            .bracketBy(Doc.text("List("), Doc.char('}')) +
+          Doc.text(")")
+      case EnumValue(v)     => Doc.text(s"""V.EnumValue("$v")""")
+      case VariableValue(v) => Doc.text(s"""V.VariableValue("$v")""")
+    }
+  }
 
   type CurrentPath[F[_]] = Local[F, Chain[String]]
 
@@ -461,6 +487,7 @@ object Generator {
           Doc.text("package gql.client.generated"),
           Doc.empty,
           imp("_root_.gql.client._"),
+          imp("_root_.gql.parser.{Value => V}"),
           imp("_root_.gql.client.dsl._")
         )
       ) + Doc.hardLine + Doc.hardLine + bodyDoc
