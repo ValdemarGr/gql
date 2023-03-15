@@ -192,7 +192,7 @@ object Generator {
 
       val tpeName = contextInfo match {
         case Some(_: ContextInfo.Fragment) => s"Option[$name]"
-        case _                            => name
+        case _                             => name
       }
 
       def codecImplicit: Doc =
@@ -340,10 +340,12 @@ object Generator {
             ).tightBracketBy(Doc.char('('), Doc.char(')'))
         }
 
-        val scalaTypeName = ms.invert.copy(inner =
-          if (subPart.isDefined) s"${companionName}.${n}"
-          else ms.inner
-        ).showScala(identity)
+        val scalaTypeName = ms.invert
+          .copy(inner =
+            if (subPart.isDefined) s"${companionName}.${n}"
+            else ms.inner
+          )
+          .showScala(identity)
 
         val clientSel = Doc.text("sel") +
           Doc.text(scalaTypeName).tightBracketBy(Doc.char('['), Doc.char(']')) +
