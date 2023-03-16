@@ -131,7 +131,7 @@ val codeGenForTest = taskKey[Seq[File]]("Generate code for test")
 lazy val testCodeGen = project
   .in(file("modules/client-codegen-test"))
   .settings(sharedSettings)
-  .aggregate(clientCodegenCli)
+  .dependsOn(clientCodegenCli)
   .dependsOn(client)
   .settings(
     tlFatalWarnings := false,
