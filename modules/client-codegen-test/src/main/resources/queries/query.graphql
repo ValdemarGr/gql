@@ -1,0 +1,20 @@
+  query AlienQuery($name: String!, $id: ID!) {
+    dog {
+      ... DogFragment
+      ... on Dog {
+        name
+        barkVolume
+      }
+      owner {
+        name
+      }
+    }
+    findDog(searchBy: { name: "Barky" }) {
+      ... DogFragment
+    }
+  }
+
+  fragment DogFragment on Dog {
+    name,
+    barkVolume
+  }

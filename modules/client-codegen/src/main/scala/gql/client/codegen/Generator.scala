@@ -203,7 +203,7 @@ object Generator {
         case Some(fi: ContextInfo.Fragment) =>
           val args = fi.fragmentName.toList ++ List(fi.typeCnd) ++ fi.extraMatches
 
-          val fragType = fi.fragmentName.as("fragment").getOrElse("inlineFragment")
+          val fragType = fi.fragmentName.as("fragment").getOrElse("inlineFrag")
 
           val invocation = Doc.text(fragType) + params(args.map(quoted))
 
@@ -288,9 +288,9 @@ object Generator {
           Doc
             .intercalate(
               Doc.comma + Doc.line,
-              fields.map { case (k, v) => Doc.text(k) + Doc.text(" -> ") + generateValue(v, anyValue) }
+              fields.map { case (k, v) => quoted(k) + Doc.text(" -> ") + generateValue(v, anyValue) }
             )
-            .bracketBy(Doc.text("List("), Doc.char('}')) +
+            .bracketBy(Doc.text("List("), Doc.char(')')) +
           Doc.text(")")
       case EnumValue(v)     => Doc.text(s"""V.EnumValue("$v")""")
       case VariableValue(v) => Doc.text(s"""V.VariableValue("$v")""")

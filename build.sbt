@@ -127,10 +127,34 @@ lazy val clientCodegenSbt = project
   .aggregate(clientCodegenCli)
   /* .enablePlugins(NoPublishPlugin) */
 
-/* lazy val testProject = project */
-/*   .in(file("modules/client-codegen-sbt-test")) */
-/*   .settings(sharedSettings) */
-/*   .enablePlugins(clientCodegenSbt) */
+val codeGenForTest = taskKey[Seq[File]]("Generate code for test")
+lazy val testCodeGen = project
+  .in(file("modules/client-codegen-test"))
+  .settings(sharedSettings)
+  .aggregate(clientCodegenCli)
+  .dependsOn(client)
+  .settings(
+    codeGenForTest := {
+      // Oh man I really loathe sbt, why do I have to do this?
+      Def.taskDyn{
+        val sp = file("./modules/client-codegen-test/src/main/resources/schema.graphql").absolutePath.replace("\\", "\\\\")
+        val qp = file("./modules/client-codegen-test/src/main/resources/queries/query.graphql").absolutePath.replace("\\", "\\\\")
+        val f = (Compile / sourceManaged).value / "gql"
+        IO.createDirectory(f)
+        val outf = f / "query.scala"
+        val outs = outf.absolutePath.replace("\\", "\\\\")
+        val input = s""" --input {"schema":"${sp}","queries":[{"query":"${qp}","output":"${outs}"}]}"""
+        val ip2: String = input.toString()
+        (clientCodegenCli / Compile / run).toTask(ip2).map(_ => Seq(outf))
+      }.value
+    },
+    // Testing consists of doing a code-gen run and then compiling the generated code
+    Compile / sourceGenerators += codeGenForTest,
+    Test / test := {
+      val _ = (Compile / compile).value
+      (Test / test).value
+    }
+  )
 
 lazy val http4sClient = project
   .in(file("modules/client-http4s"))

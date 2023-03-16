@@ -56,6 +56,7 @@ object GeneratorCli
                 |Omitting "output" will generate the file beside the input query""".stripMargin
     ) {
       Argument.from[Input]("json-input") { str =>
+        println(str)
         implicit val decoderForPath: Decoder[Path] = Decoder.decodeString.emap { str =>
           Either.catchNonFatal(Path(str)).leftMap(_.getMessage)
         }
