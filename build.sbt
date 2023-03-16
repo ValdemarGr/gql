@@ -21,6 +21,11 @@ ThisBuild / headerEmptyLine := false
 // But for now, if a tag fails in CI (I know it's not supposed to happen), then it is really 
 // annoying to have to fix the statful "step"
 ThisBuild / tlCiMimaBinaryIssueCheck := false
+// THe above setting does't work in the tlCiPublish task?
+ThisBuild / tlMimaPreviousArtifacts := Set.empty
+ThisBuild / mimaReportSignatureProblems := false
+ThisBuild / mimaFailOnProblem := false
+ThisBuild / mimaPreviousArtifacts := Set.empty
 
 /* ThisBuild / githubWorkflowAddedJobs += */
 /*   WorkflowJob( */
