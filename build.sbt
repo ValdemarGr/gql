@@ -134,6 +134,8 @@ lazy val testCodeGen = project
   .aggregate(clientCodegenCli)
   .dependsOn(client)
   .settings(
+    tlFatalWarnings := false,
+    tlFatalWarningsInCi := false,
     codeGenForTest := {
       // Oh man I really loathe sbt, why do I have to do this?
       Def.taskDyn{
@@ -155,6 +157,7 @@ lazy val testCodeGen = project
       (Test / test).value
     }
   )
+  .enablePlugins(NoPublishPlugin)
 
 lazy val http4sClient = project
   .in(file("modules/client-http4s"))
