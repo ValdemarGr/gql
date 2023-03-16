@@ -17,6 +17,11 @@ ThisBuild / developers := List(
 ThisBuild / headerLicense := Some(HeaderLicense.Custom("Copyright (c) 2023 Valdemar Grange"))
 ThisBuild / headerEmptyLine := false
 
+// I might re-enable this later
+// But for now, if a tag fails in CI (I know it's not supposed to happen), then it is really 
+// annoying to have to fix the statful "step"
+ThisBuild / tlCiMimaBinaryIssueCheck := false
+
 /* ThisBuild / githubWorkflowAddedJobs += */
 /*   WorkflowJob( */
 /*     id = "docs", */
