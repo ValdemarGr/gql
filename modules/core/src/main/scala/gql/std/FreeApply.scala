@@ -16,6 +16,8 @@
 package gql.std
 
 import cats._
+import cats.data._
+import cats.arrow.FunctionK
 
 sealed abstract class FreeApply[F[_], +A] extends Product with Serializable {
   def foldMap[G[_], B >: A](fk: F ~> G)(implicit G: Apply[G]): G[B] = this match {
@@ -23,6 +25,16 @@ sealed abstract class FreeApply[F[_], +A] extends Product with Serializable {
     case FreeApply.Ap(ff, fa)  => G.map(G.ap(ff.foldMap(fk))(fa.foldMap(fk)))(x => x)
     case FreeApply.Fmap(fa, f) => G.map(fa.foldMap(fk))(f)
   }
+
+  // Very cool, we can do non-empty algebras with semigroup with the cool Const Semigroup => Apply[Cost] typeclass impl
+  def analyze[M: Semigroup](fk: F ~> λ[α => M]): M =
+    foldMap[Const[M, *], A](FunctionK.liftFunction(fa => Const(fk(fa)))).getConst
+
+  def analyze_[M: Semigroup](fold: F[?] => M): M =
+    foldMap[Const[M, *], A](FunctionK.liftFunction(fa => Const(fold(fa)))).getConst
+
+  def enumerate: NonEmptyChain[F[?]] =
+    analyze_(fa => NonEmptyChain.one(fa))
 }
 
 object FreeApply {

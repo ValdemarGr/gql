@@ -1032,55 +1032,35 @@ object PreparedQuery {
       case (i, _)                       => raise(s"Expected type `${inName(i)}`, but got value ${pValueName(v)}.", None)
     }
 
-  def parseArgValue[F[_]: Parallel, A](
-      a: ArgValue[A],
-      input: Map[String, V[AnyValue]],
-      variableMap: Option[VariableMap],
-      ambigiousEnum: Boolean
-  )(implicit
-      F: MonadError[F, NonEmptyChain[PositionalError]],
-      L: Local[F, Prep]
-  ): F[ArgParam[A]] = {
-    val fa: F[ArgParam[V[AnyValue]]] = input.get(a.name) match {
-      case Some(x) => F.pure(ArgParam(defaulted = false, x))
-      case None =>
-        a.defaultValue match {
-          // TODO this value being parsed can probably be cached, since the default is the same for every query
-          case Some(dv) => F.pure(ArgParam(defaulted = true, dv))
-          case None =>
-            a.input.value match {
-              case InOpt(_) => F.pure(ArgParam(defaulted = false, V.NullValue()))
-              case _ =>
-                raise[F, ArgParam[V[AnyValue]]](s"Required input for field '${a.name}' was not provided and has no default value.", None)
-            }
-        }
-    }
-
-    ambientField(a.name) {
-      fa.flatMap(ap => parseInput[F, A](ap.value, a.input.value, variableMap, ambigiousEnum).map(x => ap.copy(value = x)))
-    }
-  }
-
   def parseArg[F[_]: Parallel, A](arg: Arg[A], input: Map[String, V[AnyValue]], variableMap: Option[VariableMap], ambigiousEnum: Boolean)(
       implicit
       F: MonadError[F, NonEmptyChain[PositionalError]],
       L: Local[F, Prep]
   ): F[A] = {
-    // All provided fields are of the correct type
-    // All required fields are either defiend or defaulted
-    val fieldsF: F[NonEmptyChain[(String, ArgParam[?])]] =
-      arg.entries.parTraverse { case a: ArgValue[a] =>
-        parseArgValue[F, a](
-          a,
-          input,
-          variableMap,
-          ambigiousEnum
-        ).map(a.name -> _)
-      }
+    val fv = arg.impl.foldMap[F, ValidatedNec[String, A]](new (Arg.Impl ~> F) {
+      def apply[A](fa: Arg.Impl[A]): F[A] = fa match {
+        case fa: DecodedArgValue[a, A] =>
+          ambientField(fa.av.name) {
+            def compileWith(x: V[AnyValue], default: Boolean) =
+              parseInput[F, a](x, fa.av.input.value, variableMap, ambigiousEnum)
+                .flatMap(a => raiseEither[F, A](fa.decode(ArgParam(default, a)), None))
 
-    fieldsF
-      .map(_.toList.toMap)
-      .flatMap(arg.decode(_).fold(raise(_, None), F.pure(_)))
+            input
+              .get(fa.av.name)
+              .map(compileWith(_, false))
+              .orElse(fa.av.defaultValue.map(compileWith(_, true)))
+              .getOrElse {
+                fa.av.input.value match {
+                  case _: gql.ast.InOpt[a] => raiseEither(fa.decode(ArgParam(true, None)), None)
+                  case _ =>
+                    raise(s"Missing argument for '${fa.av.name}' and no default value was found.", None)
+                }
+              }
+          }
+      }
+    })
+
+    fv.flatMap(v => raiseEither(v.toEither.leftMap(_.mkString_(", ")), None))
   }
 
   def getOperationDefinition[F[_]](
