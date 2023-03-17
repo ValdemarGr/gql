@@ -470,10 +470,12 @@ object PreparedQuery {
   }
 
   // https://spec.graphql.org/draft/#sec-Field-Selection-Merging.Formal-Specification
-  def checkFieldsMerge[F[_]: Parallel, G[_]](a: FieldInfo[G], asi: SelectionInfo[G], b: FieldInfo[G], bsi: SelectionInfo[G])(implicit
-      F: MonadError[F, NonEmptyChain[PositionalError]],
-      L: Local[F, Prep]
-  ) = {
+  def checkFieldsMerge[F[_]: Parallel, G[_]](
+      a: FieldInfo[G],
+      asi: SelectionInfo[G],
+      b: FieldInfo[G],
+      bsi: SelectionInfo[G]
+  )(implicit F: MonadError[F, NonEmptyChain[PositionalError]], L: Local[F, Prep]) = {
     sealed trait EitherObject
     object EitherObject {
       case object FirstIsObject extends EitherObject
