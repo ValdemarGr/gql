@@ -22,24 +22,39 @@ import gql.ast._
 import gql.parser.{Value => V, Const, AnyValue}
 import gql.std.FreeApply
 
-final case class ArgValue2[A, B](
+final case class ArgValue2[A](
     name: String,
     input: Eval[In[A]],
     defaultValue: Option[V[Const]],
-    description: Option[String],
-    decode: ArgParam[A] => Either[String, B]
+    description: Option[String]
 ) {
   def document(description: String) = copy(description = Some(description))
 
   def default(value: V[Const]) = copy(defaultValue = Some(value))
 }
 
-final case class Arg2[+A](impl: FreeApply[ArgValue2[?, *], ValidatedNec[String, A]]) {
+final case class DecodedArgValue[A, B](
+    av: ArgValue2[A],
+    decode: ArgParam[A] => Either[String, B]
+)
+
+final case class Arg2[+A](impl: FreeApply[Arg2.Impl, ValidatedNec[String, A]]) {
   def emap[B](f: A => Either[String, B]): Arg2[B] =
     Arg2(impl.map(_.andThen(f(_).toValidatedNec)))
 }
 
 object Arg2 {
+  type Impl[A] = DecodedArgValue[?, A]
+  def makeFrom[A, B](av: ArgValue2[A])(f: ArgParam[A] => Either[String, B]): Arg2[B] = {
+    val fa: Impl[B] = DecodedArgValue[A, B](av, f)
+    val lifted: FreeApply[Impl, B] = FreeApply.lift(fa)
+    val mapped: FreeApply[Impl, ValidatedNec[String, B]] = lifted.map(_.validNec[String])
+    Arg2(mapped)
+  }
+
+  def make[A](av: ArgValue2[A]): Arg2[A] =
+    makeFrom(av)(_.value.asRight)
+
   implicit val applyForArg: Apply[Arg2] = new Apply[Arg2] {
     override def map[A, B](fa: Arg2[A])(f: A => B): Arg2[B] =
       Arg2(fa.impl.map(_.map(f)))
@@ -52,21 +67,21 @@ object Arg2 {
   def argCompiler[B](
       avail: Map[String, V[AnyValue]],
       inCompiler: ContIn ~> ValidatedNec[String, *]
-  ): ArgValue2[B, *] ~> ValidatedNec[String, *] =
-    new (ArgValue2[B, *] ~> ValidatedNec[String, *]) {
-      override def apply[A](fa: ArgValue2[B, A]): ValidatedNec[String, A] = {
+  ): DecodedArgValue[B, *] ~> ValidatedNec[String, *] =
+    new (DecodedArgValue[B, *] ~> ValidatedNec[String, *]) {
+      override def apply[A](fa: DecodedArgValue[B, A]): ValidatedNec[String, A] = {
         def compileWith(x: V[AnyValue], default: Boolean) =
-          inCompiler((fa.input.value, x)).andThen(a => fa.decode(ArgParam(default, a)).toValidatedNec)
+          inCompiler((fa.av.input.value, x)).andThen(a => fa.decode(ArgParam(default, a)).toValidatedNec)
 
         avail
-          .get(fa.name)
+          .get(fa.av.name)
           .map(compileWith(_, false))
-          .orElse(fa.defaultValue.map(compileWith(_, true)))
+          .orElse(fa.av.defaultValue.map(compileWith(_, true)))
           .getOrElse {
-            fa.input.value match {
+            fa.av.input.value match {
               case _: gql.ast.InOpt[a] => fa.decode(ArgParam(true, None)).toValidatedNec
               case _ =>
-                s"Missing argument for '${fa.name}' and no default value was found.".invalidNec
+                s"Missing argument for '${fa.av.name}' and no default value was found.".invalidNec
             }
           }
       }
