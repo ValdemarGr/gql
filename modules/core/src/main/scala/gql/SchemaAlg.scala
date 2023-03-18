@@ -8,16 +8,28 @@ import cats.mtl._
 import cats._
 import cats.implicits._
 import gql.parser.QueryAst
+import gql.parser.Pos
 
 // This is an attempt to generalize a graphql schema
 
 trait SchemaAlg {
   type Out
+  trait OutAlg {
+
+  }
+  implicit def outAlg(ot: Out): OutAlg
+
   type In
   type Toplevel
   type OutToplevel // <: Out with Toplevel
   trait OutToplevelAlg {
     def name: String
+
+    def foldOutToplevel[C](
+      onSelectable: Selectable => C,
+      onScalar: Scalar => C,
+      onEnum: Enum => C
+    ): C
   }
   implicit def outToplevelAlg(ot: OutToplevel): OutToplevelAlg
 
@@ -25,13 +37,15 @@ trait SchemaAlg {
 
   type Selectable // <: OutToplevel
   trait SelectableAlg extends OutToplevelAlg {
-    def fold[C](
+    def foldSel[C](
         onType: Type => C,
         onInterface: Interface => C,
         onUnion: Union => C
     ): C
 
     def asSelectable: Selectable
+
+    def fields: Map[String, Field]
   }
   implicit def selectableAlg(sel: Selectable): SelectableAlg
 
@@ -54,6 +68,10 @@ trait SchemaAlg {
   implicit def unionAlg(u: Union): UnionAlg
 
   type Input // <: InTopLevel
+  trait InputAlg {
+    def args: Map[String, Arg]
+  }
+
   type Variant
 
   type Interface // <: ObjectLike
@@ -62,7 +80,16 @@ trait SchemaAlg {
 
   type Scalar // <: OutToplevel with InTopLevel
   type Enum // <: OutToplevel with InTopLevel
+
   type Field
+  trait FieldAlg {
+    def args: Map[String, Arg]
+
+    def tpe: InverseModifierStack[OutToplevel]
+  }
+  implicit def fieldAlg(f: Field): FieldAlg
+  def typename: Field
+
   type Arg
 }
 
@@ -70,6 +97,11 @@ trait SchemaQueryOps[F[_], Alg <: SchemaAlg] {
   type SelectionInfo = SchemaQueryOps.SelectionInfo[Alg#Selectable]
 
   type FieldInfo = SchemaQueryOps.FieldInfo[Alg#Selectable]
+
+  def inFragment[F[_], A](
+      fragmentName: String,
+      caret: Option[Caret]
+  )(faf: Pos[P.FragmentDefinition] => F[A]): F[A]
 
   def matchType(
       name: String,
@@ -94,6 +126,18 @@ trait SchemaQueryOps[F[_], Alg <: SchemaAlg] {
       op: P.OperationDefinition,
       root: Alg#Type
   ): F[NonEmptyList[SelectionInfo]]
+
+  def checkArg(
+    a: Alg#Arg,
+    value: V[AnyValue],
+    inVariableResolution: Boolean,
+  ): F[Unit]
+
+        def checkInput(
+        field: Map[String, Alg#Arg],
+        values: Map[String, V[AnyValue]],
+        inVariableResolution: Boolean,
+      ): F[Unit] = ???
 
   def checkSelectionsMerge(xs: NonEmptyList[SchemaQueryOps.SelectionInfo[Alg#Selectable]]): F[Unit]
 
@@ -164,7 +208,6 @@ object SchemaQueryOps {
       implementations: Map[String, Map[String, Either[alg.Interface, alg.Type]]]
   )(implicit
       L: Local[F, Prep],
-      S: Stateful[F, Int],
       F: MonadError[F, NonEmptyChain[PositionalError]],
       D: Defer[F]
   ) = {
@@ -175,6 +218,22 @@ object SchemaQueryOps {
 
     import alg._
     new SchemaQueryOps[F, alg.type] {
+      override def inFragment[F[_], A](
+          fragmentName: String,
+          caret: Option[Caret]
+      )(faf: Pos[P.FragmentDefinition] => F[A]): F[A] = ???
+
+      override def checkArg(
+        a: alg.Arg,
+        value: V[AnyValue],
+        inVariableResolution: Boolean,
+      ): F[Unit] = ???
+
+      override def checkInput(
+        fields: Map[String, alg.Arg],
+        values: Map[String, V[AnyValue]],
+        inVariableResolution: Boolean,
+      ): F[Unit] = ???
 
       override def matchType(
           name: String,
@@ -183,19 +242,19 @@ object SchemaQueryOps {
       ): F[alg.Selectable] = {
         if (sel.name == name) F.pure(sel)
         else {
-          sel.fold(
+          sel.foldSel(
             onType = t =>
               // Check downcast
               t.implements.get(name) match {
                 case None =>
                   raise(s"Tried to match with type `$name` on type object type `${sel.name}`.", Some(caret))
-                case Some(i) => F.pure(i)
+                case Some(i) => F.pure(i.asSelectable)
               },
             i =>
               // What types implement this interface?
               // We can both downcast and up-match
               i.implements.get(name) match {
-                case Some(i) => F.pure(i)
+                case Some(i) => F.pure(i.asSelectable)
                 case None =>
                   raiseOpt(
                     implementations.get(i.name),
@@ -212,23 +271,85 @@ object SchemaQueryOps {
             u =>
               // Can match to any type or any of it's types' interfacees
               u.variants.get(name) match {
-                case Some(i) => F.pure(i)
+                case Some(i) => F.pure(i.asSelectable)
                 case None =>
                   raiseOpt(
                     u.variants.values.toList.collectFirstSome(_.implements.get(name)),
                     s"`$name` is not a member of the union `${u.name}` (or any of the union's types' implemented interfaces), possible members are ${u.variants.keySet
                       .mkString(", ")}.",
                     caret.some
-                  )
+                  ).map(_.asSelectable)
               }
           )
         }
-        ???
       }
 
-      override def collectSelectionInfo(sel: alg.Selectable, ss: QueryAst.SelectionSet): F[NonEmptyList[SelectionInfo]] = ???
+      override def collectSelectionInfo(sel: alg.Selectable, ss: QueryAst.SelectionSet): F[NonEmptyList[SelectionInfo]] = {
+        val fields = ss.selections.collect { case Pos(caret, P.Selection.FieldSelection(field)) => (caret, field) }
 
-      override def collectFieldInfo(qf: alg.Field, f: QueryAst.Field, caret: Caret): F[FieldInfo] = ???
+        val actualFields = sel.fields + ("__typename" -> alg.typename)
+
+        val validateFieldsF = fields
+          .parTraverse { case (caret, field) =>
+            actualFields.get(field.name) match {
+              case None    => raise[FieldInfo](s"Field '${field.name}' is not a member of `${sel.name}`.", Some(caret))
+              case Some(f) => collectFieldInfo(f, field, caret)
+            }
+          }
+          .map(_.toNel.toList.map(SelectionInfo(sel, _, None)))
+
+        val realInlines = ss.selections
+          .collect { case Pos(caret, P.Selection.InlineFragmentSelection(f)) => (caret, f) }
+          .parFlatTraverse { case (caret, f) =>
+            f.typeCondition.traverse(matchType(_, sel, caret)).map(_.getOrElse(sel)).flatMap { t =>
+              collectSelectionInfo(t, f.selectionSet).map(_.toList)
+            }
+          }
+
+        val realFragments =
+          ss.selections
+            .collect { case Pos(caret, P.Selection.FragmentSpreadSelection(f)) => (caret, f) }
+            .parFlatTraverse { case (caret, f) =>
+              val fn = f.fragmentName
+              inFragment(fn, caret.some) { case Pos(caret, f) =>
+                matchType(f.typeCnd, sel, caret).flatMap { t =>
+                  collectSelectionInfo(t, f.selectionSet)
+                    .map(_.toList.map(_.copy(fragmentName = Some(fn))))
+                }
+              }
+            }
+
+        (validateFieldsF :: realInlines :: realFragments :: Nil).parFlatSequence
+          // Unfortunate, but is always safe here since nel is input
+          .map(_.toNel.get)
+      }
+
+      override def collectFieldInfo(qf: alg.Field, f: QueryAst.Field, caret: Caret): F[FieldInfo] = {
+        val fields = f.arguments.toList.flatMap(_.nel.toList).map(x => x.name -> x.value).toMap
+        val verifyArgsF = checkInput(qf.args, fields, inVariableResolution = false)
+
+        val c = f.selectionSet.caret
+        val name = qf.tpe.inner.name
+        val i: F[TypeInfo[alg.Selectable]] = qf.tpe.inner.foldOutToplevel(
+          onSelectable = s => 
+            raiseOpt(
+              f.selectionSet.value,
+              s"Field `${f.name}` of type `${name}` must have a selection set.",
+              Some(c)
+            ).flatMap(ss => collectSelectionInfo(s, ss))
+            .map(TypeInfo.Selectable(name, _)),
+          onEnum = _ =>
+            if (f.selectionSet.value.isEmpty) 
+              F.pure(TypeInfo.Enum(name))
+            else raise(s"Field `${f.name}` of enum type `${name}` must not have a selection set.", Some(c)),
+          onScalar = _ =>
+            if (f.selectionSet.value.isEmpty) 
+              F.pure(TypeInfo.Scalar(name))
+            else raise(s"Field `${f.name}` of scalar type `${name}` must not have a selection set.", Some(c)),
+        )
+
+        verifyArgsF &> i.map(fi => FieldInfo(name, f.alias, f.arguments, qf.tpe.copy(inner = fi)))
+      }
 
       override def variables(op: QueryAst.OperationDefinition): F[VariableMap] = ???
 
