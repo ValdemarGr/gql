@@ -66,19 +66,21 @@ object SchemaShape {
     final case class TypeImpl[F[_], A, B](t: Type[F, B], specify: A => Option[B]) extends InterfaceImpl[F, A]
   }
 
+  // Key is the interface
+  // Values:
+  //   Key is the typename of the object
+  //   Values:
+  //     1. The object like type that extends the interface
+  //     2. The function to map from the interface to the object)
+  //
+  // There is no implicit interface implementations; all transitive implementations should be explicit
+  // (https://spec.graphql.org/draft/#IsValidImplementation())
+  type Implementations[F[_]] = Map[String, Map[String, InterfaceImpl[F, ?]]]
+
   final case class DiscoveryState[F[_]](
       inputs: Map[String, InToplevel[?]],
       outputs: Map[String, OutToplevel[F, ?]],
-      // Key is the interface
-      // Values:
-      //   Key is the typename of the object
-      //   Values:
-      //     1. The object like type that extends the interface
-      //     2. The function to map from the interface to the object)
-      //
-      // There is no implicit interface implementations; all transitive implementations should be explicit
-      // (https://spec.graphql.org/draft/#IsValidImplementation())
-      implementations: Map[String, Map[String, InterfaceImpl[F, ?]]]
+      implementations: Implementations[F]
   )
 
   def discover[F[_]](shape: SchemaShape[F, ?, ?, ?]): DiscoveryState[F] = {

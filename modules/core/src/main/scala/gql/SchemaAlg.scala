@@ -1,8 +1,9 @@
 package gql
 
-import gql.parser.{QueryAst => P, Value => V, AnyValue}
+import gql.parser.{QueryAst => P, Value => V, AnyValue, Const}
 import cats.data._
 import cats.parse.Caret
+import io.circe.Json
 
 // This is an attempt to generalize a graphql schema
 
@@ -49,6 +50,8 @@ trait SchemaQueryOps[F[_]] {
       caret: Caret
   ): F[FieldInfo]
 
+  def variables(op: P.OperationDefinition): F[SchemaQueryOps.VariableMap]
+
   def checkSelectionsMerge(xs: NonEmptyList[SchemaQueryOps.SelectionInfo[schemaAlg.Selectable]]): F[Unit]
 
   def checkFieldsMerge(
@@ -85,6 +88,8 @@ object SchemaQueryOps {
       fields: NonEmptyList[FieldInfo[S]],
       fragmentName: Option[String]
   )
+
+  type VariableMap = Map[String, Either[Json, V[Const]]]
 }
 
 // trait OutAlg[A]
