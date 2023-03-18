@@ -1021,6 +1021,10 @@ object PreparedQuery {
         ambientField(name) {
           raiseEither(decoder(x), None)
         }
+      case (Input(name, fields, _), V.ObjectValue(xs)) =>
+        ambientField(name) {
+          parseArg[F, A](fields, xs.toMap, variableMap, ambigiousEnum)
+        }
       case (arr: InArr[a, c], V.ListValue(xs)) =>
         xs.zipWithIndex
           .parTraverse { case (x, i) =>
