@@ -24,6 +24,9 @@ object Modifier {
 }
 
 final case class ModifierStack[+T](modifiers: List[Modifier], inner: T) {
+  def set[T2](t: T2): ModifierStack[T2] =
+    ModifierStack(modifiers, t)
+
   def push(m: Modifier): ModifierStack[T] =
     ModifierStack(m :: modifiers, inner)
 
@@ -77,6 +80,9 @@ object InverseModifier {
 }
 
 final case class InverseModifierStack[+T](modifiers: List[InverseModifier], inner: T) {
+  def set[T2](t: T2): InverseModifierStack[T2] =
+    InverseModifierStack(modifiers, t)
+
   def push(m: InverseModifier): InverseModifierStack[T] =
     InverseModifierStack(m :: modifiers, inner)
 

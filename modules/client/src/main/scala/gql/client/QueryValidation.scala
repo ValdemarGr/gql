@@ -4,122 +4,200 @@ import gql.parser.TypeSystemAst._
 import cats._
 import cats.implicits._
 import cats.data._
-import cats.mtl.Stateful
 import gql.ast._
-import gql.parser.{Value => V, Const}
+import gql.parser.{Value => V}
 import gql.ModifierStack
 import gql.InverseModifierStack
 import gql.InverseModifier
 import gql.resolver.Resolver
 import gql.Arg
 import gql.ArgValue
+import fs2.Pure
 
 object QueryValidation {
-  def raise[F[_], A](msg: String)(implicit F: MonadError[F, NonEmptyChain[String]]): F[A] =
-    F.raiseError(NonEmptyChain.one(msg))
+  /*
+   * Stubs the whole ast
+   * Does 2 passes of the top-level types
+   * 1. Verify that all types only reference other types that are defined in the ast
+   * 2. Construct an ast, where references are call by name and generated ad-hoc:
+   * ```
+   * lazy val output: Map[String, Either[InToplevel[?], OutToplevel[fs2.Pure, ?]]] = {
+   *   ...
+   *   Eval.always(output(fieldTypename).toOption.get)
+   * }
+   * ```
+   */
+  def liftAst(ast: Map[String, TypeDefinition]): EitherNec[String, List[Either[OutToplevel[fs2.Pure, ?], InToplevel[?]]]] = {
+    sealed trait Partition { def x: TypeDefinition }
 
-  type CacheValue = Either[OutToplevel[fs2.Pure, Unit], InToplevel[Unit]]
-  type Cache = Map[String, CacheValue]
+    sealed trait InputPartition extends Partition
+    case class InputType(x: TypeDefinition.InputObjectTypeDefinition) extends InputPartition
 
-  // Stubs the whole ast
-  def liftAst[F[_]](ast: Map[String, TypeDefinition])(implicit
-      F: MonadError[F, NonEmptyChain[String]],
-      S: Stateful[F, Cache]
-  ) = {
-    def convetTd(td: TypeDefinition): F[CacheValue] = {
-      td match {
-        case e: TypeDefinition.EnumTypeDefinition =>
-          Enum[Unit](
-            e.name,
-            e.values.map(evd => evd.name -> EnumValue[Unit](())),
-            None
-          )
-        case s: TypeDefinition.ScalarTypeDefinition =>
-          Scalar[Unit](
-            s.name,
-            _ => V.NullValue(),
-            _ => Left("Not implemented")
-          )
-        case i: TypeDefinition.InterfaceTypeDefinition =>
-          Interface[fs2.Pure, Unit](
-            i.name,
-            i.fieldDefinitions.map { f =>
-              f.argumentsDefinition.map { a =>
-                foldInputStack(ModifierStack.fromType(a.tpe).invert).map{ in =>
-                  ???
-                  //Arg.make(ArgValue.)
-                }
-                ???
-              //Arg.make(ArgValue(a.name, Eval.later()))
-              }
-              val t = ModifierStack.fromType(f.tpe).invert
+    sealed trait OutputPartition extends Partition
+    case class ObjectType(x: TypeDefinition.ObjectTypeDefinition) extends OutputPartition
+    case class InterfaceType(x: TypeDefinition.InterfaceTypeDefinition) extends OutputPartition
+    case class UnionType(x: TypeDefinition.UnionTypeDefinition) extends OutputPartition
 
-              ???
-            },
-            Nil
-          )
-      }
-      ???
+    case class EnumType(x: TypeDefinition.EnumTypeDefinition) extends OutputPartition with InputPartition
+    case class ScalarType(x: TypeDefinition.ScalarTypeDefinition) extends OutputPartition with InputPartition
+
+    def partition(td: TypeDefinition): Partition = td match {
+      case x: TypeDefinition.InputObjectTypeDefinition => InputType(x)
+      case x: TypeDefinition.ObjectTypeDefinition      => ObjectType(x)
+      case x: TypeDefinition.InterfaceTypeDefinition   => InterfaceType(x)
+      case x: TypeDefinition.UnionTypeDefinition       => UnionType(x)
+      case x: TypeDefinition.EnumTypeDefinition        => EnumType(x)
+      case x: TypeDefinition.ScalarTypeDefinition      => ScalarType(x)
     }
 
-    def convert(tn: String): F[CacheValue] = S.inspect(_.get(tn)).flatMap {
-        case Some(cached) => F.pure(cached)
-        case None =>
-          ast.get(tn) match {
-            case None    => raise[F, CacheValue](s"Typename ${tn} not found")
-            case Some(x) => convetTd(x)
-          }
+    def convertInterface(i: InterfaceType): EitherNec[String, Interface[fs2.Pure, ?]] = {
+      val fields = i.x.fieldDefinitions.parTraverse(convertFieldDef)
+      val impls = i.x.interfaces.parTraverse(implementation[Unit])
+      (fields, impls)
+        .parMapN((f, is) =>
+          Interface[fs2.Pure, Unit](
+            i.x.name,
+            f.map { case (k, v) => k -> v.asAbstract },
+            is.map(_.implementation)
+          )
+        )
+    }
+
+    def convertObject(o: ObjectType): EitherNec[String, Type[fs2.Pure, ?]] = {
+      val i = o.x
+      val fields = i.fieldDefinitions.parTraverse(convertFieldDef)
+      val impls = i.interfaces.parTraverse(implementation[Unit])
+      (fields, impls).parMapN(Type[fs2.Pure, Unit](i.name, _, _))
+    }
+
+    def implementation[A](s: String): EitherNec[String, Implementation[Pure, A, ?]] =
+      partitionType(s).flatMap {
+        case i: InterfaceType =>
+          Right(Implementation(Eval.always(convertInterface(i).toOption.get))(_ => Option.empty[A]))
+        case _ => Left(NonEmptyChain.one(s"Expected interface, got object `${s}`"))
       }
 
-    def foldOutputStack(ms: InverseModifierStack[String]): F[Out[fs2.Pure, ?]] =
+    def variant[A](s: String) =
+      partitionType(s).flatMap {
+        case i: ObjectType =>
+          Right(Variant(Eval.always(convertObject(i).toOption.get))((_: Unit) => None))
+        case _ => Left(NonEmptyChain.one(s"Expected object type, got something else `${s}`"))
+      }
+
+    def convertScalar[Unit](s: ScalarType): Scalar[Unit] =
+      Scalar(s.x.name, _ => V.NullValue(), _ => Left("Not implemented"))
+
+    def convertEnum(e: EnumType): Enum[Unit] =
+      Enum(e.x.name, e.x.values.map(x => x.name -> EnumValue(())))
+
+    def convertOutputPart(p: OutputPartition): EitherNec[String, OutToplevel[fs2.Pure, ?]] =
+      p match {
+        case ObjectType(i)    => convertObject(ObjectType(i))
+        case InterfaceType(i) => convertInterface(InterfaceType(i))
+        case UnionType(x) =>
+          val variants = x.types.parTraverse(variant[Unit])
+          variants.map(Union[fs2.Pure, Unit](x.name, _))
+        case x: EnumType   => Right(convertEnum(x))
+        case x: ScalarType => Right(convertScalar(x))
+      }
+
+    def convertFieldDef(fd: FieldDefinition): EitherNec[String, (String, Field[fs2.Pure, Unit, ?])] = {
+      val o = fd.argumentsDefinition.toNel.traverse(liftArgs)
+
+      val inner = resolveOutputType(fd.tpe)
+
+      (o, inner).parMapN { case (a, i: Eval[Out[fs2.Pure, a]]) =>
+        val fail = Resolver.id[fs2.Pure, Unit].as(Ior.left[String, a]("Not implemented")).rethrow
+        Field(a.fold(fail)(Resolver.argument[fs2.Pure, Unit, Unit](_) andThen fail), i)
+      } tupleLeft fd.name
+    }
+
+    def liftArg(a: InputValueDefinition): EitherNec[String, ArgValue[?]] = {
+      val t = resolveInputType(a.tpe)
+      t.map { case i: Eval[In[a]] => ArgValue(a.name, i, a.defaultValue, None) }
+    }
+
+    def liftArgs(xs: NonEmptyList[InputValueDefinition]): EitherNec[String, Arg[Unit]] =
+      xs.traverse(liftArg).map(_.nonEmptyTraverse_(x => Arg.make(x)))
+
+    def convertInputPart(p: InputPartition): EitherNec[String, InToplevel[?]] = p match {
+      case InputType(i)  => liftArgs(i.inputFields).map(Input(i.name, _))
+      case x: EnumType   => Right(convertEnum(x))
+      case x: ScalarType => Right(convertScalar(x))
+    }
+
+    def partitionType(name: String): EitherNec[String, Partition] =
+      ast
+        .get(name)
+        .toRight(NonEmptyChain.one(s"Type `${name}` not found"))
+        .map(partition)
+
+    def resolveStackedType(t: gql.parser.Type): EitherNec[String, (String, Either[Eval[Out[fs2.Pure, ?]], Eval[In[?]]])] = {
+      val t2 = ModifierStack.fromType(t).invert
+      partitionType(t2.inner)
+        .map {
+          case o: OutputPartition => Left(Eval.always(foldOutputStack(t2.set(convertOutputPart(o).toOption.get))))
+          case i: InputPartition  => Right(Eval.always(foldInputStack(t2.set(convertInputPart(i).toOption.get))))
+        } tupleLeft t2.inner
+    }
+
+    def resolveOutputType(t: gql.parser.Type): EitherNec[String, Eval[Out[fs2.Pure, ?]]] =
+      resolveStackedType(t)
+        .flatMap {
+          case (name, Right(_)) => Left(NonEmptyChain.one(s"Expected output type, got input type `${name}`"))
+          case (_, Left(o))     => Right(o)
+        }
+
+    def resolveInputType(t: gql.parser.Type): EitherNec[String, Eval[In[?]]] =
+      resolveStackedType(t)
+        .flatMap {
+          case (name, Left(_)) => Left(NonEmptyChain.one(s"Expected input type, got output type `${name}`"))
+          case (_, Right(i))   => Right(i)
+        }
+
+    def foldOutputStack(ms: InverseModifierStack[OutToplevel[fs2.Pure, ?]]): Out[fs2.Pure, ?] =
       ms.modifiers match {
         case InverseModifier.List :: xs =>
-          foldOutputStack(InverseModifierStack(xs, ms.inner)).map { case e: Out[fs2.Pure, a] =>
-            OutArr[fs2.Pure, a, Unit, a](
-              e,
-              _ => Seq.empty[a],
-              Resolver.id[fs2.Pure, a]
-            )
+          foldOutputStack(InverseModifierStack(xs, ms.inner)) match {
+            case e: Out[fs2.Pure, a] =>
+              OutArr[fs2.Pure, a, Unit, a](
+                e,
+                _ => Seq.empty[a],
+                Resolver.id[fs2.Pure, a]
+              )
           }
         case InverseModifier.Optional :: xs =>
-          foldOutputStack(InverseModifierStack(xs, ms.inner)).map { case e: Out[fs2.Pure, a] =>
-            OutOpt[fs2.Pure, a, a](
-              e,
-              Resolver.id[fs2.Pure, a]
-            )
+          foldOutputStack(InverseModifierStack(xs, ms.inner)) match {
+            case e: Out[fs2.Pure, a] =>
+              OutOpt[fs2.Pure, a, a](
+                e,
+                Resolver.id[fs2.Pure, a]
+              )
           }
-        case Nil =>
-          convert(ms.inner).flatMap {
-            case Left(x)  => F.pure(x)
-            case Right(x) => raise(s"Expected output type, got input type ${x.name}")(F)
-          }
+        case Nil => ms.inner
       }
 
-    def foldInputStack(ms: InverseModifierStack[String]): F[In[?]] =
+    def foldInputStack(ms: InverseModifierStack[InToplevel[?]]): In[?] =
       ms.modifiers match {
         case InverseModifier.List :: xs =>
-          foldInputStack(InverseModifierStack(xs, ms.inner)).map { case e: In[a] =>
-            InArr[a, Unit](
-              e,
-              _ => Left("Not implemented")
-            )
+          foldInputStack(InverseModifierStack(xs, ms.inner)) match {
+            case e: In[a] =>
+              InArr[a, Unit](
+                e,
+                _ => Left("Not implemented")
+              )
           }
         case InverseModifier.Optional :: xs =>
-          foldInputStack(InverseModifierStack(xs, ms.inner)).map { case e: In[a] =>
-            InOpt[a](e)
+          foldInputStack(InverseModifierStack(xs, ms.inner)) match {
+            case e: In[a] =>
+              InOpt[a](e)
           }
-        case Nil =>
-          convert(ms.inner).flatMap {
-            case Left(x)  => raise(s"Expected input type, got output type ${x.name}")(F)
-            case Right(x) => F.pure(x)
-          }
+        case Nil => ms.inner
       }
 
-    ast.get("Query") match {
-      case None => raise("Query type not found")(F)
-      case Some(x) =>
-        x
-        ???
+    ast.values.toList.map(partition).parTraverse {
+      case o: OutputPartition => convertOutputPart(o).map(_.asLeft)
+      case i: InputPartition  => convertInputPart(i).map(_.asRight)
     }
   }
 }
