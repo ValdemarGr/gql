@@ -11,6 +11,25 @@ import gql.resolver.Resolver
 import fs2.Pure
 
 object QueryValidation {
+  def astToSchema(ast: List[LowLevelAstNode]): EitherNec[String, SchemaShape[fs2.Pure, ?, ?, ?]] = {
+    val outs = ast.collect { case Left(x) => x }
+    val ins = ast.collect { case Right(x) => x }
+
+    val outM = outs
+      .collect { case t: Type[fs2.Pure, ?] => t }
+      .map(x => x.name -> x)
+      .toMap
+
+    outM
+      .get("Query")
+      .toRightNec("Could not find a Query type of type object")
+      .map { q =>
+        (outM.get("Mutation"), outM.get("Subscription")) match {
+          case (m: Option[Type[fs2.Pure, m]], s: Option[Type[fs2.Pure, s]]) => SchemaShape(q, m, s, outs, ins)
+        }
+      }
+  }
+
   /*
    * Stubs the whole ast
    * Does 2 passes of the top-level types
@@ -23,7 +42,8 @@ object QueryValidation {
    * }
    * ```
    */
-  def liftAst(ast: Map[String, TypeDefinition]): EitherNec[String, List[Either[OutToplevel[fs2.Pure, ?], InToplevel[?]]]] = {
+  type LowLevelAstNode = Either[OutToplevel[fs2.Pure, ?], InToplevel[?]]
+  def liftAst(ast: Map[String, TypeDefinition]): EitherNec[String, List[LowLevelAstNode]] = {
     sealed trait Partition { def x: TypeDefinition }
 
     sealed trait InputPartition extends Partition
@@ -70,18 +90,18 @@ object QueryValidation {
       partitionType(s).flatMap {
         case i: InterfaceType =>
           Right(Implementation(Eval.always(convertInterface(i).toOption.get))(_ => Option.empty[A]))
-        case _ => Left(NonEmptyChain.one(s"Expected interface, got object `${s}`"))
+        case _ => s"Expected interface, got object `${s}`".leftNec
       }
 
     def variant[A](s: String) =
       partitionType(s).flatMap {
         case i: ObjectType =>
           Right(Variant(Eval.always(convertObject(i).toOption.get))((_: Unit) => None))
-        case _ => Left(NonEmptyChain.one(s"Expected object type, got something else `${s}`"))
+        case _ => s"Expected object type, got something else `${s}`".leftNec
       }
 
-    def convertScalar[Unit](s: ScalarType): Scalar[Unit] =
-      Scalar(s.x.name, _ => V.NullValue(), _ => Left("Not implemented"))
+    def convertScalar(s: ScalarType): Scalar[Unit] =
+      Scalar(s.x.name, _ => V.NullValue(), _ => Right(()))
 
     def convertEnum(e: EnumType): Enum[Unit] =
       Enum(e.x.name, e.x.values.map(x => x.name -> EnumValue(())))
@@ -140,14 +160,14 @@ object QueryValidation {
     def resolveOutputType(t: gql.parser.Type): EitherNec[String, Eval[Out[fs2.Pure, ?]]] =
       resolveStackedType(t)
         .flatMap {
-          case (name, Right(_)) => Left(NonEmptyChain.one(s"Expected output type, got input type `${name}`"))
+          case (name, Right(_)) => s"Expected output type, got input type `${name}`".leftNec
           case (_, Left(o))     => Right(o)
         }
 
     def resolveInputType(t: gql.parser.Type): EitherNec[String, Eval[In[?]]] =
       resolveStackedType(t)
         .flatMap {
-          case (name, Left(_)) => Left(NonEmptyChain.one(s"Expected input type, got output type `${name}`"))
+          case (name, Left(_)) => s"Expected input type, got output type `${name}`".leftNec
           case (_, Right(i))   => Right(i)
         }
 
@@ -155,20 +175,11 @@ object QueryValidation {
       ms.modifiers match {
         case InverseModifier.List :: xs =>
           foldOutputStack(InverseModifierStack(xs, ms.inner)) match {
-            case e: Out[fs2.Pure, a] =>
-              OutArr[fs2.Pure, a, Unit, a](
-                e,
-                _ => Seq.empty[a],
-                Resolver.id[fs2.Pure, a]
-              )
+            case e: Out[fs2.Pure, a] => OutArr[fs2.Pure, a, Unit, a](e, _ => Seq.empty[a], Resolver.id[fs2.Pure, a])
           }
         case InverseModifier.Optional :: xs =>
           foldOutputStack(InverseModifierStack(xs, ms.inner)) match {
-            case e: Out[fs2.Pure, a] =>
-              OutOpt[fs2.Pure, a, a](
-                e,
-                Resolver.id[fs2.Pure, a]
-              )
+            case e: Out[fs2.Pure, a] => OutOpt[fs2.Pure, a, a](e, Resolver.id[fs2.Pure, a])
           }
         case Nil => ms.inner
       }
@@ -177,16 +188,11 @@ object QueryValidation {
       ms.modifiers match {
         case InverseModifier.List :: xs =>
           foldInputStack(InverseModifierStack(xs, ms.inner)) match {
-            case e: In[a] =>
-              InArr[a, Unit](
-                e,
-                _ => Left("Not implemented")
-              )
+            case e: In[a] => InArr[a, Unit](e, _ => Right(()))
           }
         case InverseModifier.Optional :: xs =>
           foldInputStack(InverseModifierStack(xs, ms.inner)) match {
-            case e: In[a] =>
-              InOpt[a](e)
+            case e: In[a] => InOpt[a](e)
           }
         case Nil => ms.inner
       }

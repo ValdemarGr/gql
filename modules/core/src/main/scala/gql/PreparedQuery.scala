@@ -298,7 +298,6 @@ object PreparedQuery {
       fragments: Map[String, Pos[P.FragmentDefinition]],
       discoveryState: SchemaShape.DiscoveryState[G]
   )(implicit
-      G: Applicative[G],
       L: Local[F, Prep],
       F: MonadError[F, NonEmptyChain[PositionalError]],
       D: Defer[F]
@@ -336,7 +335,6 @@ object PreparedQuery {
       fragments: Map[String, Pos[P.FragmentDefinition]],
       discoveryState: SchemaShape.DiscoveryState[G]
   )(implicit
-      G: Applicative[G],
       L: Local[F, Prep],
       F: MonadError[F, NonEmptyChain[PositionalError]],
       D: Defer[F]
@@ -756,7 +754,7 @@ object PreparedQuery {
     parseInputObj[F, A](argObj, a, Some(variableMap), ambigiousEnum = false)
   }
 
-  def prepareField[F[_]: Parallel, G[_]: Applicative, I, T](
+  def prepareField[F[_]: Parallel, G[_], I, T](
       fi: MergedFieldInfo[G],
       field: Field[G, I, T],
       currentTypename: String,
@@ -836,7 +834,6 @@ object PreparedQuery {
       variableMap: VariableMap,
       discoveryState: SchemaShape.DiscoveryState[G]
   )(implicit
-      G: Applicative[G],
       L: Local[F, Prep],
       F: MonadError[F, NonEmptyChain[PositionalError]],
       S: Stateful[F, Int],
@@ -863,7 +860,6 @@ object PreparedQuery {
       fragments: Map[String, Pos[P.FragmentDefinition]],
       discoveryState: SchemaShape.DiscoveryState[G]
   )(implicit
-      G: Applicative[G],
       L: Local[F, Prep],
       S: Stateful[F, Int],
       F: MonadError[F, NonEmptyChain[PositionalError]],
@@ -1115,7 +1111,7 @@ object PreparedQuery {
 
   // TODO add another phase after finding the OperationDefinition and before this,
   // that checks all that variables have been used
-  def prepareParts[F[_]: Parallel, G[_]: Applicative, Q, M, S](
+  def prepareParts[F[_]: Parallel, G[_], Q, M, S](
       op: P.OperationDefinition,
       frags: List[Pos[P.FragmentDefinition]],
       schema: SchemaShape[G, Q, M, S],
@@ -1288,7 +1284,7 @@ object PreparedQuery {
       fa.value.run(Prep.empty).runA(0).value
   }
 
-  def prepare[F[_]: Applicative, Q, M, S](
+  def prepare[F[_], Q, M, S](
       executabels: NonEmptyList[P.ExecutableDefinition],
       schema: SchemaShape[F, Q, M, S],
       variableMap: Map[String, Json],

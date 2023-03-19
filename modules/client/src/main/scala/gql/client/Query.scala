@@ -20,9 +20,13 @@ import io.circe._
 import org.typelevel.paiges._
 import cats.implicits._
 import cats._
+import cats.data._
 import gql.client.Selection.Fragment
 import gql.client.Selection.Field
 import gql.client.Selection.InlineFragment
+import gql.parser.TypeSystemAst
+import gql.SchemaShape
+import gql.PreparedQuery
 
 final case class SimpleQuery[A](
     operationType: P.OperationType,
