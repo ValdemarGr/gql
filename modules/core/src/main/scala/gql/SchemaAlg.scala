@@ -1,5 +1,7 @@
 package gql
 
+trait SchemaAlg
+/*
 import gql.parser.{QueryAst => P, Value => V, AnyValue, Const}
 import cats.data._
 import cats.parse.Caret
@@ -365,3 +367,4 @@ object SchemaQueryOps {
     }
   }
 }
+*/
