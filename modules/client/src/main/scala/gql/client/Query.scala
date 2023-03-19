@@ -27,6 +27,8 @@ import gql.client.Selection.InlineFragment
 import gql.parser.TypeSystemAst
 import gql.SchemaShape
 import gql.PreparedQuery
+import gql.parser.GraphqlRender
+import io.circe.syntax._
 
 final case class SimpleQuery[A](
     operationType: P.OperationType,
@@ -53,24 +55,29 @@ final case class ParameterizedQuery[A, V](
   def compile(v: V): Query.Compiled[A] = Query.Compiled(
     Query.queryDecoder(query.selectionSet),
     Query.renderQuery(query, name.some, variables.written.map(_.toList)),
-    variables.value.apply(v).some
+    variables.value.encodeObject(v).some
   )
 }
 
 object Query {
-  type V = gql.parser.Value[gql.parser.AnyValue]
-
   final case class Compiled[A](
       decoder: Decoder[A],
       query: String,
-      variables: Option[Json] = None
+      variables: Option[JsonObject] = None
   ) {
     def toJson: JsonObject = JsonObject.fromMap(
       Map(
         "query" -> Some(Json.fromString(query)),
-        "variables" -> variables
+        "variables" -> variables.map(_.asJson)
       ).collect { case (k, Some(v)) => k -> v }
     )
+
+    def validate(schema: SchemaShape[fs2.Pure, ?, ?, ?]) = {
+      // Consider folding into the query ast instead of a string
+      // Then render the ast to a string
+      // Or pass the ast to the preparation function
+      gql.parser.parseQuery(query)
+    }
   }
 
   object Compiled {
@@ -161,6 +168,21 @@ object Query {
     }
   }
 
+  object ParserAst {
+    type F[A] = Writer[List[Fragment[?]], A]
+    val F = Monad[F]
+
+    def convertSelectionSet(ss: SelectionSet[?]): F[P.SelectionSet] = {
+      ss.impl.enumerate.map{ 
+        case f: Fragment[?] => Writer(List(f), P.Selection.FragmentSpreadSelection(P.FragmentSpread(f.name)))
+        case f: InlineFragment[?] =>
+          convertSelectionSet(f.subSelection)
+            .map(ss => P.Selection.InlineFragmentSelection(P.InlineFragment(Some(f.on), ss)))
+      }
+      ???
+    }
+  }
+
   object Render {
     def renderOperationType(op: P.OperationType): Doc =
       op match {
@@ -169,38 +191,16 @@ object Query {
         case P.OperationType.Subscription => Doc.text("subscription")
       }
 
-    def renderValue(v: V): Doc = {
-      import V._
-      v match {
-        case IntValue(v)     => Doc.text(v.toString)
-        case StringValue(v)  => Doc.text(s""""$v"""")
-        case FloatValue(v)   => Doc.text(v.toString)
-        case NullValue()     => Doc.text("null")
-        case BooleanValue(v) => Doc.text(v.toString)
-        case ListValue(v) =>
-          Doc.intercalate(Doc.comma + Doc.line, v.map(renderValue)).tightBracketBy(Doc.char('['), Doc.char(']'))
-        case ObjectValue(fields) =>
-          Doc
-            .intercalate(
-              Doc.comma + Doc.line,
-              fields.map { case (k, v) => Doc.text(k) + Doc.text(": ") + renderValue(v) }
-            )
-            .bracketBy(Doc.char('{'), Doc.char('}'))
-        case EnumValue(v)     => Doc.text(v)
-        case VariableValue(v) => Doc.text(s"$$${v}")
-      }
-    }
-
     def renderVar(v: Var.One[?]): Doc = {
       val default = v.default match {
         case None          => Doc.empty
-        case Some(default) => Doc.space + Doc.char('=') + Doc.space + renderValue(default)
+        case Some(default) => Doc.space + Doc.char('=') + Doc.space + GraphqlRender.renderValue(default)
       }
       Doc.text(s"$$${v.name.name}") + Doc.space + Doc.char(':') + Doc.space + Doc.text(v.tpe) + default
     }
 
     def renderArg(a: P.Argument): Doc =
-      Doc.text(a.name) + Doc.char(':') + Doc.space + renderValue(a.value)
+      Doc.text(a.name) + Doc.char(':') + Doc.space + GraphqlRender.renderValue(a.value)
 
     def renderSelectionSet(ss: SelectionSet[?]): Doc = {
       val docs = ss.impl.enumerate.toList.map {

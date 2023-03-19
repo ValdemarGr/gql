@@ -28,7 +28,7 @@ object QueryParser {
       Pos.pos(operationDefinition).map(Operation(_))
   }
 
-  lazy val operationDefinition = {
+  lazy val operationDefinition: P[OperationDefinition[Pos]] = {
     import OperationDefinition._
     P.backtrack(selectionSet).map(Simple(_)) |
       (operationType ~ name.? ~ variableDefinitions.? ~ selectionSet).map { case (((opt, name), vars), ss) =>
@@ -53,11 +53,11 @@ object QueryParser {
       s("subscription").as(Subscription)
   }
 
-  lazy val selectionSet: P[SelectionSet] = P.defer {
+  lazy val selectionSet: P[SelectionSet[Pos]] = P.defer {
     Pos.pos(selection).rep.between(t('{'), t('}')).map(SelectionSet(_))
   }
 
-  lazy val selection: P[Selection] = {
+  lazy val selection: P[Selection[Pos]] = {
     import Selection._
     field.map(FieldSelection(_)) |
       // expects on, backtrack on failure
@@ -65,7 +65,7 @@ object QueryParser {
       fragmentSpread.map(FragmentSpreadSelection(_))
   }
 
-  lazy val field: P[Field] = P.defer {
+  lazy val field: P[Field[Pos]] = P.defer {
     (P.backtrack(alias).?.with1 ~ name ~ arguments.? ~ Pos.pos0(selectionSet.?))
       .map { case (((a, n), args), s) => Field(a, n, args, s) }
   }

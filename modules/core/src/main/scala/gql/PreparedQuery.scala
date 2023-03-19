@@ -228,10 +228,10 @@ object PreparedQuery {
 
   def inFragment[F[_], A](
       fragmentName: String,
-      fragments: Map[String, Pos[P.FragmentDefinition]],
+      fragments: Map[String, Pos[P.FragmentDefinition[Pos]]],
       caret: Option[Caret]
   )(
-      faf: Pos[P.FragmentDefinition] => F[A]
+      faf: Pos[P.FragmentDefinition[Pos]] => F[A]
   )(implicit
       L: Local[F, Prep],
       F: MonadError[F, NonEmptyChain[PositionalError]],
@@ -292,10 +292,10 @@ object PreparedQuery {
 
   def collectFieldInfo[F[_]: Parallel, G[_]](
       af: AbstractField[G, ?],
-      f: P.Field,
+      f: P.Field[Pos],
       caret: Caret,
       variableMap: VariableMap,
-      fragments: Map[String, Pos[P.FragmentDefinition]],
+      fragments: Map[String, Pos[P.FragmentDefinition[Pos]]],
       discoveryState: SchemaShape.DiscoveryState[G]
   )(implicit
       L: Local[F, Prep],
@@ -330,9 +330,9 @@ object PreparedQuery {
   )
   def collectSelectionInfo[F[_]: Parallel, G[_]](
       s: Selectable[G, ?],
-      ss: P.SelectionSet,
+      ss: P.SelectionSet[Pos],
       variableMap: VariableMap,
-      fragments: Map[String, Pos[P.FragmentDefinition]],
+      fragments: Map[String, Pos[P.FragmentDefinition[Pos]]],
       discoveryState: SchemaShape.DiscoveryState[G]
   )(implicit
       L: Local[F, Prep],
@@ -855,9 +855,9 @@ object PreparedQuery {
 
   def prepareSelectableRoot[F[_]: Parallel, G[_], A](
       s: Selectable[G, A],
-      ss: P.SelectionSet,
+      ss: P.SelectionSet[Pos],
       variableMap: VariableMap,
-      fragments: Map[String, Pos[P.FragmentDefinition]],
+      fragments: Map[String, Pos[P.FragmentDefinition[Pos]]],
       discoveryState: SchemaShape.DiscoveryState[G]
   )(implicit
       L: Local[F, Prep],
@@ -1066,20 +1066,20 @@ object PreparedQuery {
   }
 
   def getOperationDefinition[F[_]](
-      ops: List[Pos[P.OperationDefinition]],
+      ops: List[Pos[P.OperationDefinition[Pos]]],
       operationName: Option[String]
-  )(implicit F: MonadError[F, (String, List[Caret])]): F[P.OperationDefinition] = {
+  )(implicit F: MonadError[F, (String, List[Caret])]): F[P.OperationDefinition[Pos]] = {
     lazy val possible = ops
       .map(_.value)
-      .collect { case d: P.OperationDefinition.Detailed => d.name }
+      .collect { case d: P.OperationDefinition.Detailed[Pos] => d.name }
       .collect { case Some(x) => s"'$x'" }
       .mkString(", ")
     (ops, operationName) match {
       case (Nil, _)      => F.raiseError((s"No operations provided.", Nil))
       case (x :: Nil, _) => F.pure(x.value)
       case (xs, _) if xs.exists {
-            case Pos(_, _: P.OperationDefinition.Simple)                     => true
-            case Pos(_, x: P.OperationDefinition.Detailed) if x.name.isEmpty => true
+            case Pos(_, _: P.OperationDefinition.Simple[Pos])                     => true
+            case Pos(_, x: P.OperationDefinition.Detailed[Pos]) if x.name.isEmpty => true
             case _                                                           => false
           } =>
         F.raiseError(
@@ -1091,12 +1091,12 @@ object PreparedQuery {
           xs.map(_.caret)
         )
       case (xs, Some(name)) =>
-        val o = xs.collectFirst { case Pos(_, d: P.OperationDefinition.Detailed) if d.name.contains(name) => d }
+        val o = xs.collectFirst { case Pos(_, d: P.OperationDefinition.Detailed[Pos]) if d.name.contains(name) => d }
         F.fromOption(o, (s"Unable to find operation '$name', provided possible operations are $possible.", xs.map(_.caret)))
     }
   }
 
-  def operationType(od: P.OperationDefinition) =
+  def operationType(od: P.OperationDefinition[Pos]) =
     od match {
       case P.OperationDefinition.Simple(_)             => P.OperationType.Query
       case P.OperationDefinition.Detailed(ot, _, _, _) => ot
@@ -1112,8 +1112,8 @@ object PreparedQuery {
   // TODO add another phase after finding the OperationDefinition and before this,
   // that checks all that variables have been used
   def prepareParts[F[_]: Parallel, G[_], Q, M, S](
-      op: P.OperationDefinition,
-      frags: List[Pos[P.FragmentDefinition]],
+      op: P.OperationDefinition[Pos],
+      frags: List[Pos[P.FragmentDefinition[Pos]]],
       schema: SchemaShape[G, Q, M, S],
       variableMap: Map[String, Json]
   )(implicit
@@ -1285,7 +1285,7 @@ object PreparedQuery {
   }
 
   def prepare[F[_], Q, M, S](
-      executabels: NonEmptyList[P.ExecutableDefinition],
+      executabels: NonEmptyList[P.ExecutableDefinition[Pos]],
       schema: SchemaShape[F, Q, M, S],
       variableMap: Map[String, Json],
       operationName: Option[String]

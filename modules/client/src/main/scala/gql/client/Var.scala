@@ -20,7 +20,7 @@ import cats.implicits._
 import cats.data._
 import io.circe._
 import cats.Contravariant
-import gql.parser.{Value => V}
+import gql.parser.{Value => V, AnyValue}
 
 final case class VariableClosure[A, V](
     variables: Var.Impl[V],
@@ -42,7 +42,7 @@ object VariableClosure {
 
 // Don't construct such an instance directly
 final case class VariableName[A](name: String) extends AnyVal {
-  def asValue: gql.parser.Value[gql.parser.AnyValue] = V.VariableValue(name)
+  def asValue: V[AnyValue] = V.VariableValue(name)
 }
 
 final case class Var[V, B](
@@ -62,8 +62,6 @@ final case class Var[V, B](
 }
 
 object Var {
-  type V = gql.parser.Value[gql.parser.AnyValue]
-
   type Impl[A] = Writer[NonEmptyChain[One[?]], Encoder.AsObject[A]]
   object Impl {
     def product[A, B](fa: Impl[A], fb: Impl[B]): Impl[(A, B)] =
@@ -87,7 +85,7 @@ object Var {
   final case class One[A](
       name: VariableName[A],
       tpe: String,
-      default: Option[V]
+      default: Option[V[AnyValue]]
   )
 
   def apply[A](name: String, tpe: String)(implicit
@@ -98,7 +96,7 @@ object Var {
     new Var(Writer(NonEmptyChain.one(One(vn, tpe, None)), enc), vn)
   }
 
-  def apply[A](name: String, tpe: String, default: V)(implicit
+  def apply[A](name: String, tpe: String, default: V[AnyValue])(implicit
       encoder: io.circe.Encoder[A]
   ): Var[Option[A], VariableName[A]] = {
     val vn = VariableName[A](name)

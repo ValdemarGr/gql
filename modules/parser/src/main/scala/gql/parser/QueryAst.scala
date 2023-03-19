@@ -19,22 +19,22 @@ import cats.data._
 import gql.parser.{Value => V}
 
 object QueryAst {
-  sealed trait ExecutableDefinition
+  sealed trait ExecutableDefinition[P[_]]
   object ExecutableDefinition {
-    final case class Operation(o: Pos[OperationDefinition]) extends ExecutableDefinition
-    final case class Fragment(f: Pos[FragmentDefinition]) extends ExecutableDefinition
+    final case class Operation[P[_]](o: P[OperationDefinition[P]]) extends ExecutableDefinition[P]
+    final case class Fragment[P[_]](f: P[FragmentDefinition[P]]) extends ExecutableDefinition[P]
   }
 
-  sealed trait OperationDefinition
+  sealed trait OperationDefinition[P[_]]
   object OperationDefinition {
-    final case class Detailed(
+    final case class Detailed[P[_]](
         tpe: OperationType,
         name: Option[String],
-        variableDefinitions: Option[VariableDefinitions],
-        selectionSet: SelectionSet
-    ) extends OperationDefinition
+        variableDefinitions: Option[VariableDefinitions[P]],
+        selectionSet: SelectionSet[P]
+    ) extends OperationDefinition[P]
 
-    final case class Simple(selectionSet: SelectionSet) extends OperationDefinition
+    final case class Simple[P[_]](selectionSet: SelectionSet[P]) extends OperationDefinition[P]
   }
 
   sealed trait OperationType
@@ -44,20 +44,20 @@ object QueryAst {
     case object Subscription extends OperationType
   }
 
-  final case class SelectionSet(selections: NonEmptyList[Pos[Selection]])
+  final case class SelectionSet[P[_]](selections: NonEmptyList[P[Selection[P]]])
 
-  sealed trait Selection
+  sealed trait Selection[P[_]]
   object Selection {
-    final case class FieldSelection(field: Field) extends Selection
-    final case class FragmentSpreadSelection(fragmentSpread: FragmentSpread) extends Selection
-    final case class InlineFragmentSelection(inlineFragment: InlineFragment) extends Selection
+    final case class FieldSelection[P[_]](field: Field[P]) extends Selection[P]
+    final case class FragmentSpreadSelection[P[_]](fragmentSpread: FragmentSpread) extends Selection[P]
+    final case class InlineFragmentSelection[P[_]](inlineFragment: InlineFragment[P]) extends Selection[P]
   }
 
-  final case class Field(
+  final case class Field[P[_]](
       alias: Option[String],
       name: String,
       arguments: Option[Arguments],
-      selectionSet: Pos[Option[SelectionSet]]
+      selectionSet: P[Option[SelectionSet[P]]]
   )
 
   final case class Arguments(nel: NonEmptyList[Argument])
@@ -66,15 +66,15 @@ object QueryAst {
 
   final case class FragmentSpread(fragmentName: String)
 
-  final case class InlineFragment(typeCondition: Option[String], selectionSet: SelectionSet)
+  final case class InlineFragment[P[_]](typeCondition: Option[String], selectionSet: SelectionSet[P])
 
-  final case class FragmentDefinition(
+  final case class FragmentDefinition[P[_]](
       name: String,
       typeCnd: String,
-      selectionSet: SelectionSet
+      selectionSet: SelectionSet[P]
   )
 
-  final case class VariableDefinitions(nel: NonEmptyList[Pos[VariableDefinition]])
+  final case class VariableDefinitions[P[_]](nel: NonEmptyList[P[VariableDefinition]])
 
   final case class VariableDefinition(name: String, tpe: Type, defaultValue: Option[V[gql.parser.Const]])
 }

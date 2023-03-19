@@ -54,7 +54,7 @@ package object parser {
         )
       }
 
-  def parseQuery(str: String): Either[ParseError, NonEmptyList[QueryAst.ExecutableDefinition]] =
+  def parseQuery(str: String): Either[ParseError, NonEmptyList[QueryAst.ExecutableDefinition[Pos]]] =
     parseFor(str, QueryParser.executableDefinition.rep)
 
   def parseSchema(str: String): Either[ParseError, NonEmptyList[TypeSystemAst.TypeDefinition]] =
