@@ -18,10 +18,13 @@ trait SchemaAlg {
 
   type In
   type Toplevel
-  type OutToplevel // <: Out with Toplevel
-  trait OutToplevelAlg {
+  trait ToplevelAlg {
     def name: String
+  }
+  implicit def toplevelAlg(tl: Toplevel): ToplevelAlg
 
+  type OutToplevel // <: Out with Toplevel
+  trait OutToplevelAlg extends ToplevelAlg {
     def foldOutToplevel[C](
         onSelectable: Selectable => C,
         onScalar: Scalar => C,
@@ -30,7 +33,15 @@ trait SchemaAlg {
   }
   implicit def outToplevelAlg(ot: OutToplevel): OutToplevelAlg
 
-  type InTopLevel // <: In with Toplevel
+  type InToplevel // <: In with Toplevel
+  trait InToplevelAlg extends ToplevelAlg {
+    def foldInToplevel[C](
+        onInput: Input => C,
+        onScalar: Scalar => C,
+        onEnum: Enum => C
+    ): C
+  }
+  implicit def inToplevelAlg(it: InToplevel): InToplevelAlg
 
   type Selectable // <: OutToplevel
   trait SelectableAlg extends OutToplevelAlg {
@@ -64,10 +75,11 @@ trait SchemaAlg {
   }
   implicit def unionAlg(u: Union): UnionAlg
 
-  type Input // <: InTopLevel
+  type Input // <: InToplevel
   trait InputAlg {
     def args: Map[String, Arg]
   }
+  implicit def inputAlg(i: Input): InputAlg
 
   type Variant
 
@@ -75,8 +87,8 @@ trait SchemaAlg {
   trait InterfaceAlg extends ObjectLikeAlg
   implicit def interfaceAlg(t: Interface): InterfaceAlg
 
-  type Scalar // <: OutToplevel with InTopLevel
-  type Enum // <: OutToplevel with InTopLevel
+  type Scalar // <: OutToplevel with InToplevel
+  type Enum // <: OutToplevel with InToplevel
 
   type Field
   trait FieldAlg {
@@ -89,8 +101,13 @@ trait SchemaAlg {
 
   type Arg
   trait ArgAlg {
-    //def tpe: InverseModifierStack[]
+    def name: String
+
+    def tpe: InverseModifierStack[InToplevel]
+
+    def defaultValue: Option[V[Const]]
   }
+  implicit def argAlg(a: Arg): ArgAlg
 }
 
 trait SchemaQueryOps[F[_], Alg <: SchemaAlg, P[_], C] {
@@ -130,13 +147,13 @@ trait SchemaQueryOps[F[_], Alg <: SchemaAlg, P[_], C] {
   def checkArg(
       a: Alg#Arg,
       value: V[AnyValue],
-      inVariableResolution: Boolean
+      ambigiousEnum: Boolean
   ): F[Unit]
 
   def checkInput(
       field: Map[String, Alg#Arg],
       values: Map[String, V[AnyValue]],
-      inVariableResolution: Boolean
+      ambigiousEnum: Boolean
   ): F[Unit] = ???
 
   def checkSelectionsMerge(xs: NonEmptyList[SchemaQueryOps.SelectionInfo[Alg#Selectable]]): F[Unit]
@@ -200,7 +217,8 @@ object SchemaQueryOps {
   }
 
   def apply[F[_]: Parallel, Alg <: SchemaAlg, P[_], C](alg: Alg)(
-      implementations: Map[String, Map[String, Either[alg.Interface, alg.Type]]]
+      implementations: Map[String, Map[String, Either[alg.Interface, alg.Type]]],
+      vars: VariableMap
   )(implicit
       L: Local[F, Prep],
       F: MonadError[F, NonEmptyChain[PositionalError[C]]],
@@ -221,14 +239,64 @@ object SchemaQueryOps {
       override def checkArg(
           a: alg.Arg,
           value: V[AnyValue],
-          inVariableResolution: Boolean
-      ): F[Unit] = ???
+          ambigiousEnum: Boolean
+      ): F[Unit] = {
+        val stack = a.tpe
+        def verifyModifierStack(ms: List[InverseModifier], current: V[AnyValue], ambigiousEnum: Boolean): F[Unit] = (ms, current) match {
+          case (_, V.VariableValue(v)) =>
+            vars.get(v) match {
+              case None =>
+                raise(
+                  s"Variable '$$$v' was not declared and provided as a possible variable for this operation. Hint add the variable to the variables list of the operation '(..., $$$v: ${a.tpe.invert
+                    .show(_.name)})' and provide a value in the variables parameter.",
+                  None
+                )
+              case Some(Right(pval)) => verifyModifierStack(ms, pval, ambigiousEnum = false)
+              case Some(Left(j))     => verifyModifierStack(ms, V.fromJson(j), ambigiousEnum = true)
+            }
+          case (InverseModifier.List :: xs, V.ListValue(vs)) =>
+            vs.parTraverse_(verifyModifierStack(xs, _, ambigiousEnum))
+          case (InverseModifier.Optional :: _, V.NullValue()) => F.unit
+          case (InverseModifier.Optional :: xs, v)            => verifyModifierStack(xs, v, ambigiousEnum)
+          case (Nil, _) =>
+            stack.inner.foldInToplevel(
+              onInput = i =>
+                current match {
+                  case V.ObjectValue(vs) => checkInput(i.args, vs.toMap, ambigiousEnum)
+                  case _                 => raise(s"Expected input object", None)
+                },
+              null, //onScalar = s => ,
+              null
+            )
+            F.unit
+        }
+        a.tpe
+        ???
+      }
 
       override def checkInput(
           fields: Map[String, alg.Arg],
           values: Map[String, V[AnyValue]],
-          inVariableResolution: Boolean
-      ): F[Unit] = ???
+          ambigiousEnum: Boolean
+      ): F[Unit] = {
+        val tooMany = fields.keySet -- values.keySet
+        val tooManyF: F[Unit] =
+          if (tooMany.isEmpty) F.unit
+          else raise(s"Too many arguments provided for input object: ${tooMany.mkString(", ")}", None)
+
+        val matched = fields.toList.parTraverse_ { case (k, a) =>
+          raiseOpt(
+            values
+              .get(k)
+              .orElse(a.defaultValue)
+              .orElse(a.tpe.modifiers.headOption.collect { case InverseModifier.Optional => V.NullValue() }),
+            s"Missing required argument `$k` and no default value was found",
+            None
+          ).flatMap(checkArg(a, _, ambigiousEnum))
+        }
+
+        tooManyF &> matched
+      }
 
       override def matchType(
           name: String,
@@ -323,7 +391,7 @@ object SchemaQueryOps {
 
       override def collectFieldInfo(qf: alg.Field, f: QueryAst.Field[P], caret: C): F[FieldInfo] = {
         val fields = f.arguments.toList.flatMap(_.nel.toList).map(x => x.name -> x.value).toMap
-        val verifyArgsF = checkInput(qf.args, fields, inVariableResolution = false)
+        val verifyArgsF = checkInput(qf.args, fields, ambigiousEnum = false)
 
         val c = P.position(f.selectionSet)
         val x = P(f.selectionSet)
