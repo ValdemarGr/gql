@@ -88,6 +88,9 @@ trait SchemaAlg {
   def typename: Field
 
   type Arg
+  trait ArgAlg {
+    //def tpe: InverseModifierStack[]
+  }
 }
 
 trait SchemaQueryOps[F[_], Alg <: SchemaAlg, P[_], C] {

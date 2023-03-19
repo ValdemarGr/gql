@@ -171,16 +171,22 @@ object Query {
   object ParserAst {
     type F[A] = Writer[List[Fragment[?]], A]
     val F = Monad[F]
-
+/*
     def convertSelectionSet(ss: SelectionSet[?]): F[P.SelectionSet] = {
       ss.impl.enumerate.map{ 
         case f: Fragment[?] => Writer(List(f), P.Selection.FragmentSpreadSelection(P.FragmentSpread(f.name)))
         case f: InlineFragment[?] =>
           convertSelectionSet(f.subSelection)
             .map(ss => P.Selection.InlineFragmentSelection(P.InlineFragment(Some(f.on), ss)))
+        case f: Field[?] =>
+          def unrollSubQuery(sq: SubQuery[?]): Option[P.SelectionSet] = sq match {
+            case ListModifier(subQuery) => unrollSubQuery(subQuery)
+            case OptionModifier(subQuery) => unrollSubQuery(subQuery)
+            case Terminal(_) => F.pure(Nil)
+          }
       }
       ???
-    }
+    }*/
   }
 
   object Render {

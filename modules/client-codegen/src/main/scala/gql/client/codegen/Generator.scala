@@ -26,6 +26,7 @@ import org.typelevel.paiges.Doc
 import cats.implicits._
 import gql._
 import cats.mtl.Local
+import gql.parser.Pos
 
 object Generator {
   /*
@@ -319,7 +320,7 @@ object Generator {
   def generateField[F[_]: Parallel](
       companionName: String,
       schema: Map[String, TypeDefinition],
-      f: Field,
+      f: Field[Pos],
       fd: FieldDefinition
   )(implicit
       P: CurrentPath[F],
@@ -361,13 +362,13 @@ object Generator {
       companionName: String,
       schema: Map[String, TypeDefinition],
       fieldMap: Map[String, FieldDefinition],
-      sel: Selection
+      sel: Selection[Pos]
   )(implicit
       P: CurrentPath[F],
       F: MonadError[F, NonEmptyChain[String]]
   ): F[FieldPart] = {
     sel match {
-      case fs: Selection.FieldSelection =>
+      case fs: Selection.FieldSelection[Pos] =>
         val f = fs.field
         fieldMap.get(f.name) match {
           case None => raise[F, FieldPart](s"Field '${f.name}' not found in type '$companionName'")
@@ -376,7 +377,7 @@ object Generator {
               generateField[F](companionName, schema, f, x)
             }
         }
-      case frag: Selection.FragmentSpreadSelection =>
+      case frag: Selection.FragmentSpreadSelection[Pos] =>
         val fs = frag.fragmentSpread
         F.pure {
           FieldPart(
@@ -385,7 +386,7 @@ object Generator {
             Doc.text(s"embed[Option[${fs.fragmentName}]]")
           )
         }
-      case inlineFrag: Selection.InlineFragmentSelection =>
+      case inlineFrag: Selection.InlineFragmentSelection[Pos] =>
         val ilf = inlineFrag.inlineFragment
         val ss = ilf.selectionSet.selections.map(_.value)
         val cnd = ilf.typeCondition.get
@@ -407,7 +408,7 @@ object Generator {
       schema: Map[String, TypeDefinition],
       name: String,
       typename: String,
-      sels: NonEmptyList[Selection],
+      sels: NonEmptyList[Selection[Pos]],
       contextInfo: Option[ContextInfo]
   )(implicit
       P: CurrentPath[F],
@@ -446,7 +447,7 @@ object Generator {
 
   def generateExecutableDefs[F[_]: Parallel](
       schema: Map[String, TypeDefinition],
-      query: NonEmptyList[ExecutableDefinition]
+      query: NonEmptyList[ExecutableDefinition[Pos]]
   )(implicit
       P: CurrentPath[F],
       F: MonadError[F, NonEmptyChain[String]]
@@ -456,7 +457,7 @@ object Generator {
         o.value match {
           case OperationDefinition.Simple(_) =>
             raise[F, Part]("Simple operations are not supported, please name all your operations")
-          case d: OperationDefinition.Detailed =>
+          case d: OperationDefinition.Detailed[Pos] =>
             in(s"operation-${d.name.get}") {
               generateTypeDef[F](
                 schema,
@@ -506,7 +507,7 @@ object Generator {
 
   def generateFor(
       schema: Map[String, TypeDefinition],
-      query: NonEmptyList[ExecutableDefinition]
+      query: NonEmptyList[ExecutableDefinition[Pos]]
   ): EitherNec[String, Doc] = {
     type F[A] = EitherT[Kleisli[Eval, Chain[String], *], NonEmptyChain[String], A]
     generateExecutableDefs[F](schema, query).value.run(Chain.empty).value
