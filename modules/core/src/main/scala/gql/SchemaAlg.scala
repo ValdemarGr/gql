@@ -88,7 +88,14 @@ trait SchemaAlg {
   implicit def interfaceAlg(t: Interface): InterfaceAlg
 
   type Scalar // <: OutToplevel with InToplevel
+  trait ScalarAlg extends OutToplevelAlg with InToplevelAlg
+  implicit def scalarAlg(s: Scalar): ScalarAlg
+
   type Enum // <: OutToplevel with InToplevel
+  trait EnumAlg extends OutToplevelAlg with InToplevelAlg {
+    def values: NonEmptySet[String]
+  }
+  implicit def enumAlg(e: Enum): EnumAlg
 
   type Field
   trait FieldAlg {
@@ -143,6 +150,11 @@ trait SchemaQueryOps[F[_], Alg <: SchemaAlg, P[_], C] {
       op: QA.OperationDefinition[P],
       root: Alg#Type
   ): F[NonEmptyList[SelectionInfo]]
+
+  def checkScalar(
+      s: Alg#Scalar,
+      value: V[AnyValue]
+  ): F[Unit]
 
   def checkArg(
       a: Alg#Arg,
@@ -236,6 +248,26 @@ object SchemaQueryOps {
           caret: Option[C]
       )(faf: P[QA.FragmentDefinition[P]] => F[A]): F[A] = ???
 
+      override def checkScalar(
+          s: alg.Scalar,
+          value: V[AnyValue]
+      ): F[Unit] = {
+        val known = Set("String", "Int", "Float", "Boolean")
+        val illigal: Set[String] = value match {
+          case V.IntValue(_)     => known - "Int"
+          case V.FloatValue(_)   => known - "Float"
+          case V.StringValue(_)  => known - "String"
+          case V.BooleanValue(_) => known - "Boolean"
+          case _                 => Set.empty
+        }
+        if (illigal.contains(s.name))
+          raise(
+            s"When supplying a value of type `${s.name}`, then a value of type ${illigal.toList.map(n => s"`${n}`").mkString(" or ")} is illigal",
+            None
+          )
+        else F.unit
+      }
+
       override def checkArg(
           a: alg.Arg,
           value: V[AnyValue],
@@ -259,19 +291,35 @@ object SchemaQueryOps {
           case (InverseModifier.Optional :: _, V.NullValue()) => F.unit
           case (InverseModifier.Optional :: xs, v)            => verifyModifierStack(xs, v, ambigiousEnum)
           case (Nil, _) =>
-            stack.inner.foldInToplevel(
+            val fo: F[Unit] = stack.inner.foldInToplevel(
               onInput = i =>
                 current match {
                   case V.ObjectValue(vs) => checkInput(i.args, vs.toMap, ambigiousEnum)
                   case _                 => raise(s"Expected input object", None)
                 },
-              null, //onScalar = s => ,
-              null
+              onScalar = s => checkScalar(s, current),
+              onEnum = { e =>
+                val fa: F[String] = current match {
+                  case V.EnumValue(s)                    => F.pure(s)
+                  case V.StringValue(s) if ambigiousEnum => F.pure(s)
+                  case _                                 => raise(s"Enum value expected for `${e.name}`.", None)
+                }
+
+                fa.flatMap[Unit] { s =>
+                  val names = e.values.toList
+                  if (e.values.contains(s)) F.unit
+                  else
+                    raise(
+                      s"Enum value `$s` does not occur in enum type `${e.name}`, possible enum values are ${names.map(s => s"`$s`").mkString_(", ")}.",
+                      None
+                    )
+                }
+              }
             )
-            F.unit
+            fo
         }
-        a.tpe
-        ???
+
+        verifyModifierStack(stack.modifiers, value, ambigiousEnum)
       }
 
       override def checkInput(
