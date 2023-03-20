@@ -13,8 +13,6 @@ import gql.Arg
 import gql.InverseModifierStack
 
 trait FieldMerging[F[_], G[_], C] {
-  import FieldCollection._
-
   def checkSelectionsMerge(xs: NonEmptyList[SelectionInfo[G]]): F[Unit]
 
   def checkFieldsMerge(
@@ -29,4 +27,10 @@ trait FieldMerging[F[_], G[_], C] {
   def compareArguments(name: String, aa: QA.Arguments, ba: QA.Arguments, caret: Option[C]): F[Unit]
 
   def compareValues(av: V[AnyValue], bv: V[AnyValue], caret: Option[C]): F[Unit]
+}
+
+object FieldMerging {
+    def apply[F[_], G[_], C](): FieldMerging[F, G, C] = new FieldMerging[F, G, C] {
+        
+    }
 }
