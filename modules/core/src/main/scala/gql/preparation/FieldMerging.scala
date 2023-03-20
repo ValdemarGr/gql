@@ -30,7 +30,7 @@ trait FieldMerging[F[_], G[_], C] {
 }
 
 object FieldMerging {
-    def apply[F[_], G[_], C](): FieldMerging[F, G, C] = new FieldMerging[F, G, C] {
-        
-    }
+    /*def apply[F[_], G[_], C](): FieldMerging[F, G, C] = new FieldMerging[F, G, C] {
+
+    }*/
 }
