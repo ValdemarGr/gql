@@ -13,6 +13,7 @@ import gql.Arg
 import gql.InverseModifierStack
 import gql.SchemaShape
 import gql.ModifierStack
+import gql.Cursor
 
 trait FieldCollection[F[_], G[_], P[_], C] {
   def matchType(
@@ -24,17 +25,17 @@ trait FieldCollection[F[_], G[_], P[_], C] {
   def collectSelectionInfo(
       sel: Selectable[G, ?],
       ss: QA.SelectionSet[P]
-  ): F[NonEmptyList[SelectionInfo[G]]]
+  ): F[NonEmptyList[SelectionInfo[G, C]]]
 
   def collectFieldInfo(
       qf: AbstractField[G, ?],
       f: QA.Field[P],
       caret: C
-  ): F[FieldInfo[G]]
+  ): F[FieldInfo[G, C]]
 }
 
 object FieldCollection {
-    type CycleSet = Set[String]
+  type CycleSet = Set[String]
 
   def apply[F[_]: Parallel, G[_], P[_], C](
       implementations: SchemaShape.Implementations[G],
@@ -44,6 +45,7 @@ object FieldCollection {
       E: ErrorAlg[F, C],
       PA: PathAlg[F],
       L: Local[F, CycleSet],
+      C: Local[F, Cursor],
       P: Positioned[P, C],
       A: ArgParsing[F]
   ) = {
@@ -55,13 +57,15 @@ object FieldCollection {
           fragmentName: String,
           caret: Option[C]
       )(faf: P[QA.FragmentDefinition[P]] => F[A]): F[A] =
-        L.ask[CycleSet].map(_.contains(fragmentName)).ifM(
+        L.ask[CycleSet]
+          .map(_.contains(fragmentName))
+          .ifM(
             raise(s"Fragment by '$fragmentName' is cyclic. Hint: graphql queries must be finite.", caret),
             fragments.get(fragmentName) match {
               case None    => raise(s"Unknown fragment name '$fragmentName'.", caret)
               case Some(f) => L.local(faf(f))(_ + fragmentName)
             }
-        )
+          )
 
       override def matchType(name: String, sel: Selectable[G, ?], caret: C): F[Selectable[G, ?]] = {
         if (sel.name == name) F.pure(sel)
@@ -111,17 +115,17 @@ object FieldCollection {
         }
       }
 
-      override def collectSelectionInfo(sel: Selectable[G, ?], ss: QueryAst.SelectionSet[P]): F[NonEmptyList[SelectionInfo[G]]] = {
+      override def collectSelectionInfo(sel: Selectable[G, ?], ss: QueryAst.SelectionSet[P]): F[NonEmptyList[SelectionInfo[G, C]]] = {
         val all = ss.selections.map(p => (P.position(p), P(p)))
         val fields = all.collect { case (caret, QA.Selection.FieldSelection(field)) => (caret, field) }
 
-        val actualFields = 
-            sel.abstractFieldMap + ("__typename" -> AbstractField(None, Eval.now(stringScalar), None))
+        val actualFields =
+          sel.abstractFieldMap + ("__typename" -> AbstractField(None, Eval.now(stringScalar), None))
 
         val validateFieldsF = fields
           .parTraverse { case (caret, field) =>
             actualFields.get(field.name) match {
-              case None    => raise[FieldInfo[G]](s"Field '${field.name}' is not a member of `${sel.name}`.", Some(caret))
+              case None    => raise[FieldInfo[G, C]](s"Field '${field.name}' is not a member of `${sel.name}`.", Some(caret))
               case Some(f) => ambientField(field.name)(collectFieldInfo(f, field, caret))
             }
           }
@@ -154,16 +158,16 @@ object FieldCollection {
           .map(_.toNel.get)
       }
 
-      override def collectFieldInfo(qf: AbstractField[G, _], f: QueryAst.Field[P], caret: C): F[FieldInfo[G]] = {
+      override def collectFieldInfo(qf: AbstractField[G, _], f: QueryAst.Field[P], caret: C): F[FieldInfo[G, C]] = {
         val fields = f.arguments.toList.flatMap(_.nel.toList).map(x => x.name -> x.value).toMap
-        val verifyArgsF = qf.arg.traverse_{ case a: Arg[a] => A.decodeArg[a](a, fields, ambigiousEnum = false).void }
+        val verifyArgsF = qf.arg.traverse_ { case a: Arg[a] => A.decodeArg[a](a, fields, ambigiousEnum = false).void }
 
         val c = P.position(f.selectionSet)
         val x = P(f.selectionSet)
         val ims = InverseModifierStack.fromOut(qf.output.value)
         val tl = ims.inner
-        val i: F[TypeInfo[G]] = tl match {
-          case s: Selectable[G, ?]=>
+        val i: F[TypeInfo[G, C]] = tl match {
+          case s: Selectable[G, ?] =>
             raiseOpt(
               x,
               s"Field `${f.name}` of type `${tl.name}` must have a selection set.",
@@ -178,7 +182,7 @@ object FieldCollection {
             else raise(s"Field `${f.name}` of scalar type `${tl.name}` must not have a selection set.", Some(c))
         }
 
-        verifyArgsF &> i.map(fi => FieldInfo[G](tl.name, f.alias, f.arguments, ims.copy(inner = fi)))
+        verifyArgsF &> i.flatMap(fi => C.ask.map(c => FieldInfo[G, C](tl.name, f.alias, f.arguments, ims.copy(inner = fi), caret, c)))
       }
     }
   }
@@ -200,22 +204,28 @@ object Positioned {
   }
 }
 
-sealed trait TypeInfo[+G[_]]
+sealed trait TypeInfo[+G[_], +C] {
+  def name: String
+}
 object TypeInfo {
-  final case class Scalar(name: String) extends TypeInfo[Nothing]
-  final case class Enum(name: String) extends TypeInfo[Nothing]
-  final case class Selectable[G[_]](name: String, selection: NonEmptyList[SelectionInfo[G]]) extends TypeInfo[G]
+  final case class Scalar(name: String) extends TypeInfo[Nothing, Nothing]
+  final case class Enum(name: String) extends TypeInfo[Nothing, Nothing]
+  final case class Selectable[G[_], C](name: String, selection: NonEmptyList[SelectionInfo[G, C]]) extends TypeInfo[G, C]
 }
 
-final case class SelectionInfo[G[_]](
+final case class SelectionInfo[G[_], C](
     s: Selectable[G, ?],
-    fields: NonEmptyList[FieldInfo[G]],
+    fields: NonEmptyList[FieldInfo[G, C]],
     fragmentName: Option[String]
 )
 
-final case class FieldInfo[G[_]](
+final case class FieldInfo[G[_], C](
     name: String,
     alias: Option[String],
     args: Option[QA.Arguments],
-    tpe: InverseModifierStack[TypeInfo[G]]
-)
+    tpe: InverseModifierStack[TypeInfo[G, C]],
+    caret: C,
+    path: Cursor
+) {
+    lazy val outputName: String = alias.getOrElse(name)
+}

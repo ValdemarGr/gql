@@ -14,6 +14,8 @@ import gql.InverseModifierStack
 import gql.ModifierStack
 
 package object preparation {
+    type VariableMap = Map[String, Either[Json, V[Const]]]
+
     def pValueName(v: V[AnyValue]): String = {
     import V._
     v match {
@@ -28,4 +30,7 @@ package object preparation {
       case VariableValue(_) => "variable"
     }
   }
+
+  def fieldName[G[_], C](f: FieldInfo[G, C]): String =
+    s"'${f.alias.getOrElse(f.name)}'${f.alias.map(x => s" (alias for '$x')").mkString}"
 }

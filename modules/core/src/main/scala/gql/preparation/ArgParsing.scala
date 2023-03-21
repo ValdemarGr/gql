@@ -31,8 +31,6 @@ trait ArgParsing[F[_]] {
 }
 
 object ArgParsing {
-  type VariableMap = Map[String, Either[Json, V[Const]]]
-
   def apply[F[_]: Parallel](
       variables: VariableMap
   )(implicit
