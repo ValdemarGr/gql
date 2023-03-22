@@ -36,7 +36,8 @@ object ArgParsing {
   )(implicit
       F: Monad[F],
       P: PathAlg[F],
-      E: ErrorAlg[F, ?]
+      E: ErrorAlg[F, ?],
+      T: Tell[F, Set[String]]
   ): ArgParsing[F] = new ArgParsing[F] {
     import E._
     import P._
@@ -44,16 +45,27 @@ object ArgParsing {
     override def decodeIn[A](a: In[A], value: V[AnyValue], ambigiousEnum: Boolean): F[A] = {
       (a, value) match {
         case (_, V.VariableValue(v)) =>
-          variables.get(v) match {
-            case None =>
-              raise(
-                s"Variable '$$$v' was not declared and provided as a possible variable for this operation. Hint add the variable to the variables list of the operation '(..., $$$v: ${ModifierStack
-                  .fromIn(a)
-                  .show(_.name)})' and provide a value in the variables parameter.",
-                None
-              )
-            case Some(Right(pval)) => decodeIn(a, pval, ambigiousEnum = false)
-            case Some(Left(j))     => decodeIn(a, V.fromJson(j), ambigiousEnum = true)
+          T.tell(Set(v)) *> {
+            variables.get(v) match {
+              case None =>
+                raise(
+                  s"Variable '$$$v' was not declared and provided as a possible variable for this operation. Hint add the variable to the variables list of the operation '(..., $$$v: ${ModifierStack
+                    .fromIn(a)
+                    .show(_.name)})' and provide a value in the variables parameter.",
+                  None
+                )
+              case Some(v) =>
+                val parseInner: F[A] = v.value match {
+                  case Right(pval) => decodeIn(a, pval, ambigiousEnum = false)
+                  case Left(j)     => decodeIn(a, V.fromJson(j), ambigiousEnum = true)
+                }
+                // TODO verify variable here
+                /*
+              val gottenTypename = ModifierStack.fromType(v.tpe).inner
+              val foundTypename =
+                 */
+                parseInner
+            }
           }
         case (e @ Enum(name, _, _), v) =>
           val fa: F[String] = v match {
