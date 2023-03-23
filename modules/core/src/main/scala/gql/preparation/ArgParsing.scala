@@ -15,6 +15,7 @@ import gql.ModifierStack
 import gql.parser.NonVar
 import gql.DecodedArgValue
 import gql.ArgParam
+import gql.Modifier
 
 trait ArgParsing[F[_]] {
   def decodeIn[A](
@@ -59,6 +60,31 @@ object ArgParsing {
                   case Right(pval) => decodeIn(a, pval, ambigiousEnum = false)
                   case Left(j)     => decodeIn(a, V.fromJson(j), ambigiousEnum = true)
                 }
+
+                val m = ModifierStack.fromType(v.tpe)
+
+                // We must verify if the variable may occur here by comparing the type of the variable with the type of the arg
+                // If we don't do this, variables will be structurally typed (e.g variable [[[A]]] is compatible with )
+                // Var should be more constrained than the arg
+                def verifyTypeShape(argShape: List[Modifier], varShape: List[Modifier]): Nothing = (argShape, varShape) match {
+                  // A compat V
+                  case (Nil, Nil) => ???
+
+                  // a! compat v! -> ok
+                  case (Modifier.NonNull :: xs, Modifier.NonNull :: ys) => verifyTypeShape(xs, ys)
+                  // a! compat ([v] | V) -> fail
+                  case (Modifier.NonNull :: xs, ys) => verifyTypeShape(xs, ys)
+                  // ([a] | A) compat v! -> ok
+                  case (xs, Modifier.NonNull :: ys) => verifyTypeShape(xs, ys)
+                  
+                  // [a] compat [v] -> ok
+                  case (Modifier.List :: xs, Modifier.List :: ys) => verifyTypeShape(xs, ys)
+                  // [a] compat V -> fail
+                  case (Modifier.List :: xs, Nil) => ???
+                  // A compat [v] -> fail
+                  case (Nil, Modifier.List :: ys) => ???
+                }
+
                 // TODO verify variable here
                 /*
               val gottenTypename = ModifierStack.fromType(v.tpe).inner
