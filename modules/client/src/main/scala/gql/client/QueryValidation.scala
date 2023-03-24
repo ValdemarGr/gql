@@ -152,8 +152,10 @@ object QueryValidation {
       val t2 = ModifierStack.fromType(t).invert
       partitionType(t2.inner)
         .map {
-          case o: OutputPartition => Left(Eval.always(foldOutputStack(t2.set(convertOutputPart(o).toOption.get))))
-          case i: InputPartition  => Right(Eval.always(foldInputStack(t2.set(convertInputPart(i).toOption.get))))
+          case o: OutputPartition =>
+            Left(Eval.always(foldOutputStack(t2.set(convertOutputPart(o).toOption.get))))
+          case i: InputPartition =>
+            Right(Eval.always(InverseModifierStack.toIn(t2.set(convertInputPart(i).toOption.get))))
         } tupleLeft t2.inner
     }
 
@@ -180,19 +182,6 @@ object QueryValidation {
         case InverseModifier.Optional :: xs =>
           foldOutputStack(InverseModifierStack(xs, ms.inner)) match {
             case e: Out[fs2.Pure, a] => OutOpt[fs2.Pure, a, a](e, Resolver.id[fs2.Pure, a])
-          }
-        case Nil => ms.inner
-      }
-
-    def foldInputStack(ms: InverseModifierStack[InToplevel[?]]): In[?] =
-      ms.modifiers match {
-        case InverseModifier.List :: xs =>
-          foldInputStack(InverseModifierStack(xs, ms.inner)) match {
-            case e: In[a] => InArr[a, Unit](e, _ => Right(()))
-          }
-        case InverseModifier.Optional :: xs =>
-          foldInputStack(InverseModifierStack(xs, ms.inner)) match {
-            case e: In[a] => InOpt[a](e)
           }
         case Nil => ms.inner
       }

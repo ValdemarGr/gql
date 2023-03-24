@@ -129,4 +129,17 @@ object InverseModifierStack {
       case InArr(of, _)     => fromIn(of).push(InverseModifier.List)
       case o: InOpt[?]      => fromIn(o.of).push(InverseModifier.Optional)
     }
+
+  def toIn(ms: InverseModifierStack[InToplevel[?]]): In[?] =
+    ms.modifiers match {
+      case InverseModifier.List :: xs =>
+        toIn(InverseModifierStack(xs, ms.inner)) match {
+          case e: In[a] => InArr[a, Unit](e, _ => Right(()))
+        }
+      case InverseModifier.Optional :: xs =>
+        toIn(InverseModifierStack(xs, ms.inner)) match {
+          case e: In[a] => InOpt[a](e)
+        }
+      case Nil => ms.inner
+    }
 }
