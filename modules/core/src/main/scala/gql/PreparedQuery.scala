@@ -1080,7 +1080,7 @@ object PreparedQuery {
       case (xs, _) if xs.exists {
             case Pos(_, _: P.OperationDefinition.Simple[Pos])                     => true
             case Pos(_, x: P.OperationDefinition.Detailed[Pos]) if x.name.isEmpty => true
-            case _                                                           => false
+            case _                                                                => false
           } =>
         F.raiseError(
           (s"Exactly one operation must be suplied if the operations include at least one unnamed operation.", xs.map(_.caret))

@@ -53,7 +53,7 @@ object ArgParsing {
                   s"Variable '$$$vn' was not declared and provided as a possible variable for this operation. Hint add the variable to the variables list of the operation '(..., $$$vn: ${ModifierStack
                     .fromIn(a)
                     .show(_.name)})' and provide a value in the variables parameter.",
-                  None
+                  Nil
                 )
               case Some(v) =>
                 val parseInnerF: F[A] = v.value match {
@@ -89,26 +89,34 @@ object ArgParsing {
                     case (xs @ (Modifier.List :: _), Nil) =>
                       raise(
                         s"${prefix}, remaining argument type modifiers were `${at.copy(modifiers = xs).show(_.name)}` when verifying $against",
-                        None
+                        Nil
                       )
                     // A compat [v] -> fail
                     case (Nil, Modifier.List :: ys) =>
                       raise(
                         s"${prefix}, remaining variable type modifiers were `${vt.copy(modifiers = ys).show(identity)}` when verifying $against",
-                        None
+                        Nil
                       )
                   }
 
                 val verifiedF: F[Unit] = verifyTypeShape(at.modifiers, vt.modifiers)
 
-                verifiedF &> parseInnerF
+                val verifiedTypenameF: F[Unit] =
+                  if (vt.inner === at.inner.name) F.unit
+                  else
+                    raise(
+                      s"${prefix}, typename of the variable '${vt.inner}' was not the same as the argument typename '${at.inner.name}'",
+                      Nil
+                    )
+
+                verifiedF &> verifiedTypenameF &> parseInnerF
             }
           }
         case (e @ Enum(name, _, _), v) =>
           val fa: F[String] = v match {
             case V.EnumValue(s)                    => F.pure(s)
             case V.StringValue(s) if ambigiousEnum => F.pure(s)
-            case _                                 => raise(s"Enum value expected for `$name`, but got ${pValueName(v)}.", None)
+            case _                                 => raise(s"Enum value expected for `$name`, but got ${pValueName(v)}.", Nil)
           }
 
           fa.flatMap[A] { s =>
@@ -118,13 +126,13 @@ object ArgParsing {
                 val names = e.m.keys.toList
                 raise(
                   s"Enum value `$s` does not occur in enum type `$name`, possible enum values are ${names.map(s => s"`$s`").mkString_(", ")}.",
-                  None
+                  Nil
                 )
             }
           }
         case (Scalar(name, _, decoder, _), x: NonVar) =>
           ambientField(name) {
-            raiseEither(decoder(x), None)
+            raiseEither(decoder(x), Nil)
           }
         case (Input(_, fields, _), V.ObjectValue(xs)) => decodeArg(fields, xs.toMap, ambigiousEnum)
         case (a: InArr[a, c], V.ListValue(vs)) =>
@@ -134,10 +142,10 @@ object ArgParsing {
                 decodeIn(a.of, v, ambigiousEnum)
               }
             }
-            .flatMap[c](a.fromSeq(_).fold(raise(_, None), F.pure(_)))
+            .flatMap[c](a.fromSeq(_).fold(raise(_, Nil), F.pure(_)))
         case (_: InOpt[a], V.NullValue()) => F.pure(Option.empty[a])
         case (opt: InOpt[a], v)           => decodeIn(opt.of, v, ambigiousEnum).map(Option(_))
-        case (i, _) => raise(s"Expected type `${ModifierStack.fromIn(i).show(_.name)}`, but got value ${pValueName(value)}.", None)
+        case (i, _) => raise(s"Expected type `${ModifierStack.fromIn(i).show(_.name)}`, but got value ${pValueName(value)}.", Nil)
       }
     }
 
@@ -148,7 +156,7 @@ object ArgParsing {
       val tooMuch = provided -- expected
       val tooMuchF: F[Unit] =
         if (tooMuch.isEmpty) F.unit
-        else raise(s"Too many fields provided, unknown fields are ${tooMuch.toList.map(x => s"'$x'").mkString_(", ")}.", None)
+        else raise(s"Too many fields provided, unknown fields are ${tooMuch.toList.map(x => s"'$x'").mkString_(", ")}.", Nil)
 
       val fv = arg.impl.foldMap[F, ValidatedNec[String, A]](new (Arg.Impl ~> F) {
         def apply[A](fa: Arg.Impl[A]): F[A] = fa match {
@@ -156,7 +164,7 @@ object ArgParsing {
             ambientField(fa.av.name) {
               def compileWith(x: V[AnyValue], default: Boolean) =
                 decodeIn[a](fa.av.input.value, x, ambigiousEnum)
-                  .flatMap(a => raiseEither(fa.decode(ArgParam(default, a)), None))
+                  .flatMap(a => raiseEither(fa.decode(ArgParam(default, a)), Nil))
 
               values
                 .get(fa.av.name)
@@ -164,16 +172,16 @@ object ArgParsing {
                 .orElse(fa.av.defaultValue.map(compileWith(_, true)))
                 .getOrElse {
                   fa.av.input.value match {
-                    case _: gql.ast.InOpt[a] => raiseEither(fa.decode(ArgParam(true, None)), None)
+                    case _: gql.ast.InOpt[a] => raiseEither(fa.decode(ArgParam(true, None)), Nil)
                     case _ =>
-                      raise(s"Missing argument for '${fa.av.name}' and no default value was found.", None)
+                      raise(s"Missing argument for '${fa.av.name}' and no default value was found.", Nil)
                   }
                 }
             }
         }
       })
 
-      tooMuchF &> fv.flatMap(v => raiseEither(v.toEither.leftMap(_.mkString_(", ")), None))
+      tooMuchF &> fv.flatMap(v => raiseEither(v.toEither.leftMap(_.mkString_(", ")), Nil))
     }
   }
 }

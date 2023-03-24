@@ -15,13 +15,13 @@ import gql.ModifierStack
 import gql.resolver._
 
 package object preparation {
-    final case class Variable(
+  final case class Variable(
       tpe: gql.parser.Type,
-      value: Either[Json, V[Const]],
-    )
-    type VariableMap = Map[String, Variable]
+      value: Either[Json, V[Const]]
+  )
+  type VariableMap = Map[String, Variable]
 
-    def pValueName(v: V[AnyValue]): String = {
+  def pValueName(v: V[AnyValue]): String = {
     import V._
     v match {
       case ObjectValue(_)   => "object"
@@ -44,7 +44,7 @@ package object preparation {
   type Used[F[_], A] = WriterT[F, UsedArgs, A]
 
   def collectArgs[G[_]](step: Step[G, ?, ?]): Chain[Arg[?]] =
-        step match {
+    step match {
       case Step.Alg.Argument(a)   => Chain.one(a)
       case Step.Alg.First(s)      => collectArgs(s)
       case Step.Alg.Choose(l, r)  => collectArgs(l) ++ collectArgs(r)

@@ -6,12 +6,12 @@ import cats.mtl._
 import gql.Cursor
 
 trait ErrorAlg[F[_], C] {
-  def raise[A](message: String, caret: Option[C]): F[A]
+  def raise[A](message: String, carets: List[C]): F[A]
 
-  def raiseEither[A](e: Either[String, A], caret: Option[C]): F[A]
+  def raiseEither[A](e: Either[String, A], carets: List[C]): F[A]
 
-  def raiseOpt[A](oa: Option[A], message: String, caret: Option[C]): F[A] =
-    raiseEither(oa.toRight(message), caret)
+  def raiseOpt[A](oa: Option[A], message: String, carets: List[C]): F[A] =
+    raiseEither(oa.toRight(message), carets)
 
   def modifyError[A](f: PositionalError[C] => PositionalError[C])(fa: F[A]): F[A]
 
@@ -26,12 +26,12 @@ object ErrorAlg {
       H: Handle[F, G[PositionalError[C]]],
       L: Local[F, Cursor]
   ): ErrorAlg[F, C] = new ErrorAlg[F, C] {
-    override def raise[A](message: String, caret: Option[C]): F[A] =
-      L.ask.flatMap(c => H.raise(Applicative[G].pure(PositionalError(c, caret.toList, message))))
+    override def raise[A](message: String, carets: List[C]): F[A] =
+      L.ask.flatMap(c => H.raise(Applicative[G].pure(PositionalError(c, carets, message))))
 
-    override def raiseEither[A](e: Either[String, A], caret: Option[C]): F[A] =
+    override def raiseEither[A](e: Either[String, A], carets: List[C]): F[A] =
       e match {
-        case Left(value)  => raise(value, caret)
+        case Left(value)  => raise(value, carets)
         case Right(value) => Monad[F].pure(value)
       }
 

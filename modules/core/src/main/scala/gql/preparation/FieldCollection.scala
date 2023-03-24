@@ -55,14 +55,14 @@ object FieldCollection {
     new FieldCollection[F, G, P, C] {
       def inFragment[A](
           fragmentName: String,
-          caret: Option[C]
+          carets: List[C]
       )(faf: P[QA.FragmentDefinition[P]] => F[A]): F[A] =
         L.ask[CycleSet]
           .map(_.contains(fragmentName))
           .ifM(
-            raise(s"Fragment by '$fragmentName' is cyclic. Hint: graphql queries must be finite.", caret),
+            raise(s"Fragment by '$fragmentName' is cyclic. Hint: graphql queries must be finite.", carets),
             fragments.get(fragmentName) match {
-              case None    => raise(s"Unknown fragment name '$fragmentName'.", caret)
+              case None    => raise(s"Unknown fragment name '$fragmentName'.", carets)
               case Some(f) => L.local(faf(f))(_ + fragmentName)
             }
           )
@@ -75,7 +75,7 @@ object FieldCollection {
               // Check downcast
               t.implementsMap.get(t.name) match {
                 case None =>
-                  raise(s"Tried to match with type `$name` on type object type `${sel.name}`.", Some(caret))
+                  raise(s"Tried to match with type `$name` on type object type `${sel.name}`.", List(caret))
                 case Some(i) => F.pure(i.value)
               }
             case i: Interface[G, ?] =>
@@ -87,7 +87,7 @@ object FieldCollection {
                   raiseOpt(
                     implementations.get(i.name),
                     s"The interface `${i.name}` is not implemented by any type.",
-                    caret.some
+                    List(caret)
                   ).flatMap { m =>
                     raiseOpt(
                       m.get(name).map {
@@ -95,7 +95,7 @@ object FieldCollection {
                         case i: SchemaShape.InterfaceImpl.OtherInterface[G @unchecked, ?] => i.i
                       },
                       s"`$name` does not implement interface `${i.name}`, possible implementations are ${m.keySet.mkString(", ")}.",
-                      caret.some
+                      List(caret)
                     )
                   }
               }
@@ -108,7 +108,7 @@ object FieldCollection {
                     u.types.toList.map(_.tpe.value).collectFirstSome(_.implementsMap.get(name)),
                     s"`$name` is not a member of the union `${u.name}` (or any of the union's types' implemented interfaces), possible members are ${u.instanceMap.keySet
                       .mkString(", ")}.",
-                    caret.some
+                    List(caret)
                   ).map(_.value)
               }
           }
@@ -125,7 +125,7 @@ object FieldCollection {
         val validateFieldsF = fields
           .parTraverse { case (caret, field) =>
             actualFields.get(field.name) match {
-              case None    => raise[FieldInfo[G, C]](s"Field '${field.name}' is not a member of `${sel.name}`.", Some(caret))
+              case None    => raise[FieldInfo[G, C]](s"Field '${field.name}' is not a member of `${sel.name}`.", List(caret))
               case Some(f) => ambientField(field.name)(collectFieldInfo(f, field, caret))
             }
           }
@@ -143,7 +143,7 @@ object FieldCollection {
           .collect { case (caret, QA.Selection.FragmentSpreadSelection(f)) => (caret, f) }
           .parFlatTraverse { case (caret, f) =>
             val fn = f.fragmentName
-            inFragment(fn, caret.some) { p =>
+            inFragment(fn, List(caret)) { p =>
               val caret = P.position(p)
               val f = P(p)
               matchType(f.typeCnd, sel, caret).flatMap { t =>
@@ -171,15 +171,15 @@ object FieldCollection {
             raiseOpt(
               x,
               s"Field `${f.name}` of type `${tl.name}` must have a selection set.",
-              Some(c)
+              List(c)
             ).flatMap(ss => collectSelectionInfo(s, ss)).map(TypeInfo.Selectable(tl.name, _))
           case _: Enum[?] =>
             if (x.isEmpty) F.pure(TypeInfo.Enum(tl.name))
-            else raise(s"Field `${f.name}` of enum type `${tl.name}` must not have a selection set.", Some(c))
+            else raise(s"Field `${f.name}` of enum type `${tl.name}` must not have a selection set.", List(c))
           case _: Scalar[?] =>
             if (x.isEmpty)
               F.pure(TypeInfo.Scalar(tl.name))
-            else raise(s"Field `${f.name}` of scalar type `${tl.name}` must not have a selection set.", Some(c))
+            else raise(s"Field `${f.name}` of scalar type `${tl.name}` must not have a selection set.", List(c))
         }
 
         verifyArgsF &> i.flatMap(fi => C.ask.map(c => FieldInfo[G, C](tl.name, f.alias, f.arguments, ims.copy(inner = fi), caret, c)))

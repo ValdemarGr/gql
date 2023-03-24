@@ -158,9 +158,9 @@ object QueryPreparation {
             import io.circe.syntax._
             pure(PreparedLeaf(s.name, x => s.encoder(x).asJson))
           case (o, Some(_)) =>
-            lift(raise(s"Type `${ModifierStack.fromOut(o).show(_.name)}` cannot have selections.", Some(fi.caret)))
+            lift(raise(s"Type `${ModifierStack.fromOut(o).show(_.name)}` cannot have selections.", List(fi.caret)))
           case (o, None) =>
-            lift(raise(s"Object like type `${ModifierStack.fromOut(o).show(_.name)}` must have a selection.", Some(fi.caret)))
+            lift(raise(s"Object like type `${ModifierStack.fromOut(o).show(_.name)}` must have a selection.", List(fi.caret)))
         }
 
       override def prepareField[I, O](
@@ -192,7 +192,7 @@ object QueryPreparation {
               s"Too many arguments provided for field `${fi.name}`. Provided: ${providedArgNames.toList
                 .map(x => s"'$x'")
                 .mkString(", ")}. Declared: ${declaredArgNames.toList.map(x => s"'$x'").mkString(", ")}",
-              Some(fi.caret)
+              List(fi.caret)
             )
 
         val preparedF = (
@@ -283,7 +283,7 @@ object QueryPreparation {
                   else {
                     t.fieldMap.get(f.name) match {
                       case None =>
-                        raise[PairedFieldSelection[G, b, C]](s"Could not find field '${f.name}' on type `${t.name}`.", None)
+                        raise[PairedFieldSelection[G, b, C]](s"Could not find field '${f.name}' on type `${t.name}`.", Nil)
                       case Some(field) => F.pure(PairedFieldSelection[G, b, C](f, field))
                     }
                   }
@@ -298,7 +298,7 @@ object QueryPreparation {
             case None =>
               raise[NonEmptyList[MergedImplementation[G, A, ?, C]]](
                 s"Could not find any implementations of `${base.name}` in the selection set.",
-                None
+                Nil
               )
           }
         }

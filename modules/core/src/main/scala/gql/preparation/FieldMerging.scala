@@ -79,12 +79,12 @@ object FieldMerging {
           // }
           case (TypeInfo.Enum(l), TypeInfo.Enum(r)) =>
             if (l === r) F.unit
-            else raise(s"Enums are not the same, got '$l' and '$r'.", Some(caret))
+            else raise(s"Enums are not the same, got '$l' and '$r'.", List(caret))
           case (TypeInfo.Scalar(l), TypeInfo.Scalar(r)) =>
             if (l === r) F.unit
-            else raise(s"Scalars are not the same, got '$l' and '$r'.", Some(caret))
+            else raise(s"Scalars are not the same, got '$l' and '$r'.", List(caret))
           case _ =>
-            raise(s"Types are not the same, got `${a.invert.show(_.name)}` and `${b.invert.show(_.name)}`.", Some(caret))
+            raise(s"Types are not the same, got `${a.invert.show(_.name)}` and `${b.invert.show(_.name)}`.", List(caret))
         }
       }
 
@@ -123,8 +123,8 @@ object FieldMerging {
         val thoroughCheckF = if (parentNameSame || objectPair != EitherObject.BothAreObjects) {
           val argsF = (a.args, b.args) match {
             case (None, None)         => F.unit
-            case (Some(_), None)      => raise(s"A selection of field ${fieldName(a)} has arguments, while another doesn't.", Some(b.caret))
-            case (None, Some(_))      => raise(s"A selection of field ${fieldName(a)} has arguments, while another doesn't.", Some(b.caret))
+            case (Some(_), None)      => raise(s"A selection of field ${fieldName(a)} has arguments, while another doesn't.", List(b.caret))
+            case (None, Some(_))      => raise(s"A selection of field ${fieldName(a)} has arguments, while another doesn't.", List(b.caret))
             case (Some(aa), Some(ba)) => compareArguments(fieldName(a), aa, ba, Some(b.caret))
           }
 
@@ -133,7 +133,7 @@ object FieldMerging {
             else {
               raise(
                 s"Field $aIn and $bIn must have the same name (not alias) when they are merged.",
-                Some(a.caret)
+                List(a.caret)
               )
             }
 
@@ -157,16 +157,16 @@ object FieldMerging {
             .parTraverse {
               case (k, v :: Nil) => F.pure(k -> v)
               case (k, _) =>
-                raise[(String, QA.Argument)](s"Argument '$k' of field $name was not unique.", caret)
+                raise[(String, QA.Argument)](s"Argument '$k' of field $name was not unique.", caret.toList)
             }
             .map(_.toMap)
 
         (checkUniqueness(aa), checkUniqueness(ba)).parTupled.flatMap { case (amap, bmap) =>
           (amap align bmap).toList.parTraverse_[F, Unit] {
             case (k, Ior.Left(_)) =>
-              raise(s"Field $name is already selected with argument '$k', but no argument was given here.", caret)
+              raise(s"Field $name is already selected with argument '$k', but no argument was given here.", caret.toList)
             case (k, Ior.Right(_)) =>
-              raise(s"Field $name is already selected without argument '$k', but an argument was given here.", caret)
+              raise(s"Field $name is already selected without argument '$k', but an argument was given here.", caret.toList)
             case (k, Ior.Both(l, r)) => ambientField(k)(compareValues(l.value, r.value, caret))
           }
         }
@@ -176,33 +176,33 @@ object FieldMerging {
         (av, bv) match {
           case (V.VariableValue(avv), V.VariableValue(bvv)) =>
             if (avv === bvv) F.unit
-            else raise(s"Variable '$avv' and '$bvv' are not equal.", caret)
+            else raise(s"Variable '$avv' and '$bvv' are not equal.", caret.toList)
           case (V.IntValue(ai), V.IntValue(bi)) =>
             if (ai === bi) F.unit
-            else raise(s"Int '$ai' and '$bi' are not equal.", caret)
+            else raise(s"Int '$ai' and '$bi' are not equal.", caret.toList)
           case (V.FloatValue(af), V.FloatValue(bf)) =>
             if (af === bf) F.unit
-            else raise(s"Float '$af' and '$bf' are not equal.", caret)
+            else raise(s"Float '$af' and '$bf' are not equal.", caret.toList)
           case (V.StringValue(as), V.StringValue(bs)) =>
             if (as === bs) F.unit
-            else raise(s"String '$as' and '$bs' are not equal.", caret)
+            else raise(s"String '$as' and '$bs' are not equal.", caret.toList)
           case (V.BooleanValue(ab), V.BooleanValue(bb)) =>
             if (ab === bb) F.unit
-            else raise(s"Boolean '$ab' and '$bb' are not equal.", caret)
+            else raise(s"Boolean '$ab' and '$bb' are not equal.", caret.toList)
           case (V.EnumValue(ae), V.EnumValue(be)) =>
             if (ae === be) F.unit
-            else raise(s"Enum '$ae' and '$be' are not equal.", caret)
+            else raise(s"Enum '$ae' and '$be' are not equal.", caret.toList)
           case (V.NullValue(), V.NullValue()) => F.unit
           case (V.ListValue(al), V.ListValue(bl)) =>
             if (al.length === bl.length) {
               al.zip(bl).zipWithIndex.parTraverse_ { case ((a, b), i) => ambientIndex(i)(compareValues(a, b, caret)) }
             } else
-              raise(s"Lists are not af same size. Found list of length ${al.length} versus list of length ${bl.length}.", caret)
+              raise(s"Lists are not af same size. Found list of length ${al.length} versus list of length ${bl.length}.", caret.toList)
           case (V.ObjectValue(ao), V.ObjectValue(bo)) =>
             if (ao.size =!= bo.size)
               raise(
                 s"Objects are not af same size. Found object of length ${ao.size} versus object of length ${bo.size}.",
-                caret
+                caret.toList
               )
             else {
               def checkUniqueness(xs: List[(String, V[AnyValue])]) =
@@ -210,20 +210,20 @@ object FieldMerging {
                   .toList
                   .parTraverse {
                     case (k, v :: Nil) => F.pure(k -> v)
-                    case (k, _)        => raise[(String, V[AnyValue])](s"Key '$k' is not unique in object.", caret)
+                    case (k, _)        => raise[(String, V[AnyValue])](s"Key '$k' is not unique in object.", caret.toList)
                   }
                   .map(_.toMap)
 
               (checkUniqueness(ao), checkUniqueness(bo)).parTupled.flatMap { case (amap, bmap) =>
                 // TODO test that verifies that order does not matter
                 (amap align bmap).toList.parTraverse_[F, Unit] {
-                  case (k, Ior.Left(_))    => raise(s"Key '$k' is missing in object.", caret)
-                  case (k, Ior.Right(_))   => raise(s"Key '$k' is missing in object.", caret)
+                  case (k, Ior.Left(_))    => raise(s"Key '$k' is missing in object.", caret.toList)
+                  case (k, Ior.Right(_))   => raise(s"Key '$k' is missing in object.", caret.toList)
                   case (k, Ior.Both(l, r)) => ambientField(k)(compareValues(l, r, caret))
                 }
               }
             }
-          case _ => raise(s"Values are not same type, got ${pValueName(av)} and ${pValueName(bv)}.", caret)
+          case _ => raise(s"Values are not same type, got ${pValueName(av)} and ${pValueName(bv)}.", caret.toList)
         }
       }
     }
