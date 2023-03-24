@@ -45,12 +45,12 @@ object ArgParsing {
 
     override def decodeIn[A](a: In[A], value: V[AnyValue], ambigiousEnum: Boolean): F[A] = {
       (a, value) match {
-        case (_, V.VariableValue(v)) =>
-          T.tell(Set(v)) *> {
-            variables.get(v) match {
+        case (_, V.VariableValue(vn)) =>
+          T.tell(Set(vn)) *> {
+            variables.get(vn) match {
               case None =>
                 raise(
-                  s"Variable '$$$v' was not declared and provided as a possible variable for this operation. Hint add the variable to the variables list of the operation '(..., $$$v: ${ModifierStack
+                  s"Variable '$$$vn' was not declared and provided as a possible variable for this operation. Hint add the variable to the variables list of the operation '(..., $$$vn: ${ModifierStack
                     .fromIn(a)
                     .show(_.name)})' and provide a value in the variables parameter.",
                   None
@@ -64,37 +64,40 @@ object ArgParsing {
                 val vt: ModifierStack[String] = ModifierStack.fromType(v.tpe)
                 val at = ModifierStack.fromIn(a)
 
+                lazy val prefix = s"Variable '${vn}' was not compatible with argument"
+
                 lazy val against = s"argument type `${at.show(_.name)}` and variable type `${vt.show(identity)}`"
 
                 // We must verify if the variable may occur here by comparing the type of the variable with the type of the arg
                 // If we don't do this, variables will be structurally typed (e.g variable [[[A]]] is compatible with )
                 // Var should be more constrained than the arg
-                def verifyTypeShape(argShape: List[Modifier], varShape: List[Modifier]): F[Unit] = (argShape, varShape) match {
-                  // A compat V
-                  case (Nil, Nil) => F.unit
+                def verifyTypeShape(argShape: List[Modifier], varShape: List[Modifier]): F[Unit] =
+                  (argShape, varShape) match {
+                    // A compat V
+                    case (Nil, Nil) => F.unit
 
-                  // a! compat v! -> ok
-                  case (Modifier.NonNull :: xs, Modifier.NonNull :: ys) => verifyTypeShape(xs, ys)
-                  // a! compat ([v] | V) -> fail
-                  case (Modifier.NonNull :: xs, ys) => verifyTypeShape(xs, ys)
-                  // ([a] | A) compat v! -> ok
-                  case (xs, Modifier.NonNull :: ys) => verifyTypeShape(xs, ys)
+                    // a! compat v! -> ok
+                    case (Modifier.NonNull :: xs, Modifier.NonNull :: ys) => verifyTypeShape(xs, ys)
+                    // a! compat ([v] | V) -> fail
+                    case (Modifier.NonNull :: xs, ys) => verifyTypeShape(xs, ys)
+                    // ([a] | A) compat v! -> ok
+                    case (xs, Modifier.NonNull :: ys) => verifyTypeShape(xs, ys)
 
-                  // [a] compat [v] -> ok
-                  case (Modifier.List :: xs, Modifier.List :: ys) => verifyTypeShape(xs, ys)
-                  // [a] compat V -> fail
-                  case (xs @ (Modifier.List :: _), Nil) =>
-                    raise(
-                      s"Variable was not compatible with argument, remaining argument type modifiers were `${at.copy(modifiers = xs).show(_.name)}` when verifying $against",
-                      None
-                    )
-                  // A compat [v] -> fail
-                  case (Nil, Modifier.List :: ys) =>
-                    raise(
-                      s"Variable was not compatible with argument, remaining variable type modifiers were `${vt.copy(modifiers = ys).show(identity)}` when verifying $against",
-                      None
-                    )
-                }
+                    // [a] compat [v] -> ok
+                    case (Modifier.List :: xs, Modifier.List :: ys) => verifyTypeShape(xs, ys)
+                    // [a] compat V -> fail
+                    case (xs @ (Modifier.List :: _), Nil) =>
+                      raise(
+                        s"${prefix}, remaining argument type modifiers were `${at.copy(modifiers = xs).show(_.name)}` when verifying $against",
+                        None
+                      )
+                    // A compat [v] -> fail
+                    case (Nil, Modifier.List :: ys) =>
+                      raise(
+                        s"${prefix}, remaining variable type modifiers were `${vt.copy(modifiers = ys).show(identity)}` when verifying $against",
+                        None
+                      )
+                  }
 
                 val verifiedF: F[Unit] = verifyTypeShape(at.modifiers, vt.modifiers)
 
