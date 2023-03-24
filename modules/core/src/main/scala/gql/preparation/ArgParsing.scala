@@ -56,19 +56,22 @@ object ArgParsing {
                   None
                 )
               case Some(v) =>
-                val parseInner: F[A] = v.value match {
+                val parseInnerF: F[A] = v.value match {
                   case Right(pval) => decodeIn(a, pval, ambigiousEnum = false)
                   case Left(j)     => decodeIn(a, V.fromJson(j), ambigiousEnum = true)
                 }
 
-                val m = ModifierStack.fromType(v.tpe)
+                val vt: ModifierStack[String] = ModifierStack.fromType(v.tpe)
+                val at = ModifierStack.fromIn(a)
+
+                lazy val against = s"argument type `${at.show(_.name)}` and variable type `${vt.show(identity)}`"
 
                 // We must verify if the variable may occur here by comparing the type of the variable with the type of the arg
                 // If we don't do this, variables will be structurally typed (e.g variable [[[A]]] is compatible with )
                 // Var should be more constrained than the arg
-                def verifyTypeShape(argShape: List[Modifier], varShape: List[Modifier]): Nothing = (argShape, varShape) match {
+                def verifyTypeShape(argShape: List[Modifier], varShape: List[Modifier]): F[Unit] = (argShape, varShape) match {
                   // A compat V
-                  case (Nil, Nil) => ???
+                  case (Nil, Nil) => F.unit
 
                   // a! compat v! -> ok
                   case (Modifier.NonNull :: xs, Modifier.NonNull :: ys) => verifyTypeShape(xs, ys)
@@ -76,21 +79,26 @@ object ArgParsing {
                   case (Modifier.NonNull :: xs, ys) => verifyTypeShape(xs, ys)
                   // ([a] | A) compat v! -> ok
                   case (xs, Modifier.NonNull :: ys) => verifyTypeShape(xs, ys)
-                  
+
                   // [a] compat [v] -> ok
                   case (Modifier.List :: xs, Modifier.List :: ys) => verifyTypeShape(xs, ys)
                   // [a] compat V -> fail
-                  case (Modifier.List :: xs, Nil) => ???
+                  case (xs @ (Modifier.List :: _), Nil) =>
+                    raise(
+                      s"Variable was not compatible with argument, remaining argument type modifiers were `${at.copy(modifiers = xs).show(_.name)}` when verifying $against",
+                      None
+                    )
                   // A compat [v] -> fail
-                  case (Nil, Modifier.List :: ys) => ???
+                  case (Nil, Modifier.List :: ys) =>
+                    raise(
+                      s"Variable was not compatible with argument, remaining variable type modifiers were `${vt.copy(modifiers = ys).show(identity)}` when verifying $against",
+                      None
+                    )
                 }
 
-                // TODO verify variable here
-                /*
-              val gottenTypename = ModifierStack.fromType(v.tpe).inner
-              val foundTypename =
-                 */
-                parseInner
+                val verifiedF: F[Unit] = verifyTypeShape(at.modifiers, vt.modifiers)
+
+                verifiedF &> parseInnerF
             }
           }
         case (e @ Enum(name, _, _), v) =>
