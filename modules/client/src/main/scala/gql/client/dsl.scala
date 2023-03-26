@@ -21,31 +21,33 @@ import gql._
 import gql.parser.{Value => V, QueryAst => P, AnyValue, Const}
 import java.util.UUID
 import java.time.LocalDate
+import gql.std.Sourced
+import org.tpolecat.sourcepos.SourcePos
 
 object dsl {
-  def sel[A](fieldName: String, alias: String)(implicit sq: SubQuery[A]): SelectionSet[A] =
-    SelectionSet.lift(Selection.Field(fieldName, Some(alias), Nil, sq))
+  def sel[A](fieldName: String, alias: String)(implicit sq: Sourced[SubQuery[A]]): SelectionSet[A] =
+    SelectionSet.lift(sq.map(Selection.Field(fieldName, Some(alias), Nil, _)))
 
-  def sel[A](fieldName: String)(implicit sq: SubQuery[A]): SelectionSet[A] =
-    SelectionSet.lift(Selection.Field(fieldName, None, Nil, sq))
+  def sel[A](fieldName: String)(implicit sq: Sourced[SubQuery[A]]): SelectionSet[A] =
+    SelectionSet.lift(sq.map(Selection.Field(fieldName, None, Nil, _)))
 
-  def sel[A](fieldName: String, argHd: P.Argument, argTl: P.Argument*)(implicit sq: SubQuery[A]): SelectionSet[A] =
-    SelectionSet.lift(Selection.Field(fieldName, None, argHd :: argTl.toList, sq))
+  def sel[A](fieldName: String, argHd: P.Argument, argTl: P.Argument*)(implicit sq: Sourced[SubQuery[A]]): SelectionSet[A] =
+    SelectionSet.lift(sq.map(Selection.Field(fieldName, None, argHd :: argTl.toList, _)))
 
-  def sel[A](fieldName: String, alias: String, argHd: P.Argument, argTl: P.Argument*)(implicit sq: SubQuery[A]): SelectionSet[A] =
-    SelectionSet.lift(Selection.Field(fieldName, Some(alias), argHd :: argTl.toList, sq))
+  def sel[A](fieldName: String, alias: String, argHd: P.Argument, argTl: P.Argument*)(implicit sq: Sourced[SubQuery[A]]): SelectionSet[A] =
+    SelectionSet.lift(sq.map(Selection.Field(fieldName, Some(alias), argHd :: argTl.toList, _)))
 
-  def inlineFrag[A](on: String, matchAlso: String*)(implicit q: SelectionSet[A]): SelectionSet[Option[A]] =
-    SelectionSet.lift(Selection.InlineFragment(on, Chain.fromSeq(matchAlso), q))
+  def inlineFrag[A](on: String, matchAlso: String*)(implicit q: Sourced[SelectionSet[A]]): SelectionSet[Option[A]] =
+    SelectionSet.lift(q.map(Selection.InlineFragment(on, Chain.fromSeq(matchAlso), _)))
 
-  def fragment[A](name: String, on: String, matchAlso: String*)(implicit q: SelectionSet[A]): SelectionSet[Option[A]] =
-    SelectionSet.lift(Selection.Fragment(name, on, Chain.fromSeq(matchAlso), q))
+  def fragment[A](name: String, on: String, matchAlso: String*)(implicit q: Sourced[SelectionSet[A]]): SelectionSet[Option[A]] =
+    SelectionSet.lift(q.map(Selection.Fragment(name, on, Chain.fromSeq(matchAlso), _)))
 
   def list[A](implicit sq: SubQuery[A]): SubQuery[List[A]] = ListModifier(sq)
 
   def opt[A](implicit sq: SubQuery[A]): SubQuery[Option[A]] = OptionModifier(sq)
 
-  def oneOf[A](hd: SelectionSet[Option[A]], tl: SelectionSet[Option[A]]*) =
+  def oneOf[A](hd: SelectionSet[Option[A]], tl: SelectionSet[Option[A]]*)(implicit sp: SourcePos): SelectionSet[Option[A]] =
     NonEmptyChain
       .of(hd, tl: _*)
       .nonEmptySequence

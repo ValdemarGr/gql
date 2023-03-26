@@ -20,6 +20,8 @@ import cats._
 import cats.implicits._
 import gql.std.FreeApply
 import gql.parser.{QueryAst => P}
+import org.tpolecat.sourcepos.SourcePos
+import gql.std.Sourced
 
 /*
  * A SubQuery is either:
@@ -49,7 +51,7 @@ final case class ListModifier[A](subQuery: SubQuery[A]) extends SubQuery[List[A]
 
 final case class OptionModifier[A](subQuery: SubQuery[A]) extends SubQuery[Option[A]]
 
-final case class SelectionSet[A](impl: FreeApply[Selection, ValidatedNec[String, A]]) extends SubQuery[A] {
+final case class SelectionSet[A](impl: FreeApply[SelectionSet.SourcedSel, ValidatedNec[String, A]]) extends SubQuery[A] {
   def vmap[B](f: A => ValidatedNec[String, B]): SelectionSet[B] = SelectionSet(impl.map(_.andThen(f)))
 
   def emap[B](f: A => Either[String, B]): SelectionSet[B] =
@@ -57,6 +59,8 @@ final case class SelectionSet[A](impl: FreeApply[Selection, ValidatedNec[String,
 }
 
 object SelectionSet {
+  type SourcedSel[A] = Sourced[Selection[A]]
+
   implicit val applyForSelectionSet: Apply[SelectionSet] = {
     new Apply[SelectionSet] {
       override def map[A, B](fa: SelectionSet[A])(f: A => B): SelectionSet[B] = SelectionSet {
@@ -69,8 +73,8 @@ object SelectionSet {
     }
   }
 
-  def lift[A](sel: Selection[A]): SelectionSet[A] =
-    SelectionSet(FreeApply.lift(sel).map(_.validNec))
+  def lift[A](sel: Sourced[Selection[A]]): SelectionSet[A] =
+    SelectionSet(FreeApply.lift[SourcedSel, A](sel).map(_.validNec))
 }
 
 /*

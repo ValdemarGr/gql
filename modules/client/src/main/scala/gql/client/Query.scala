@@ -118,7 +118,7 @@ object Query {
     Decoder.instance(_.get[A]("data")(Dec.decoderForSelectionSet(ss)))
 
   def findFragments(ss: SelectionSet[?]): List[Fragment[?]] =
-    ss.impl.enumerate.toList.flatMap {
+    ss.impl.enumerate.toList.map(_.value).flatMap {
       case f: Fragment[?] => f :: findFragments(f.subSelection)
       case f: Field[?] =>
         def unpackSubQuery(q: SubQuery[?]): List[Fragment[?]] =
@@ -151,9 +151,9 @@ object Query {
     }
 
     def decoderForSelectionSet[A](ss: SelectionSet[A]): Decoder[A] = {
-      val compiler = new (Selection ~> Decoder) {
-        override def apply[A](fa: Selection[A]): Decoder[A] = {
-          fa match {
+      val compiler = new (SelectionSet.SourcedSel ~> Decoder) {
+        override def apply[A](fa: SelectionSet.SourcedSel[A]): Decoder[A] = {
+          fa.value match {
             case f: Selection.Field[a] =>
               val name = f.alias.getOrElse(f.fieldName)
               Decoder.instance(_.get(name)(decoderForSubQuery(f.subQuery)))
@@ -208,7 +208,7 @@ object Query {
       Doc.text(a.name) + Doc.char(':') + Doc.space + GraphqlRender.renderValue(a.value)
 
     def renderSelectionSet(ss: SelectionSet[?]): Doc = {
-      val docs = ss.impl.enumerate.toList.map {
+      val docs = ss.impl.enumerate.toList.map(_.value).map {
         // Fragments are floated to the top level and handled separately
         case f: Fragment[?] =>
           Doc.text(s"...${f.name}")
