@@ -175,7 +175,23 @@ object ast extends AstImplicits.Implicits {
     def document(description: String): Field[F, I, T] = copy(description = Some(description))
 
     def asAbstract: AbstractField[F, T] =
-      AbstractField(NonEmptyChain.fromChain(PreparedQuery.collectFields(resolve.underlying)).map(_.nonEmptySequence), output, description)
+      AbstractField(
+        NonEmptyChain
+          .fromChain {
+            def collectFields[G[_]](step: Step[G, ?, ?]): Chain[Arg[Any]] =
+              step match {
+                case Step.Alg.Argument(a)   => Chain.one(a)
+                case Step.Alg.First(s)      => collectFields(s)
+                case Step.Alg.Choose(l, r)  => collectFields(l) ++ collectFields(r)
+                case Step.Alg.Compose(l, r) => collectFields(l) ++ collectFields(r)
+                case _                      => Chain.empty
+              }
+            collectFields(resolve.underlying)
+          }
+          .map(_.nonEmptySequence),
+        output,
+        description
+      )
 
     def compose[F2[x] >: F[x], I2](r: Resolver[F2, I2, I]): Field[F2, I2, T] =
       Field(r.andThen(resolve), output, description)
