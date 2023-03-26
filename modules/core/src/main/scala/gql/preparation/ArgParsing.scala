@@ -32,13 +32,15 @@ trait ArgParsing[F[_]] {
 }
 
 object ArgParsing {
+  type UsedVariables = Set[String]
+
   def apply[F[_]: Parallel](
       variables: VariableMap
   )(implicit
       F: Monad[F],
       P: PathAlg[F],
       E: ErrorAlg[F, ?],
-      T: Tell[F, Set[String]]
+      T: Tell[F, UsedVariables]
   ): ArgParsing[F] = new ArgParsing[F] {
     import E._
     import P._

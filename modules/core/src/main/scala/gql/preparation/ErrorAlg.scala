@@ -22,7 +22,7 @@ trait ErrorAlg[F[_], C] {
 object ErrorAlg {
   def apply[F[_], C](implicit ev: ErrorAlg[F, C]): ErrorAlg[F, C] = ev
 
-  implicit def errorAlgForHandle[F[_]: Monad, G[_]: Applicative, C](implicit
+  def errorAlgForHandle[F[_]: Monad, G[_]: Applicative, C](implicit
       H: Handle[F, G[PositionalError[C]]],
       L: Local[F, Cursor]
   ): ErrorAlg[F, C] = new ErrorAlg[F, C] {

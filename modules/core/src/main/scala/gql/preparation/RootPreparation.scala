@@ -10,6 +10,12 @@ import gql.ModifierStack
 import gql.InverseModifierStack
 import gql.Modifier
 import gql.InverseModifier
+import cats.mtl.Local
+import gql.Cursor
+import cats.mtl.Stateful
+import java.lang
+import scala.collection.immutable
+import cats.mtl.Listen
 
 trait RootPreparation[F[_], G[_], P[_]] {
   def pickRootOperation(
@@ -24,20 +30,47 @@ trait RootPreparation[F[_], G[_], P[_]] {
 
   def prepareRoot[Q, M, S](
       executabels: NonEmptyList[QA.ExecutableDefinition[P]],
-      schema: SchemaShape[F, Q, M, S],
+      schema: SchemaShape[G, Q, M, S],
       variableMap: Map[String, Json],
       operationName: Option[String]
   ): F[PreparedRoot[G, Q, M, S]]
 }
 
 object RootPreparation {
+  type IdGen[F[_], A] = StateT[F, Int, A]
+  type UsedVars[F[_], A] = WriterT[F, ArgParsing.UsedVariables, A]
+  type CycleF[F[_], A] = Kleisli[F, FieldCollection.CycleSet, A]
+  type CursorF[F[_], A] = Kleisli[F, Cursor, A]
+  type ErrF[F[_], C, A] = EitherT[F, NonEmptyChain[PositionalError[C]], A]
+
+  type Stack[C, A] = ErrF[CycleF[CursorF[UsedVars[IdGen[Eval, *], *], *], *], C, A]
+
+  object Stack {
+    def runK[C] = new (Stack[C, *] ~> EitherNec[PositionalError[C], *]) {
+      override def apply[A](fa: Stack[C, A]): EitherNec[PositionalError[C], A] =
+        fa.value.run(Set.empty).run(Cursor.empty).value.runA(0).value
+    }
+  }
+
+  def prepareRun[G[_], P[_], C, Q, M, S](
+      executabels: NonEmptyList[QA.ExecutableDefinition[P]],
+      schema: SchemaShape[G, Q, M, S],
+      variableMap: Map[String, Json],
+      operationName: Option[String]
+  )(implicit P: Positioned[P, C]): EitherNec[PositionalError[C], PreparedRoot[G, Q, M, S]] = Stack.runK[C] {
+    apply[Stack[C, *], G, P, C].prepareRoot(executabels, schema, variableMap, operationName)
+  }
+
   def apply[F[_]: Parallel, G[_], P[_], C](implicit
-      F: Monad[F],
-      AP: ArgParsing[F],
-      EA: ErrorAlg[F, C],
+      F: MonadError[F, NonEmptyChain[PositionalError[C]]],
       P: Positioned[P, C],
-      PA: PathAlg[F]
+      C: Local[F, Cursor],
+      L: Local[F, FieldCollection.CycleSet],
+      S: Stateful[F, Int],
+      LI: Listen[F, ArgParsing.UsedVariables]
   ) = {
+    implicit val EA = ErrorAlg.errorAlgForHandle[F, NonEmptyChain, C]
+    implicit val PA = PathAlg[F]
     import EA._
     import PA._
 
@@ -75,6 +108,7 @@ object RootPreparation {
           op: QA.OperationDefinition[P],
           variableMap: Map[String, Json]
       ): F[VariableMap] = {
+        val AP = ArgParsing[F](Map.empty)
         /*
          * Convert the variable signature into a gql arg and parse both the default value and the provided value
          * Then save the provided getOrElse default into a map along with the type
@@ -90,27 +124,28 @@ object RootPreparation {
 
                 val ms = ModifierStack.fromType(vd.tpe)
 
-                val fo: F[Either[Json, V[Const]]] =
-                  (variableMap.get(vd.name).map(_.asLeft) orElse vd.defaultValue.map(_.asRight)) match {
-                    case None =>
-                      if (ms.invert.modifiers.headOption.contains(InverseModifier.Optional)) F.pure(Right(V.NullValue()))
-                      else raise(s"Variable '${vd.name}' is required but was not provided", List(pos))
-                    case Some(x) =>
-                      val stubTLArg: gql.ast.InToplevel[Unit] = gql.ast.Scalar[Unit](ms.inner, _ => V.NullValue(), _ => Right(()))
+                val oe: Option[Either[Json, V[Const]]] = (variableMap.get(vd.name).map(_.asLeft) orElse vd.defaultValue.map(_.asRight))
 
-                      val t = InverseModifierStack.toIn(ms.copy(inner = stubTLArg).invert)
+                val fo: F[Either[Json, V[Const]]] = oe match {
+                  case None =>
+                    if (ms.invert.modifiers.headOption.contains(InverseModifier.Optional)) F.pure(Right(V.NullValue()))
+                    else raise(s"Variable '${vd.name}' is required but was not provided", List(pos))
+                  case Some(x) =>
+                    val stubTLArg: gql.ast.InToplevel[Unit] = gql.ast.Scalar[Unit](ms.inner, _ => V.NullValue(), _ => Right(()))
 
-                      ambientField(vd.name) {
-                        t match {
-                          case in: gql.ast.In[a] =>
-                            val (v, amb) = x match {
-                              case Left(j)  => (V.fromJson(j), true)
-                              case Right(v) => (v, false)
-                            }
-                            AP.decodeIn[a](in, v, ambigiousEnum = amb).void
-                        }
-                      } as x
-                  }
+                    val t = InverseModifierStack.toIn(ms.copy(inner = stubTLArg).invert)
+
+                    ambientField(vd.name) {
+                      t match {
+                        case in: gql.ast.In[a] =>
+                          val (v, amb) = x match {
+                            case Left(j)  => (V.fromJson(j), true)
+                            case Right(v) => (v, false)
+                          }
+                          AP.decodeIn[a](in, v, ambigiousEnum = amb).void
+                      }
+                    } as x
+                }
 
                 fo.map(e => vd.name -> Variable(vd.tpe, e))
               }
@@ -120,7 +155,7 @@ object RootPreparation {
 
       override def prepareRoot[Q, M, S](
           executabels: NonEmptyList[QA.ExecutableDefinition[P]],
-          schema: SchemaShape[F, Q, M, S],
+          schema: SchemaShape[G, Q, M, S],
           variableMap: Map[String, Json],
           operationName: Option[String]
       ): F[PreparedRoot[G, Q, M, S]] = {
@@ -131,12 +166,38 @@ object RootPreparation {
 
         pickRootOperation(ops, operationName).flatMap { od =>
           variables(od, variableMap)
-          val ot = od match {
-            case QA.OperationDefinition.Simple(_)             => QA.OperationType.Query
-            case QA.OperationDefinition.Detailed(ot, _, _, _) => ot
+          val (ot, ss) = od match {
+            case QA.OperationDefinition.Simple(ss)             => (QA.OperationType.Query, ss)
+            case QA.OperationDefinition.Detailed(ot, _, _, ss) => (ot, ss)
           }
 
-          ???
+          def runWith[A](o: gql.ast.Type[G, A]): F[NonEmptyList[PreparedSpecification[G, A, _]]] =
+            variables(od, variableMap).flatMap { vm =>
+              implicit val AP = ArgParsing[F](vm)
+              val fragMap = frags.map(x => P(x).name -> x).toMap
+              val FC: FieldCollection[F, G, P, C] = FieldCollection[F, G, P, C](schema.discover.implementations, fragMap)
+              val FM = FieldMerging[F, G, C]
+              val QP = QueryPreparation[F, G, C](vm, schema.discover.implementations)
+              FC.collectSelectionInfo(o, ss).flatMap { root =>
+                FM.checkSelectionsMerge(root) >> QP.prepareSelectable(o, root)
+              }
+            }
+
+          ot match {
+            case QA.OperationType.Query =>
+              val i: NonEmptyList[(String, gql.ast.Field[G, Unit, ?])] = schema.introspection
+              val q = schema.query
+              val full = q.copy(fields = i.map { case (k, v) => k -> v.contramap[G, Q](_ => ()) } concatNel q.fields)
+              runWith[Q](full).map(PreparedRoot.Query(_))
+            case QA.OperationType.Mutation =>
+              raiseOpt(schema.mutation, "No `Mutation` type defined in this schema.", Nil)
+                .flatMap(runWith[M])
+                .map(PreparedRoot.Mutation(_))
+            case QA.OperationType.Subscription =>
+              raiseOpt(schema.subscription, "No `Subscription` type defined in this schema.", Nil)
+                .flatMap(runWith[S])
+                .map(PreparedRoot.Subscription(_))
+          }
         }
       }
     }
