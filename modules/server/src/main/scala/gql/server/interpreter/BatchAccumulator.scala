@@ -48,7 +48,7 @@ object BatchAccumulator {
     F.ref(List.empty[EvalFailure.BatchResolution]).flatMap { errState =>
       batches
         .flatTraverse { case (batcherKey, batch) =>
-          F.ref(Map.empty[PreparedQuery.UniqueBatchInstance[?, ?], Batch[?, ?]]).map { inputAccum =>
+          F.ref(Map.empty[UniqueBatchInstance[?, ?], Batch[?, ?]]).map { inputAccum =>
             val batchIds = batch.map(_.uniqueNodeId)
             batchIds.map(id => id -> (inputAccum, batchIds, batcherKey)).toChain
           }

@@ -26,7 +26,6 @@ import gql.client.Selection.Field
 import gql.client.Selection.InlineFragment
 import gql.parser.TypeSystemAst
 import gql.SchemaShape
-import gql.PreparedQuery
 import gql.parser.GraphqlRender
 import io.circe.syntax._
 
