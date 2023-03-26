@@ -22,10 +22,11 @@ import gql._
 import cats.data._
 import gql.planner._
 import gql.resolver.Step
+import gql.preparation._
 
 trait BatchAccumulator[F[_]] {
   // Emits the whole result of the batch, so the calle must filter
-  def submit[K, V](id: PreparedQuery.UniqueBatchInstance[K, V], values: Chain[(Cursor, Set[K])]): F[Option[Map[K, V]]]
+  def submit[K, V](id: UniqueBatchInstance[K, V], values: Chain[(Cursor, Set[K])]): F[Option[Map[K, V]]]
 
   def getErrors: F[List[EvalFailure.BatchResolution]]
 }
@@ -55,15 +56,15 @@ object BatchAccumulator {
         .map(_.toList.toMap)
         .map { accumLookup0 =>
           new BatchAccumulator[F] {
-            def submit[K, V](id: PreparedQuery.UniqueBatchInstance[K, V], values: Chain[(Cursor, Set[K])]): F[Option[Map[K, V]]] = {
+            def submit[K, V](id: UniqueBatchInstance[K, V], values: Chain[(Cursor, Set[K])]): F[Option[Map[K, V]]] = {
               F.deferred[Option[Map[K, V]]].flatMap { ret =>
                 val accumLookup1 = accumLookup0
                 val accumLookup = accumLookup1.asInstanceOf[
                   Map[
-                    PreparedQuery.UniqueBatchInstance[K, V],
+                    UniqueBatchInstance[K, V],
                     (
-                        Ref[F, Map[PreparedQuery.UniqueBatchInstance[K, V], Batch[K, V]]],
-                        NonEmptyChain[PreparedQuery.UniqueBatchInstance[K, V]],
+                        Ref[F, Map[UniqueBatchInstance[K, V], Batch[K, V]]],
+                        NonEmptyChain[UniqueBatchInstance[K, V]],
                         Step.BatchKey[K, V]
                     )
                   ]

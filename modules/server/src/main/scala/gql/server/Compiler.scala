@@ -23,6 +23,8 @@ import gql.interpreter.{Interpreter, DebugPrinter}
 import cats.data._
 import scala.concurrent.duration._
 import io.circe.syntax._
+import gql.preparation._
+import cats.parse.Caret
 
 sealed trait CompilationError
 object CompilationError {
@@ -32,7 +34,7 @@ object CompilationError {
       Map("errors" -> List(err.error)).asJsonObject
     }
   }
-  final case class Preparation(error: NonEmptyChain[gql.PreparedQuery.PositionalError]) extends CompilationError
+  final case class Preparation(error: NonEmptyChain[PositionalError[Caret]]) extends CompilationError
   object Preparation {
     implicit val encoder: Encoder.AsObject[Preparation] = Encoder.AsObject.instance[Preparation] { err =>
       Map("errors" -> err.error).asJsonObject
@@ -112,11 +114,11 @@ object Compiler {
     def parsePrep[Q, M, S](
         schema: Schema[F, Q, M, S],
         cp: QueryParameters
-    ): Either[CompilationError, PreparedQuery.PrepResult[F, Q, M, S]] =
+    ): Either[CompilationError, PreparedRoot[F, Q, M, S]] =
       gql.parser.parseQuery(cp.query) match {
         case Left(pe) => Left(CompilationError.Parse(pe))
         case Right(q) =>
-          PreparedQuery.prepare(q, schema.shape, cp.variables.getOrElse(Map.empty), cp.operationName) match {
+          RootPreparation.prepareRun(q, schema.shape, cp.variables.getOrElse(Map.empty), cp.operationName)(Positioned.parserPos) match {
             case Left(pe) => Left(CompilationError.Preparation(pe))
             case Right(x) => Right(x)
           }
@@ -124,7 +126,7 @@ object Compiler {
 
     def compilePrepared[Q, M, S](
         schema: Schema[F, Q, M, S],
-        ps: PreparedQuery.PrepResult[F, Q, M, S],
+        ps: PreparedRoot[F, Q, M, S],
         queryInput: F[Q] = F.unit,
         mutationInput: F[M] = F.unit,
         subscriptionInput: F[S] = F.unit,
@@ -135,19 +137,19 @@ object Compiler {
       implicit val p = schema.planner
 
       ps match {
-        case PreparedQuery.PrepResult.Query(ps) =>
+        case PreparedRoot.Query(ps) =>
           Application.Query {
             queryInput.flatMap { qi =>
               Interpreter.runSync(qi, ps, schema.state, debug).map { case (e, d) => QueryResult(d, e.flatMap(_.asResult)) }
             }
           }
-        case PreparedQuery.PrepResult.Mutation(ps) =>
+        case PreparedRoot.Mutation(ps) =>
           Application.Mutation {
             mutationInput.flatMap { mi =>
               Interpreter.runSync(mi, ps, schema.state, debug).map { case (e, d) => QueryResult(d, e.flatMap(_.asResult)) }
             }
           }
-        case PreparedQuery.PrepResult.Subscription(ps) =>
+        case PreparedRoot.Subscription(ps) =>
           Application.Subscription {
             fs2.Stream.eval(subscriptionInput).flatMap { si =>
               Interpreter.runStreamed(si, ps, schema.state, debug, accumulate).map { case (e, d) =>

@@ -21,6 +21,9 @@ import cats.implicits._
 import cats.mtl._
 import gql.ast._
 import gql.parser.GraphqlParser
+import gql.preparation.PositionalError
+import gql.preparation.ArgParsing
+import gql.preparation.RootPreparation
 
 object Validation {
   sealed trait Error {
@@ -55,7 +58,7 @@ object Validation {
     final case class DuplicateInterfaceInstance(conflict: String) extends Error {
       def message: String = s"Duplicate interface instance `$conflict`."
     }
-    final case class InvalidInput(pe: PreparedQuery.PositionalError) extends Error {
+    final case class InvalidInput(pe: PositionalError[Unit]) extends Error {
       def message: String = s"Invalid argument input: ${pe.message}"
     }
     final case class InputNoArgs(name: String) extends Error {
@@ -289,16 +292,17 @@ object Validation {
       S: Stateful[G, ValidationState[F]]
   ): G[Unit] =
     allUnique[F, G](DuplicateArg.apply, arg.entries.toList.map(_.name)) >> {
+
       // A trick;
       // We check the arg like we would in a user-supplied query
       // Except, we use default as the "input" such that it is verified against the arg
       val checkArgsF =
         arg.entries.toChain
           .mapFilter(x => x.defaultValue.tupleLeft(x))
-          .traverse { case (a: ArgValue[a], pv) =>
-            PreparedQuery.runK {
-              PreparedQuery
-                .parseInput[PreparedQuery.H, a](pv, a.input.value, None, ambigiousEnum = false)
+          .traverse_[G, Unit] { case (a: ArgValue[a], pv) =>
+            RootPreparation.Stack.runK[Unit] {
+              ArgParsing[RootPreparation.Stack[Unit, *], Unit](Map.empty)
+                .decodeIn[a](a.input.value, pv, ambigiousEnum = false)
             } match {
               case Left(errs) =>
                 errs.traverse_ { err =>

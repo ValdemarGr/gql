@@ -16,6 +16,7 @@ import gql.parser.NonVar
 import gql.DecodedArgValue
 import gql.ArgParam
 import gql.Modifier
+import gql.Cursor
 
 trait ArgParsing[F[_]] {
   def decodeIn[A](
@@ -34,14 +35,16 @@ trait ArgParsing[F[_]] {
 object ArgParsing {
   type UsedVariables = Set[String]
 
-  def apply[F[_]: Parallel](
+  def apply[F[_]: Parallel, C](
       variables: VariableMap
   )(implicit
       F: Monad[F],
-      P: PathAlg[F],
-      E: ErrorAlg[F, ?],
+      L: Local[F, Cursor],
+      H: Handle[F, NonEmptyChain[PositionalError[C]]],
       T: Tell[F, UsedVariables]
   ): ArgParsing[F] = new ArgParsing[F] {
+    val E = ErrorAlg.errorAlgForHandle[F, NonEmptyChain, C]
+    val P = PathAlg[F]
     import E._
     import P._
 

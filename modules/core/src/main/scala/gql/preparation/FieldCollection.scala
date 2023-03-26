@@ -14,6 +14,8 @@ import gql.InverseModifierStack
 import gql.SchemaShape
 import gql.ModifierStack
 import gql.Cursor
+import cats.parse.Caret
+import cats.arrow.FunctionK
 
 trait FieldCollection[F[_], G[_], P[_], C] {
   def matchType(
@@ -202,6 +204,10 @@ object Positioned {
       def position[A](p: P[A]): C = p0(p)
     }
   }
+
+  val parserPos: Positioned[Pos, Caret] = apply[Pos, Caret](_.caret)(new (Pos ~> Id) {
+    override def apply[A](fa: Pos[A]): Id[A] = fa.value
+  })
 }
 
 sealed trait TypeInfo[+G[_], +C] {
@@ -227,5 +233,5 @@ final case class FieldInfo[G[_], C](
     caret: C,
     path: Cursor
 ) {
-    lazy val outputName: String = alias.getOrElse(name)
+  lazy val outputName: String = alias.getOrElse(name)
 }

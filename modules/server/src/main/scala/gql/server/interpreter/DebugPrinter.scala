@@ -19,6 +19,7 @@ import cats._
 import cats.implicits._
 import org.typelevel.paiges._
 import cats.effect._
+import gql.preparation._
 
 trait DebugPrinter[F[_]] {
   def apply(s: => String): F[Unit]
@@ -34,8 +35,6 @@ object DebugPrinter {
   }
 
   def noop[F[_]](implicit F: Monad[F]): DebugPrinter[F] = apply(_ => F.unit)
-
-  import gql.PreparedQuery._
 
   object Printer {
     def kv(k: String, v: Doc): Doc = Doc.text(k) + Doc.space + Doc.char('=') + Doc.space + v

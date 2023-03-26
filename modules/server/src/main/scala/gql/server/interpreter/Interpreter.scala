@@ -17,7 +17,6 @@ package gql.interpreter
 
 import gql.resolver._
 import cats.data._
-import gql.PreparedQuery._
 import gql.planner._
 import gql._
 import cats.implicits._
@@ -28,6 +27,7 @@ import io.circe.syntax._
 import cats.effect.std.Supervisor
 import scala.concurrent.duration._
 import cats._
+import gql.preparation._
 
 trait Interpreter[F[_]] {
   type W[A] = WriterT[F, Chain[EvalFailure], A]
@@ -152,7 +152,7 @@ object Interpreter {
                 debug("got changes")
             }
 
-            val inital = RunInput.root(rootInput, PreparedQuery.Selection(rootSel), rootScope)
+            val inital = RunInput.root(rootInput, Selection(rootSel), rootScope)
 
             fs2.Stream
               .eval(evalAll[F](NonEmptyList.one(inital), schemaState, sup, ss))

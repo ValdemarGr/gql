@@ -1284,7 +1284,7 @@ object PreparedQuery {
       fa.value.run(Prep.empty).runA(0).value
   }
 
-  def prepare[F[_], Q, M, S](
+  def prepare0[F[_], Q, M, S](
       executabels: NonEmptyList[P.ExecutableDefinition[Pos]],
       schema: SchemaShape[F, Q, M, S],
       variableMap: Map[String, Json],

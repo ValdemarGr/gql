@@ -17,7 +17,7 @@ package gql.planner
 
 import cats.implicits._
 import cats.data._
-import gql.PreparedQuery._
+import gql.preparation._
 import scala.collection.immutable.TreeSet
 import cats._
 import scala.io.AnsiColor
@@ -37,7 +37,7 @@ trait Planner[F[_]] { self =>
 object Planner {
   final case class BatchRef[K, V](
       batcherId: gql.resolver.Step.BatchKey[K, V],
-      uniqueNodeId: PreparedQuery.UniqueBatchInstance[K, V]
+      uniqueNodeId: UniqueBatchInstance[K, V]
   )
 
   final case class NodeId(id: Int) extends AnyVal
@@ -131,7 +131,7 @@ object Planner {
     }
   }
 
-  def costForFields[F[_], G[_]](prepared: NonEmptyList[PreparedQuery.PreparedField[G, ?]])(implicit
+  def costForFields[F[_], G[_]](prepared: NonEmptyList[PreparedField[G, ?]])(implicit
       F: Monad[F],
       stats: Statistics[F],
       S: Stateful[F, TraversalState]

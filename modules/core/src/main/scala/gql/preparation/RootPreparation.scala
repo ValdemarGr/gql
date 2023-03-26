@@ -108,7 +108,7 @@ object RootPreparation {
           op: QA.OperationDefinition[P],
           variableMap: Map[String, Json]
       ): F[VariableMap] = {
-        val AP = ArgParsing[F](Map.empty)
+        val AP = ArgParsing[F, C](Map.empty)
         /*
          * Convert the variable signature into a gql arg and parse both the default value and the provided value
          * Then save the provided getOrElse default into a map along with the type
@@ -173,13 +173,18 @@ object RootPreparation {
 
           def runWith[A](o: gql.ast.Type[G, A]): F[NonEmptyList[PreparedSpecification[G, A, _]]] =
             variables(od, variableMap).flatMap { vm =>
-              implicit val AP = ArgParsing[F](vm)
+              implicit val AP = ArgParsing[F, C](vm)
               val fragMap = frags.map(x => P(x).name -> x).toMap
               val FC: FieldCollection[F, G, P, C] = FieldCollection[F, G, P, C](schema.discover.implementations, fragMap)
               val FM = FieldMerging[F, G, C]
               val QP = QueryPreparation[F, G, C](vm, schema.discover.implementations)
-              FC.collectSelectionInfo(o, ss).flatMap { root =>
+              val prog = FC.collectSelectionInfo(o, ss).flatMap { root =>
                 FM.checkSelectionsMerge(root) >> QP.prepareSelectable(o, root)
+              }
+              LI.listen(prog).flatMap{ case (res, used) =>
+                val unused = vm.keySet -- used
+                if (unused.nonEmpty) raise(s"Unused variables: ${unused.map(str => s"'$str'").mkString(", ")}", Nil)
+                else F.pure(res)
               }
             }
 
