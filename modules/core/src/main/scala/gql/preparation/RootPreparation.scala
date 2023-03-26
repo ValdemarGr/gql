@@ -176,7 +176,7 @@ object RootPreparation {
               implicit val AP = ArgParsing[F, C](vm)
               val fragMap = frags.map(x => P(x).name -> x).toMap
               val FC: FieldCollection[F, G, P, C] = FieldCollection[F, G, P, C](schema.discover.implementations, fragMap)
-              val FM = FieldMerging[F, G, C]
+              val FM = FieldMerging[F, C]
               val QP = QueryPreparation[F, G, C](vm, schema.discover.implementations)
               val prog = FC.collectSelectionInfo(o, ss).flatMap { root =>
                 FM.checkSelectionsMerge(root) >> QP.prepareSelectable(o, root)

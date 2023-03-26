@@ -24,6 +24,8 @@ import gql.parser.GraphqlParser
 import gql.preparation.PositionalError
 import gql.preparation.ArgParsing
 import gql.preparation.RootPreparation
+import gql.preparation.FieldCollection
+import gql.preparation.FieldMerging
 
 object Validation {
   sealed trait Error {
@@ -363,11 +365,22 @@ object Validation {
               ol.abstractFieldMap.get(k) match {
                 case None =>
                   raise[F, G](
-                    Error.MissingInterfaceFields(sel.name, i.value.name, k, PreparedQuery.friendlyName(v.output.value))
+                    Error.MissingInterfaceFields(
+                      sel.name,
+                      i.value.name,
+                      k,
+                      ModifierStack
+                        .fromOut(v.output.value)
+                        .show(_.name)
+                    )
                   )
                 case Some(f) =>
-                  val actualStr = PreparedQuery.friendlyName(v.output.value)
-                  val expectedStr = PreparedQuery.friendlyName(f.output.value)
+                  val actualStr = ModifierStack
+                    .fromOut(v.output.value)
+                    .show(_.name)
+                  val expectedStr = ModifierStack
+                    .fromOut(f.output.value)
+                    .show(_.name)
                   val verifyFieldTypeF =
                     if (actualStr != expectedStr)
                       raise[F, G](Error.WrongInterfaceFieldType(sel.name, i.value.name, k, expectedStr, actualStr))
@@ -384,8 +397,12 @@ object Validation {
                     case Ior.Right((argName, _)) =>
                       raise[F, G](Error.MissingInterfaceFieldArgument(ol.name, i.value.name, k, argName))
                     case Ior.Both((argName, l), (_, r)) =>
-                      val lName = PreparedQuery.inName(l.input.value)
-                      val rName = PreparedQuery.inName(r.input.value)
+                      val lName = ModifierStack
+                        .fromIn(l.input.value)
+                        .show(_.name)
+                      val rName = ModifierStack
+                        .fromIn(r.input.value)
+                        .show(_.name)
                       val verifyTypesF =
                         if (lName != rName)
                           raise[F, G](
@@ -400,8 +417,10 @@ object Validation {
                         case (None, Some(_)) =>
                           raise[F, G](Error.InterfaceImplementationMissingDefaultArg(ol.name, i.value.name, k, argName))
                         case (Some(ld), Some(rd)) =>
-                          PreparedQuery
-                            .runK(PreparedQuery.compareValues[PreparedQuery.H](ld, rd, None))
+                          RootPreparation.Stack
+                            .runK {
+                              FieldMerging[RootPreparation.Stack[Unit, *], Unit].compareValues(ld, rd, None)
+                            }
                             .swap
                             .toOption
                             .traverse_(_.traverse_ { pe =>

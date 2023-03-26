@@ -11,11 +11,12 @@ import gql.parser.Pos
 import gql.ast._
 import gql.Arg
 import gql.InverseModifierStack
+import gql.Cursor
 
-trait FieldMerging[F[_], G[_], C] {
-  def checkSelectionsMerge(xs: NonEmptyList[SelectionInfo[G, C]]): F[Unit]
+trait FieldMerging[F[_], C] {
+  def checkSelectionsMerge[G[_]](xs: NonEmptyList[SelectionInfo[G, C]]): F[Unit]
 
-  def checkFieldsMerge(
+  def checkFieldsMerge[G[_]](
       a: FieldInfo[G, C],
       asi: SelectionInfo[G, C],
       b: FieldInfo[G, C],
@@ -30,16 +31,18 @@ trait FieldMerging[F[_], G[_], C] {
 }
 
 object FieldMerging {
-  def apply[F[_]: Parallel, G[_], C](implicit
+  def apply[F[_]: Parallel, C](implicit
       F: Monad[F],
-      E: ErrorAlg[F, C],
-      PA: PathAlg[F]
-  ): FieldMerging[F, G, C] = {
+      L: Local[F, Cursor],
+      H: Handle[F, NonEmptyChain[PositionalError[C]]],
+  ): FieldMerging[F, C] = {
+    val E = ErrorAlg.errorAlgForHandle[F, NonEmptyChain, C]
+    val P = PathAlg[F]
     import E._
-    import PA._
+    import P._
 
-    new FieldMerging[F, G, C] {
-      override def checkSelectionsMerge(xs: NonEmptyList[SelectionInfo[G, C]]): F[Unit] = {
+    new FieldMerging[F, C] {
+      override def checkSelectionsMerge[G[_]](xs: NonEmptyList[SelectionInfo[G, C]]): F[Unit] = {
         val ys: NonEmptyList[NonEmptyList[(SelectionInfo[G, C], FieldInfo[G, C])]] =
           xs.flatMap(si => si.fields tupleLeft si)
             .groupByNem { case (_, f) => f.outputName }
@@ -65,7 +68,7 @@ object FieldMerging {
 
       // Optimization: we don't check selections recursively since checkSelectionsMerge traverses the whole tree
       // We only need to check the immidiate children and will eventually have checked the whole tree
-      def checkSimplifiedTypeShape(a: InverseModifierStack[TypeInfo[G, C]], b: InverseModifierStack[TypeInfo[G, C]], caret: C): F[Unit] = {
+      def checkSimplifiedTypeShape[G[_]](a: InverseModifierStack[TypeInfo[G, C]], b: InverseModifierStack[TypeInfo[G, C]], caret: C): F[Unit] = {
         (a.inner, b.inner) match {
           // It turns out we don't care if more fields are selected in one object than the other
           case (TypeInfo.Selectable(_, _), TypeInfo.Selectable(_, _)) => F.unit
@@ -88,7 +91,7 @@ object FieldMerging {
         }
       }
 
-      override def checkFieldsMerge(a: FieldInfo[G, C], asi: SelectionInfo[G, C], b: FieldInfo[G, C], bsi: SelectionInfo[G, C]): F[Unit] = {
+      override def checkFieldsMerge[G[_]](a: FieldInfo[G, C], asi: SelectionInfo[G, C], b: FieldInfo[G, C], bsi: SelectionInfo[G, C]): F[Unit] = {
         sealed trait EitherObject
         object EitherObject {
           case object FirstIsObject extends EitherObject
