@@ -59,7 +59,6 @@ object SchemaShape {
 
   def make[F[_]] = new PartiallyAppliedSchemaShape[F]
 
-  type Specify[A, B] = A => Option[B]
   sealed trait InterfaceImpl[+F[_], A]
   object InterfaceImpl {
     final case class OtherInterface[F[_], A](i: Interface[F, A]) extends InterfaceImpl[F, A]
