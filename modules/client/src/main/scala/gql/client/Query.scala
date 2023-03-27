@@ -28,6 +28,7 @@ import gql.parser.TypeSystemAst
 import gql.SchemaShape
 import gql.parser.GraphqlRender
 import io.circe.syntax._
+import org.tpolecat.sourcepos.SourcePos
 
 final case class SimpleQuery[A](
     operationType: P.OperationType,
@@ -134,10 +135,10 @@ object Query {
     }
 
   object Dec {
-    def decoderForSubQuery[A](sq: SubQuery[A]): Decoder[A] = sq match {
-      case Terminal(decoder)     => decoder
-      case lm: ListModifier[a]   => Decoder.decodeList(decoderForSubQuery(lm.subQuery))
-      case om: OptionModifier[a] => Decoder.decodeOption(decoderForSubQuery(om.subQuery))
+    def decoderForSubQuery[A](sq: SubQuery[A], sp: SourcePos): Decoder[A] = sq match {
+      case Terminal(decoder)     => decoder.adaptError(e => e.withMessage(s"${e.message} at ${sp.toString}"))
+      case lm: ListModifier[a]   => Decoder.decodeList(decoderForSubQuery(lm.subQuery, sp))
+      case om: OptionModifier[a] => Decoder.decodeOption(decoderForSubQuery(om.subQuery, sp))
       case ss: SelectionSet[A]   => decoderForSelectionSet(ss)
     }
 
@@ -156,14 +157,14 @@ object Query {
           fa.value match {
             case f: Selection.Field[a] =>
               val name = f.alias.getOrElse(f.fieldName)
-              Decoder.instance(_.get(name)(decoderForSubQuery(f.subQuery)))
+              Decoder.instance(_.get(name)(decoderForSubQuery(f.subQuery, fa.position)))
             case f: Fragment[a]       => decoderForFragment(f.on, f.matchAlsoSet, f.subSelection)
             case f: InlineFragment[a] => decoderForFragment(f.on, f.matchAlsoSet, f.subSelection)
           }
         }
       }
 
-      ss.impl.foldMap(compiler).emap(_.toEither.leftMap(_.intercalate(", ")))
+      ss.impl.foldMap(compiler).emap(_.toEither.leftMap(_.map(s => s"${s.value} at ${s.position.toString}").intercalate(", ")))
     }
   }
 

@@ -51,11 +51,11 @@ final case class ListModifier[A](subQuery: SubQuery[A]) extends SubQuery[List[A]
 
 final case class OptionModifier[A](subQuery: SubQuery[A]) extends SubQuery[Option[A]]
 
-final case class SelectionSet[A](impl: FreeApply[SelectionSet.SourcedSel, ValidatedNec[String, A]]) extends SubQuery[A] {
-  def vmap[B](f: A => ValidatedNec[String, B]): SelectionSet[B] = SelectionSet(impl.map(_.andThen(f)))
+final case class SelectionSet[A](impl: FreeApply[SelectionSet.SourcedSel, ValidatedNec[Sourced[String], A]]) extends SubQuery[A] {
+  def vmap[B](f: A => ValidatedNec[Sourced[String], B]): SelectionSet[B] = SelectionSet(impl.map(_.andThen(f)))
 
-  def emap[B](f: A => Either[String, B]): SelectionSet[B] =
-    SelectionSet(impl.map(_.andThen(f(_).toValidatedNec)))
+  def emap[B](f: A => Either[String, B])(implicit sp: SourcePos): SelectionSet[B] =
+    SelectionSet(impl.map(_.andThen(a => f(a).leftMap(Sourced(_, sp)).toValidatedNec)))
 }
 
 object SelectionSet {
