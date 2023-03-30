@@ -34,7 +34,7 @@ object FieldMerging {
   def apply[F[_]: Parallel, C](implicit
       F: Monad[F],
       L: Local[F, Cursor],
-      H: Handle[F, NonEmptyChain[PositionalError[C]]],
+      H: Handle[F, NonEmptyChain[PositionalError[C]]]
   ): FieldMerging[F, C] = {
     val E = ErrorAlg.errorAlgForHandle[F, NonEmptyChain, C]
     val P = PathAlg[F]
@@ -68,7 +68,11 @@ object FieldMerging {
 
       // Optimization: we don't check selections recursively since checkSelectionsMerge traverses the whole tree
       // We only need to check the immidiate children and will eventually have checked the whole tree
-      def checkSimplifiedTypeShape[G[_]](a: InverseModifierStack[TypeInfo[G, C]], b: InverseModifierStack[TypeInfo[G, C]], caret: C): F[Unit] = {
+      def checkSimplifiedTypeShape[G[_]](
+          a: InverseModifierStack[TypeInfo[G, C]],
+          b: InverseModifierStack[TypeInfo[G, C]],
+          caret: C
+      ): F[Unit] = {
         (a.inner, b.inner) match {
           // It turns out we don't care if more fields are selected in one object than the other
           case (TypeInfo.Selectable(_, _), TypeInfo.Selectable(_, _)) => F.unit
@@ -91,7 +95,12 @@ object FieldMerging {
         }
       }
 
-      override def checkFieldsMerge[G[_]](a: FieldInfo[G, C], asi: SelectionInfo[G, C], b: FieldInfo[G, C], bsi: SelectionInfo[G, C]): F[Unit] = {
+      override def checkFieldsMerge[G[_]](
+          a: FieldInfo[G, C],
+          asi: SelectionInfo[G, C],
+          b: FieldInfo[G, C],
+          bsi: SelectionInfo[G, C]
+      ): F[Unit] = {
         sealed trait EitherObject
         object EitherObject {
           case object FirstIsObject extends EitherObject

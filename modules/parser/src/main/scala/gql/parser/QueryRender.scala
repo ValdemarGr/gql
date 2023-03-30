@@ -5,7 +5,7 @@ import cats.data._
 
 object QueryRender {
   import QueryAst._
-/*
+  /*
   def renderOperationDefinition(op: OperationDefinition): Doc = op match {
     case OperationDefinition.Simple(ss) =>
       renderSelectionSet(ss.selections.map(_.value))
@@ -32,7 +32,7 @@ object QueryRender {
             case Some(default) => Doc.space + Doc.char('=') + Doc.space + GraphqlRender.renderValue(default)
           }
 
-          Doc.text(s"$$${vd.name}") + Doc.space + Doc.char(':') + Doc.space + 
+          Doc.text(s"$$${vd.name}") + Doc.space + Doc.char(':') + Doc.space +
             GraphqlRender.renderType(vd.tpe) + default
         }
       )

@@ -69,8 +69,8 @@ object RootPreparation {
       S: Stateful[F, Int],
       LI: Listen[F, ArgParsing.UsedVariables]
   ) = {
-    implicit val EA = ErrorAlg.errorAlgForHandle[F, NonEmptyChain, C]
-    implicit val PA = PathAlg[F]
+    implicit val EA: ErrorAlg[F, C] = ErrorAlg.errorAlgForHandle[F, NonEmptyChain, C]
+    implicit val PA: PathAlg[F] = PathAlg.pathAlgForLocal[F]
     import EA._
     import PA._
 
@@ -129,7 +129,7 @@ object RootPreparation {
                 val fo: F[Either[Json, V[Const]]] = oe match {
                   case None =>
                     if (ms.invert.modifiers.headOption.contains(InverseModifier.Optional)) F.pure(Right(V.NullValue()))
-                    else raise(s"Variable '${vd.name}' is required but was not provided", List(pos))
+                    else raise(s"Variable '$$${vd.name}' is required but was not provided.", List(pos))
                   case Some(x) =>
                     val stubTLArg: gql.ast.InToplevel[Unit] = gql.ast.Scalar[Unit](ms.inner, _ => V.NullValue(), _ => Right(()))
 
@@ -173,7 +173,7 @@ object RootPreparation {
 
           def runWith[A](o: gql.ast.Type[G, A]): F[NonEmptyList[PreparedSpecification[G, A, _]]] =
             variables(od, variableMap).flatMap { vm =>
-              implicit val AP = ArgParsing[F, C](vm)
+              implicit val AP: ArgParsing[F] = ArgParsing[F, C](vm)
               val fragMap = frags.map(x => P(x).name -> x).toMap
               val FC: FieldCollection[F, G, P, C] = FieldCollection[F, G, P, C](schema.discover.implementations, fragMap)
               val FM = FieldMerging[F, C]
@@ -181,7 +181,7 @@ object RootPreparation {
               val prog = FC.collectSelectionInfo(o, ss).flatMap { root =>
                 FM.checkSelectionsMerge(root) >> QP.prepareSelectable(o, root)
               }
-              LI.listen(prog).flatMap{ case (res, used) =>
+              LI.listen(prog).flatMap { case (res, used) =>
                 val unused = vm.keySet -- used
                 if (unused.nonEmpty) raise(s"Unused variables: ${unused.map(str => s"'$str'").mkString(", ")}", Nil)
                 else F.pure(res)

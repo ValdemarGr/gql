@@ -16,28 +16,40 @@
 package gql.std
 
 import cats._
+import cats.implicits._
 import cats.data._
-import cats.arrow.FunctionK
 
 sealed abstract class FreeApply[F[_], +A] extends Product with Serializable {
-  def foldMap[G[_], B >: A](fk: F ~> G)(implicit G: Apply[G]): G[B] = this match {
-    case FreeApply.Lift(fa)    => G.map(fk(fa))(x => x)
-    case FreeApply.Ap(ff, fa)  => G.map(G.ap(ff.foldMap(fk))(fa.foldMap(fk)))(x => x)
-    case FreeApply.Fmap(fa, f) => G.map(fa.foldMap(fk))(f)
-  }
+  def foldMap[G[_], B >: A](fk: F ~> G)(implicit G: Apply[G]): G[B] =
+    FreeApply.foldMap[F, G, B](this)(fk)
 
   // Very cool, we can do non-empty algebras with semigroup with the cool Const Semigroup => Apply[Cost] typeclass impl
   def analyze[M: Semigroup](fk: F ~> λ[α => M]): M =
-    foldMap[Const[M, *], A](FunctionK.liftFunction(fa => Const(fk(fa)))).getConst
+    foldMap[Const[M, *], A](new (F ~> Const[M, *]) {
+      def apply[A](fa: F[A]): Const[M, A] = Const(fk(fa))
+    }).getConst
 
   def analyze_[M: Semigroup](fold: F[?] => M): M =
-    foldMap[Const[M, *], A](FunctionK.liftFunction(fa => Const(fold(fa)))).getConst
+    foldMap[Const[M, *], A](new (F ~> Const[M, *]) {
+      def apply[A](fa: F[A]): Const[M, A] = Const(fold(fa))
+    }).getConst
 
   def enumerate: NonEmptyChain[F[?]] =
     analyze_(fa => NonEmptyChain.one(fa))
 }
 
 object FreeApply {
+  def foldMap[F[_], G[_], A](fa: FreeApply[F, A])(fk: F ~> G)(implicit G: Apply[G]): G[A] = {
+    def go[B](fa: FreeApply[F, B]): Eval[G[B]] = Eval.defer {
+      fa match {
+        case Lift(fa)            => Eval.now(G.map(fk(fa))(x => x))
+        case fmap: Fmap[F, a, B] => go(fmap.fa).map(G.map(_)(fmap.f))
+        case ap: Ap[F, a, B]     => (go(ap.ff), go(ap.fa)).mapN((gf, ga) => G.ap(gf)(ga))
+      }
+    }
+    go(fa).value
+  }
+
   final case class Ap[F[_], A, B](ff: FreeApply[F, A => B], fa: FreeApply[F, A]) extends FreeApply[F, B]
 
   final case class Lift[F[_], A](fa: F[A]) extends FreeApply[F, A]

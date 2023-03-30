@@ -28,7 +28,6 @@ import gql.parser.TypeSystemAst
 import gql.SchemaShape
 import gql.parser.GraphqlRender
 import io.circe.syntax._
-import org.tpolecat.sourcepos.SourcePos
 
 final case class SimpleQuery[A](
     operationType: P.OperationType,
@@ -119,7 +118,7 @@ object Query {
     Decoder.instance(_.get[A]("data")(Dec.decoderForSelectionSet(ss)))
 
   def findFragments(ss: SelectionSet[?]): List[Fragment[?]] =
-    ss.impl.enumerate.toList.map(_.value).flatMap {
+    ss.impl.enumerate.toList.flatMap {
       case f: Fragment[?] => f :: findFragments(f.subSelection)
       case f: Field[?] =>
         def unpackSubQuery(q: SubQuery[?]): List[Fragment[?]] =
@@ -135,10 +134,10 @@ object Query {
     }
 
   object Dec {
-    def decoderForSubQuery[A](sq: SubQuery[A], sp: SourcePos): Decoder[A] = sq match {
-      case Terminal(decoder)     => decoder.adaptError(e => e.withMessage(s"${e.message} at ${sp.toString}"))
-      case lm: ListModifier[a]   => Decoder.decodeList(decoderForSubQuery(lm.subQuery, sp))
-      case om: OptionModifier[a] => Decoder.decodeOption(decoderForSubQuery(om.subQuery, sp))
+    def decoderForSubQuery[A](sq: SubQuery[A]): Decoder[A] = sq match {
+      case Terminal(decoder)     => decoder //.adaptError(e => e.withMessage(s"${e.message} at ${sp.toString}"))
+      case lm: ListModifier[a]   => Decoder.decodeList(decoderForSubQuery(lm.subQuery))
+      case om: OptionModifier[a] => Decoder.decodeOption(decoderForSubQuery(om.subQuery))
       case ss: SelectionSet[A]   => decoderForSelectionSet(ss)
     }
 
@@ -152,28 +151,28 @@ object Query {
     }
 
     def decoderForSelectionSet[A](ss: SelectionSet[A]): Decoder[A] = {
-      val compiler = new (SelectionSet.SourcedSel ~> Decoder) {
-        override def apply[A](fa: SelectionSet.SourcedSel[A]): Decoder[A] = {
-          fa.value match {
+      val compiler = new (Selection ~> Decoder) {
+        override def apply[A](fa: Selection[A]): Decoder[A] = {
+          fa match {
             case f: Selection.Field[a] =>
               val name = f.alias.getOrElse(f.fieldName)
-              Decoder.instance(_.get(name)(decoderForSubQuery(f.subQuery, fa.position)))
+              Decoder.instance(_.get(name)(decoderForSubQuery(f.subQuery)))
             case f: Fragment[a]       => decoderForFragment(f.on, f.matchAlsoSet, f.subSelection)
             case f: InlineFragment[a] => decoderForFragment(f.on, f.matchAlsoSet, f.subSelection)
           }
         }
       }
 
-      ss.impl.foldMap(compiler).emap(_.toEither.leftMap(_.map(s => s"${s.value} at ${s.position.toString}").intercalate(", ")))
+      ss.impl.foldMap(compiler).emap(_.toEither.leftMap(_ /*.map(s => s"${s.value} at ${s.position.toString}")*/ .intercalate(", ")))
     }
   }
 
   object ParserAst {
     type F[A] = Writer[List[Fragment[?]], A]
     val F = Monad[F]
-/*
+    /*
     def convertSelectionSet(ss: SelectionSet[?]): F[P.SelectionSet] = {
-      ss.impl.enumerate.map{ 
+      ss.impl.enumerate.map{
         case f: Fragment[?] => Writer(List(f), P.Selection.FragmentSpreadSelection(P.FragmentSpread(f.name)))
         case f: InlineFragment[?] =>
           convertSelectionSet(f.subSelection)
@@ -209,7 +208,7 @@ object Query {
       Doc.text(a.name) + Doc.char(':') + Doc.space + GraphqlRender.renderValue(a.value)
 
     def renderSelectionSet(ss: SelectionSet[?]): Doc = {
-      val docs = ss.impl.enumerate.toList.map(_.value).map {
+      val docs = ss.impl.enumerate.toList.map {
         // Fragments are floated to the top level and handled separately
         case f: Fragment[?] =>
           Doc.text(s"...${f.name}")

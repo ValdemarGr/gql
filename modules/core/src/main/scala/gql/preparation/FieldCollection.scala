@@ -184,7 +184,7 @@ object FieldCollection {
             else raise(s"Field `${f.name}` of scalar type `${tl.name}` must not have a selection set.", List(c))
         }
 
-        verifyArgsF &> i.flatMap(fi => C.ask.map(c => FieldInfo[G, C](tl.name, f.alias, f.arguments, ims.copy(inner = fi), caret, c)))
+        verifyArgsF &> i.flatMap(fi => C.ask.map(c => FieldInfo[G, C](f.name, f.alias, f.arguments, ims.copy(inner = fi), caret, c)))
       }
     }
   }
@@ -197,15 +197,21 @@ trait Positioned[P[_], C] {
 }
 
 object Positioned {
-  def apply[P[_], C](position: P[?] => C)(get: P ~> Id): Positioned[P, C] = {
+  import cats.data.Const
+
+  def apply[P[_], C](position: P ~> Const[C, *])(get: P ~> Id): Positioned[P, C] = {
     val p0 = position
     new Positioned[P, C] {
       def apply[A](p: P[A]): A = get(p)
-      def position[A](p: P[A]): C = p0(p)
+      def position[A](p: P[A]): C = p0(p).getConst
     }
   }
 
-  val parserPos: Positioned[Pos, Caret] = apply[Pos, Caret](_.caret)(new (Pos ~> Id) {
+  val parserPos: Positioned[Pos, Caret] = apply[Pos, Caret](
+    new (Pos ~> Const[Caret, *]) {
+      def apply[A](fa: Pos[A]): Const[Caret, A] = Const(fa.caret)
+    }
+  )(new (Pos ~> Id) {
     override def apply[A](fa: Pos[A]): Id[A] = fa.value
   })
 }

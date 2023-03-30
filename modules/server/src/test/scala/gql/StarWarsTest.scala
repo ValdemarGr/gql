@@ -308,7 +308,7 @@ class StarWarsTest extends CatsEffectSuite {
       {
         "errors": [
           {
-            "message": "Variable '$someId' is required but was not provided. Hint: Provide variable or a default value for '$someId' of type `String!`.",
+            "message": "Variable '$someId' is required but was not provided.",
             "locations": [
               {
                 "line": 1,

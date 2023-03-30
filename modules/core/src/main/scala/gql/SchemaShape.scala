@@ -85,7 +85,7 @@ object SchemaShape {
   def discover[F[_]](shape: SchemaShape[F, ?, ?, ?]): DiscoveryState[F] = {
     def inputNotSeen[G[_], A](
         tl: InToplevel[?]
-    )(ga: G[A])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]], M: Monoid[A]): G[A] =
+    )(ga: => G[A])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]], M: Monoid[A]): G[A] =
       S.get.flatMap { s =>
         if (s.inputs.contains(tl.name)) G.pure(M.empty)
         else S.modify(_.copy(inputs = s.inputs + (tl.name -> tl))) *> ga
@@ -93,7 +93,7 @@ object SchemaShape {
 
     def outputNotSeen[G[_], A](
         tl: OutToplevel[F, ?]
-    )(ga: G[A])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]], M: Monoid[A]): G[A] =
+    )(ga: => G[A])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]], M: Monoid[A]): G[A] =
       S.get.flatMap { s =>
         if (s.outputs.contains(tl.name)) G.pure(M.empty)
         else S.modify(_.copy(outputs = s.outputs + (tl.name -> tl))) *> ga
