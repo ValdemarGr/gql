@@ -428,9 +428,11 @@ object Generator {
               )
           }
 
+          val tn = FieldDefinition(None, "__typename", Nil, gql.parser.Type.NonNull(gql.parser.Type.Named("String")))
+
           fieldMapF.flatMap { fm =>
             sels
-              .parTraverse(generateSelection[F](name, schema, fm, _))
+              .parTraverse(generateSelection[F](name, schema, fm + ("__typename" -> tn), _))
               .map { parts =>
                 Part(
                   name,
