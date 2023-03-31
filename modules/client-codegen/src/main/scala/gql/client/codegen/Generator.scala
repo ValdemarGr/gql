@@ -462,7 +462,7 @@ object Generator {
               generateTypeDef[F](
                 schema,
                 d.name.get,
-                "Query",
+                d.tpe.toString(),
                 d.selectionSet.selections.map(_.value),
                 Some(
                   ContextInfo.Operation(
