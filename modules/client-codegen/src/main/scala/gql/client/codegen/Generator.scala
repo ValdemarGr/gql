@@ -27,6 +27,7 @@ import cats.implicits._
 import gql._
 import cats.mtl.Local
 import gql.parser.Pos
+import cats.mtl.Tell
 
 object Generator {
   /*
@@ -184,7 +185,8 @@ object Generator {
   ) {
     // Yes yes, it is a fold
     def collapse: Doc = {
-      val tpe = Doc.text(s"final case class $name") + params(typePart.toList)
+      val tpe = Doc.text(s"final case class $name") +
+        hardIntercalateBracket('(', sep = Doc.comma)(typePart.toList)(')')
 
       val codecSelection = hardIntercalateBracket('(', Doc.comma)(codec.toList)(')') +
         Doc.char('.') +
@@ -298,6 +300,8 @@ object Generator {
     }
   }
 
+  type UsedInput = Either[TypeDefinition.EnumTypeDefinition, TypeDefinition.InputObjectTypeDefinition]
+  type UsedInputTypes[F[_]] = Tell[F, Set[UsedInput]]
   type CurrentPath[F[_]] = Local[F, Chain[String]]
 
   def in[F[_], A](field: String)(fa: F[A])(implicit P: CurrentPath[F]): F[A] =
@@ -447,11 +451,14 @@ object Generator {
     }
   }
 
+  def imp(t: String) = Doc.text(s"import $t")
+
   def generateExecutableDefs[F[_]: Parallel](
       schema: Map[String, TypeDefinition],
       query: NonEmptyList[ExecutableDefinition[Pos]]
   )(implicit
       P: CurrentPath[F],
+      U: UsedInputTypes[F],
       F: MonadError[F, NonEmptyChain[String]]
   ) = {
     val bodyF: F[NonEmptyList[Part]] = query.parTraverse {
@@ -461,18 +468,29 @@ object Generator {
             raise[F, Part]("Simple operations are not supported, please name all your operations")
           case d: OperationDefinition.Detailed[Pos] =>
             in(s"operation-${d.name.get}") {
-              generateTypeDef[F](
-                schema,
-                d.name.get,
-                d.tpe.toString(),
-                d.selectionSet.selections.map(_.value),
-                Some(
-                  ContextInfo.Operation(
-                    d.tpe,
-                    d.variableDefinitions.toList.flatMap(_.nel.toList.map(_.value))
+              val vds = d.variableDefinitions.toList.flatMap(_.nel.toList).map(_.value)
+              val usedF = vds
+                .map(vd => ModifierStack.fromType(vd.tpe).inner)
+                .mapFilter(schema.get)
+                .traverse_ {
+                  case x: TypeDefinition.InputObjectTypeDefinition => U.tell(Set(Right(x)))
+                  case x: TypeDefinition.EnumTypeDefinition        => U.tell(Set(Left(x)))
+                  case _                                           => F.unit
+                }
+
+              usedF *>
+                generateTypeDef[F](
+                  schema,
+                  d.name.get,
+                  d.tpe.toString(),
+                  d.selectionSet.selections.map(_.value),
+                  Some(
+                    ContextInfo.Operation(
+                      d.tpe,
+                      d.variableDefinitions.toList.flatMap(_.nel.toList.map(_.value))
+                    )
                   )
                 )
-              )
             }
         }
       case ExecutableDefinition.Fragment(f) => {
@@ -492,7 +510,6 @@ object Generator {
     bodyF.map { body =>
       val bodyDoc = Doc.intercalate(Doc.hardLine + Doc.hardLine, body.toList.map(_.collapse))
 
-      def imp(t: String) = Doc.text(s"import $t")
       Doc.intercalate(
         Doc.hardLine,
         List(
@@ -507,18 +524,99 @@ object Generator {
     }
   }
 
+  def generateInput(uis: List[UsedInput]): List[Doc] = {
+    uis.map {
+      case Left(x) =>
+        val st = Doc.text(s"sealed trait ${x.name}")
+
+        val names = x.values.toList.map(_.name)
+
+        val companionParts = names.map { e =>
+          Doc.text("case object ") + Doc.text(e) + Doc.text(" extends ") + Doc.text(x.name)
+        } ++ List(Doc.hardLine) ++ List(
+          Doc.text("implicit val circeDecoder = io.circe.Decoder.decodeString.emap") +
+            hardIntercalateBracket('{') {
+              names.map { e =>
+                Doc.text("case ") + quoted(x.name) + Doc.text(s" => Right($e)")
+              } ++ List(Doc.text("case x => Left(s\"Unknown enum value for ${x.name}: $x\")"))
+            }('}')
+        ) ++ List(Doc.hardLine) ++ List(
+          Doc.text(s"implicit val circeEncoder = io.circe.Encoder.encodeString.contramap[${x.name}]") +
+            hardIntercalateBracket('{') {
+              names.map { e =>
+                Doc.text("case ") + Doc.text(e) + Doc.text(s" => ") + quoted(x.name)
+              }
+            }('}')
+        )
+
+        val companion = Doc.text("object") + Doc.space + Doc.text(x.name) + Doc.space +
+          hardIntercalateBracket('{')(companionParts)('}')
+
+        st + Doc.hardLine + companion
+      case Right(x) =>
+        val fixedMods: List[(String, InverseModifierStack[String])] = x.inputFields.toList.map { f =>
+          val ms = ModifierStack.fromType(f.tpe).invert
+
+          // Add an option if the outermost modifier is not option and there is a default value
+          val ms2 = if (!ms.modifiers.contains(InverseModifier.Optional) && f.defaultValue.isDefined) {
+            ms.push(InverseModifier.Optional)
+          } else ms
+
+          f.name -> ms2
+        }
+
+        val cc = Doc.text("final case class ") + Doc.text(x.name) + hardIntercalateBracket('(', Doc.comma)(
+          fixedMods.map { case (name, ms) =>
+            val isOpt = ms.modifiers.headOption.contains(InverseModifier.Optional)
+
+            Doc.text(name) + Doc.char(':') + Doc.space +
+              Doc.text(ms.showScala(identity)) + (if (isOpt) Doc.text(" = None") else Doc.empty)
+          }
+        )(')')
+
+        val companionParts = List(
+          Doc.text(s"implicit val circeEncoder = io.circe.Encoder.AsObject.instance[${x.name}]{ a => ") +
+            (
+              Doc.hardLine +
+                Doc
+                  .intercalate(
+                    Doc.hardLine,
+                    List(
+                      Doc.text("import io.circe.syntax._"),
+                      Doc.text("Map") +
+                        hardIntercalateBracket('(', sep = Doc.comma) {
+                          fixedMods.map { case (name, _) =>
+                            quoted(name) + Doc.text(" -> ") + Doc.text(s"a.$name.asJson")
+                          }
+                        }(')') + Doc.text(".asJsonObject")
+                    )
+                  )
+            )
+              .nested(2)
+              .grouped + Doc.hardLine + Doc.char('}') + Doc.hardLine,
+          Doc.text(s"implicit val typenameInstance = typename[${x.name}](") +
+            quoted(x.name) + Doc.char(')')
+        )
+
+        val companion = Doc.text("object") + Doc.space + Doc.text(x.name) + Doc.space +
+          hardIntercalateBracket('{')(companionParts)('}')
+
+        cc + Doc.hardLine + companion
+    }
+  }
+
   def generateFor(
       schema: Map[String, TypeDefinition],
       query: NonEmptyList[ExecutableDefinition[Pos]]
-  ): EitherNec[String, Doc] = {
-    type F[A] = EitherT[Kleisli[Eval, Chain[String], *], NonEmptyChain[String], A]
-    generateExecutableDefs[F](schema, query).value.run(Chain.empty).value
+  ): EitherNec[String, (Set[UsedInput], Doc)] = {
+    type F[A] = WriterT[EitherT[Kleisli[Eval, Chain[String], *], NonEmptyChain[String], *], Set[UsedInput], A]
+    generateExecutableDefs[F](schema, query).run.value.run(Chain.empty).value
   }
 
   def generateWith(
       schema: Map[String, TypeDefinition],
       query: String
-  ): EitherNec[String, Doc] =
+  ): EitherNec[String, (Set[UsedInput], Doc)] =
     gql.parser.parseQuery(query).leftFlatMap(_.prettyError.value.leftNec).flatMap(generateFor(schema, _))
 
   def getSchemaFrom(s: String): Either[String, Map[String, TypeDefinition]] =
@@ -532,35 +630,64 @@ object Generator {
       path: Path,
       doc: Doc
   )
-  def readAndGenerate[F[_]: Async](
-      schemaPath: Path
-  ): fs2.Pipe[F, Input, fs2.Stream[F, EitherNec[String, Output]]] = queryPaths =>
+
+  def generateForInput[F[_]: Async](
+      schema: Map[String, TypeDefinition],
+      i: Input
+  ): fs2.Stream[F, EitherNec[String, (Set[UsedInput], Output)]] =
+    Files[F]
+      .readAll(i.query)
+      .through(fs2.text.utf8.decode[F])
+      .foldMonoid
+      .map(generateWith(schema, _))
+      .map(_.map { case (usedInputs, doc) => (usedInputs, Output(i.output, doc)) })
+
+  def writeStream[F[_]: Async](path: Path, doc: Doc) =
+    fs2.Stream
+      .iterable(doc.renderStream(80))
+      .lift[F]
+      .through(fs2.text.utf8.encode)
+      .through(Files[F].writeAll(path))
+
+  def readAndGenerate[F[_]](schemaPath: Path, sharedPath: Path)(
+      data: fs2.Stream[F, Input]
+  )(implicit F: Async[F]): F[List[String]] =
     Files[F]
       .readAll(schemaPath)
       .through(fs2.text.utf8.decode[F])
+      .compile
       .foldMonoid
       .map(getSchemaFrom)
-      .map {
-        case Left(e) => fs2.Stream.emit(Left(NonEmptyChain.one(e)))
+      .flatMap {
+        case Left(e) => F.pure(List(s"failed to parse schema at $schemaPath with error $e"))
         case Right(s) =>
-          queryPaths.flatMap { i =>
-            Files[F]
-              .readAll(i.query)
-              .through(fs2.text.utf8.decode[F])
-              .foldMonoid
-              .map(generateWith(s, _))
-              .map(_.map(doc => Output(i.output, doc)))
-          }
-      }
+          data
+            .flatMap(generateForInput[F](s, _))
+            .evalMap[F, Validated[List[String], Set[UsedInput]]] {
+              case Left(e)          => F.pure(e.toList.invalid)
+              case Right((used, x)) => writeStream[F](x.path, x.doc).compile.drain.as(used.valid)
+            }
+            .compile
+            .foldMonoid
+            .flatMap(_.toEither match {
+              case Left(e) => F.pure(e.toList)
+              case Right(inputs) =>
+                inputs.toList.toNel.traverse_ { nel =>
+                  val d = Doc.intercalate(
+                    Doc.hardLine + Doc.hardLine,
+                    List(
+                      Doc.text("package gql.client.generated"),
+                      Doc.intercalate(
+                        Doc.hardLine,
+                        List(
+                          imp("_root_.gql.client.dsl._")
+                        )
+                      )
+                    ) ++ generateInput(nel.toList)
+                  )
 
-  def readGenerateWrite[F[_]](schemaPath: Path)(implicit F: Async[F]): fs2.Pipe[F, Input, List[String]] =
-    readAndGenerate[F](schemaPath).andThen(_.flatMap(_.flatMap {
-      case Left(e) => fs2.Stream.emit(e.toList)
-      case Right(x) =>
-        fs2.Stream
-          .iterable(x.doc.renderStream(80))
-          .lift[F]
-          .through(fs2.text.utf8.encode)
-          .through(Files[F].writeAll(x.path))
-    }))
+                  writeStream[F](sharedPath, d).compile.drain
+                } as Nil
+            })
+      }
 }

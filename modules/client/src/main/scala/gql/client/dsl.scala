@@ -79,6 +79,8 @@ object dsl {
 
   def embed[A](implicit ss: SelectionSet[A]): SelectionSet[A] = ss
 
+  def typename[A](name: String): Typename[A] = Typename(InverseModifierStack(Nil, name))
+
   final case class Typename[A](stack: InverseModifierStack[String]) {
     def push[B](m: InverseModifier): Typename[B] = Typename(stack.push(m))
   }
@@ -89,23 +91,17 @@ object dsl {
     implicit def typenameStackForOption[A](implicit ta: Typename[A]): Typename[Option[A]] =
       ta.push(InverseModifier.Optional)
 
-    implicit lazy val typenameForString: Typename[String] =
-      Typename(InverseModifierStack(Nil, "String"))
+    implicit lazy val typenameForString: Typename[String] = typename("String")
 
-    implicit lazy val typenameForInt: Typename[Int] =
-      Typename(InverseModifierStack(Nil, "Int"))
+    implicit lazy val typenameForInt: Typename[Int] = typename("Int")
 
-    implicit lazy val typenameForUUID: Typename[UUID] =
-      Typename(InverseModifierStack(Nil, "UUID"))
+    implicit lazy val typenameForUUID: Typename[UUID] = typename("UUID")
 
-    implicit lazy val typenameForFloat: Typename[Float] =
-      Typename(InverseModifierStack(Nil, "Float"))
+    implicit lazy val typenameForFloat: Typename[Float] = typename("Float")
 
-    implicit lazy val typenameForBoolean: Typename[Boolean] =
-      Typename(InverseModifierStack(Nil, "Boolean"))
+    implicit lazy val typenameForBoolean: Typename[Boolean] = typename("Boolean")
 
-    implicit lazy val typenameForLocalDate: Typename[LocalDate] =
-      Typename(InverseModifierStack(Nil, "String"))
+    implicit lazy val typenameForLocalDate: Typename[LocalDate] = typename("LocalDate")
   }
 
   implicit class SyntaxForOptionalSelectionSet[A](q: SelectionSet[Option[A]]) {

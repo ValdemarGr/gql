@@ -19,7 +19,6 @@ import gql.client.generated._
 
 package object generated {
   type ID = String
-  type FindDogInput = String
 }
 
 object GenTest {}

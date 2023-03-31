@@ -18,7 +18,7 @@ ThisBuild / headerLicense := Some(HeaderLicense.Custom("Copyright (c) 2023 Valde
 ThisBuild / headerEmptyLine := false
 
 // I might re-enable this later
-// But for now, if a tag fails in CI (I know it's not supposed to happen), then it is really 
+// But for now, if a tag fails in CI (I know it's not supposed to happen), then it is really
 // annoying to have to fix the statful "step"
 ThisBuild / tlCiMimaBinaryIssueCheck := false
 ThisBuild / tlMimaPreviousVersions := Set.empty
@@ -83,7 +83,7 @@ lazy val sharedSettings = Seq(
     "org.typelevel" %% "munit-cats-effect" % "2.0.0-M3" % Test
   ),
   tlFatalWarnings := false,
-  tlFatalWarningsInCi := false,
+  tlFatalWarningsInCi := false
 )
 
 lazy val parser = project
@@ -120,7 +120,7 @@ lazy val clientCodegenCli = project
   .in(file("modules/client-codegen-cli"))
   .settings(sharedSettings)
   .settings(
-    name := "gql-client-codegen-cli" /*, tlFatalWarnings := true*/ ,
+    name := "gql-client-codegen-cli" /*, tlFatalWarnings := true*/,
     libraryDependencies ++= Seq(
       "com.monovore" %% "decline" % "2.4.0",
       "com.monovore" %% "decline-effect" % "2.4.0"
@@ -140,7 +140,7 @@ lazy val clientCodegenSbt = project
     name := "gql-client-codegen-sbt"
   )
   .aggregate(clientCodegenCli)
-  /* .enablePlugins(NoPublishPlugin) */
+/* .enablePlugins(NoPublishPlugin) */
 
 val codeGenForTest = taskKey[Seq[File]]("Generate code for test")
 lazy val testCodeGen = project
@@ -153,16 +153,18 @@ lazy val testCodeGen = project
     tlFatalWarningsInCi := false,
     codeGenForTest := {
       // Oh man I really loathe sbt, why do I have to do this?
-      Def.taskDyn{
+      Def.taskDyn {
         val sp = file("./modules/client-codegen-test/src/main/resources/schema.graphql").absolutePath.replace("\\", "\\\\")
         val qp = file("./modules/client-codegen-test/src/main/resources/queries/query.graphql").absolutePath.replace("\\", "\\\\")
         val f = (Compile / sourceManaged).value / "gql"
         IO.createDirectory(f)
+        val s0 = f / "shared.scala"
+        val s = s0.absolutePath.replace("\\", "\\\\")
         val outf = f / "query.scala"
         val outs = outf.absolutePath.replace("\\", "\\\\")
-        val input = s""" --input {"schema":"${sp}","queries":[{"query":"${qp}","output":"${outs}"}]}"""
+        val input = s""" --input {"schema":"${sp}","shared":"${s}","queries":[{"query":"${qp}","output":"${outs}"}]}"""
         val ip2: String = input.toString()
-        (clientCodegenCli / Compile / run).toTask(ip2).map(_ => Seq(outf))
+        (clientCodegenCli / Compile / run).toTask(ip2).map(_ => Seq(outf, s0))
       }.value
     },
     // Testing consists of doing a code-gen run and then compiling the generated code

@@ -28,35 +28,26 @@ object GeneratorCli
       name = "gql-client-codegen",
       header = "GraphQL client code generator for GQL"
     ) {
-  implicit val argForPath: Argument[Path] = Argument.from[Path]("path") { path =>
-    Either.catchNonFatal(Path(path)).leftMap(_.getMessage).toValidatedNel
-  }
-
-  implicit def argForTuple[A: Argument, B: Argument]: Argument[(A, B)] =
-    Argument.from[(A, B)](Argument[A].defaultMetavar + "=" + Argument[B].defaultMetavar) { str =>
-      str.split('=').toList match {
-        case x :: y :: Nil => (Argument[A].read(x), Argument[B].read(y)).mapN(_ -> _)
-        case _             => s"Invalid key=value pair: $str".invalidNel
-      }
-    }
-
   final case class Query(
       query: Path,
       output: Option[Path]
   )
   final case class Input(
       schema: Path,
+      shared: Path,
       queries: NonEmptyList[Query]
   )
   val kvPairs =
     Opts.options[Input](
       "input",
       help = """|Path to the GraphQL schemas and query files, given as json value.
-                |For instance: {"schema": "/my/schema", "queries": [{ "query": "/my/query", "output": "/my/Query.scala" }] }.
+                |For instance: {"schema": "/my/schema", "shared": "/mp/shared", "queries": [{ "query": "/my/query", "output": "/my/Query.scala" }] }.
+                |"schema" should be the path to your schema
+                |"shared" should be the output file for shared types (graphql input and enum types), note that only inputs and enums used in your queries are generated
+                |"queries" should be the collection of queries that you want to generate code for
                 |Omitting "output" will generate the file beside the input query""".stripMargin
     ) {
       Argument.from[Input]("json-input") { str =>
-        println(str)
         implicit val decoderForPath: Decoder[Path] = Decoder.decodeString.emap { str =>
           Either.catchNonFatal(Path(str)).leftMap(_.getMessage)
         }
@@ -71,6 +62,7 @@ object GeneratorCli
         implicit val inputDec: Decoder[Input] = Decoder.instance[Input] { c =>
           (
             c.get[Path]("schema"),
+            c.get[Path]("shared"),
             c.get[NonEmptyList[Query]]("queries")
           ).mapN(Input.apply)
         }
@@ -85,15 +77,19 @@ object GeneratorCli
         fs2.Stream
           .emits(kvs.toList)
           .lift[IO]
-          .flatMap { i =>
-            fs2.Stream
-              .emits(
-                i.queries.toList.map(q =>
-                  Generator.Input(q.query, q.output.getOrElse(q.query.parent.get / (q.query.fileName.toString + ".scala")))
+          .evalMap { i =>
+            Generator.readAndGenerate[IO](i.schema, i.shared) {
+              fs2.Stream
+                .emits(
+                  i.queries.toList.map(q =>
+                    Generator.Input(
+                      q.query,
+                      q.output
+                        .getOrElse(q.query.parent.get / (q.query.fileName.toString + ".scala"))
+                    )
+                  )
                 )
-              )
-              .lift[IO]
-              .through(Generator.readGenerateWrite[IO](i.schema))
+            }
           }
           .compile
           .foldMonoid

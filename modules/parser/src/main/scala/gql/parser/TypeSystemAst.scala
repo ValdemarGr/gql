@@ -34,8 +34,11 @@ object TypeSystemAst {
         fieldDefinitions: NonEmptyList[FieldDefinition]
     ) extends TypeDefinition
     final case class UnionTypeDefinition(description: Option[String], name: String, types: NonEmptyList[String]) extends TypeDefinition
-    final case class EnumTypeDefinition(description: Option[String], name: String, values: NonEmptyList[EnumValueDefinition])
-        extends TypeDefinition
+    final case class EnumTypeDefinition(
+        description: Option[String],
+        name: String,
+        values: NonEmptyList[EnumValueDefinition]
+    ) extends TypeDefinition
     final case class InputObjectTypeDefinition(
         description: Option[String],
         name: String,

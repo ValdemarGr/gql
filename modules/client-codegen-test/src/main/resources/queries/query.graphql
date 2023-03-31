@@ -1,23 +1,24 @@
-  query AlienQuery($name: String!, $id: ID!, $struct: FindDogInput) {
-    dog {
-      ... DogFragment
-      ... on Dog {
-        name
-        barkVolume
-      }
-      owner {
-        name
-      }
+query AlienQuery($name: String!, $id: ID!, $struct: FindDogInput) {
+  dog {
+    ... DogFragment
+    ... on Dog {
+      name
+      barkVolume
     }
-    findDog(searchBy: { name: "Barky" }) {
-      ... DogFragment
-    }
-    findDog2: findDog(searchBy: $struct) {
-      ... DogFragment
+    owner {
+      name
     }
   }
+  findDog(searchBy: { name: "Barky" }) {
+    ... DogFragment
+  }
+  findDog2: findDog(searchBy: $struct) {
+    ... DogFragment
+  }
+}
 
-  fragment DogFragment on Dog {
-    name,
-    barkVolume
-  }
+fragment DogFragment on Dog {
+  name,
+  barkVolume
+}
+

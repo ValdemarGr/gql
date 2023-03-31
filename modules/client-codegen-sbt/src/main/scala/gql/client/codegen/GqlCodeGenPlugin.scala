@@ -24,16 +24,18 @@ object GqlCodeGenPlugin extends AutoPlugin {
     object Gql {
       sealed trait ResourceGroup
       final case class CustomResourceGroup(
+          name: String,
           schemaPath: File,
           files: Seq[File]
       ) extends ResourceGroup
       case object DefaultResourceGroup extends ResourceGroup
 
-      def resourceGroup(schema: File, files: File*): ResourceGroup =
-        CustomResourceGroup(schema, files)
+      def resourceGroup(name: String, schema: File, files: File*): ResourceGroup =
+        CustomResourceGroup(name, schema, files)
 
-      def resourceGroup(path: File): ResourceGroup = {
+      def resourceGroup(name: String, path: File): ResourceGroup = {
         CustomResourceGroup(
+          name,
           path / "schema.graphql",
           (path / "queries").listFiles().toList
         )
@@ -82,7 +84,7 @@ object GqlCodeGenPlugin extends AutoPlugin {
                   |$hint""".stripMargin
             )
             None
-          } else Some(Gql.CustomResourceGroup(schema, queries))
+          } else Some(Gql.CustomResourceGroup(rg.name, schema, queries))
         }
 
         val customs = rs
@@ -93,7 +95,7 @@ object GqlCodeGenPlugin extends AutoPlugin {
             val r = (Compile / resourceDirectory).value
             val schema = r / "schema.graphql"
             val queries = Option((r / "queries").listFiles()).toList.flatMap(_.toList)
-            val rg = Gql.CustomResourceGroup(schema, queries)
+            val rg = Gql.CustomResourceGroup("default", schema, queries)
             verifyResourceGroup(rg)
           }
           .flatten
@@ -104,17 +106,21 @@ object GqlCodeGenPlugin extends AutoPlugin {
       Gql.libraryVersion := BuildInfo.version,
       libraryDependencies += "io.github.valdemargr" %% "gql-client-codegen-cli" % Gql.libraryVersion.value,
       Gql.codeGenInput := {
-        val f = (Compile / sourceManaged).value / "gql"
-        IO.createDirectory(f)
+        val base = (Compile / sourceManaged).value / "gql"
+        IO.createDirectory(base)
         val resources = Gql.findResources.value
         resources.map { rg =>
+          val f = base / rg.name
+          IO.createDirectory(f)
           val queries = rg.files.map { in =>
             val fn = in.name.replaceAll("\\.", "_")
             val outFile = f / s"${fn}.scala"
             s"""{"query": "${in.absolutePath}", "output": "${outFile.absolutePath}"}""" -> outFile
           }
 
-          s"""{"schema":"${rg.schemaPath.absolutePath}","queries":[${queries.map(_._1).mkString(",")}]}""" -> queries.map(_._2)
+          s"""{"schema":"${rg.schemaPath.absolutePath}","shared":"${(f / s"shared.scala").absolutePath}","queries":[${queries
+            .map(_._1)
+            .mkString(",")}]}""" -> queries.map(_._2)
         }
       },
       Gql.invokeCodeGen := {
