@@ -537,16 +537,19 @@ object Generator {
           Doc.text("implicit val circeDecoder = io.circe.Decoder.decodeString.emap") +
             hardIntercalateBracket('{') {
               names.map { e =>
-                Doc.text("case ") + quoted(x.name) + Doc.text(s" => Right($e)")
-              } ++ List(Doc.text("case x => Left(s\"Unknown enum value for ${x.name}: $x\")"))
+                Doc.text("case ") + quoted(e) + Doc.text(s" => Right($e)")
+              } ++ List(Doc.text(s"""case x => Left(s"Unknown enum value for ${x.name}: $$x")"""))
             }('}')
         ) ++ List(Doc.hardLine) ++ List(
           Doc.text(s"implicit val circeEncoder = io.circe.Encoder.encodeString.contramap[${x.name}]") +
             hardIntercalateBracket('{') {
               names.map { e =>
-                Doc.text("case ") + Doc.text(e) + Doc.text(s" => ") + quoted(x.name)
+                Doc.text("case ") + Doc.text(e) + Doc.text(s" => ") + quoted(e)
               }
             }('}')
+        ) ++ List(Doc.hardLine) ++ List(
+          Doc.text(s"implicit val typenameInstance = typename[${x.name}](") +
+            quoted(x.name) + Doc.char(')')
         )
 
         val companion = Doc.text("object") + Doc.space + Doc.text(x.name) + Doc.space +
