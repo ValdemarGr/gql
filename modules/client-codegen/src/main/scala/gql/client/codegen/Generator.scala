@@ -283,16 +283,27 @@ object Generator {
         }
       case frag: Selection.FragmentSpreadSelection[Pos] =>
         val fs = frag.fragmentSpread
-        def wrap(s: String): String =
-          if (env.fragmentInfos.get(fs.fragmentName).exists(fi => env.subtypesOf(fi.on).contains(td.name)))
-            s
-          else s"Option[$s]"
+
+        val f = env.fragmentInfos.get(fs.fragmentName)
+
+        val optTn = s"Option[${fs.fragmentName}]"
+
+        val (tn, suf) = (f.map(fi => fi -> env.subtypesOf(fi.on))) match {
+          case Some((x, so)) if so.contains(td.name) =>
+            (
+              fs.fragmentName,
+              Doc.text(".requiredFragment") + params(
+                quoted(x.name) :: quoted(x.on) :: (env.concreteSubtypesOf(x.on) - x.on).toList.map(quoted)
+              )
+            )
+          case _ => (optTn, Doc.empty)
+        }
 
         F.pure {
           FieldPart(
-            scalaField(toCaml(fs.fragmentName), s"Option[${fs.fragmentName}]"),
+            scalaField(toCaml(fs.fragmentName), tn),
             None,
-            Doc.text(s"embed[${wrap(fs.fragmentName)}]")
+            Doc.text(s"embed[${optTn}]") + suf
           )
         }
       case inlineFrag: Selection.InlineFragmentSelection[Pos] =>
@@ -300,22 +311,28 @@ object Generator {
         val ss = ilf.selectionSet.selections.map(_.value)
         val cnd = ilf.typeCondition.get
 
-        val sts = env.subtypesOf(cnd)
-
-        def wrap(s: String): String =
-          if (sts.contains(td.name))
-            s
-          else s"Option[$s]"
-
         val name = s"Inline${cnd}"
+
+        val fn = s"${companionName}.${name}"
+
+        val so = env.subtypesOf(cnd)
+
+        val extras = env.concreteSubtypesOf(cnd) - cnd
+
+        val (tn, suf) =
+          if (so.contains(td.name))
+            (fn, Doc.text(".requiredFragment") + params(quoted(name) :: quoted(cnd) :: extras.toList.map(quoted)))
+          else
+            (s"Option[$fn]", Doc.empty)
+
         in(s"inline-fragment-${cnd}") {
           // We'd like to match every concrete subtype of the inline fragment's type condition (since typename in the result becomes concrete)
-          generateTypeDef[F](env, name, cnd, ss, Some(ContextInfo.Fragment(None, cnd, (env.concreteSubtypesOf(cnd) - td.name).toList)))
+          generateTypeDef[F](env, name, cnd, ss, Some(ContextInfo.Fragment(None, cnd, extras.toList)))
             .map { p =>
               FieldPart(
-                scalaField(toCaml(name), s"Option[${companionName}.${name}]"),
+                scalaField(toCaml(name), tn),
                 Some(p),
-                Doc.text(s"embed[${wrap(name)}]")
+                Doc.text(s"embed[Option[${name}]]") + suf
               )
             }
         }

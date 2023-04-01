@@ -107,5 +107,12 @@ object dsl {
   implicit class SyntaxForOptionalSelectionSet[A](q: SelectionSet[Option[A]]) {
     def required: SelectionSet[A] =
       q.emap(_.toRight("Required field was null"))
+
+    def requiredFragment(name: String, on: String, matchAlso: String*): SelectionSet[A] =
+      (sel[Option[String]]("__typename"), q).tupled.emap { case (tn, oa) =>
+        oa.toRight(s"Expected fragment '${name}' to match at-least one of the following typenames ${(on :: matchAlso.toList)
+          .map(x => s"`$x`")
+          .mkString(", ")}, but the typename `${tn.getOrElse("null")}` was found.")
+      }
   }
 }
