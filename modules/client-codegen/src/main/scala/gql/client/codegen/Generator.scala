@@ -262,6 +262,7 @@ object Generator {
   }
 
   def generateSelection[F[_]: Parallel](
+      typename: String,
       companionName: String,
       env: Env,
       fieldMap: Map[String, FieldDefinition],
@@ -282,17 +283,28 @@ object Generator {
         }
       case frag: Selection.FragmentSpreadSelection[Pos] =>
         val fs = frag.fragmentSpread
+        def wrap(s: String): String =
+          if (env.fragmentInfos.get(fs.fragmentName).exists(fi => env.subtypesOf(fi.on).contains(typename)))
+            s
+          else s"Option[$s]"
+
         F.pure {
           FieldPart(
             scalaField(toCaml(fs.fragmentName), s"Option[${fs.fragmentName}]"),
             None,
-            Doc.text(s"embed[Option[${fs.fragmentName}]]")
+            Doc.text(s"embed[${wrap(fs.fragmentName)}]")
           )
         }
       case inlineFrag: Selection.InlineFragmentSelection[Pos] =>
         val ilf = inlineFrag.inlineFragment
         val ss = ilf.selectionSet.selections.map(_.value)
         val cnd = ilf.typeCondition.get
+
+        def wrap(s: String): String =
+          if (env.subtypesOf(cnd).contains(typename))
+            s
+          else s"Option[$s]"
+
         val name = s"Inline${cnd}"
         in(s"inline-fragment-${cnd}") {
           generateTypeDef[F](env, name, cnd, ss, Some(ContextInfo.Fragment(None, cnd, Nil)))
@@ -300,7 +312,7 @@ object Generator {
               FieldPart(
                 scalaField(toCaml(name), s"Option[${companionName}.${name}]"),
                 Some(p),
-                Doc.text(s"embed[Option[${name}]]")
+                Doc.text(s"embed[${wrap(name)}]")
               )
             }
         }
@@ -335,7 +347,7 @@ object Generator {
 
           fieldMapF.flatMap { fm =>
             sels
-              .parTraverse(generateSelection[F](name, env, fm + ("__typename" -> tn), _))
+              .parTraverse(generateSelection[F](typename, name, env, fm + ("__typename" -> tn), _))
               .map { parts =>
                 Part(
                   name,
@@ -539,6 +551,25 @@ object Generator {
       fragmentInfos: Map[String, FragmentInfo]
   ) {
     def get(name: String): Option[TypeDefinition] = schema.get(name)
+
+    // A -> [B <: A]
+    val subtypeRelations: Map[String, Set[String]] = schema.values.toList
+      .collect {
+        case td: TypeDefinition.ObjectTypeDefinition =>
+          // this, impl1, impl2 -> this
+          (td.name :: td.interfaces) tupleRight td.name
+        case td: TypeDefinition.UnionTypeDefinition =>
+          // this -> this
+          List(td.name -> td.name)
+        case td: TypeDefinition.InterfaceTypeDefinition =>
+          // this, impl1, impl2 -> this
+          (td.name :: td.interfaces) tupleRight td.name
+      }
+      .flatten
+      .groupMap { case (abs, _) => abs } { case (_, conc) => conc }
+      .fmap(_.toSet)
+
+    def subtypesOf(abs: String): Set[String] = subtypeRelations.getOrElse(abs, Set.empty)
   }
 
   type Err[F[_]] = Handle[F, NonEmptyChain[String]]
