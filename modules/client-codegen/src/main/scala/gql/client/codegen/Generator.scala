@@ -28,7 +28,6 @@ import gql._
 import cats.mtl.Local
 import gql.parser.Pos
 import cats.mtl.Tell
-import cats.mtl.Raise
 import cats.mtl.Handle
 
 object Generator {
