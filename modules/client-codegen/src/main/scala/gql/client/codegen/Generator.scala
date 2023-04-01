@@ -28,111 +28,10 @@ import gql._
 import cats.mtl.Local
 import gql.parser.Pos
 import cats.mtl.Tell
+import cats.mtl.Raise
+import cats.mtl.Handle
 
 object Generator {
-  /*
-   * query MyQuery {
-   *   name
-   *   personalInfo {
-   *     age
-   *     height
-   *   }
-   *   friends {
-   *     ...FriendFragment
-   *   }
-   * }
-   *
-   * fragment FriendFragment on Friend {
-   *   name
-   *   age
-   *   personalInfo {
-   *     age
-   *   }
-   *   ... on Human {
-   *     name
-   *     age
-   *   }
-   * }
-   *
-   * final case class MyQuery(
-   *   name: String,
-   *   personalInfo: MyQuery.PersonalInfo,
-   *   friends: List[MyQuery.Friends]
-   * )
-   *
-   * object MyQuery {
-   *   final case class PersonalInfo(
-   *     age: Int,
-   *     height: Double
-   *   )
-   *
-   *   object PersonalInfo {
-   *     implicit lazy val selectionSet: SelectionSet[PersonalInfo] = (
-   *       sel[Int]("age"),
-   *       sel[Double]("height")
-   *     ).mapN(apply)
-   *   }
-   *
-   *   final case class Friends(
-   *     friendFragment: Option[FriendFragment]
-   *   )
-   *
-   *   object Friends {
-   *     implicit lazy val selectionSet: SelectionSet[Friends] = (
-   *       FriendFragment.frag
-   *     ).mapN(apply)
-   *   }
-   *
-   *   implicit lazy val selectionSet: SelectionSet[MyQuery] = (
-   *     sel[String]("name"),
-   *     sel[PersonalInfo]("personalInfo"),
-   *     sel[List[Friends]]("friends")
-   *   ).mapN(apply)
-   * }
-   *
-   * final case class FriendFragment(
-   *   name: String,
-   *   age: Int,
-   *   personalInfo: FriendFragment.PersonalInfo,
-   *   humanFragment: Option[HumanFragment]
-   * )
-   *
-   * object FriendFragment {
-   *   final case class PersonalInfo(
-   *     age: Int
-   *   )
-   *
-   *   object PersonalInfo {
-   *     implicit lazy val selectionSet: SelectionSet[PersonalInfo] = (
-   *       sel[Int]("age")
-   *     ).mapN(apply)
-   *   }
-   *
-   *   final case class HumanFragment(
-   *     name: String,
-   *     age: Int
-   *   )
-   *
-   *   object HumanFragment {
-   *     implicit lazy val selectionSet: SelectionSet[HumanFragment] = (
-   *       sel[String]("name"),
-   *       sel[Int]("age")
-   *     ).mapN(apply)
-   *   }
-   *
-   *   implicit lazy val frag: SelectionSet[Option[FriendFragment]] =
-   *    fragment("FriendFragment", "Friend") {
-   *      (
-   *        sel[String]("name"),
-   *        sel[Int]("age"),
-   *        sel[PersonalInfo]("personalInfo"),
-   *        inlineFragment[HumanFragment]("Human")
-   *      ).mapN(apply)
-   *    }
-   * }
-   *
-   */
-
   def modifyHead(f: Char => Char): String => String = { str =>
     val hd = str.headOption.map(f(_).toString()).getOrElse("")
     hd + str.drop(1)
@@ -323,7 +222,7 @@ object Generator {
   )
   def generateField[F[_]: Parallel](
       companionName: String,
-      schema: Map[String, TypeDefinition],
+      env: Env,
       f: Field[Pos],
       fd: FieldDefinition
   )(implicit
@@ -336,7 +235,7 @@ object Generator {
 
     f.selectionSet.value
       .map(_.selections.map(_.value))
-      .parTraverse(generateTypeDef[F](schema, n, ms.inner, _, None))
+      .parTraverse(generateTypeDef[F](env, n, ms.inner, _, None))
       .map { subPart =>
         val argPart = f.arguments.toList.flatMap(_.nel.toList).map { x =>
           Doc.text("arg") +
@@ -364,7 +263,7 @@ object Generator {
 
   def generateSelection[F[_]: Parallel](
       companionName: String,
-      schema: Map[String, TypeDefinition],
+      env: Env,
       fieldMap: Map[String, FieldDefinition],
       sel: Selection[Pos]
   )(implicit
@@ -378,7 +277,7 @@ object Generator {
           case None => raise[F, FieldPart](s"Field '${f.name}' not found in type '$companionName'")
           case Some(x) =>
             in(f.name) {
-              generateField[F](companionName, schema, f, x)
+              generateField[F](companionName, env, f, x)
             }
         }
       case frag: Selection.FragmentSpreadSelection[Pos] =>
@@ -396,7 +295,7 @@ object Generator {
         val cnd = ilf.typeCondition.get
         val name = s"Inline${cnd}"
         in(s"inline-fragment-${cnd}") {
-          generateTypeDef[F](schema, name, cnd, ss, Some(ContextInfo.Fragment(None, cnd, Nil)))
+          generateTypeDef[F](env, name, cnd, ss, Some(ContextInfo.Fragment(None, cnd, Nil)))
             .map { p =>
               FieldPart(
                 scalaField(toCaml(name), s"Option[${companionName}.${name}]"),
@@ -409,7 +308,7 @@ object Generator {
   }
 
   def generateTypeDef[F[_]: Parallel](
-      schema: Map[String, TypeDefinition],
+      env: Env,
       name: String,
       typename: String,
       sels: NonEmptyList[Selection[Pos]],
@@ -418,7 +317,7 @@ object Generator {
       P: CurrentPath[F],
       F: MonadError[F, NonEmptyChain[String]]
   ): F[Part] = {
-    schema.get(typename) match {
+    env.get(typename) match {
       case None => raise[F, Part](s"Type `$typename` not found")
       case Some(td) =>
         in(s"type-definition-${typename}") {
@@ -436,7 +335,7 @@ object Generator {
 
           fieldMapF.flatMap { fm =>
             sels
-              .parTraverse(generateSelection[F](name, schema, fm + ("__typename" -> tn), _))
+              .parTraverse(generateSelection[F](name, env, fm + ("__typename" -> tn), _))
               .map { parts =>
                 Part(
                   name,
@@ -453,8 +352,21 @@ object Generator {
 
   def imp(t: String) = Doc.text(s"import $t")
 
+  final case class FragmentInfo(
+      name: String,
+      on: String
+  )
+
+  def gatherFragmentInfos(
+      xs: NonEmptyList[ExecutableDefinition[Pos]]
+  ): List[FragmentInfo] =
+    xs.collect { case ExecutableDefinition.Fragment(f) =>
+      val x = f.value
+      FragmentInfo(x.name, x.typeCnd)
+    }
+
   def generateExecutableDefs[F[_]: Parallel](
-      schema: Map[String, TypeDefinition],
+      env: Env,
       query: NonEmptyList[ExecutableDefinition[Pos]]
   )(implicit
       P: CurrentPath[F],
@@ -471,7 +383,7 @@ object Generator {
               val vds = d.variableDefinitions.toList.flatMap(_.nel.toList).map(_.value)
               val usedF = vds
                 .map(vd => ModifierStack.fromType(vd.tpe).inner)
-                .mapFilter(schema.get)
+                .mapFilter(env.get)
                 .traverse_ {
                   case x: TypeDefinition.InputObjectTypeDefinition => U.tell(Set(Right(x)))
                   case x: TypeDefinition.EnumTypeDefinition        => U.tell(Set(Left(x)))
@@ -480,7 +392,7 @@ object Generator {
 
               usedF *>
                 generateTypeDef[F](
-                  schema,
+                  env,
                   d.name.get,
                   d.tpe.toString(),
                   d.selectionSet.selections.map(_.value),
@@ -493,18 +405,18 @@ object Generator {
                 )
             }
         }
-      case ExecutableDefinition.Fragment(f) => {
+      case ExecutableDefinition.Fragment(f) =>
         in(s"fragment-${f.value.name}") {
           val f2 = f.value
           generateTypeDef[F](
-            schema,
+            env,
             f2.name,
             f2.typeCnd,
             f2.selectionSet.selections.map(_.value),
             Some(ContextInfo.Fragment(Some(f2.name), f2.typeCnd, Nil))
           )
         }
-      }
+
     }
 
     bodyF.map { body =>
@@ -524,8 +436,8 @@ object Generator {
     }
   }
 
-  def generateInput(uis: List[UsedInput]): List[Doc] = {
-    uis.map {
+  def generateOneInput(ui: UsedInput): Doc =
+    ui match {
       case Left(x) =>
         val st = Doc.text(s"sealed trait ${x.name}")
 
@@ -606,21 +518,38 @@ object Generator {
 
         cc + Doc.hardLine + companion
     }
+
+  def generateInputs(uis: List[UsedInput]): Doc = {
+    Doc.intercalate(
+      Doc.hardLine + Doc.hardLine,
+      List(
+        Doc.text("package gql.client.generated"),
+        Doc.intercalate(
+          Doc.hardLine,
+          List(
+            imp("_root_.gql.client.dsl._")
+          )
+        )
+      ) ++ uis.map(generateOneInput)
+    )
   }
 
-  def generateFor(
+  final case class Env(
       schema: Map[String, TypeDefinition],
+      fragmentInfos: Map[String, FragmentInfo]
+  ) {
+    def get(name: String): Option[TypeDefinition] = schema.get(name)
+  }
+
+  type Err[F[_]] = Handle[F, NonEmptyChain[String]]
+
+  def generateFor[F[_]](
+      env: Env,
       query: NonEmptyList[ExecutableDefinition[Pos]]
-  ): EitherNec[String, (Set[UsedInput], Doc)] = {
+  )(implicit E: Err[F], F: Applicative[F]): F[(Set[UsedInput], Doc)] = {
     type F[A] = WriterT[EitherT[Kleisli[Eval, Chain[String], *], NonEmptyChain[String], *], Set[UsedInput], A]
-    generateExecutableDefs[F](schema, query).run.value.run(Chain.empty).value
+    generateExecutableDefs[F](env, query).run.value.run(Chain.empty).value.fold(E.raise, F.pure)
   }
-
-  def generateWith(
-      schema: Map[String, TypeDefinition],
-      query: String
-  ): EitherNec[String, (Set[UsedInput], Doc)] =
-    gql.parser.parseQuery(query).leftFlatMap(_.prettyError.value.leftNec).flatMap(generateFor(schema, _))
 
   def getSchemaFrom(s: String): Either[String, Map[String, TypeDefinition]] =
     gql.parser.parseSchema(s).leftMap(_.prettyError.value).map(_.map(td => td.name -> td).toList.toMap)
@@ -634,16 +563,27 @@ object Generator {
       doc: Doc
   )
 
-  def generateForInput[F[_]: Async](
-      schema: Map[String, TypeDefinition],
-      i: Input
-  ): fs2.Stream[F, EitherNec[String, (Set[UsedInput], Output)]] =
+  def readInputData[F[_]](i: Input)(implicit
+      E: Err[F],
+      F: Async[F]
+  ): F[NonEmptyList[ExecutableDefinition[Pos]]] =
     Files[F]
       .readAll(i.query)
       .through(fs2.text.utf8.decode[F])
+      .compile
       .foldMonoid
-      .map(generateWith(schema, _))
-      .map(_.map { case (usedInputs, doc) => (usedInputs, Output(i.output, doc)) })
+      .flatMap(x => gql.parser.parseQuery(x).leftFlatMap(_.prettyError.value.leftNec).fold(E.raise, F.pure))
+
+  def generateForInput[F[_]: Async: Err](
+      env: Env,
+      i: Input
+  ): F[(Set[UsedInput], Output)] =
+    readInputData[F](i)
+      .flatMap(generateFor(env, _))
+      .map { case (usedInputs, doc) => (usedInputs, Output(i.output, doc)) }
+
+  def gatherFragInfo[F[_]: Async: Err](i: Input): F[List[FragmentInfo]] =
+    readInputData[F](i).map(gatherFragmentInfos(_))
 
   def writeStream[F[_]: Async](path: Path, doc: Doc) =
     fs2.Stream
@@ -652,45 +592,33 @@ object Generator {
       .through(fs2.text.utf8.encode)
       .through(Files[F].writeAll(path))
 
-  def readAndGenerate[F[_]](schemaPath: Path, sharedPath: Path)(
-      data: fs2.Stream[F, Input]
-  )(implicit F: Async[F]): F[List[String]] =
+  def readSchema[F[_]](schemaPath: Path)(implicit E: Err[F], F: Async[F]): F[Map[String, TypeDefinition]] =
     Files[F]
       .readAll(schemaPath)
       .through(fs2.text.utf8.decode[F])
       .compile
       .foldMonoid
-      .map(getSchemaFrom)
-      .flatMap {
-        case Left(e) => F.pure(List(s"failed to parse schema at $schemaPath with error $e"))
-        case Right(s) =>
-          data
-            .flatMap(generateForInput[F](s, _))
-            .evalMap[F, Validated[List[String], Set[UsedInput]]] {
-              case Left(e)          => F.pure(e.toList.invalid)
-              case Right((used, x)) => writeStream[F](x.path, x.doc).compile.drain.as(used.valid)
-            }
-            .compile
-            .foldMonoid
-            .flatMap(_.toEither match {
-              case Left(e) => F.pure(e.toList)
-              case Right(inputs) =>
-                inputs.toList.toNel.traverse_ { nel =>
-                  val d = Doc.intercalate(
-                    Doc.hardLine + Doc.hardLine,
-                    List(
-                      Doc.text("package gql.client.generated"),
-                      Doc.intercalate(
-                        Doc.hardLine,
-                        List(
-                          imp("_root_.gql.client.dsl._")
-                        )
-                      )
-                    ) ++ generateInput(nel.toList)
-                  )
+      .flatMap(s => getSchemaFrom(s).fold(s => E.raise(NonEmptyChain.one(s)), F.pure))
 
-                  writeStream[F](sharedPath, d).compile.drain
-                } as Nil
-            })
-      }
+  def readEnv[F[_]: Async: Err](schema: Path)(data: List[Input]): F[Env] =
+    readSchema[F](schema).flatMap { m =>
+      data
+        .flatTraverse(gatherFragInfo[F])
+        .map(f => Env(m, f.map(fi => fi.name -> fi).toMap))
+    }
+
+  def readAndGenerate[F[_]](schemaPath: Path, sharedPath: Path)(
+      data: List[Input]
+  )(implicit F: Async[F], E: Err[F]): F[Unit] =
+    readEnv[F](schemaPath)(data).flatMap { e =>
+      data
+        .flatTraverse { d =>
+          generateForInput[F](e, d)
+            .flatMap { case (used, x) => writeStream[F](x.path, x.doc).compile.drain.as(used.toList) }
+        }
+        .flatMap(_.distinct.toNel.traverse_(nel => writeStream[F](sharedPath, generateInputs(nel.toList)).compile.drain))
+    }
+
+  def mainGenerate[F[_]: Async](schemaPath: Path, sharedPath: Path)(data: List[Input]): F[List[String]] =
+    readAndGenerate[EitherT[F, NonEmptyChain[String], *]](schemaPath, sharedPath)(data).value.map(_.fold(_.toList, _ => Nil))
 }

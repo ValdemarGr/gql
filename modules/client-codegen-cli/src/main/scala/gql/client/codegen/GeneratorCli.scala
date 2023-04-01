@@ -78,17 +78,13 @@ object GeneratorCli
           .emits(kvs.toList)
           .lift[IO]
           .evalMap { i =>
-            Generator.readAndGenerate[IO](i.schema, i.shared) {
-              fs2.Stream
-                .emits(
-                  i.queries.toList.map(q =>
-                    Generator.Input(
-                      q.query,
-                      q.output
-                        .getOrElse(q.query.parent.get / (q.query.fileName.toString + ".scala"))
-                    )
-                  )
+            Generator.mainGenerate[IO](i.schema, i.shared) {
+              i.queries.toList.map { q =>
+                Generator.Input(
+                  q.query,
+                  q.output.getOrElse(q.query.parent.get / (q.query.fileName.toString + ".scala"))
                 )
+              }
             }
           }
           .compile
