@@ -262,7 +262,7 @@ object Generator {
   }
 
   def generateSelection[F[_]: Parallel](
-      typename: String,
+      td: TypeDefinition,
       companionName: String,
       env: Env,
       fieldMap: Map[String, FieldDefinition],
@@ -284,7 +284,7 @@ object Generator {
       case frag: Selection.FragmentSpreadSelection[Pos] =>
         val fs = frag.fragmentSpread
         def wrap(s: String): String =
-          if (env.fragmentInfos.get(fs.fragmentName).exists(fi => env.subtypesOf(fi.on).contains(typename)))
+          if (env.fragmentInfos.get(fs.fragmentName).exists(fi => env.subtypesOf(fi.on).contains(td.name)))
             s
           else s"Option[$s]"
 
@@ -300,14 +300,17 @@ object Generator {
         val ss = ilf.selectionSet.selections.map(_.value)
         val cnd = ilf.typeCondition.get
 
+        val sts = env.subtypesOf(cnd)
+
         def wrap(s: String): String =
-          if (env.subtypesOf(cnd).contains(typename))
+          if (sts.contains(td.name))
             s
           else s"Option[$s]"
 
         val name = s"Inline${cnd}"
         in(s"inline-fragment-${cnd}") {
-          generateTypeDef[F](env, name, cnd, ss, Some(ContextInfo.Fragment(None, cnd, Nil)))
+          // We'd like to match every concrete subtype of the inline fragment's type condition (since typename in the result becomes concrete)
+          generateTypeDef[F](env, name, cnd, ss, Some(ContextInfo.Fragment(None, cnd, (env.concreteSubtypesOf(cnd) - td.name).toList)))
             .map { p =>
               FieldPart(
                 scalaField(toCaml(name), s"Option[${companionName}.${name}]"),
@@ -347,7 +350,7 @@ object Generator {
 
           fieldMapF.flatMap { fm =>
             sels
-              .parTraverse(generateSelection[F](typename, name, env, fm + ("__typename" -> tn), _))
+              .parTraverse(generateSelection[F](td, name, env, fm + ("__typename" -> tn), _))
               .map { parts =>
                 Part(
                   name,
@@ -425,7 +428,7 @@ object Generator {
             f2.name,
             f2.typeCnd,
             f2.selectionSet.selections.map(_.value),
-            Some(ContextInfo.Fragment(Some(f2.name), f2.typeCnd, Nil))
+            Some(ContextInfo.Fragment(Some(f2.name), f2.typeCnd, (env.concreteSubtypesOf(f2.typeCnd) - f2.typeCnd).toList))
           )
         }
 
@@ -570,6 +573,12 @@ object Generator {
       .fmap(_.toSet)
 
     def subtypesOf(abs: String): Set[String] = subtypeRelations.getOrElse(abs, Set.empty)
+
+    def concreteSubtypesOf(abs: String): Set[String] =
+      subtypesOf(abs).filter(schema(_) match {
+        case _: TypeDefinition.ObjectTypeDefinition => true
+        case _                                      => false
+      })
   }
 
   type Err[F[_]] = Handle[F, NonEmptyChain[String]]
