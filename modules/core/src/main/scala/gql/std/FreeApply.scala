@@ -18,6 +18,7 @@ package gql.std
 import cats._
 import cats.implicits._
 import cats.data._
+import scala.annotation.nowarn
 
 sealed abstract class FreeApply[F[_], +A] extends Product with Serializable {
   def foldMap[G[_], B >: A](fk: F ~> G)(implicit G: Apply[G]): G[B] =
@@ -29,17 +30,20 @@ sealed abstract class FreeApply[F[_], +A] extends Product with Serializable {
       def apply[A](fa: F[A]): Const[M, A] = Const(fk(fa))
     }).getConst
 
+  @nowarn
   def analyze_[M: Semigroup](fold: F[?] => M): M =
     foldMap[Const[M, *], A](new (F ~> Const[M, *]) {
       def apply[A](fa: F[A]): Const[M, A] = Const(fold(fa))
     }).getConst
 
+  @nowarn
   def enumerate: NonEmptyChain[F[?]] =
     analyze_(fa => NonEmptyChain.one(fa))
 }
 
 object FreeApply {
   def foldMap[F[_], G[_], A](fa: FreeApply[F, A])(fk: F ~> G)(implicit G: Apply[G]): G[A] = {
+    @nowarn
     def go[B](fa: FreeApply[F, B]): Eval[G[B]] = Eval.defer {
       fa match {
         case Lift(fa)            => Eval.now(G.map(fk(fa))(x => x))

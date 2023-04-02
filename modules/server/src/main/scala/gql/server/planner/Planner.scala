@@ -179,7 +179,6 @@ object Planner {
           val baseEnds = tree.endTimes
           val childrenV = tree.childrenLookup
           val lookupV = tree.lookup
-          val childBatchesV = tree.childBatches
 
           val maxEnd = baseEnds.lookup.values.maxOption.get
 
@@ -198,26 +197,6 @@ object Planner {
             }
 
           val movedDown = tree.roots.map(_.id).traverse_(moveDown).runS(Plan.empty).value
-
-          final case class PlannerState(
-              moved: Map[NodeId, Double],
-              batches: Map[Step.BatchKey[?, ?], TreeSet[Double]]
-          )
-
-          final case class NodeState(
-              moveUpperbound: Double,
-              batchUpperbound: Option[Double],
-              currentCost: Double
-          )
-
-          case class TetrisState(
-          )
-
-          case class NodeSubtreeStats(
-              id: NodeId,
-              batch: Step.BatchKey[?, ?],
-              subtree: Children
-          )
 
           // Run though orderd by end time (smallest first)
           // Then move up to furthest batchable neighbour

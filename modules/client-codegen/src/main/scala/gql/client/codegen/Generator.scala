@@ -472,21 +472,21 @@ object Generator {
         val companionParts = names.map { e =>
           Doc.text("case object ") + Doc.text(e) + Doc.text(" extends ") + Doc.text(x.name)
         } ++ List(Doc.hardLine) ++ List(
-          Doc.text("implicit val circeDecoder = io.circe.Decoder.decodeString.emap") +
+          Doc.text(s"implicit val circeDecoder: io.circe.Decoder[${x.name}] = io.circe.Decoder.decodeString.emap") +
             hardIntercalateBracket('{') {
               names.map { e =>
                 Doc.text("case ") + quoted(e) + Doc.text(s" => Right($e)")
               } ++ List(Doc.text(s"""case x => Left(s"Unknown enum value for ${x.name}: $$x")"""))
             }('}')
         ) ++ List(Doc.hardLine) ++ List(
-          Doc.text(s"implicit val circeEncoder = io.circe.Encoder.encodeString.contramap[${x.name}]") +
+          Doc.text(s"implicit val circeEncoder: io.circe.Encoder[${x.name}] = io.circe.Encoder.encodeString.contramap[${x.name}]") +
             hardIntercalateBracket('{') {
               names.map { e =>
                 Doc.text("case ") + Doc.text(e) + Doc.text(s" => ") + quoted(e)
               }
             }('}')
         ) ++ List(Doc.hardLine) ++ List(
-          Doc.text(s"implicit val typenameInstance = typename[${x.name}](") +
+          Doc.text(s"implicit val typenameInstance: Typename[${x.name}] = typename[${x.name}](") +
             quoted(x.name) + Doc.char(')')
         )
 
@@ -516,7 +516,9 @@ object Generator {
         )(')')
 
         val companionParts = List(
-          Doc.text(s"implicit val circeEncoder = io.circe.Encoder.AsObject.instance[${x.name}]{ a => ") +
+          Doc.text(
+            s"implicit val circeEncoder: io.circe.Encoder.AsObject[${x.name}] = io.circe.Encoder.AsObject.instance[${x.name}]{ a => "
+          ) +
             (
               Doc.hardLine +
                 Doc
@@ -535,7 +537,7 @@ object Generator {
             )
               .nested(2)
               .grouped + Doc.hardLine + Doc.char('}') + Doc.hardLine,
-          Doc.text(s"implicit val typenameInstance = typename[${x.name}](") +
+          Doc.text(s"implicit val typenameInstance: Typename[${x.name}] = typename[${x.name}](") +
             quoted(x.name) + Doc.char(')')
         )
 

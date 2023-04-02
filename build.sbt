@@ -65,6 +65,15 @@ lazy val sharedSettings = Seq(
   mimaReportSignatureProblems := false,
   mimaFailOnProblem := false,
   mimaPreviousArtifacts := Set.empty,
+  scalacOptions ++= {
+    if (scalaVersion.value.startsWith("2")) {
+      Seq(
+        "-Wunused:-nowarn",
+        "-Wconf:cat=unused-nowarn:s",
+        "-Ywarn-unused:-nowarn"
+      )
+    } else Seq.empty
+  },
   libraryDependencies ++= Seq(
     "org.typelevel" %% "cats-effect" % "3.3.14",
     "org.typelevel" %% "cats-collections-core" % "0.9.4",
@@ -81,9 +90,7 @@ lazy val sharedSettings = Seq(
     "org.typelevel" %% "paiges-core" % "0.4.2",
     "org.scalameta" %% "munit" % "1.0.0-M6" % Test,
     "org.typelevel" %% "munit-cats-effect" % "2.0.0-M3" % Test
-  ),
-  tlFatalWarnings := false,
-  tlFatalWarningsInCi := false
+  )
 )
 
 lazy val parser = project
