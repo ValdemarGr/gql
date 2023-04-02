@@ -15,7 +15,7 @@
  */
 package gql.client
 
-import gql.parser.{QueryAst => P, Value => V}
+import gql.parser.{QueryAst => P}
 import io.circe._
 import org.typelevel.paiges._
 import cats.implicits._
@@ -24,8 +24,8 @@ import cats.data._
 import gql.client.Selection.Fragment
 import gql.client.Selection.Field
 import gql.client.Selection.InlineFragment
-import gql.parser.TypeSystemAst
-import gql.SchemaShape
+//import gql.parser.TypeSystemAst
+//import gql.SchemaShape
 import gql.parser.GraphqlRender
 import io.circe.syntax._
 
@@ -35,14 +35,16 @@ final case class SimpleQuery[A](
 ) {
   def compile: Query.Compiled[A] = Query.Compiled(
     Query.queryDecoder(selectionSet),
-    Query.renderQuery(this)
+    Query.renderQuery(this),
+    this
   )
 }
 
 final case class NamedQuery[A](name: String, query: SimpleQuery[A]) {
   def compile: Query.Compiled[A] = Query.Compiled(
     Query.queryDecoder(query.selectionSet),
-    Query.renderQuery(query, name.some)
+    Query.renderQuery(query, name.some),
+    query
   )
 }
 
@@ -54,6 +56,7 @@ final case class ParameterizedQuery[A, V](
   def compile(v: V): Query.Compiled[A] = Query.Compiled(
     Query.queryDecoder(query.selectionSet),
     Query.renderQuery(query, name.some, variables.written.map(_.toList)),
+    query,
     variables.value.encodeObject(v).some
   )
 }
@@ -62,6 +65,7 @@ object Query {
   final case class Compiled[A](
       decoder: Decoder[A],
       query: String,
+      origin: SimpleQuery[A],
       variables: Option[JsonObject] = None
   ) {
     def toJson: JsonObject = JsonObject.fromMap(
@@ -70,13 +74,13 @@ object Query {
         "variables" -> variables.map(_.asJson)
       ).collect { case (k, Some(v)) => k -> v }
     )
-
+    /*
     def validate(schema: SchemaShape[fs2.Pure, ?, ?, ?]) = {
       // Consider folding into the query ast instead of a string
       // Then render the ast to a string
       // Or pass the ast to the preparation function
-      gql.parser.parseQuery(query)
-    }
+      val frags = findFragments(origin.selectionSet)
+    }*/
   }
 
   def matchAlias(typename: String): String =

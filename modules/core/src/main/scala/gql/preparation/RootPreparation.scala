@@ -1,21 +1,20 @@
 package gql.preparation
 
-import cats.implicits._
-import io.circe._
 import cats._
 import cats.data._
-import gql.parser.{QueryAst => QA, Value => V, AnyValue, Const}
-import gql.SchemaShape
-import gql.ModifierStack
-import gql.InverseModifierStack
-import gql.Modifier
-import gql.InverseModifier
-import cats.mtl.Local
-import gql.Cursor
-import cats.mtl.Stateful
-import java.lang
-import scala.collection.immutable
+import cats.implicits._
 import cats.mtl.Listen
+import cats.mtl.Local
+import cats.mtl.Stateful
+import gql.Cursor
+import gql.InverseModifier
+import gql.InverseModifierStack
+import gql.ModifierStack
+import gql.SchemaShape
+import gql.parser.Const
+import gql.parser.{QueryAst => QA}
+import gql.parser.{Value => V}
+import io.circe._
 
 trait RootPreparation[F[_], G[_], P[_]] {
   def pickRootOperation(

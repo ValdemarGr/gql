@@ -15,7 +15,6 @@
  */
 package gql.resolver
 
-import gql._
 import gql.parser.{QueryAst => P}
 import gql.Cursor
 import gql.preparation.VariableMap

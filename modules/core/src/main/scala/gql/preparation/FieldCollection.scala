@@ -1,21 +1,18 @@
 package gql.preparation
 
-import gql.parser.{QueryAst => QA, Value => V, AnyValue, Const}
-import cats.data._
-import io.circe._
-import cats.mtl._
 import cats._
+import cats.data._
 import cats.implicits._
-import gql.parser.QueryAst
-import gql.parser.Pos
-import gql.ast._
+import cats.mtl._
+import cats.parse.Caret
 import gql.Arg
+import gql.Cursor
 import gql.InverseModifierStack
 import gql.SchemaShape
-import gql.ModifierStack
-import gql.Cursor
-import cats.parse.Caret
-import cats.arrow.FunctionK
+import gql.ast._
+import gql.parser.Pos
+import gql.parser.QueryAst
+import gql.parser.{QueryAst => QA}
 
 trait FieldCollection[F[_], G[_], P[_], C] {
   def matchType(

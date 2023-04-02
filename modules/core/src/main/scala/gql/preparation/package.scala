@@ -1,18 +1,12 @@
 package gql
 
-import gql.parser.{QueryAst => QA, Value => V, AnyValue, Const}
 import cats.data._
-import io.circe._
-import cats.mtl._
-import cats._
-import cats.implicits._
-import gql.parser.QueryAst
-import gql.parser.Pos
-import gql.ast._
 import gql.Arg
-import gql.InverseModifierStack
-import gql.ModifierStack
+import gql.parser.AnyValue
+import gql.parser.Const
+import gql.parser.{Value => V}
 import gql.resolver._
+import io.circe._
 
 package object preparation {
   final case class Variable(

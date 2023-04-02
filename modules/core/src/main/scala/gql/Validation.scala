@@ -24,7 +24,6 @@ import gql.parser.GraphqlParser
 import gql.preparation.PositionalError
 import gql.preparation.ArgParsing
 import gql.preparation.RootPreparation
-import gql.preparation.FieldCollection
 import gql.preparation.FieldMerging
 
 object Validation {
