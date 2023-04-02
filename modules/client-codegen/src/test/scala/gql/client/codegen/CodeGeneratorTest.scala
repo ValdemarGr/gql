@@ -20,7 +20,7 @@ import munit.CatsEffectSuite
 class CodeGeneratorTest extends CatsEffectSuite {
   //import Generator._
   test("test the code-gen") {
-   /* val o = getSchemaFrom(testSchema).flatMap(generateWith(_, testQuery))
+    /* val o = getSchemaFrom(testSchema).flatMap(generateWith(_, testQuery))
 
     println(o.map(_._2.render(80)))*/
   }

@@ -20,7 +20,6 @@ import cats._
 import cats.implicits._
 import gql.std.FreeApply
 import gql.parser.{QueryAst => P}
-import gql.std.Sourced
 
 /*
  * A SubQuery is either:
@@ -95,17 +94,11 @@ object Selection {
   final case class Fragment[A](
       name: String,
       on: String,
-      matchAlso: Chain[String],
       subSelection: SelectionSet[A]
-  ) extends Selection[Option[A]] {
-    val matchAlsoSet: Set[String] = matchAlso.toList.toSet
-  }
+  ) extends Selection[Option[A]]
 
   final case class InlineFragment[A](
       on: String,
-      matchAlso: Chain[String],
       subSelection: SelectionSet[A]
-  ) extends Selection[Option[A]] {
-    val matchAlsoSet: Set[String] = matchAlso.toList.toSet
-  }
+  ) extends Selection[Option[A]]
 }

@@ -35,11 +35,11 @@ object dsl {
   def sel[A](fieldName: String, alias: String, argHd: P.Argument, argTl: P.Argument*)(implicit sq: SubQuery[A]): SelectionSet[A] =
     SelectionSet.lift(Selection.Field(fieldName, Some(alias), argHd :: argTl.toList, sq))
 
-  def inlineFrag[A](on: String, matchAlso: String*)(implicit q: SelectionSet[A]): SelectionSet[Option[A]] =
-    SelectionSet.lift(Selection.InlineFragment(on, Chain.fromSeq(matchAlso), q))
+  def inlineFrag[A](on: String)(implicit q: SelectionSet[A]): SelectionSet[Option[A]] =
+    SelectionSet.lift(Selection.InlineFragment(on, q))
 
-  def fragment[A](name: String, on: String, matchAlso: String*)(implicit q: SelectionSet[A]): SelectionSet[Option[A]] =
-    SelectionSet.lift(Selection.Fragment(name, on, Chain.fromSeq(matchAlso), q))
+  def fragment[A](name: String, on: String)(implicit q: SelectionSet[A]): SelectionSet[Option[A]] =
+    SelectionSet.lift(Selection.Fragment(name, on, q))
 
   def list[A](implicit sq: SubQuery[A]): SubQuery[List[A]] = ListModifier(sq)
 
@@ -108,11 +108,9 @@ object dsl {
     def required: SelectionSet[A] =
       q.emap(_.toRight("Required field was null"))
 
-    def requiredFragment(name: String, on: String, matchAlso: String*): SelectionSet[A] =
-      (sel[Option[String]]("__typename"), q).tupled.emap { case (tn, oa) =>
-        oa.toRight(s"Expected fragment '${name}' to match at-least one of the following typenames ${(on :: matchAlso.toList)
-          .map(x => s"`$x`")
-          .mkString(", ")}, but the typename `${tn.getOrElse("null")}` was found.")
+    def requiredFragment(name: String, on: String): SelectionSet[A] =
+      (sel[String]("__typename"), q).tupled.emap { case (tn, oa) =>
+        oa.toRight(s"Expected fragment '${name}' to match the typename `${on}`, but the typename `${tn}` was found.")
       }
   }
 }

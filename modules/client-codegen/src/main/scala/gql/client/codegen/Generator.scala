@@ -66,8 +66,7 @@ object Generator {
   object ContextInfo {
     final case class Fragment(
         fragmentName: Option[String],
-        typeCnd: String,
-        extraMatches: List[String]
+        typeCnd: String
     ) extends ContextInfo
     final case class Operation(
         op: OperationType,
@@ -102,7 +101,7 @@ object Generator {
       val fullCodec = contextInfo match {
         case None => codecImplicit + codecSelection
         case Some(fi: ContextInfo.Fragment) =>
-          val args = fi.fragmentName.toList ++ List(fi.typeCnd) ++ fi.extraMatches
+          val args = fi.fragmentName.toList ++ List(fi.typeCnd)
 
           val fragType = fi.fragmentName.as("fragment").getOrElse("inlineFrag")
 
@@ -291,9 +290,7 @@ object Generator {
           case Some((x, so)) if so.contains(td.name) =>
             (
               fs.fragmentName,
-              Doc.text(".requiredFragment") + params(
-                quoted(x.name) :: quoted(x.on) :: (env.concreteSubtypesOf(x.on) - x.on).toList.map(quoted)
-              )
+              Doc.text(".requiredFragment") + params(quoted(x.name) :: quoted(x.on) :: Nil)
             )
           case _ => (optTn, Doc.empty)
         }
@@ -316,17 +313,15 @@ object Generator {
 
         val so = env.subtypesOf(cnd)
 
-        val extras = env.concreteSubtypesOf(cnd) - cnd
-
         val (tn, suf) =
           if (so.contains(td.name))
-            (fn, Doc.text(".requiredFragment") + params(quoted(name) :: quoted(cnd) :: extras.toList.map(quoted)))
+            (fn, Doc.text(".requiredFragment") + params(quoted(name) :: quoted(cnd) :: Nil))
           else
             (s"Option[$fn]", Doc.empty)
 
         in(s"inline-fragment-${cnd}") {
           // We'd like to match every concrete subtype of the inline fragment's type condition (since typename in the result becomes concrete)
-          generateTypeDef[F](env, name, cnd, ss, Some(ContextInfo.Fragment(None, cnd, extras.toList)))
+          generateTypeDef[F](env, name, cnd, ss, Some(ContextInfo.Fragment(None, cnd)))
             .map { p =>
               FieldPart(
                 scalaField(toCaml(name), tn),
@@ -444,7 +439,7 @@ object Generator {
             f2.name,
             f2.typeCnd,
             f2.selectionSet.selections.map(_.value),
-            Some(ContextInfo.Fragment(Some(f2.name), f2.typeCnd, (env.concreteSubtypesOf(f2.typeCnd) - f2.typeCnd).toList))
+            Some(ContextInfo.Fragment(Some(f2.name), f2.typeCnd))
           )
         }
 

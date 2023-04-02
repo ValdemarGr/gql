@@ -79,6 +79,9 @@ object Query {
     }
   }
 
+  def matchAlias(typename: String): String =
+    s"__matchedOn$typename"
+
   object Compiled {
     implicit def enc[A]: io.circe.Encoder.AsObject[Query.Compiled[A]] =
       io.circe.Encoder.AsObject.instance[Query.Compiled[A]](_.toJson)
@@ -141,12 +144,11 @@ object Query {
       case ss: SelectionSet[A]   => decoderForSelectionSet(ss)
     }
 
-    def decoderForFragment[A](on: String, also: Set[String], ss: SelectionSet[A]): Decoder[Option[A]] = {
+    def decoderForFragment[A](on: String, ss: SelectionSet[A]): Decoder[Option[A]] = {
       Decoder.instance { cursor =>
-        cursor.get[String]("__typename").flatMap { tn =>
-          if (on === tn || also.contains(tn)) cursor.as(decoderForSelectionSet(ss)).map(_.some)
-          else cursor.as(Decoder.const(None))
-        }
+        cursor
+          .get[Option[String]](matchAlias(on))
+          .flatMap(_.traverse(_ => cursor.as(decoderForSelectionSet(ss))))
       }
     }
 
@@ -157,8 +159,8 @@ object Query {
             case f: Selection.Field[a] =>
               val name = f.alias.getOrElse(f.fieldName)
               Decoder.instance(_.get(name)(decoderForSubQuery(f.subQuery)))
-            case f: Fragment[a]       => decoderForFragment(f.on, f.matchAlsoSet, f.subSelection)
-            case f: InlineFragment[a] => decoderForFragment(f.on, f.matchAlsoSet, f.subSelection)
+            case f: Fragment[a]       => decoderForFragment(f.on, f.subSelection)
+            case f: InlineFragment[a] => decoderForFragment(f.on, f.subSelection)
           }
         }
       }
@@ -207,13 +209,16 @@ object Query {
     def renderArg(a: P.Argument): Doc =
       Doc.text(a.name) + Doc.char(':') + Doc.space + GraphqlRender.renderValue(a.value)
 
+    def matchTypename(on: String): SelectionSet[String] =
+      dsl.sel[String]("__typename", matchAlias(on))
+
     def renderSelectionSet(ss: SelectionSet[?]): Doc = {
       val docs = ss.impl.enumerate.toList.map {
         // Fragments are floated to the top level and handled separately
         case f: Fragment[?] =>
           Doc.text(s"...${f.name}")
-        case InlineFragment(on, _, subSelection) =>
-          Doc.text(s"...$on") + Doc.space + renderSelectionSet(subSelection)
+        case InlineFragment(on, subSelection) =>
+          Doc.text(s"...$on") + Doc.space + renderSelectionSet(subSelection <* matchTypename(on))
         case Selection.Field(name, alias, args, sq) =>
           val aliased = alias match {
             case None    => Doc.empty
@@ -238,13 +243,13 @@ object Query {
 
           lhs + argsDoc + rhs
       }
-      Doc.intercalate(Doc.comma + Doc.line, Doc.text("__typename") :: docs).bracketBy(Doc.char('{'), Doc.char('}'))
+      Doc.intercalate(Doc.comma + Doc.line, docs).bracketBy(Doc.char('{'), Doc.char('}'))
     }
 
     def renderFragment(frag: Fragment[?]): Doc =
       Doc.text("fragment") + Doc.space +
         Doc.text(frag.name) + Doc.space +
         Doc.text("on") + Doc.space + Doc.text(frag.on) + Doc.space +
-        renderSelectionSet(frag.subSelection)
+        renderSelectionSet(frag.subSelection <* matchTypename(frag.on))
   }
 }
