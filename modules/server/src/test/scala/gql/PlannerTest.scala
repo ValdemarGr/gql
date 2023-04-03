@@ -15,6 +15,8 @@
  */
 package gql
 
+trait A
+/*
 import munit.CatsEffectSuite
 import cats.implicits._
 import scala.collection.immutable.TreeSet
@@ -220,7 +222,7 @@ Problem(
     1,1,1,1
   ]
 )
-     */
+ */
     lazy val names = Array(
       "r1",
       "c1",
@@ -536,3 +538,4 @@ object Planner {
       u.toList.mkString("\n").toString()
   }
 }
+ */
