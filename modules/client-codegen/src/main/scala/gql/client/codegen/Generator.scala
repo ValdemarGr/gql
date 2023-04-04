@@ -62,6 +62,15 @@ object Generator {
   def params(xs: List[Doc]): Doc =
     Doc.intercalate(Doc.comma + Doc.space, xs).tightBracketBy(Doc.char('('), Doc.char(')'))
 
+  def optUnless(cond: Boolean)(tpe: String): String =
+    if (cond) tpe else s"Option[${tpe}]"
+
+  final case class QVar(
+      varDecl: Doc,
+      name: String,
+      scalaType: String,
+      isOption: Boolean
+  )
   sealed trait ContextInfo
   object ContextInfo {
     final case class Fragment(
@@ -126,16 +135,52 @@ object Generator {
             s"_root_.gql.parser.QueryAst.OperationType.${operationType}"
 
           val vars = op.variables.map { v =>
-            val scalaType = ModifierStack.fromType(v.tpe).invert.showScala(identity)
+            val ims = ModifierStack.fromType(v.tpe).invert
+            val scalaType = ims.showScala(identity)
             val args = quoted(v.name) :: v.defaultValue.toList.map(generateValue(_, anyValue = false))
-            Doc.text("variable") + Doc.char('[') + Doc.text(scalaType) + Doc.char(']') + params(args)
+            QVar(
+              Doc.text("variable") + Doc.char('[') + Doc.text(scalaType) + Doc.char(']') + params(args),
+              v.name,
+              optUnless(v.defaultValue.isEmpty)(scalaType),
+              v.defaultValue.nonEmpty || ims.modifiers.headOption.contains(InverseModifier.Optional)
+            )
           }
 
-          val expr = vars.toNel match {
-            case None => codecSelection
+          val (expr, auxilaryType) = vars.toNel match {
+            case None => (codecSelection, None)
             case Some(vars) =>
-              hardIntercalateBracket('(', Doc.text(" ~"))(vars.toList)(')') + Doc.text(".introduce ") +
+              val decls = vars.toList.map(_.varDecl)
+
+              val (contraPart, contraType) = if (vars.size > 1) {
+                val auxilaryType = Doc.text(s"final case class Variables") +
+                  hardIntercalateBracket('(', Doc.comma)(vars.toList.map { q =>
+                    val optPart = if (q.isOption) Doc.text(" = None") else Doc.empty
+                    Doc.text(q.name) + Doc.char(':') + Doc.space + Doc.text(q.scalaType) + optPart
+                  })(')')
+
+                val types = ("(" * vars.size) + vars.map(_.name).toList.mkString("), ") + ")"
+
+                val unapplyPart =
+                  Doc.text("Variables(") + Doc.intercalate(Doc.text(", "), vars.toList.map(_.name).map(Doc.text)) + Doc.text(")")
+
+                val contra = Doc.text(s".contramap[Variables]") +
+                  hardIntercalate(
+                    Doc.text(s"{ case ") + unapplyPart + Doc.text(" =>"),
+                    Doc.hardLine + Doc.char('}'),
+                    List(Doc.text(types))
+                  )
+
+                (contra, Some(auxilaryType))
+              } else {
+                (Doc.empty, None)
+              }
+
+              val e = hardIntercalateBracket('(', Doc.text(" ~"))(decls)(')') +
+                contraPart +
+                Doc.text(".introduce ") +
                 hardIntercalate(Doc.text("{ _ =>"), Doc.hardLine + Doc.char('}'), List(codecSelection))
+
+              (e, contraType)
           }
 
           val queryExpr = Doc.text("val queryExpr = ") + expr
@@ -153,7 +198,8 @@ object Generator {
           val compiled = Doc.text("val query = ") +
             Doc.text("_root_.gql.client.Query.") + queryPrefix + hardIntercalateBracket('(', Doc.comma)(args)(')')
 
-          queryExpr +
+          auxilaryType.map(_ + Doc.hardLine + Doc.hardLine).getOrElse(Doc.empty) +
+            queryExpr +
             Doc.hardLine +
             Doc.hardLine +
             compiled

@@ -52,6 +52,9 @@ final case class Var[V, B](
   def ~[C, D](that: Var[C, D]): Var[(V, C), (B, D)] =
     Var(Var.Impl.product(impl, that.impl), (variableNames, that.variableNames))
 
+  def contramap[C](f: C => V): Var[C, B] =
+    Var(impl.map(_.contramapObject(f)), variableNames)
+
   def introduce[A](f: B => SelectionSet[A]): VariableClosure[A, V] =
     VariableClosure(impl, f(variableNames))
 
@@ -74,13 +77,14 @@ object Var {
       )
   }
 
-  implicit def contravariantForVar[B]: Contravariant[Var[*, B]] = {
-    type G[A] = Var[A, B]
-    new Contravariant[G] {
-      override def contramap[A, B](fa: G[A])(f: B => A): G[B] =
-        Var(fa.impl.map(_.contramapObject(f)), fa.variableNames)
-    }
-  }
+  // Why does this not work?
+  // implicit def contravariantForVar[B]: Contravariant[Var[*, B]] = {
+  //   type G[A] = Var[A, B]
+  //   new Contravariant[G] {
+  //     override def contramap[A, B](fa: G[A])(f: B => A): G[B] =
+  //       Var(fa.impl.map(_.contramapObject(f)), fa.variableNames)
+  //   }
+  // }
 
   final case class One[A](
       name: VariableName[A],

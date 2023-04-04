@@ -90,7 +90,8 @@ lazy val sharedSettings = Seq(
     "org.typelevel" %% "paiges-core" % "0.4.2",
     "org.scalameta" %% "munit" % "1.0.0-M6" % Test,
     "org.typelevel" %% "munit-cats-effect" % "2.0.0-M3" % Test
-  )
+  ),
+  tlFatalWarnings := true
 )
 
 lazy val parser = project
@@ -155,6 +156,7 @@ lazy val testCodeGen = project
   .settings(sharedSettings)
   .dependsOn(clientCodegenCli)
   .dependsOn(client)
+  .dependsOn(server % "test->test")
   .settings(
     tlFatalWarnings := false,
     tlFatalWarningsInCi := false,
