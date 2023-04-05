@@ -63,6 +63,14 @@ object Generator {
   def params(xs: List[Doc]): Doc =
     Doc.intercalate(Doc.comma + Doc.space, xs).tightBracketBy(Doc.char('('), Doc.char(')'))
 
+  def caseClass[G[_]: Foldable](name: String, xs: G[Doc]): Doc =
+    Doc.text(s"final case class $name") +
+      hardIntercalateBracket('(', Doc.comma)(xs.toList)(')')
+
+  def obj[G[_]: Foldable](name: String, body: G[Doc]): Doc =
+    Doc.text("object") + Doc.space + Doc.text(name) + Doc.space +
+      hardIntercalateBracket('{', Doc.hardLine)(body.toList)('}')
+
   def optUnless(cond: Boolean)(tpe: String): String =
     if (cond) tpe else s"Option[${tpe}]"
 
@@ -92,8 +100,7 @@ object Generator {
   ) {
     // Yes yes, it is a fold
     def collapse: Doc = {
-      val tpe = Doc.text(s"final case class $name") +
-        hardIntercalateBracket('(', sep = Doc.comma)(typePart.toList)(')')
+      val tpe = caseClass(name, typePart)
 
       val codecSelection = hardIntercalateBracket('(', Doc.comma)(codec.toList)(')') +
         Doc.char('.') +
@@ -121,9 +128,7 @@ object Generator {
             hardIntercalate(
               Doc.empty,
               Doc.empty,
-              List(
-                invocation + Doc.space + hardIntercalateBracket('{')(List(codecSelection))('}')
-              )
+              List(invocation + Doc.space + hardIntercalateBracket('{')(List(codecSelection))('}'))
             )
         case Some(op: ContextInfo.Operation) =>
           val operationType = op.op match {
@@ -153,13 +158,14 @@ object Generator {
               val decls = vars.toList.map(_.varDecl)
 
               val (contraPart, contraType) = if (vars.size > 1) {
-                val auxilaryType = Doc.text(s"final case class Variables") +
-                  hardIntercalateBracket('(', Doc.comma)(vars.toList.map { q =>
-                    val optPart = if (q.isOption) Doc.text(" = None") else Doc.empty
-                    Doc.text(q.name) + Doc.char(':') + Doc.space + Doc.text(q.scalaType) + optPart
-                  })(')')
+                val ccBody = vars.toList.map { q =>
+                  val optPart = if (q.isOption) Doc.text(" = None") else Doc.empty
+                  Doc.text(q.name) + Doc.char(':') + Doc.space + Doc.text(q.scalaType) + optPart
+                }
 
-                val types = ("(" * vars.size) + vars.map(_.name).toList.mkString("), ") + ")"
+                val auxilaryType = caseClass("Variables", ccBody)
+
+                val tupleApply = ("(" * vars.size) + vars.map(_.name).toList.mkString("), ") + ")"
 
                 val unapplyPart =
                   Doc.text("Variables(") + Doc.intercalate(Doc.text(", "), vars.toList.map(_.name).map(Doc.text)) + Doc.text(")")
@@ -168,7 +174,7 @@ object Generator {
                   hardIntercalate(
                     Doc.text(s"{ case ") + unapplyPart + Doc.text(" =>"),
                     Doc.hardLine + Doc.char('}'),
-                    List(Doc.text(types))
+                    List(Doc.text(tupleApply))
                   )
 
                 (contra, Some(auxilaryType))
@@ -352,8 +358,11 @@ object Generator {
 
         val optTn = s"Option[${fs.fragmentName}]"
 
-        val (tn, suf) = (f.map(fi => fi -> env.subtypesOf(fi.on))) match {
-          case Some((x, so)) if so.contains(td.name) =>
+        // If the this type is a sub-type (more specific) of the fragment type
+        // That is, This <: Fragment.on
+        // Then the fragment result will always be present
+        val (tn, suf) = f.filter(fi => env.subtypesOf(fi.on).contains(td.name)) match {
+          case Some(x) =>
             (
               fs.fragmentName,
               Doc.text(".requiredFragment") + params(quoted(x.name) :: quoted(x.on) :: Nil)
@@ -377,10 +386,8 @@ object Generator {
 
         val fn = s"${companionName}.${name}"
 
-        val so = env.subtypesOf(cnd)
-
         val (tn, suf) =
-          if (so.contains(td.name))
+          if (env.subtypesOf(cnd).contains(td.name))
             (fn, Doc.text(".requiredFragment") + params(quoted(name) :: quoted(cnd) :: Nil))
           else
             (s"Option[$fn]", Doc.empty)
@@ -522,89 +529,93 @@ object Generator {
     }
   }
 
+  def generateEnumType(td: TypeDefinition.EnumTypeDefinition): Doc = {
+    val st = Doc.text(s"sealed trait ${td.name}")
+
+    val names = td.values.toList.map(_.name)
+
+    val companionParts = names.map { e =>
+      Doc.text("case object ") + Doc.text(e) + Doc.text(" extends ") + Doc.text(td.name)
+    } ++ List(Doc.hardLine) ++ List(
+      Doc.text(s"implicit val circeDecoder: io.circe.Decoder[${td.name}] = io.circe.Decoder.decodeString.emap") +
+        hardIntercalateBracket('{') {
+          names.map { e =>
+            Doc.text("case ") + quoted(e) + Doc.text(s" => Right($e)")
+          } ++ List(Doc.text(s"""case x => Left(s"Unknown enum value for ${td.name}: $$x")"""))
+        }('}')
+    ) ++ List(Doc.hardLine) ++ List(
+      Doc.text(s"implicit val circeEncoder: io.circe.Encoder[${td.name}] = io.circe.Encoder.encodeString.contramap[${td.name}]") +
+        hardIntercalateBracket('{') {
+          names.map { e =>
+            Doc.text("case ") + Doc.text(e) + Doc.text(s" => ") + quoted(e)
+          }
+        }('}')
+    ) ++ List(Doc.hardLine) ++ List(
+      Doc.text(s"implicit val typenameInstance: Typename[${td.name}] = typename[${td.name}](") +
+        quoted(td.name) + Doc.char(')')
+    )
+
+    val companion = obj(td.name, companionParts)
+
+    st + Doc.hardLine + companion
+  }
+
+  def generateInputType(td: TypeDefinition.InputObjectTypeDefinition): Doc = {
+    val fixedMods: List[(String, InverseModifierStack[String])] = td.inputFields.toList.map { f =>
+      val ms = ModifierStack.fromType(f.tpe).invert
+
+      // Add an option if the outermost modifier is not option and there is a default value
+      val ms2 = if (!ms.modifiers.contains(InverseModifier.Optional) && f.defaultValue.isDefined) {
+        ms.push(InverseModifier.Optional)
+      } else ms
+
+      f.name -> ms2
+    }
+
+    val ccFields = fixedMods.map { case (name, ms) =>
+      val isOpt = ms.modifiers.headOption.contains(InverseModifier.Optional)
+
+      Doc.text(name) + Doc.char(':') + Doc.space +
+        Doc.text(ms.showScala(identity)) + (if (isOpt) Doc.text(" = None") else Doc.empty)
+    }
+
+    val cc = caseClass(td.name, ccFields)
+
+    val companionParts = List(
+      Doc.text(
+        s"implicit val circeEncoder: io.circe.Encoder.AsObject[${td.name}] = io.circe.Encoder.AsObject.instance[${td.name}]{ a => "
+      ) +
+        (
+          Doc.hardLine +
+            Doc
+              .intercalate(
+                Doc.hardLine,
+                List(
+                  Doc.text("import io.circe.syntax._"),
+                  Doc.text("Map") +
+                    hardIntercalateBracket('(', sep = Doc.comma) {
+                      fixedMods.map { case (name, _) =>
+                        quoted(name) + Doc.text(" -> ") + Doc.text(s"a.$name.asJson")
+                      }
+                    }(')') + Doc.text(".asJsonObject")
+                )
+              )
+        )
+          .nested(2)
+          .grouped + Doc.hardLine + Doc.char('}') + Doc.hardLine,
+      Doc.text(s"implicit val typenameInstance: Typename[${td.name}] = typename[${td.name}](") +
+        quoted(td.name) + Doc.char(')')
+    )
+
+    val companion = obj(td.name, companionParts)
+
+    cc + Doc.hardLine + companion
+  }
+
   def generateOneInput(ui: UsedInput): Doc =
     ui match {
-      case Left(x) =>
-        val st = Doc.text(s"sealed trait ${x.name}")
-
-        val names = x.values.toList.map(_.name)
-
-        val companionParts = names.map { e =>
-          Doc.text("case object ") + Doc.text(e) + Doc.text(" extends ") + Doc.text(x.name)
-        } ++ List(Doc.hardLine) ++ List(
-          Doc.text(s"implicit val circeDecoder: io.circe.Decoder[${x.name}] = io.circe.Decoder.decodeString.emap") +
-            hardIntercalateBracket('{') {
-              names.map { e =>
-                Doc.text("case ") + quoted(e) + Doc.text(s" => Right($e)")
-              } ++ List(Doc.text(s"""case x => Left(s"Unknown enum value for ${x.name}: $$x")"""))
-            }('}')
-        ) ++ List(Doc.hardLine) ++ List(
-          Doc.text(s"implicit val circeEncoder: io.circe.Encoder[${x.name}] = io.circe.Encoder.encodeString.contramap[${x.name}]") +
-            hardIntercalateBracket('{') {
-              names.map { e =>
-                Doc.text("case ") + Doc.text(e) + Doc.text(s" => ") + quoted(e)
-              }
-            }('}')
-        ) ++ List(Doc.hardLine) ++ List(
-          Doc.text(s"implicit val typenameInstance: Typename[${x.name}] = typename[${x.name}](") +
-            quoted(x.name) + Doc.char(')')
-        )
-
-        val companion = Doc.text("object") + Doc.space + Doc.text(x.name) + Doc.space +
-          hardIntercalateBracket('{')(companionParts)('}')
-
-        st + Doc.hardLine + companion
-      case Right(x) =>
-        val fixedMods: List[(String, InverseModifierStack[String])] = x.inputFields.toList.map { f =>
-          val ms = ModifierStack.fromType(f.tpe).invert
-
-          // Add an option if the outermost modifier is not option and there is a default value
-          val ms2 = if (!ms.modifiers.contains(InverseModifier.Optional) && f.defaultValue.isDefined) {
-            ms.push(InverseModifier.Optional)
-          } else ms
-
-          f.name -> ms2
-        }
-
-        val cc = Doc.text("final case class ") + Doc.text(x.name) + hardIntercalateBracket('(', Doc.comma)(
-          fixedMods.map { case (name, ms) =>
-            val isOpt = ms.modifiers.headOption.contains(InverseModifier.Optional)
-
-            Doc.text(name) + Doc.char(':') + Doc.space +
-              Doc.text(ms.showScala(identity)) + (if (isOpt) Doc.text(" = None") else Doc.empty)
-          }
-        )(')')
-
-        val companionParts = List(
-          Doc.text(
-            s"implicit val circeEncoder: io.circe.Encoder.AsObject[${x.name}] = io.circe.Encoder.AsObject.instance[${x.name}]{ a => "
-          ) +
-            (
-              Doc.hardLine +
-                Doc
-                  .intercalate(
-                    Doc.hardLine,
-                    List(
-                      Doc.text("import io.circe.syntax._"),
-                      Doc.text("Map") +
-                        hardIntercalateBracket('(', sep = Doc.comma) {
-                          fixedMods.map { case (name, _) =>
-                            quoted(name) + Doc.text(" -> ") + Doc.text(s"a.$name.asJson")
-                          }
-                        }(')') + Doc.text(".asJsonObject")
-                    )
-                  )
-            )
-              .nested(2)
-              .grouped + Doc.hardLine + Doc.char('}') + Doc.hardLine,
-          Doc.text(s"implicit val typenameInstance: Typename[${x.name}] = typename[${x.name}](") +
-            quoted(x.name) + Doc.char(')')
-        )
-
-        val companion = Doc.text("object") + Doc.space + Doc.text(x.name) + Doc.space +
-          hardIntercalateBracket('{')(companionParts)('}')
-
-        cc + Doc.hardLine + companion
+      case Left(x)  => generateEnumType(x)
+      case Right(x) => generateInputType(x)
     }
 
   def generateInputs(env: Env, uis: List[UsedInput]): Doc = {
