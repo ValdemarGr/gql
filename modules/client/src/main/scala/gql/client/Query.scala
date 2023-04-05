@@ -222,7 +222,7 @@ object Query {
         case f: Fragment[?] =>
           Doc.text(s"...${f.name}")
         case InlineFragment(on, subSelection) =>
-          Doc.text(s"...$on") + Doc.space + renderSelectionSet(subSelection <* matchTypename(on))
+          Doc.text(s"... on $on") + Doc.space + renderSelectionSet(subSelection <* matchTypename(on))
         case Selection.Field(name, alias, args, sq) =>
           val aliased = alias match {
             case None    => Doc.empty

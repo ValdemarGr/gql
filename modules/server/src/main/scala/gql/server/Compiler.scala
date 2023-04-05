@@ -89,7 +89,7 @@ object Compiler {
         subscriptionInput: F[S] = F.unit,
         debug: DebugPrinter[F] = DebugPrinter.noop[F],
         accumulate: Option[FiniteDuration] = Some(5.millis)
-    ) = compileWith(
+    ): Outcome[F] = compileWith(
       schema,
       QueryParameters(query, Some(variables), operationName),
       queryInput,

@@ -22,17 +22,24 @@ import gql._
 import gql.dsl._
 import gql.ast._
 import munit.CatsEffectSuite
-import cats.effect
-import gql.client.{Var, VariableName}
-import cats.Contravariant
+import org.http4s.client.Client
+import org.http4s.Request
 
 class GenTest extends CatsEffectSuite {
   import GenTest._
 
   lazy val sch = schema.unsafeRunSync()
 
-  test("") {
-    AlienQuery.query
+  test("should be able to use the generated query") {
+    val q = AlienQuery.query.compile(AlienQuery.Variables(name = "Colt"))
+    val client = Client.fromHttpApp[IO](
+      gql.http4s.Http4sRoutes.syncSimple[IO](qp => IO.pure(Right(Compiler[IO].compileWith(sch, qp)))).orNotFound
+    )
+
+    import gql.client.http4s.implicits._
+    import org.http4s.implicits._
+    val res = Request[IO](uri = uri"https://notreal.com/graphql").graphql(q, client)
+    res.map(aq => assert(aq.dog.isDefined))
   }
 }
 
@@ -138,6 +145,7 @@ object GenTest {
     "isHousetrained" -> lift(arg[Option[Boolean]]("atOtherHomes")) { case (x, y) => y.isHousetrained(x.getOrElse(false)) },
     "owner" -> lift(_.owner.flatMap(humanDatabase.get))
   ).addFields(petFields.toList: _*)
+    .subtypeOf[Pet]
 
   lazy val sentientFields = fields[IO, Sentient](
     "name" -> lift(_.name)
@@ -150,11 +158,13 @@ object GenTest {
     "Alien",
     "homePlanet" -> lift(_.homePlanet)
   ).addFields(sentientFields.toList: _*)
+    .subtypeOf[Sentient]
 
   implicit lazy val human: Type[IO, Human] = tpe[IO, Human](
     "Human",
     "pets" -> lift(_.pets.flatMap(dogDatabase.get))
   ).addFields(sentientFields.toList: _*)
+    .subtypeOf[Sentient]
 
   implicit lazy val catCommand: Enum[CatCommand] = enumType[CatCommand](
     "CatCommand",
@@ -167,6 +177,7 @@ object GenTest {
     "meowVolume" -> lift(_.meowVolume),
     "doesKnowCommand" -> lift(arg[CatCommand]("catCommand")) { case (x, y) => y.doesKnowCommand(x) }
   ).addFields(petFields.toList: _*)
+    .subtypeOf[Pet]
 
   implicit lazy val catOrDog: Union[IO, CatOrDog] = union[IO, CatOrDog]("CatOrDog")
     .variant[Cat] { case CatOrDog.CatType(x) => x }
@@ -188,13 +199,17 @@ object GenTest {
     ).mapN(FindDogInput.apply)
   )
 
-  def schema: IO[Schema[IO, Unit, Unit, Unit]] = Schema.query(
-    tpe[IO, Unit](
-      "Query",
-      "dog" -> lift(_ => dogDatabase("Colt")),
-      "findDog" -> lift(arg[FindDogInput]("findDogInput")) { case (x, _) =>
-        dogDatabase.get(x.name.getOrElse("Colt"))
-      }
-    )
+  def schema: IO[Schema[IO, Unit, Unit, Unit]] = Schema.simple(
+    SchemaShape
+      .make[IO](
+        tpe[IO, Unit](
+          "Query",
+          "dog" -> lift(_ => dogDatabase("Colt")),
+          "findDog" -> lift(arg[Option[FindDogInput]]("searchBy")) { case (x, _) =>
+            x.flatMap(y => dogDatabase.get(y.name.getOrElse("Colt")))
+          }
+        )
+      )
+      .addOutputTypes(cat)
   )
 }

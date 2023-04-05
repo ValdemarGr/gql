@@ -87,7 +87,7 @@ object FieldCollection {
           sel match {
             case t: Type[G, ?] =>
               // Check downcast
-              t.implementsMap.get(t.name) match {
+              t.implementsMap.get(name) match {
                 case None =>
                   raise(s"Tried to match with type `$name` on type object type `${sel.name}`.", List(caret))
                 case Some(i) => F.pure(i.value)

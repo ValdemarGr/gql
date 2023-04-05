@@ -1,4 +1,4 @@
-query AlienQuery($name: String!, $id: ID!, $struct: FindDogInput, $dogCommand: DogCommand! = DOWN) {
+query AlienQuery($name: String!, $struct: FindDogInput, $dogCommand: DogCommand! = DOWN) {
   dog {
     ... DogFragment
     ... on Dog {
@@ -17,6 +17,10 @@ query AlienQuery($name: String!, $id: ID!, $struct: FindDogInput, $dogCommand: D
   findDog2: findDog(searchBy: $struct) {
     ... DogFragment
     doesKnowCommand(dogCommand: $dogCommand)
+  }
+  findDog3: findDog(searchBy: { name: $name }) {
+    ... DogFragment
+    ... PetFrag
   }
 }
 
