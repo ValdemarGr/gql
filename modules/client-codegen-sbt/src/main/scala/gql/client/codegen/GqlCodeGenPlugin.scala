@@ -112,6 +112,9 @@ object GqlCodeGenPlugin extends AutoPlugin {
         resources.map { rg =>
           val f = base / rg.name
           IO.createDirectory(f)
+
+          val sh = (f / s"shared.scala")
+
           val queries = rg.files.map { in =>
             val fn = in.name.replaceAll("\\.", "_")
             val outFile = f / s"${fn}.scala"
@@ -120,7 +123,7 @@ object GqlCodeGenPlugin extends AutoPlugin {
 
           s"""{"schema":"${rg.schemaPath.absolutePath}","shared":"${(f / s"shared.scala").absolutePath}","queries":[${queries
             .map(_._1)
-            .mkString(",")}]}""" -> queries.map(_._2)
+            .mkString(",")}]}""" -> (queries.map(_._2) ++ Seq(sh))
         }
       },
       Gql.invokeCodeGen := {
