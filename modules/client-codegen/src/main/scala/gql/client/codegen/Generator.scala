@@ -29,6 +29,7 @@ import cats.mtl.Local
 import gql.parser.Pos
 import cats.mtl.Tell
 import cats.mtl.Handle
+import cats.mtl.Stateful
 
 object Generator {
   def modifyHead(f: Char => Char): String => String = { str =>
@@ -258,6 +259,16 @@ object Generator {
       F.raiseError[A](NonEmptyChain.one(msg + s" at ${path.toList.mkString(".")}"))
     }
 
+  def partitionEmittableInputDef[F[_]](env: Env, typename: String)(implicit F: Monad[F], U: UsedInputTypes[F]): F[Unit] =
+    env.get(typename).traverse_ {
+      case x: TypeDefinition.InputObjectTypeDefinition => U.tell(Set(Right(x)))
+      case x: TypeDefinition.EnumTypeDefinition        => U.tell(Set(Left(x)))
+      case _                                           => F.unit
+    }
+
+  def partitionEmittableInputType[F[_]](env: Env, tpe: gql.parser.Type)(implicit F: Monad[F], U: UsedInputTypes[F]): F[Unit] =
+    partitionEmittableInputDef[F](env, ModifierStack.fromType(tpe).inner)
+
   final case class FieldPart(
       typePart: Doc,
       // local case class and companion object, not present if the field is a fragment or terminal
@@ -271,38 +282,46 @@ object Generator {
       fd: FieldDefinition
   )(implicit
       P: CurrentPath[F],
+      U: UsedInputTypes[F],
       F: MonadError[F, NonEmptyChain[String]]
   ): F[FieldPart] = {
     val ms = ModifierStack.fromType(fd.tpe)
     val gqlName = f.alias.getOrElse(f.name)
     val n = toPascal(gqlName)
 
-    f.selectionSet.value
-      .map(_.selections.map(_.value))
-      .parTraverse(generateTypeDef[F](env, n, ms.inner, _, None))
-      .map { subPart =>
-        val argPart = f.arguments.toList.flatMap(_.nel.toList).map { x =>
-          Doc.text("arg") +
-            (
-              quoted(x.name) + Doc.char(',') + Doc.space + generateValue(x.value, anyValue = true)
-            ).tightBracketBy(Doc.char('('), Doc.char(')'))
+    val existsing = fd.argumentsDefinition.map(iv => iv.name -> iv).toMap
+    val provided = f.arguments.map(_.nel.toList).getOrElse(Nil).map(_.name).toSet
+    val existingProvided = existsing.view.filterKeys(provided.contains).toMap
+
+    val putUsedInputsF = existingProvided.values.toList.traverse_(x => partitionEmittableInputType[F](env, x.tpe))
+
+    putUsedInputsF &>
+      f.selectionSet.value
+        .map(_.selections.map(_.value))
+        .parTraverse(generateTypeDef[F](env, n, ms.inner, _, None))
+        .map { subPart =>
+          val argPart = f.arguments.toList.flatMap(_.nel.toList).map { x =>
+            Doc.text("arg") +
+              (
+                quoted(x.name) + Doc.char(',') + Doc.space + generateValue(x.value, anyValue = true)
+              ).tightBracketBy(Doc.char('('), Doc.char(')'))
+          }
+
+          val scalaTypeName = ms.invert
+            .copy(inner =
+              if (subPart.isDefined) s"${companionName}.${n}"
+              else ms.inner
+            )
+            .showScala(identity)
+
+          val clientSel = Doc.text("sel") +
+            Doc.text(scalaTypeName).tightBracketBy(Doc.char('['), Doc.char(']')) +
+            params(quoted(fd.name) :: f.alias.toList.map(quoted) ++ argPart)
+
+          val sf = scalaField(gqlName, scalaTypeName)
+
+          FieldPart(sf, subPart, clientSel)
         }
-
-        val scalaTypeName = ms.invert
-          .copy(inner =
-            if (subPart.isDefined) s"${companionName}.${n}"
-            else ms.inner
-          )
-          .showScala(identity)
-
-        val clientSel = Doc.text("sel") +
-          Doc.text(scalaTypeName).tightBracketBy(Doc.char('['), Doc.char(']')) +
-          params(quoted(fd.name) :: f.alias.toList.map(quoted) ++ argPart)
-
-        val sf = scalaField(gqlName, scalaTypeName)
-
-        FieldPart(sf, subPart, clientSel)
-      }
   }
 
   def generateSelection[F[_]: Parallel](
@@ -313,6 +332,7 @@ object Generator {
       sel: Selection[Pos]
   )(implicit
       P: CurrentPath[F],
+      U: UsedInputTypes[F],
       F: MonadError[F, NonEmptyChain[String]]
   ): F[FieldPart] = {
     sel match {
@@ -387,6 +407,7 @@ object Generator {
       contextInfo: Option[ContextInfo]
   )(implicit
       P: CurrentPath[F],
+      U: UsedInputTypes[F],
       F: MonadError[F, NonEmptyChain[String]]
   ): F[Part] = {
     env.get(typename) match {
@@ -453,14 +474,7 @@ object Generator {
           case d: OperationDefinition.Detailed[Pos] =>
             in(s"operation-${d.name.get}") {
               val vds = d.variableDefinitions.toList.flatMap(_.nel.toList).map(_.value)
-              val usedF = vds
-                .map(vd => ModifierStack.fromType(vd.tpe).inner)
-                .mapFilter(env.get)
-                .traverse_ {
-                  case x: TypeDefinition.InputObjectTypeDefinition => U.tell(Set(Right(x)))
-                  case x: TypeDefinition.EnumTypeDefinition        => U.tell(Set(Left(x)))
-                  case _                                           => F.unit
-                }
+              val usedF = vds.traverse_(vd => partitionEmittableInputType[F](env, vd.tpe))
 
               usedF *>
                 generateTypeDef[F](
@@ -593,7 +607,32 @@ object Generator {
         cc + Doc.hardLine + companion
     }
 
-  def generateInputs(uis: List[UsedInput]): Doc = {
+  def generateInputs(env: Env, uis: List[UsedInput]): Doc = {
+    def walkObject[F[_]](
+        x: TypeDefinition.InputObjectTypeDefinition
+    )(implicit F: Monad[F], S: Stateful[F, Map[String, UsedInput]]): F[Unit] =
+      x.inputFields.toList.traverse_ { i =>
+        S.get.flatMap { cache =>
+          val typename = ModifierStack.fromType(i.tpe).inner
+          if (cache.get(typename).isDefined) F.unit
+          else {
+            val outcome = partitionEmittableInputDef[Writer[Set[UsedInput], *]](env, typename).written
+            val insertF = outcome.toList.traverse_(x => S.modify(_ + (typename -> x)))
+
+            insertF *> outcome.toList.traverse_ {
+              case Right(io) => walkObject[F](io)
+              case _         => F.unit
+            }
+          }
+        }
+      }
+
+    val ios = uis.collect { case Right(x) => x }
+    val m = ios
+      .traverse_(walkObject[StateT[Eval, Map[String, UsedInput], *]](_))
+      .runS(uis.map(io => io.bimap(_.name, _.name).merge -> io).toMap)
+      .value
+
     Doc.intercalate(
       Doc.hardLine + Doc.hardLine,
       List(
@@ -604,7 +643,7 @@ object Generator {
             imp("_root_.gql.client.dsl._")
           )
         )
-      ) ++ uis.map(generateOneInput)
+      ) ++ m.values.toList.map(generateOneInput)
     )
   }
 
@@ -715,7 +754,7 @@ object Generator {
           generateForInput[F](e, d)
             .flatMap { case (used, x) => writeStream[F](x.path, x.doc).compile.drain.as(used.toList) }
         }
-        .flatMap(_.distinct.toNel.traverse_(nel => writeStream[F](sharedPath, generateInputs(nel.toList)).compile.drain))
+        .flatMap(_.distinct.toNel.traverse_(nel => writeStream[F](sharedPath, generateInputs(e, nel.toList)).compile.drain))
     }
 
   def mainGenerate[F[_]: Async](schemaPath: Path, sharedPath: Path)(data: List[Input]): F[List[String]] =
