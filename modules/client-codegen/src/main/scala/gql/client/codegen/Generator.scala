@@ -534,23 +534,28 @@ object Generator {
 
     val names = td.values.toList.map(_.name)
 
-    val companionParts = names.map { e =>
-      Doc.text("case object ") + Doc.text(e) + Doc.text(" extends ") + Doc.text(td.name)
-    } ++ List(Doc.hardLine) ++ List(
+    val companionParts = List(
+      Doc.intercalate(
+        Doc.hardLine,
+        names.map { e =>
+          Doc.text("case object ") + Doc.text(e) + Doc.text(" extends ") + Doc.text(td.name)
+        }
+      )
+    ) ++ List(
       Doc.text(s"implicit val circeDecoder: io.circe.Decoder[${td.name}] = io.circe.Decoder.decodeString.emap") +
         hardIntercalateBracket('{') {
           names.map { e =>
             Doc.text("case ") + quoted(e) + Doc.text(s" => Right($e)")
           } ++ List(Doc.text(s"""case x => Left(s"Unknown enum value for ${td.name}: $$x")"""))
         }('}')
-    ) ++ List(Doc.hardLine) ++ List(
+    ) ++ List(
       Doc.text(s"implicit val circeEncoder: io.circe.Encoder[${td.name}] = io.circe.Encoder.encodeString.contramap[${td.name}]") +
         hardIntercalateBracket('{') {
           names.map { e =>
             Doc.text("case ") + Doc.text(e) + Doc.text(s" => ") + quoted(e)
           }
         }('}')
-    ) ++ List(Doc.hardLine) ++ List(
+    ) ++ List(
       Doc.text(s"implicit val typenameInstance: Typename[${td.name}] = typename[${td.name}](") +
         quoted(td.name) + Doc.char(')')
     )
@@ -586,23 +591,22 @@ object Generator {
         s"implicit val circeEncoder: io.circe.Encoder.AsObject[${td.name}] = io.circe.Encoder.AsObject.instance[${td.name}]{ a => "
       ) +
         (
-          Doc.hardLine +
-            Doc
-              .intercalate(
-                Doc.hardLine,
-                List(
-                  Doc.text("import io.circe.syntax._"),
-                  Doc.text("Map") +
-                    hardIntercalateBracket('(', sep = Doc.comma) {
-                      fixedMods.map { case (name, _) =>
-                        quoted(name) + Doc.text(" -> ") + Doc.text(s"a.$name.asJson")
-                      }
-                    }(')') + Doc.text(".asJsonObject")
-                )
+          Doc
+            .intercalate(
+              Doc.hardLine,
+              List(
+                Doc.text("import io.circe.syntax._"),
+                Doc.text("Map") +
+                  hardIntercalateBracket('(', sep = Doc.comma) {
+                    fixedMods.map { case (name, _) =>
+                      quoted(name) + Doc.text(" -> ") + Doc.text(s"a.$name.asJson")
+                    }
+                  }(')') + Doc.text(".asJsonObject")
               )
-        )
+            )
+          )
           .nested(2)
-          .grouped + Doc.hardLine + Doc.char('}') + Doc.hardLine,
+          .grouped + Doc.hardLine + Doc.char('}'),
       Doc.text(s"implicit val typenameInstance: Typename[${td.name}] = typename[${td.name}](") +
         quoted(td.name) + Doc.char(')')
     )
