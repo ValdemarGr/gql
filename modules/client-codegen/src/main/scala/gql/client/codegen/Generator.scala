@@ -30,7 +30,6 @@ import gql.parser.Pos
 import cats.mtl.Tell
 import cats.mtl.Handle
 import cats.mtl.Stateful
-import scala.collection.immutable.SortedMap
 
 object Generator {
   def modifyHead(f: Char => Char): String => String = { str =>
