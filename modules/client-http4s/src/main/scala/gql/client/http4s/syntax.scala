@@ -18,7 +18,6 @@ package gql.client.http4s
 import gql.client.Query
 import org.http4s.Request
 import org.http4s.circe._
-import io.circe.syntax._
 import org.http4s.client.Client
 import cats.effect._
 import org.http4s.EntityDecoder
