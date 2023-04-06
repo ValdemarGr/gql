@@ -30,6 +30,7 @@ import gql.parser.Pos
 import cats.mtl.Tell
 import cats.mtl.Handle
 import cats.mtl.Stateful
+import scala.collection.immutable.SortedMap
 
 object Generator {
   def modifyHead(f: Char => Char): String => String = { str =>
@@ -63,9 +64,17 @@ object Generator {
   def params(xs: List[Doc]): Doc =
     Doc.intercalate(Doc.comma + Doc.space, xs).tightBracketBy(Doc.char('('), Doc.char(')'))
 
-  def caseClass[G[_]: Foldable](name: String, xs: G[Doc]): Doc =
+  def caseClass(name: String, xs: List[Doc], methods: List[Doc]): Doc =
     Doc.text(s"final case class $name") +
-      hardIntercalateBracket('(', Doc.comma)(xs.toList)(')')
+      hardIntercalateBracket('(', Doc.comma)(xs)(')') + methods.toNel
+        .map { ms =>
+          val d = Doc.hardLine + Doc.intercalate(Doc.hardLine + Doc.hardLine, ms.toList)
+
+          Doc.text(" {") +
+            d.grouped.nested(2) +
+            Doc.hardLine + Doc.char('}')
+        }
+        .getOrElse(Doc.empty)
 
   def verticalApply(name: String, params: List[Doc]): Doc =
     Doc.text(name) + hardIntercalateBracket('(', Doc.comma)(params)(')')
@@ -101,19 +110,11 @@ object Generator {
       fields: List[CaseClassField]
   ) {
     val doc: Doc = {
-      val typeDecl = caseClass(name, fields.map(_.doc))
-
       val helpers = fields.filter(_.isOmittable).map { f =>
         Doc.text(s"def set${toPascal(f.name)}(value: ${f.tpe.showScala(identity)}): ${name} = copy(${f.name} = Some(value))")
       }
 
-      val methods = helpers.toNel.map(ms => Doc.hardLine + Doc.intercalate(Doc.hardLine + Doc.hardLine, ms.toList))
-
-      typeDecl + methods.map { m =>
-        Doc.text(" {") +
-          m.grouped.nested(2) +
-          Doc.hardLine + Doc.char('}')
-      }.getOrElse(Doc.empty)
+      caseClass(name, fields.map(_.doc), helpers)
     }
 
     lazy val circeEncoder = {
@@ -167,13 +168,15 @@ object Generator {
   final case class Part(
       name: String,
       typePart: NonEmptyList[Doc],
+      typeMethods: List[Doc],
       subParts: List[Part],
       codec: NonEmptyList[Doc],
-      contextInfo: Option[ContextInfo]
+      contextInfo: Option[ContextInfo],
+      companionExtra: List[Doc]
   ) {
     // Yes yes, it is a fold
     def collapse: Doc = {
-      val tpe = caseClass(name, typePart)
+      val tpe = caseClass(name, typePart.toList, typeMethods)
 
       val codecSelection = hardIntercalateBracket('(', Doc.comma)(codec.toList)(')') +
         Doc.char('.') +
@@ -266,7 +269,7 @@ object Generator {
             compiled
       }
 
-      val companionParts = subParts.map(_.collapse) ++ List(fullCodec)
+      val companionParts = subParts.map(_.collapse) ++ companionExtra ++ List(fullCodec)
 
       val companion = Doc.text("object") + Doc.space + Doc.text(name) + Doc.space +
         hardIntercalateBracket('{', Doc.hardLine)(companionParts)('}')
@@ -330,11 +333,16 @@ object Generator {
     partitionEmittableInputDef[F](env, ModifierStack.fromType(tpe).inner)
 
   final case class FieldPart(
-      typePart: Doc,
+      name: String,
+      scalaType: String,
+      localType: String,
       // local case class and companion object, not present if the field is a fragment or terminal
       subPart: Option[Part],
-      codec: Doc
-  )
+      codec: Doc,
+      spreadCondition: Option[String]
+  ) {
+    lazy val typePart = scalaField(name, scalaType)
+  }
   def generateField[F[_]: Parallel](
       companionName: String,
       env: Env,
@@ -378,9 +386,7 @@ object Generator {
             Doc.text(scalaTypeName).tightBracketBy(Doc.char('['), Doc.char(']')) +
             params(quoted(fd.name) :: f.alias.toList.map(quoted) ++ argPart)
 
-          val sf = scalaField(gqlName, scalaTypeName)
-
-          FieldPart(sf, subPart, clientSel)
+          FieldPart(gqlName, scalaTypeName, n, subPart, clientSel, None)
         }
   }
 
@@ -426,9 +432,12 @@ object Generator {
 
         F.pure {
           FieldPart(
-            scalaField(toCaml(fs.fragmentName), tn),
+            toCaml(fs.fragmentName),
+            tn,
+            fs.fragmentName,
             None,
-            Doc.text(s"embed[${optTn}]") + suf
+            Doc.text(s"embed[${optTn}]") + suf,
+            f.map(_.on)
           )
         }
       case inlineFrag: Selection.InlineFragmentSelection[Pos] =>
@@ -448,14 +457,16 @@ object Generator {
 
         in(s"inline-fragment-${cnd}") {
           // We'd like to match every concrete subtype of the inline fragment's type condition (since typename in the result becomes concrete)
-          generateTypeDef[F](env, name, cnd, ss, Some(ContextInfo.Fragment(None, cnd)))
-            .map { p =>
-              FieldPart(
-                scalaField(toCaml(name), tn),
-                Some(p),
-                Doc.text(s"embed[Option[${name}]]") + suf
-              )
-            }
+          generateTypeDef[F](env, name, cnd, ss, Some(ContextInfo.Fragment(None, cnd))).map { p =>
+            FieldPart(
+              toCaml(name),
+              tn,
+              name,
+              Some(p),
+              Doc.text(s"embed[Option[${name}]]") + suf,
+              Some(cnd)
+            )
+          }
         }
     }
   }
@@ -491,12 +502,75 @@ object Generator {
             sels
               .parTraverse(generateSelection[F](td, name, env, fm + ("__typename" -> tn), _))
               .map { parts =>
+                // If there are at-lease two spreads that are sub-types of the current type, e.g Fragment.on <: This
+                // Then generate a sealed trait hierachy
+                val subtypeSpreads = parts.toList.mapFilter { p =>
+                  p.spreadCondition.flatMap { sc =>
+                    if (env.concreteSubtypesOf(typename).contains(sc)) Some((p, sc))
+                    else None
+                  }
+                }
+                val groupedSpreads: List[(String, NonEmptyList[FieldPart])] =
+                  subtypeSpreads.groupByNel { case (_, sc) => sc }.fmap(_.map { case (f, _) => f }).toList
+
+                val (variantMethods, variantCompanion) = if (groupedSpreads.size > 1) {
+                  val cases = Doc.intercalate(
+                    Doc.text(" orElse") + Doc.hardLine,
+                    groupedSpreads.map { case (sc, fps) =>
+                      val (args, op) = fps match {
+                        case NonEmptyList(x, Nil) => (Doc.text(x.name), Doc.text("map"))
+                        case _                    => (params(fps.toList.map(fp => Doc.text(fp.name))), Doc.text("mapN"))
+                      }
+                      params(
+                        List(
+                          args + Doc.char('.') + op +
+                            params(
+                              List(
+                                Doc.text(s"${name}.Variant.${sc}") +
+                                  params(fps.toList.map(_ => Doc.text("_")))
+                              )
+                            )
+                        )
+                      )
+                    }
+                  )
+
+                  val variants = Doc.intercalate(
+                    Doc.hardLine,
+                    groupedSpreads.map { case (sc, fps) =>
+                      val cc = caseClass(
+                        sc,
+                        fps.toList.map(fp => scalaField(fp.name, fp.localType)),
+                        List.empty
+                      )
+                      cc + Doc.text(" extends Variant")
+                    }
+                  )
+
+                  val companionPart: Doc =
+                    Doc.text(s"sealed trait Variant extends Product with Serializable") + Doc.hardLine +
+                      obj(
+                        "Variant",
+                        List(variants)
+                      )
+
+                  val methods = Doc.text(s"lazy val variant: Option[${name}.Variant] =") +
+                    (Doc.hardLine +
+                      cases.grouped.nested(2)).nested(2)
+
+                  (List(methods), List(companionPart))
+                } else {
+                  (Nil, Nil)
+                }
+
                 Part(
                   name,
                   parts.map(_.typePart),
+                  variantMethods,
                   parts.toList.flatMap(_.subPart.toList),
                   parts.map(_.codec),
-                  contextInfo
+                  contextInfo,
+                  variantCompanion
                 )
               }
           }
@@ -627,31 +701,6 @@ object Generator {
     }
 
     val cc = CaseClass(td.name, fixedMods)
-    /*
-    val companionParts = List(
-      Doc.text(
-        s"implicit val circeEncoder: io.circe.Encoder.AsObject[${td.name}] = io.circe.Encoder.AsObject.instance[${td.name}]{ a => "
-      ) +
-        (
-          Doc
-            .intercalate(
-              Doc.hardLine,
-              List(
-                Doc.text("import io.circe.syntax._"),
-                Doc.text("Map") +
-                  hardIntercalateBracket('(', sep = Doc.comma) {
-                    fixedMods.map { case (name, _) =>
-                      quoted(name) + Doc.text(" -> ") + Doc.text(s"a.$name.asJson")
-                    }
-                  }(')') + Doc.text(".asJsonObject")
-              )
-            )
-          )
-          .nested(2)
-          .grouped + Doc.hardLine + Doc.char('}'),
-      Doc.text(s"implicit val typenameInstance: Typename[${td.name}] = typename[${td.name}](") +
-        quoted(td.name) + Doc.char(')')
-    )*/
 
     val companion = obj(td.name, List(cc.circeEncoder, cc.typenameInstance))
 

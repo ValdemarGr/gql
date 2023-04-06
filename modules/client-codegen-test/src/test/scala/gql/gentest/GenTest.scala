@@ -25,6 +25,76 @@ import munit.CatsEffectSuite
 import org.http4s.client.Client
 import org.http4s.Request
 
+object Test {
+  trait Animal {
+    def legs: Int
+  }
+
+  trait Pet extends Animal {
+    def name: String
+  }
+
+  final case class Dog(
+    name: String,
+    legs: Int,
+    bark: String
+  ) extends Pet
+
+  final case class Cat(
+    name: String,
+    legs: Int,
+    meow: String
+  ) extends Pet
+
+  /*
+  {
+    legs
+    ... on Pet {
+      name
+    }
+    ... on Dog {
+      bark
+    }
+    ... on Cat {
+      name
+      meow
+    }
+  }
+  */
+  final case class Selection(
+    legs: Int,
+    petSelection: Option[PetSelection],
+    dogSelection: Option[DogSelection],
+    catSelection: Option[CatSelection]
+  ) {
+    lazy val variant: Option[SelectionVariant] = 
+      (dogSelection.map(SelectionVariant.DogVariant(_))) orElse
+      (catSelection.map(SelectionVariant.CatVariant(_)))
+  }
+
+  sealed trait SelectionVariant
+  object SelectionVariant {
+    case class DogVariant(value: DogSelection) extends SelectionVariant
+    case class CatVariant(value: CatSelection) extends SelectionVariant
+  }
+
+  final case class PetSelection(
+    name: String
+  )
+
+  final case class DogSelection(
+    bark: String
+  )
+  
+  final case class CatSelection(
+    name: String,
+    meow: String
+  )
+  def selection(a: Animal) = {
+    // Hvad er outpu typen????
+  }
+}
+
 class GenTest extends CatsEffectSuite {
   import GenTest._
 
