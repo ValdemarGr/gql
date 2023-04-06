@@ -17,8 +17,6 @@ trait Analyzer[F[_]] {
   def analyzeCont[G[_]](edges: PreparedStep[G, ?, ?], cont: Prepared[G, ?]): F[Unit]
 }
 object Analysis {
-  final case class NodeTree(all: List[Node])
-
   type H[F[_], A] = StateT[F, TraversalState, A]
   def liftStatistics[F[_]: Applicative](stats: Statistics[F]): Statistics[H[F, *]] =
     stats.mapK(StateT.liftK[F, TraversalState])
@@ -28,22 +26,6 @@ object Analysis {
 
   def runCostAnalysis[F[_]: Monad: Statistics, A](f: Statistics[H[F, *]] => H[F, A]): F[NodeTree] =
     runCostAnalysisFor[F, List[Node]](s => f(s).get.map(_.nodes.toList)).map(NodeTree(_))
-
-  final case class BatchRef[K, V](
-      batcherId: gql.resolver.Step.BatchKey[K, V],
-      uniqueNodeId: UniqueBatchInstance[K, V]
-  )
-
-  final case class NodeId(id: Int) extends AnyVal
-
-  final case class Node(
-      id: NodeId,
-      name: String,
-      cost: Double,
-      elemCost: Double,
-      parents: Set[NodeId],
-      batchId: Option[BatchRef[?, ?]]
-  )
 
   final case class TraversalState(
       id: Int,
