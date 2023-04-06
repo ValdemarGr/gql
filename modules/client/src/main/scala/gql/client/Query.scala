@@ -68,12 +68,6 @@ object Query {
       origin: SimpleQuery[A],
       variables: Option[JsonObject] = None
   ) {
-    def toJson: JsonObject = JsonObject.fromMap(
-      Map(
-        "query" -> Some(Json.fromString(query)),
-        "variables" -> variables.map(_.asJson)
-      ).collect { case (k, Some(v)) => k -> v }
-    )
     /*
     def validate(schema: SchemaShape[fs2.Pure, ?, ?, ?]) = {
       // Consider folding into the query ast instead of a string
@@ -88,7 +82,23 @@ object Query {
 
   object Compiled {
     implicit def enc[A]: io.circe.Encoder.AsObject[Query.Compiled[A]] =
-      io.circe.Encoder.AsObject.instance[Query.Compiled[A]](_.toJson)
+      io.circe.Encoder.AsObject.instance[Query.Compiled[A]] { x =>
+        JsonObject.fromMap(
+          Map(
+            "query" -> Some(Json.fromString(x.query)),
+            "variables" -> x.variables.map(
+              _.asJson/*.fold[Json](
+                jsonNull = Json.Null,
+                jsonBoolean = _.asJson,
+                jsonNumber = _.asJson,
+                jsonString = _.asJson,
+                jsonArray = _.asJson,
+                jsonObject = _.toMap.collect { case (k, v) if !v.isNull => k -> v }.asJson
+              )*/
+            )
+          ).collect { case (k, Some(v)) => k -> v }
+        )
+      }
   }
 
   def simple[A](operationType: P.OperationType, selectionSet: SelectionSet[A]): SimpleQuery[A] =

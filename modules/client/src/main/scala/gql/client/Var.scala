@@ -100,14 +100,14 @@ object Var {
     new Var(Writer(NonEmptyChain.one(One(vn, tpe, None)), enc), vn)
   }
 
-  def apply[A](name: String, tpe: String, default: V[AnyValue])(implicit
+  def apply[A](name: String, tpe: String, default: Option[V[AnyValue]])(implicit
       encoder: io.circe.Encoder[A]
   ): Var[Option[A], VariableName[A]] = {
     val vn = VariableName[A](name)
     val enc = Encoder.AsObject.instance[Option[A]] {
-      case None    => JsonObject.empty
-      case Some(a) => JsonObject(name -> a.asJson)
+      case None         => JsonObject.empty
+      case Some(oa) => JsonObject(name -> oa.asJson)
     }
-    new Var(Writer(NonEmptyChain.one(One(vn, tpe, Some(default))), enc), vn)
+    new Var(Writer(NonEmptyChain.one(One(vn, tpe, default)), enc), vn)
   }
 }

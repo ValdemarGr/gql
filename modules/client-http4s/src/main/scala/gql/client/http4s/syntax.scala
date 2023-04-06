@@ -36,8 +36,9 @@ object implicits {
 
   implicit class GqlHttp4sRequestOps[F[_]](private val req: Request[F]) extends AnyVal {
     def graphql[A](q: Query.Compiled[A], client: Client[F])(implicit F: Concurrent[F]): F[A] = {
+      import io.circe.syntax._
       implicit val ed: EntityDecoder[F, A] = gqlEntityDecoderInstance(q)
-      client.expect[A](req.withMethod(Method.POST).withEntity(q.toJson.asJson))
+      client.expect[A](req.withMethod(Method.POST).withEntity(q.asJson))
     }
 
     def graphql[A](q: Query.Compiled[A])(implicit F: Concurrent[F], client: Client[F]): F[A] =

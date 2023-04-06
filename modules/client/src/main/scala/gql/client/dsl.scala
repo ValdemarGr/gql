@@ -60,10 +60,15 @@ object dsl {
       encoder: io.circe.Encoder[A]
   ): Var[A, VariableName[A]] = Var[A](name, tn.stack.invert.show(identity))
 
-  def variable[A](name: String, default: V[Const])(implicit
+  def omittableVariable[A](name: String, default: V[Const])(implicit
       tn: Typename[A],
       encoder: io.circe.Encoder[A]
-  ): Var[Option[A], VariableName[A]] = Var[A](name, tn.stack.invert.show(identity), default)
+  ): Var[Option[A], VariableName[A]] = Var[A](name, tn.stack.invert.show(identity), Some(default))
+
+  def omittableVariable[A](name: String)(implicit
+      tn: Typename[A],
+      encoder: io.circe.Encoder[A]
+  ): Var[Option[A], VariableName[A]] = Var[A](name, tn.stack.invert.show(identity), None)
 
   def value[A](a: A)(implicit enc: io.circe.Encoder[A]) =
     V.fromJson(enc(a))
