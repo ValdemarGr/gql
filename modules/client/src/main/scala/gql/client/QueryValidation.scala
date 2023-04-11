@@ -104,14 +104,16 @@ object QueryValidation {
     def implementation[A](s: String): EitherNec[String, Implementation[Pure, A, ?]] =
       partitionType(s).flatMap {
         case i: InterfaceType =>
-          Right(Implementation(Eval.always(convertInterface(i).toOption.get))(_ => Option.empty[A]))
+          for (impl <- convertInterface(i))
+            yield Implementation(Eval.always(impl))(_ => Option.empty[A])
         case _ => s"Expected interface, got object `${s}`".leftNec
       }
 
     def variant[A](s: String) =
       partitionType(s).flatMap {
         case i: ObjectType =>
-          Right(Variant(Eval.always(convertObject(i).toOption.get))((_: Unit) => None))
+          for (tpe <- convertObject(i))
+            yield Variant(Eval.always(tpe))((_: Unit) => None)
         case _ => s"Expected object type, got something else `${s}`".leftNec
       }
 
