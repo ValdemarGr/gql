@@ -26,4 +26,13 @@ object PlanEnumeration {
     val familyMap: Map[NodeId, FamilyId] =
       families.zipWithIndex.flatMap { case (fam, id) => fam.nodes.map(_ -> FamilyId(id)) }.toMap
   }
+
+  final case class BatchId(id: Int) extends AnyVal
+  final case class EndTime(time: Int) extends AnyVal
+
+  final case class State(
+      batch: Map[BatchId, EndTime],
+      visited: Map[NodeId, BatchId],
+      forbidden: Set[Set[NodeId]]
+  )
 }
