@@ -16,6 +16,7 @@ trait Analyzer[F[_]] {
 
   def analyzeCont[G[_]](edges: PreparedStep[G, ?, ?], cont: Prepared[G, ?]): F[Unit]
 }
+
 object Analysis {
   type H[F[_], A] = StateT[F, TraversalState, A]
   def liftStatistics[F[_]: Applicative](stats: Statistics[F]): Statistics[H[F, *]] =

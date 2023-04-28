@@ -3,13 +3,13 @@ package gql.server.planner
 import cats.implicits._
 
 object PlanEnumeration {
-    final case class NodeId(id: Int) extends AnyVal
-    final case class FamilyId(id: Int) extends AnyVal
+  final case class NodeId(id: Int) extends AnyVal
+  final case class FamilyId(id: Int) extends AnyVal
 
-    final case class Family(
+  final case class Family(
       cost: Int,
       nodes: Set[NodeId]
-    )
+  )
 
   final case class Problem(
       families: Array[Family],
@@ -34,8 +34,8 @@ object PlanEnumeration {
   }
 
   final case class Batch(
-    nodes: Set[NodeId],
-    end: EndTime
+      nodes: Set[NodeId],
+      end: EndTime
   )
 
   final case class EnumerationState(
@@ -44,10 +44,10 @@ object PlanEnumeration {
   )
 
   def enumerateAll(problem: Problem): LazyList[Map[NodeId, Batch]] = {
-    def go(current: EnumerationState): LazyList[EnumerationState] = 
+    def go(current: EnumerationState): LazyList[EnumerationState] =
       if (current.scheduled.size === problem.all.size) LazyList(current)
       else enumerateNextRound(problem, current).flatMap(go)
-    
+
     go(EnumerationState(Map.empty, Set.empty)).map(_.scheduled)
   }
 
@@ -105,7 +105,8 @@ object PlanEnumeration {
           .filter(s => !state.forbidden.contains(s))
 
         o.mapAccumulate(state.forbidden) { case (forbid, batch) =>
-          val batchEndTime = batch.flatMap { x =>
+          val batchEndTime = batch
+            .flatMap { x =>
               val parents = problem.reverseArcs.getOrElse(x, Set.empty)
               parents.map(y => state.scheduled(y).end)
             }
