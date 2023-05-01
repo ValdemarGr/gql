@@ -7,7 +7,7 @@ object PlanEnumeration {
   final case class FamilyId(id: Int) extends AnyVal
 
   final case class Family(
-      cost: Int,
+      cost: Double,
       nodes: Set[NodeId]
   )
 
@@ -28,7 +28,7 @@ object PlanEnumeration {
   }
 
   final case class BatchId(id: Int) extends AnyVal
-  final case class EndTime(time: Int) extends AnyVal
+  final case class EndTime(time: Double) extends AnyVal
   object EndTime {
     implicit val ordering: Ordering[EndTime] = Ordering.by(_.time)
   }

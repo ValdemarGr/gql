@@ -24,6 +24,11 @@ final case class Node(
 
 final case class NodeTree(all: List[Node])
 
+final case class OptimizedDAG(
+  tree: NodeTree,
+  plan: Map[NodeId, Set[NodeId]]
+)
+
 final case class Plan(lookup: Map[NodeId, Double]) {
   def apply(id: NodeId): Double = lookup(id)
 

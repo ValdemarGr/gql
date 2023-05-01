@@ -24,6 +24,8 @@ import scala.io.AnsiColor
 import cats.mtl.Stateful
 import gql.resolver.Step
 import gql._
+import gql.server.planner.PlanEnumeration
+import gql.server.planner.OptimizedDAG
 
 trait Planner[F[_]] { self =>
   def plan(naive: Planner.NodeTree): F[Planner.PlannedNodeTree]
@@ -170,6 +172,49 @@ object Planner {
 
   def runCostAnalysis[F[_]: Monad: Statistics, A](f: Statistics[H[F, *]] => H[F, A]): F[NodeTree] =
     runCostAnalysisFor[F, List[Node]](s => f(s).get.map(_.nodes.toList)).map(NodeTree(_))
+
+  def enumerateAllPlanner[F[_]](tree: NodeTree) = {
+    val all = tree.all
+
+    val trivials = all.filter(_.batchId.isEmpty)
+
+    val batches = all.mapFilter(x => x.batchId tupleRight x)
+    val grp = batches.groupBy { case (b, _) => b.batcherId }
+
+    val trivialFamilies = trivials.map { n =>
+      PlanEnumeration.Family(n.cost, Set(PlanEnumeration.NodeId(n.id.id)))
+    }
+
+    val batchFamilies = grp.toList.map { case (_, gs) =>
+      val (_, hd) = gs.head
+      PlanEnumeration.Family(hd.cost, gs.map { case (_, x) => PlanEnumeration.NodeId(x.id.id) }.toSet)
+    }
+
+    val prob = PlanEnumeration.Problem(
+      (trivialFamilies ++ batchFamilies).toArray,
+      tree.childrenLookup.map { case (k, vs) =>
+        PlanEnumeration.NodeId(k.id) -> vs.toList.map(v => PlanEnumeration.NodeId(v.id)).toSet
+      }
+    )
+
+    PlanEnumeration.enumerateAll(prob)
+  }
+
+  def apply2[F[_]](implicit F: Applicative[F]) = new Planner[F] {
+    def plan(tree: NodeTree): F[PlannedNodeTree] = {
+      // The best solution has lease amount of nodes in the contracted DAG
+      val best = enumerateAllPlanner[F](tree)
+        .take(tree.all.size)
+        .minBy(m => m.values.toSet.size)
+      F.pure {
+        OptimizedDAG(
+          tree.asInstanceOf[gql.server.planner.NodeTree],
+          null
+        )
+      }
+      ???
+    }
+  }
 
   def apply[F[_]](implicit F: Applicative[F]) = new Planner[F] {
     def plan(tree: NodeTree): F[PlannedNodeTree] = {
