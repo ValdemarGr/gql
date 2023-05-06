@@ -50,7 +50,7 @@ final case class NodeTree(all: List[Node]) {
     val l = lookup
 
     def go(id: NodeId): State[Map[NodeId, Double], Double] =
-      State.inspect { cache: Map[NodeId, Double] => cache.get(id) }.flatMap {
+      State.inspect { (cache: Map[NodeId, Double]) => cache.get(id) }.flatMap {
         case Some(e) => State.pure(e)
         case None =>
           val n = l(id)

@@ -31,18 +31,15 @@ trait Planner[F[_]] { self =>
 
 object Planner {
   def apply[F[_]](implicit F: Applicative[F]) = new Planner[F] {
-    def plan(tree: NodeTree): F[OptimizedDAG] = {
+    def plan(tree: NodeTree): F[OptimizedDAG] = F.pure {
       // The best solution has lease amount of nodes in the contracted DAG
-      val best = enumerateAllPlanner[F](tree)
+      val plan = enumerateAllPlanner[F](tree)
         .take(tree.all.size)
-        .minBy(m => m.values.toSet.size)
+        .minByOption(m => m.values.toSet.size)
+        .map(_.map { case (k, v) => (NodeId(k.id), (v.nodes.map(n => NodeId(n.id)), v.end)) })
+        .getOrElse(Map.empty)
 
-      F.pure {
-        OptimizedDAG(
-          tree,
-          best.map { case (k, v) => (NodeId(k.id), (v.nodes.map(n => NodeId(n.id)), v.end)) }
-        )
-      }
+      OptimizedDAG(tree, plan)
     }
   }
 
