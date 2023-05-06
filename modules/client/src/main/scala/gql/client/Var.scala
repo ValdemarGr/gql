@@ -105,7 +105,7 @@ object Var {
   ): Var[Option[A], VariableName[A]] = {
     val vn = VariableName[A](name)
     val enc = Encoder.AsObject.instance[Option[A]] {
-      case None         => JsonObject.empty
+      case None     => JsonObject.empty
       case Some(oa) => JsonObject(name -> oa.asJson)
     }
     new Var(Writer(NonEmptyChain.one(One(vn, tpe, default)), enc), vn)

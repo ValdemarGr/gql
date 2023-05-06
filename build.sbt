@@ -25,6 +25,7 @@ ThisBuild / tlMimaPreviousVersions := Set.empty
 ThisBuild / mimaReportSignatureProblems := false
 ThisBuild / mimaFailOnProblem := false
 ThisBuild / mimaPreviousArtifacts := Set.empty
+//ThisBuild / tlFatalWarnings := true
 
 /* ThisBuild / githubWorkflowAddedJobs += */
 /*   WorkflowJob( */
@@ -90,37 +91,36 @@ lazy val sharedSettings = Seq(
     "org.typelevel" %% "paiges-core" % "0.4.2",
     "org.scalameta" %% "munit" % "1.0.0-M6" % Test,
     "org.typelevel" %% "munit-cats-effect" % "2.0.0-M3" % Test
-  )//,
-  /* tlFatalWarnings := true */
+  )
 )
 
 lazy val parser = project
   .in(file("modules/parser"))
   .settings(sharedSettings)
-  .settings(name := "gql-parser" /*, tlFatalWarnings := true*/ )
+  .settings(name := "gql-parser")
 
 lazy val core = project
   .in(file("modules/core"))
   .settings(sharedSettings)
-  .settings(name := "gql-core" /*, tlFatalWarnings := true*/ )
+  .settings(name := "gql-core")
   .dependsOn(parser)
 
 lazy val server = project
   .in(file("modules/server"))
   .settings(sharedSettings)
-  .settings(name := "gql-server" /*, tlFatalWarnings := true*/ )
+  .settings(name := "gql-server")
   .dependsOn(core)
 
 lazy val client = project
   .in(file("modules/client"))
   .settings(sharedSettings)
-  .settings(name := "gql-client" /*, tlFatalWarnings := true*/ )
+  .settings(name := "gql-client")
   .dependsOn(core)
 
 lazy val clientCodegen = project
   .in(file("modules/client-codegen"))
   .settings(sharedSettings)
-  .settings(name := "gql-client-codegen" /*, tlFatalWarnings := true*/ )
+  .settings(name := "gql-client-codegen")
   .dependsOn(core)
   .dependsOn(client)
 
@@ -128,7 +128,7 @@ lazy val clientCodegenCli = project
   .in(file("modules/client-codegen-cli"))
   .settings(sharedSettings)
   .settings(
-    name := "gql-client-codegen-cli" /*, tlFatalWarnings := true*/,
+    name := "gql-client-codegen-cli",
     libraryDependencies ++= Seq(
       "com.monovore" %% "decline" % "2.4.0",
       "com.monovore" %% "decline-effect" % "2.4.0"

@@ -87,7 +87,7 @@ object Query {
           Map(
             "query" -> Some(Json.fromString(x.query)),
             "variables" -> x.variables.map(
-              _.asJson/*.fold[Json](
+              _.asJson /*.fold[Json](
                 jsonNull = Json.Null,
                 jsonBoolean = _.asJson,
                 jsonNumber = _.asJson,

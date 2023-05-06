@@ -20,7 +20,7 @@ import cats.implicits._
 import cats.effect._
 import gql._
 import cats.data._
-import gql.planner._
+import gql.server.planner._
 import gql.resolver.Step
 import gql.preparation._
 
@@ -32,12 +32,20 @@ trait BatchAccumulator[F[_]] {
 }
 
 object BatchAccumulator {
-  def apply[F[_]](schemaState: SchemaState[F], plan: Planner.PlannedNodeTree)(implicit
+  def apply[F[_]](schemaState: SchemaState[F], plan: OptimizedDAG)(implicit
       F: Async[F],
       stats: Statistics[F]
   ): F[BatchAccumulator[F]] = {
-    val batches: Chain[(Step.BatchKey[?, ?], NonEmptyChain[Planner.BatchRef[?, ?]])] =
-      Chain.fromSeq(plan.batches)
+    val batches: Chain[(Step.BatchKey[?, ?], NonEmptyChain[BatchRef[?, ?]])] = Chain.fromSeq {
+      plan.plan.values.toList.mapFilter { case (bs, _) =>
+        plan.tree.lookup(bs.head).batchId.map(_.batcherId).map { bk =>
+          val vs = NonEmptyChain
+            .fromChainUnsafe(Chain.fromIterableOnce(bs))
+            .map(n => plan.tree.lookup(n).batchId.get)
+          bk -> vs
+        }
+      }
+    }
 
     // Now we allocate a deferred for each id in each batch
     //type BatchPromise = Option[Map[BatchKey, BatchValue]] => F[Unit]
