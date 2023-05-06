@@ -1,3 +1,18 @@
+/*
+ * Copyright 2023 Valdemar Grange
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package gql.server.planner
 
 import cats._
@@ -35,9 +50,9 @@ final case class NodeTree(all: List[Node]) {
     val l = lookup
 
     def go(id: NodeId): State[Map[NodeId, Double], Double] =
-      State.inspect{ cache: Map[NodeId, Double] => cache.get(id)}.flatMap{
+      State.inspect { cache: Map[NodeId, Double] => cache.get(id) }.flatMap {
         case Some(e) => State.pure(e)
-        case None            =>
+        case None =>
           val n = l(id)
           n.parents.toList
             .traverse(go)
@@ -84,7 +99,7 @@ final case class OptimizedDAG(
 
     val per = math.max((maxEnd / 40d), 1)
 
-    val enumeratedBatches = plan.toList.zipWithIndex.map{ case ((k, (v1, v2)), i) => (k, (v1, v2, i))}.toMap
+    val enumeratedBatches = plan.toList.zipWithIndex.map { case ((k, (v1, v2)), i) => (k, (v1, v2, i)) }.toMap
 
     def go(nodes: List[NodeId]): String = {
       nodes
@@ -96,7 +111,7 @@ final case class OptimizedDAG(
           val basePrefix = " " * (nStart / per).toInt
           val showDisp = enumeratedBatches
             .get(n.id)
-            .filter{ case (_, d, _) => d.time != nEnd }
+            .filter { case (_, d, _) => d.time != nEnd }
             .map { case (_, dEnd, i) =>
               val dStart = dEnd.time - n.cost
               val pushedPrefix = blue + ">" * ((dStart - nStart) / per).toInt + green
@@ -117,5 +132,5 @@ final case class OptimizedDAG(
 }
 
 object OptimizedDAG {
-    implicit lazy val showForPlannedNodeTree: Show[OptimizedDAG] = Show.show[OptimizedDAG](_.show())
+  implicit lazy val showForPlannedNodeTree: Show[OptimizedDAG] = Show.show[OptimizedDAG](_.show())
 }

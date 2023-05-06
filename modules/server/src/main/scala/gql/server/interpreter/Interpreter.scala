@@ -113,15 +113,14 @@ object Interpreter {
       ss: SignalScopes[F, StreamingData[F, ?, ?]]
   )(implicit planner: Planner[F]): F[(Chain[EvalFailure], NonEmptyList[EvalNode[F, Json]])] =
     for {
-      costTree <- Planner.runCostAnalysis[F, Unit] { implicit stats2 =>
+      costTree <- Analyzer.analyzeWith[F, Unit] { analyzer =>
         metas.toList.traverse_ { ri =>
-          def contCost(step: StepCont[F, ?, ?]): Planner.H[F, Unit] =
+          def contCost(step: StepCont[F, ?, ?]): Analyzer.H[F, Unit] =
             step match {
-              case d: StepCont.Done[F, i] => Planner.costForPrepared[Planner.H[F, *], F](d.prep)
-              case c: StepCont.Continue[F, ?, ?, ?] =>
-                Planner.costForStep[Planner.H[F, *], F](c.step) *> contCost(c.next)
-              case StepCont.Join(_, next)      => contCost(next)
-              case StepCont.TupleWith(_, next) => contCost(next)
+              case d: StepCont.Done[F, i]           => analyzer.analyzePrepared(d.prep)
+              case c: StepCont.Continue[F, ?, ?, ?] => analyzer.analyzeStep(c.step) *> contCost(c.next)
+              case StepCont.Join(_, next)           => contCost(next)
+              case StepCont.TupleWith(_, next)      => contCost(next)
             }
           contCost(ri.cps)
         }

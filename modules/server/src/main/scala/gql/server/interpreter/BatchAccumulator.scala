@@ -36,15 +36,16 @@ object BatchAccumulator {
       F: Async[F],
       stats: Statistics[F]
   ): F[BatchAccumulator[F]] = {
-    val batches: Chain[(Step.BatchKey[?, ?], NonEmptyChain[BatchRef[?, ?]])] = Chain.fromSeq{
-        plan.plan.values.toList
-          .map{ case (bs, _) => 
-            val bk = plan.tree.lookup(bs.head).batchId.get.batcherId
-            val vs = NonEmptyChain.fromChainUnsafe(Chain.fromIterableOnce(bs))
-              .map(n => plan.tree.lookup(n).batchId.get)
-            bk -> vs
-          }
-      }
+    val batches: Chain[(Step.BatchKey[?, ?], NonEmptyChain[BatchRef[?, ?]])] = Chain.fromSeq {
+      plan.plan.values.toList
+        .map { case (bs, _) =>
+          val bk = plan.tree.lookup(bs.head).batchId.get.batcherId
+          val vs = NonEmptyChain
+            .fromChainUnsafe(Chain.fromIterableOnce(bs))
+            .map(n => plan.tree.lookup(n).batchId.get)
+          bk -> vs
+        }
+    }
 
     // Now we allocate a deferred for each id in each batch
     //type BatchPromise = Option[Map[BatchKey, BatchValue]] => F[Unit]
