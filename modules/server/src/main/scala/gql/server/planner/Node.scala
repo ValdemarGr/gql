@@ -1,5 +1,6 @@
 package gql.server.planner
 
+import cats._
 import gql.preparation._
 import cats.data._
 import cats.implicits._
@@ -113,4 +114,8 @@ final case class OptimizedDAG(
 
     prefix + go(tree.roots.map(_.id))
   }
+}
+
+object OptimizedDAG {
+    implicit lazy val showForPlannedNodeTree: Show[OptimizedDAG] = Show.show[OptimizedDAG](_.show())
 }
