@@ -20,7 +20,7 @@ import cats.implicits._
 import cats.effect._
 import gql._
 import cats.data._
-import gql.planner._
+import gql.server.planner._
 import gql.resolver.Step
 import gql.preparation._
 
@@ -36,7 +36,7 @@ object BatchAccumulator {
       F: Async[F],
       stats: Statistics[F]
   ): F[BatchAccumulator[F]] = {
-    val batches: Chain[(Step.BatchKey[?, ?], NonEmptyChain[Planner.BatchRef[?, ?]])] =
+    val batches: Chain[(Step.BatchKey[?, ?], NonEmptyChain[BatchRef[?, ?]])] =
       Chain.fromSeq(plan.batches)
 
     // Now we allocate a deferred for each id in each batch

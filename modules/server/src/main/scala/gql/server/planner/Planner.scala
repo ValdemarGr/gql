@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package gql.planner
+package gql.server.planner
 
 import cats.implicits._
 import cats.data._
@@ -37,22 +37,6 @@ trait Planner[F[_]] { self =>
 }
 
 object Planner {
-  final case class BatchRef[K, V](
-      batcherId: gql.resolver.Step.BatchKey[K, V],
-      uniqueNodeId: UniqueBatchInstance[K, V]
-  )
-
-  final case class NodeId(id: Int) extends AnyVal
-
-  final case class Node(
-      id: NodeId,
-      name: String,
-      cost: Double,
-      elemCost: Double,
-      parents: Set[NodeId],
-      batchId: Option[BatchRef[?, ?]]
-  )
-
   final case class TraversalState(
       id: Int,
       parents: Set[NodeId],

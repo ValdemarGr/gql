@@ -1,10 +1,9 @@
 package gql.server.planner
 
 import gql.preparation._
-import cats._
 import cats.data._
 import cats.implicits._
-import gql.resolver.Step
+import scala.io.AnsiColor
 
 final case class BatchRef[K, V](
     batcherId: gql.resolver.Step.BatchKey[K, V],
@@ -22,58 +21,96 @@ final case class Node(
     batchId: Option[BatchRef[?, ?]]
 )
 
-final case class NodeTree(all: List[Node])
+final case class NodeTree(all: List[Node]) {
+  lazy val lookup = all.map(n => n.id -> n).toMap
+
+  lazy val roots = all.filter(_.parents.isEmpty)
+
+  lazy val reverseLookup: Map[NodeId, List[NodeId]] = all
+    .flatMap(n => n.parents.toList tupleRight n.id)
+    .groupMap { case (k, _) => k } { case (_, v) => v }
+
+  lazy val endTimes: Map[NodeId, Double] = {
+    val l = lookup
+
+    def go(id: NodeId): State[Map[NodeId, Double], Double] =
+      State.inspect{ cache: Map[NodeId, Double] => cache.get(id)}.flatMap{
+        case Some(e) => State.pure(e)
+        case None            =>
+          val n = l(id)
+          n.parents.toList
+            .traverse(go)
+            .map(_.maxOption.getOrElse(0d) + n.cost)
+            .flatTap(e => State.modify(_ + (id -> e)))
+      }
+
+    roots.traverse_(x => go(x.id)).runS(Map.empty).value
+  }
+}
 
 final case class OptimizedDAG(
-  tree: NodeTree,
-  plan: Map[NodeId, Set[NodeId]]
-)
-
-final case class Plan(lookup: Map[NodeId, Double]) {
-  def apply(id: NodeId): Double = lookup(id)
-
-  def get(id: NodeId): Option[Double] = lookup.get(id)
-
-  def +(kv: (NodeId, Double)): Plan = Plan(lookup + kv)
-}
-
-final case class PlannedNodeTree(
     tree: NodeTree,
-    plan: Plan
+    plan: Map[NodeId, (Set[NodeId], PlanEnumeration.EndTime)]
 ) {
-  lazy val batches: List[(Step.BatchKey[?, ?], NonEmptyChain[BatchRef[?, ?]])] = {
-    tree.all
-      .map(n => (n.batchId, n))
-      .collect { case (Some(batcherKey), node) => (batcherKey, node) }
-      .groupByNec { case (_, node) => plan(node.id) }
-      .toList
-      .flatMap { case (_, endGroup) =>
-        endGroup.toList
-          .groupBy { case (batcherKey, _) => batcherKey.batcherId }
-          .map { case (batcherKey, batch) => batcherKey -> NonEmptyChain.fromSeq(batch.map { case (br, _) => br }) }
-          .collect { case (k, Some(vs)) => k -> vs }
-      }
+  lazy val batches: Set[(Set[NodeId], PlanEnumeration.EndTime)] = plan.values.toSet
+
+  lazy val totalCost: Double =
+    batches.map { case (b, _) => b }.unorderedFoldMap(b => tree.lookup(b.head).cost * b.size)
+
+  def show(ansiColors: Boolean = false) = {
+    val lookup = tree.lookup
+    val endTimes = tree.endTimes
+    val children = tree.reverseLookup
+
+    val maxEnd = math.max(
+      batches.map { case (_, e) => e.time }.maxOption.getOrElse(0d),
+      tree.endTimes.values.maxOption.getOrElse(0d)
+    )
+
+    val (red, green, blue, reset) =
+      if (ansiColors) (AnsiColor.RED_B, AnsiColor.GREEN_B, AnsiColor.BLUE_B, AnsiColor.RESET)
+      else ("", "", "", "")
+
+    val prefix =
+      if (ansiColors)
+        plan.as {
+          s"""|
+          |${red}old field schedule$reset
+          |${green}new field offset (deferral of execution)$reset
+          |""".stripMargin
+        }.mkString
+      else ""
+
+    val per = math.max((maxEnd / 40d), 1)
+
+    val enumeratedBatches = plan.toList.zipWithIndex.map{ case ((k, (v1, v2)), i) => (k, (v1, v2, i))}.toMap
+
+    def go(nodes: List[NodeId]): String = {
+      nodes
+        .sortBy(_.id)
+        .map { n0 =>
+          val n = lookup(n0)
+          val nEnd = endTimes(n.id)
+          val nStart = nEnd - n.cost
+          val basePrefix = " " * (nStart / per).toInt
+          val showDisp = enumeratedBatches
+            .get(n.id)
+            .filter{ case (_, d, _) => d.time != nEnd }
+            .map { case (_, dEnd, i) =>
+              val dStart = dEnd.time - n.cost
+              val pushedPrefix = blue + ">" * ((dStart - nStart) / per).toInt + green
+              s"$basePrefix${pushedPrefix}name: ${n.name}, cost: ${n.cost}, end: ${dEnd}$reset, batch: $i"
+            }
+          val showHere =
+            s"$basePrefix${if (showDisp.isDefined) red else ""}name: ${n.name}, cost: ${n.cost}, end: ${nEnd}$reset"
+
+          val all = showHere + showDisp.map("\n" + _).mkString
+          val cs = go(children.get(n.id).map(_.toList).getOrElse(Nil))
+          all + "\n" + cs
+        }
+        .mkString("")
+    }
+
+    prefix + go(tree.roots.map(_.id))
   }
-
-  lazy val totalCost: Double = {
-    val thisFlat = tree.all
-    val thisBatches = batches.filter { case (_, edges) => edges.size > 1 }
-    val batchCostMap: Map[Step.BatchKey[?, ?], Double] =
-      thisFlat.mapFilter(n => n.batchId.map(br => br.batcherId -> n.cost)).toMap
-
-    val naiveCost = thisFlat.map(_.cost).sum
-
-    val batchSubtraction = thisBatches.map { case (_, xs) =>
-      // cost * (size - 1 )
-      batchCostMap(xs.head.batcherId) * (xs.size - 1)
-    }.sum
-
-    naiveCost - batchSubtraction
-  }
-}
-
-object PlannedNodeTree {
-  /*implicit lazy val showForPlannedNodeTree: Show[PlannedNodeTree] = Show.show[PlannedNodeTree] { x =>
-    x.tree.show(plan = Some(x.plan))
-  }*/
 }
