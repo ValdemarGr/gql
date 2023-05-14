@@ -179,7 +179,6 @@ object RootPreparation {
         }
 
         pickRootOperation(ops, operationName).flatMap { od =>
-          variables(od, variableMap)
           val (ot, ss) = od match {
             case QA.OperationDefinition.Simple(ss)             => (QA.OperationType.Query, ss)
             case QA.OperationDefinition.Detailed(ot, _, _, ss) => (ot, ss)

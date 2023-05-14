@@ -16,7 +16,6 @@
 package gql.client
 
 import gql.parser.TypeSystemAst._
-import cats._
 import cats.implicits._
 import cats.data._
 import gql.ast._
@@ -24,8 +23,39 @@ import gql.parser.{Value => V}
 import gql._
 import gql.resolver.Resolver
 import fs2.Pure
+import gql.parser.QueryAst
+import gql.preparation.RootPreparation
+import gql.preparation.Positioned
+import cats._
+import gql.preparation.PreparedRoot
+import gql.preparation.PositionalError
 
 object QueryValidation {
+  type NoPos[A] = Const[A, Unit]
+  implicit val positionedForNoPos = Positioned[NoPos, Unit](new (NoPos ~> Const[Unit, *]) {
+    def apply[A](fa: NoPos[A]): Const[Unit, A] = Const(())
+  })(
+    new (NoPos ~> Id) {
+      def apply[A](fa: NoPos[A]): A = fa.getConst
+    }
+  )
+
+  def validateQuery(
+      ast: Map[String, TypeDefinition],
+      executables: NonEmptyList[QueryAst.ExecutableDefinition[Const[*, Unit]]]
+  ): Either[EitherNec[String, NonEmptyChain[PositionalError[Unit]]], PreparedRoot[Pure, ?, ?, ?]] =
+    getSchema(ast) match {
+      case Left(e) => Left(Left(e))
+      case Right(x) =>
+        RootPreparation.prepareRun(executables, x, Map.empty, None) match {
+          case Left(e)  => Left(Right(e))
+          case Right(x) => Right(x)
+        }
+    }
+
+  def getSchema(ast: Map[String, TypeDefinition]): EitherNec[String, SchemaShape[Pure, ?, ?, ?]] =
+    liftAst(ast) >>= astToSchema
+
   def astToSchema(ast: List[LowLevelAstNode]): EitherNec[String, SchemaShape[fs2.Pure, ?, ?, ?]] = {
     val outs = ast.collect { case Left(x) => x }
     val ins = ast.collect { case Right(x) => x }

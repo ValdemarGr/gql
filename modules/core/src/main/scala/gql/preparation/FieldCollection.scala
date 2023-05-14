@@ -219,7 +219,7 @@ object Positioned {
     }
   }
 
-  val parserPos: Positioned[Pos, Caret] = apply[Pos, Caret](
+  implicit val parserPos: Positioned[Pos, Caret] = apply[Pos, Caret](
     new (Pos ~> Const[Caret, *]) {
       def apply[A](fa: Pos[A]): Const[Caret, A] = Const(fa.caret)
     }

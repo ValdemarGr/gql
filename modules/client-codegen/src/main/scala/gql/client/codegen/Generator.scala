@@ -30,6 +30,9 @@ import gql.parser.Pos
 import cats.mtl.Tell
 import cats.mtl.Handle
 import cats.mtl.Stateful
+import gql.parser.QueryAst
+import gql.client.QueryValidation
+import gql.preparation.RootPreparation
 
 object Generator {
   def modifyHead(f: Char => Char): String => String = { str =>
@@ -821,10 +824,10 @@ object Generator {
   def generateForInput[F[_]: Async: Err](
       env: Env,
       i: Input
-  ): F[(Set[UsedInput], Output)] =
+  ): F[(Set[UsedInput], Output, NonEmptyList[ExecutableDefinition[Pos]])] =
     readInputData[F](i)
-      .flatMap(generateFor(env, _))
-      .map { case (usedInputs, doc) => (usedInputs, Output(i.output, doc)) }
+      .flatMap(eds => generateFor(env, eds) tupleLeft eds)
+      .map { case (eds, (usedInputs, doc)) => (usedInputs, Output(i.output, doc), eds) }
 
   def gatherFragInfo[F[_]: Async: Err](i: Input): F[List[FragmentInfo]] =
     readInputData[F](i).map(gatherFragmentInfos(_))
@@ -855,10 +858,30 @@ object Generator {
       data: List[Input]
   )(implicit F: Async[F], E: Err[F]): F[Unit] =
     readEnv[F](schemaPath)(data).flatMap { e =>
+      QueryValidation.getSchema(e.schema) match {
+        case Left(es) => F.raiseError(new RuntimeException(es.mkString_("\n")))
+        case Right(x) =>
+          data.traverse(generateForInput[F](e, _)).map { elems =>
+            val allFrags = elems.flatMap { case (_, _, nel) =>
+              nel.collect { case f: QueryAst.ExecutableDefinition.Fragment[Pos] => f }
+            }
+
+            elems.traverse_ { case (_, o, nel) =>
+              val ops = nel.collect { case op: QueryAst.ExecutableDefinition.Operation[Pos] => op }
+              ops.traverse_ { op =>
+                val toTest: List[QueryAst.ExecutableDefinition[Pos]] = op :: allFrags
+                toTest.toNel.traverse_(RootPreparation.prepareRun(_, x, Map.empty, None))
+              }
+            }
+            ???
+          }
+          F.pure(x)
+      }
       data
         .flatTraverse { d =>
-          generateForInput[F](e, d)
-            .flatMap { case (used, x) => writeStream[F](x.path, x.doc).compile.drain.as(used.toList) }
+          generateForInput[F](e, d).flatMap { case (used, x, eds) =>
+            writeStream[F](x.path, x.doc).compile.drain.as(used.toList)
+          }
         }
         .flatMap(_.distinct.toNel.traverse_(nel => writeStream[F](sharedPath, generateInputs(e, nel.toList)).compile.drain))
     }
