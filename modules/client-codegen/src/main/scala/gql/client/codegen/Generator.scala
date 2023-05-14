@@ -868,10 +868,17 @@ object Generator {
 
             elems.traverse_ { case (_, o, nel) =>
               val ops = nel.collect { case op: QueryAst.ExecutableDefinition.Operation[Pos] => op }
-              ops.traverse_ { op =>
-                val toTest: List[QueryAst.ExecutableDefinition[Pos]] = op :: allFrags
-                toTest.toNel.traverse_(RootPreparation.prepareRun(_, x, Map.empty, None))
-              }
+              ops
+                .traverse_ { op =>
+                  val toTest: List[QueryAst.ExecutableDefinition[Pos]] = op :: allFrags
+                  toTest.toNel.traverse_(RootPreparation.prepareRun(_, x, Map.empty, None))
+                }
+                .leftMap { errs =>
+                  errs.map { pe =>
+                    val pos = pe.position.formatted
+                    // val caretTexsts = 
+                  }
+                }
             }
             ???
           }
