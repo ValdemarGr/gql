@@ -29,6 +29,7 @@ import gql.preparation.Positioned
 import cats._
 import gql.preparation.PreparedRoot
 import gql.preparation.PositionalError
+import gql.parser.TypeSystemAst
 
 object QueryValidation {
   type NoPos[A] = Const[A, Unit]
@@ -132,14 +133,14 @@ object QueryValidation {
     }
 
     def implementation[A](s: String): EitherNec[String, Implementation[Pure, A, ?]] =
-      partitionType(s).flatMap {
+      partitionType(s) match {
         case i: InterfaceType =>
           Right(Implementation(Eval.always(convertInterface(i).toOption.get))(_ => Option.empty[A]))
         case _ => s"Expected interface, got object `${s}`".leftNec
       }
 
     def variant[A](s: String) =
-      partitionType(s).flatMap {
+      partitionType(s) match {
         case i: ObjectType =>
           Right(Variant(Eval.always(convertObject(i).toOption.get))((_: Unit) => None))
         case _ => s"Expected object type, got something else `${s}`".leftNec
@@ -187,36 +188,39 @@ object QueryValidation {
       case x: ScalarType => Right(convertScalar(x))
     }
 
-    def partitionType(name: String): EitherNec[String, Partition] =
+    def partitionType(name: String): Partition =
       ast
         .get(name)
-        .toRight(NonEmptyChain.one(s"Type `${name}` not found"))
         .map(partition)
+        .getOrElse(ScalarType(TypeSystemAst.TypeDefinition.ScalarTypeDefinition(None, name)))
 
-    def resolveStackedType(t: gql.parser.Type): EitherNec[String, (String, Either[Eval[Out[fs2.Pure, ?]], Eval[In[?]]])] = {
+    def resolveStackedType(t: gql.parser.Type): (String, Ior[Eval[Out[fs2.Pure, ?]], Eval[In[?]]]) = {
       val t2 = ModifierStack.fromType(t).invert
-      partitionType(t2.inner)
-        .map {
-          case o: OutputPartition =>
-            Left(Eval.always(foldOutputStack(t2.set(convertOutputPart(o).toOption.get))))
-          case i: InputPartition =>
-            Right(Eval.always(InverseModifierStack.toIn(t2.set(convertInputPart(i).toOption.get))))
-        } tupleLeft t2.inner
+      def out(o: OutputPartition) = Eval.always(foldOutputStack(t2.set(convertOutputPart(o).toOption.get)))
+      def in(i: InputPartition)   = Eval.always(InverseModifierStack.toIn(t2.set(convertInputPart(i).toOption.get)))
+      val p = partitionType(t2.inner) match {
+        case b: OutputPartition with InputPartition => Ior.Both(out(b), in(b))
+        case o: OutputPartition => Ior.Left(out(o))
+        case i: InputPartition => Ior.Right(in(i))
+      }
+      (t2.inner, p)
     }
 
-    def resolveOutputType(t: gql.parser.Type): EitherNec[String, Eval[Out[fs2.Pure, ?]]] =
-      resolveStackedType(t)
-        .flatMap {
-          case (name, Right(_)) => s"Expected output type, got input type `${name}`".leftNec
-          case (_, Left(o))     => Right(o)
-        }
+    def resolveOutputType(t: gql.parser.Type): EitherNec[String, Eval[Out[fs2.Pure, ?]]] = {
+      val (name, i) = resolveStackedType(t)
+      i.swap.toEither.swap match {
+        case Right(_) => s"Expected output type, got input type `${name}`".leftNec
+        case Left(o)  => Right(o)
+      }
+    }
 
-    def resolveInputType(t: gql.parser.Type): EitherNec[String, Eval[In[?]]] =
-      resolveStackedType(t)
-        .flatMap {
-          case (name, Left(_)) => s"Expected input type, got output type `${name}`".leftNec
-          case (_, Right(i))   => Right(i)
-        }
+    def resolveInputType(t: gql.parser.Type): EitherNec[String, Eval[In[?]]] = {
+      val (name, i) = resolveStackedType(t)
+      i.toEither match {
+        case Left(_)  => s"Expected input type, got output type `${name}`".leftNec
+        case Right(i) => Right(i)
+      }
+    }
 
     def foldOutputStack(ms: InverseModifierStack[OutToplevel[fs2.Pure, ?]]): Out[fs2.Pure, ?] =
       ms.modifiers match {

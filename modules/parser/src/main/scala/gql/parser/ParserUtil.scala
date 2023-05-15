@@ -56,7 +56,17 @@ object ParserUtil {
 
   def errorMessage(data: String, e: Parser.Error): String = {
     import scala.io.AnsiColor
-    val (left, r0) = data.splitAt(e.failedAtOffset)
+    val (msg, conflictingCharacter, ln) = showVirtualTextLine(data, e.failedAtOffset)
+    val niceError = showExpectations(e.expected)
+
+    AnsiColor.BLUE +
+      s"failed at offset ${e.failedAtOffset} on line $ln with code ${conflictingCharacter.toInt}\n${niceError}\nfor document:\n$msg" +
+      AnsiColor.RESET
+  }
+
+  def showVirtualTextLine(data: String, offset: Int) = {
+    import scala.io.AnsiColor
+    val (left, r0) = data.splitAt(offset)
     val right = r0.tail
     val column = left.reverseIterator.takeWhile(_ != '\n').size
 
@@ -90,15 +100,11 @@ object ParserUtil {
     val chunk =
       green + leftChunk + conflictFmt + rightChunks
 
-    val msg =
-      green + chunk
-        .split("\n")
-        .map(x => s"| $x")
-        .mkString("\n")
-    val niceError = showExpectations(e.expected)
+    val err = green + chunk
+      .split("\n")
+      .map(x => s"| $x")
+      .mkString("\n")
 
-    AnsiColor.BLUE +
-      s"failed at offset ${e.failedAtOffset} on line $ln with code ${conflictingCharacter.toInt}\n${niceError}\nfor document:\n$msg" +
-      AnsiColor.RESET
+    (err, conflictingCharacter, ln)
   }
 }

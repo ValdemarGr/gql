@@ -33,6 +33,7 @@ import cats.mtl.Stateful
 import gql.parser.QueryAst
 import gql.client.QueryValidation
 import gql.preparation.RootPreparation
+import gql.parser.ParserUtil
 
 object Generator {
   def modifyHead(f: Char => Char): String => String = { str =>
@@ -813,24 +814,29 @@ object Generator {
   def readInputData[F[_]](i: Input)(implicit
       E: Err[F],
       F: Async[F]
-  ): F[NonEmptyList[ExecutableDefinition[Pos]]] =
+  ): F[(String, NonEmptyList[ExecutableDefinition[Pos]])] =
     Files[F]
       .readAll(i.query)
       .through(fs2.text.utf8.decode[F])
       .compile
       .foldMonoid
-      .flatMap(x => gql.parser.parseQuery(x).leftFlatMap(_.prettyError.value.leftNec).fold(E.raise, F.pure))
+      .flatMap { x =>
+        val fa: F[NonEmptyList[ExecutableDefinition[Pos]]] =
+          gql.parser.parseQuery(x).leftFlatMap(_.prettyError.value.leftNec).fold(E.raise, F.pure)
+
+        fa tupleLeft x
+      }
 
   def generateForInput[F[_]: Async: Err](
       env: Env,
       i: Input
-  ): F[(Set[UsedInput], Output, NonEmptyList[ExecutableDefinition[Pos]])] =
+  ): F[(String, Set[UsedInput], Output, NonEmptyList[ExecutableDefinition[Pos]])] =
     readInputData[F](i)
-      .flatMap(eds => generateFor(env, eds) tupleLeft eds)
-      .map { case (eds, (usedInputs, doc)) => (usedInputs, Output(i.output, doc), eds) }
+      .flatMap { case (q, eds) => generateFor(env, eds) tupleLeft ((q, eds)) }
+      .map { case ((q, eds), (usedInputs, doc)) => (q, usedInputs, Output(i.output, doc), eds) }
 
   def gatherFragInfo[F[_]: Async: Err](i: Input): F[List[FragmentInfo]] =
-    readInputData[F](i).map(gatherFragmentInfos(_))
+    readInputData[F](i).map { case (_, eds) => gatherFragmentInfos(eds) }
 
   def writeStream[F[_]: Async](path: Path, doc: Doc) =
     fs2.Stream
@@ -858,39 +864,50 @@ object Generator {
       data: List[Input]
   )(implicit F: Async[F], E: Err[F]): F[Unit] =
     readEnv[F](schemaPath)(data).flatMap { e =>
-      QueryValidation.getSchema(e.schema) match {
+      val validateF: F[Unit] = QueryValidation.getSchema(e.schema) match {
         case Left(es) => F.raiseError(new RuntimeException(es.mkString_("\n")))
         case Right(x) =>
-          data.traverse(generateForInput[F](e, _)).map { elems =>
-            val allFrags = elems.flatMap { case (_, _, nel) =>
+          data.traverse(generateForInput[F](e, _)).flatMap[Unit] { elems =>
+            val allFrags = elems.flatMap { case (_, _, _, nel) =>
               nel.collect { case f: QueryAst.ExecutableDefinition.Fragment[Pos] => f }
             }
 
-            elems.traverse_ { case (_, o, nel) =>
+            val maybeErrors = elems.traverse_ { case (q, _, _, nel) =>
               val ops = nel.collect { case op: QueryAst.ExecutableDefinition.Operation[Pos] => op }
               ops
                 .traverse_ { op =>
                   val toTest: List[QueryAst.ExecutableDefinition[Pos]] = op :: allFrags
                   toTest.toNel.traverse_(RootPreparation.prepareRun(_, x, Map.empty, None))
                 }
-                .leftMap { errs =>
-                  errs.map { pe =>
+                .leftFlatMap { errs =>
+                  val fixed = errs.filterNot(_.message.contains("Variable")).map { pe =>
                     val pos = pe.position.formatted
-                    // val caretTexsts = 
+                    val caretErrs = pe.caret.distinct
+                      .map(c => ParserUtil.showVirtualTextLine(q, c.offset))
+                      .map{ case (msg, _, _) => msg }
+                    val msg = pe.message
+                    s"$msg at $pos\n${caretErrs.mkString_("\n")}"
                   }
+                  NonEmptyChain.fromChain(fixed).toLeft(())
                 }
             }
-            ???
+
+            maybeErrors.fold(nec => F.raiseError(new Exception(nec.mkString_("\n"))), _ => F.unit)
           }
-          F.pure(x)
       }
-      data
+
+      val generateF = data
         .flatTraverse { d =>
-          generateForInput[F](e, d).flatMap { case (used, x, eds) =>
+          generateForInput[F](e, d).flatMap { case (_, used, x, _) =>
             writeStream[F](x.path, x.doc).compile.drain.as(used.toList)
           }
         }
         .flatMap(_.distinct.toNel.traverse_(nel => writeStream[F](sharedPath, generateInputs(e, nel.toList)).compile.drain))
+      
+      // First do a dry run to validate the queries
+      // Then perfrom the actual generation
+      // Then we don't partially generate queries if there are errors
+      validateF *> generateF
     }
 
   def mainGenerate[F[_]: Async](schemaPath: Path, sharedPath: Path)(data: List[Input]): F[List[String]] =
