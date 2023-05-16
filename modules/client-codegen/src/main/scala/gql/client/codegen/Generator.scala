@@ -860,7 +860,7 @@ object Generator {
         .map(f => Env(m, f.map(fi => fi.name -> fi).toMap))
     }
 
-  def readAndGenerate[F[_]](schemaPath: Path, sharedPath: Path)(
+  def readAndGenerate[F[_]](schemaPath: Path, sharedPath: Path, validate: Boolean)(
       data: List[Input]
   )(implicit F: Async[F], E: Err[F]): F[Unit] =
     readEnv[F](schemaPath)(data).flatMap { e =>
@@ -876,11 +876,24 @@ object Generator {
               val ops = nel.collect { case op: QueryAst.ExecutableDefinition.Operation[Pos] => op }
               ops
                 .traverse_ { op =>
+                  val vds = op.o.value match {
+                    case QueryAst.OperationDefinition.Simple(_) => Nil
+                    case d: QueryAst.OperationDefinition.Detailed[Pos] => d.variableDefinitions.toList.flatMap(_.nel.toList.map(_.value))
+                  }
+                  val missingVars = vds
+                    .map(vd => vd -> ModifierStack.fromType(vd.tpe))
+                    // No default and first modifier if that modifier is NonNull
+                    .filter{ case (vd, ms) => vd.defaultValue.isEmpty && (ms.modifiers.take(1).forall(_ == Modifier.NonNull)) }
+
+                  missingVars.map{ case (vd, ms) =>
+                    vd
+                  }
+
                   val toTest: List[QueryAst.ExecutableDefinition[Pos]] = op :: allFrags
                   toTest.toNel.traverse_(RootPreparation.prepareRun(_, x, Map.empty, None))
                 }
                 .leftFlatMap { errs =>
-                  val fixed = errs.filterNot(_.message.contains("Variable")).map { pe =>
+                  val fixed = errs.filterNot(_.message.contains("is required but was not provided")).map { pe =>
                     val pos = pe.position.formatted
                     val caretErrs = pe.caret.distinct
                       .map(c => ParserUtil.showVirtualTextLine(q, c.offset))
@@ -907,9 +920,9 @@ object Generator {
       // First do a dry run to validate the queries
       // Then perfrom the actual generation
       // Then we don't partially generate queries if there are errors
-      validateF *> generateF
+      F.whenA(validate)(validateF) *> generateF
     }
 
-  def mainGenerate[F[_]: Async](schemaPath: Path, sharedPath: Path)(data: List[Input]): F[List[String]] =
-    readAndGenerate[EitherT[F, NonEmptyChain[String], *]](schemaPath, sharedPath)(data).value.map(_.fold(_.toList, _ => Nil))
+  def mainGenerate[F[_]: Async](schemaPath: Path, sharedPath: Path, validate: Boolean)(data: List[Input]): F[List[String]] =
+    readAndGenerate[EitherT[F, NonEmptyChain[String], *]](schemaPath, sharedPath, validate)(data).value.map(_.fold(_.toList, _ => Nil))
 }

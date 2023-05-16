@@ -86,7 +86,7 @@ object ArgParsing {
                 lazy val against = s"argument type `${at.show(_.name)}` and variable type `${vt.show(identity)}`"
 
                 // We must verify if the variable may occur here by comparing the type of the variable with the type of the arg
-                // If we don't do this, variables will be structurally typed (e.g variable [[[A]]] is compatible with )
+                // If we don't do this, variables will be structurally typed (e.g variable [[[A]]] is compatible with ?)
                 // Var should be more constrained than the arg
                 def verifyTypeShape(argShape: List[Modifier], varShape: List[Modifier]): F[Unit] =
                   (argShape, varShape) match {

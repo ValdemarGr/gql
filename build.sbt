@@ -173,7 +173,7 @@ lazy val testCodeGen = project
         val s = s0.absolutePath.replace("\\", "\\\\")
         val outf = f / "query.scala"
         val outs = outf.absolutePath.replace("\\", "\\\\")
-        val input = s""" --input {"schema":"${sp}","shared":"${s}","queries":[{"query":"${qp}","output":"${outs}"}]}"""
+        val input = s""" --validate --input {"schema":"${sp}","shared":"${s}","queries":[{"query":"${qp}","output":"${outs}"}]}"""
         val ip2: String = input.toString()
         (clientCodegenCli / Compile / run).toTask(ip2).map(_ => Seq(outf, s0))
       }.value
