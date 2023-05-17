@@ -71,30 +71,29 @@ object GeneratorCli
       }
     }
 
-    Opts.flag("validate", "validate the schema and queries").orFalse
+  Opts.flag("validate", "validate the schema and queries").orFalse
 
   override def main: Opts[IO[ExitCode]] =
-    (kvPairs, Opts.flag("validate", "validate the schema and queries").orFalse)
-      .mapN { case (kvs, validate) =>
-        fs2.Stream
-          .emits(kvs.toList)
-          .lift[IO]
-          .evalMap { i =>
-            Generator.mainGenerate[IO](i.schema, i.shared, validate) {
-              i.queries.toList.map { q =>
-                Generator.Input(
-                  q.query,
-                  q.output.getOrElse(q.query.parent.get / (q.query.fileName.toString + ".scala"))
-                )
-              }
+    kvPairs.map { kvs =>
+      fs2.Stream
+        .emits(kvs.toList)
+        .lift[IO]
+        .evalMap { i =>
+          Generator.mainGenerate[IO](i.schema, i.shared) {
+            i.queries.toList.map { q =>
+              Generator.Input(
+                q.query,
+                q.output.getOrElse(q.query.parent.get / (q.query.fileName.toString + ".scala"))
+              )
             }
           }
-          .compile
-          .foldMonoid
-          .flatMap {
-            case Nil => IO.unit
-            case xs  => IO.raiseError(new Exception(s"Failed to generate code for ${xs.mkString(", ")}"))
-          }
-          .as(ExitCode.Success)
-      }
+        }
+        .compile
+        .foldMonoid
+        .flatMap {
+          case Nil => IO.unit
+          case xs  => IO.raiseError(new Exception(s"Failed to generate code for ${xs.mkString(", ")}"))
+        }
+        .as(ExitCode.Success)
+    }
 }

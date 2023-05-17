@@ -23,36 +23,39 @@ import gql.parser.{Value => V}
 import gql._
 import gql.resolver.Resolver
 import fs2.Pure
-import gql.parser.QueryAst
 import gql.preparation.RootPreparation
-import gql.preparation.Positioned
 import cats._
-import gql.preparation.PreparedRoot
-import gql.preparation.PositionalError
+import io.circe.Json
+import gql.parser.ParserUtil
 import gql.parser.TypeSystemAst
 
 object QueryValidation {
-  type NoPos[A] = Const[A, Unit]
-  implicit val positionedForNoPos = Positioned[NoPos, Unit](new (NoPos ~> Const[Unit, *]) {
-    def apply[A](fa: NoPos[A]): Const[Unit, A] = Const(())
-  })(
-    new (NoPos ~> Id) {
-      def apply[A](fa: NoPos[A]): A = fa.getConst
-    }
-  )
-
   def validateQuery(
+      q: String,
       ast: Map[String, TypeDefinition],
-      executables: NonEmptyList[QueryAst.ExecutableDefinition[Const[*, Unit]]]
-  ): Either[EitherNec[String, NonEmptyChain[PositionalError[Unit]]], PreparedRoot[Pure, ?, ?, ?]] =
-    getSchema(ast) match {
-      case Left(e) => Left(Left(e))
-      case Right(x) =>
-        RootPreparation.prepareRun(executables, x, Map.empty, None) match {
-          case Left(e)  => Left(Right(e))
-          case Right(x) => Right(x)
+      variables: Map[String, Json]
+  ): List[String] =
+    gql.parser
+      .parseQuery(q)
+      .leftMap(err => NonEmptyChain.one(err.prettyError.value))
+      .flatMap { executables =>
+        getSchema(ast).flatMap { x =>
+          RootPreparation
+            .prepareRun(executables, x, variables, None)
+            .leftMap(_.map { pe =>
+              val pos = pe.position.formatted
+              val caretErrs = pe.caret.distinct
+                .map(c => ParserUtil.showVirtualTextLine(q, c.offset))
+                .map { case (msg, _, _) => msg }
+              val msg = pe.message
+              s"$msg at $pos\n${caretErrs.mkString_("\n")}"
+            })
         }
-    }
+      }
+      .left
+      .toOption
+      .toList
+      .flatMap(_.toList)
 
   def getSchema(ast: Map[String, TypeDefinition]): EitherNec[String, SchemaShape[Pure, ?, ?, ?]] =
     liftAst(ast) >>= astToSchema
@@ -197,11 +200,11 @@ object QueryValidation {
     def resolveStackedType(t: gql.parser.Type): (String, Ior[Eval[Out[fs2.Pure, ?]], Eval[In[?]]]) = {
       val t2 = ModifierStack.fromType(t).invert
       def out(o: OutputPartition) = Eval.always(foldOutputStack(t2.set(convertOutputPart(o).toOption.get)))
-      def in(i: InputPartition)   = Eval.always(InverseModifierStack.toIn(t2.set(convertInputPart(i).toOption.get)))
+      def in(i: InputPartition) = Eval.always(InverseModifierStack.toIn(t2.set(convertInputPart(i).toOption.get)))
       val p = partitionType(t2.inner) match {
         case b: OutputPartition with InputPartition => Ior.Both(out(b), in(b))
-        case o: OutputPartition => Ior.Left(out(o))
-        case i: InputPartition => Ior.Right(in(i))
+        case o: OutputPartition                     => Ior.Left(out(o))
+        case i: InputPartition                      => Ior.Right(in(i))
       }
       (t2.inner, p)
     }

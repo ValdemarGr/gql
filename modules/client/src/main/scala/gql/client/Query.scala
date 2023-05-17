@@ -20,14 +20,12 @@ import io.circe._
 import org.typelevel.paiges._
 import cats.implicits._
 import cats._
-import cats.data._
 import gql.client.Selection.Fragment
 import gql.client.Selection.Field
 import gql.client.Selection.InlineFragment
-//import gql.parser.TypeSystemAst
-//import gql.SchemaShape
 import gql.parser.GraphqlRender
 import io.circe.syntax._
+import gql.parser.TypeSystemAst
 
 final case class SimpleQuery[A](
     operationType: P.OperationType,
@@ -68,13 +66,12 @@ object Query {
       origin: SimpleQuery[A],
       variables: Option[JsonObject] = None
   ) {
-    /*
-    def validate(schema: SchemaShape[fs2.Pure, ?, ?, ?]) = {
-      // Consider folding into the query ast instead of a string
-      // Then render the ast to a string
-      // Or pass the ast to the preparation function
-      val frags = findFragments(origin.selectionSet)
-    }*/
+    def validate(schema: Map[String, TypeSystemAst.TypeDefinition]) = 
+      QueryValidation.validateQuery(
+        query, 
+        schema, 
+        variables.map(_.toMap).getOrElse(Map.empty)
+      )
   }
 
   def matchAlias(typename: String): String =
@@ -181,27 +178,6 @@ object Query {
 
       ss.impl.foldMap(compiler).emap(_.toEither.leftMap(_ /*.map(s => s"${s.value} at ${s.position.toString}")*/ .intercalate(", ")))
     }
-  }
-
-  object ParserAst {
-    type F[A] = Writer[List[Fragment[?]], A]
-    val F = Monad[F]
-    /*
-    def convertSelectionSet(ss: SelectionSet[?]): F[P.SelectionSet] = {
-      ss.impl.enumerate.map{
-        case f: Fragment[?] => Writer(List(f), P.Selection.FragmentSpreadSelection(P.FragmentSpread(f.name)))
-        case f: InlineFragment[?] =>
-          convertSelectionSet(f.subSelection)
-            .map(ss => P.Selection.InlineFragmentSelection(P.InlineFragment(Some(f.on), ss)))
-        case f: Field[?] =>
-          def unrollSubQuery(sq: SubQuery[?]): Option[P.SelectionSet] = sq match {
-            case ListModifier(subQuery) => unrollSubQuery(subQuery)
-            case OptionModifier(subQuery) => unrollSubQuery(subQuery)
-            case Terminal(_) => F.pure(Nil)
-          }
-      }
-      ???
-    }*/
   }
 
   object Render {

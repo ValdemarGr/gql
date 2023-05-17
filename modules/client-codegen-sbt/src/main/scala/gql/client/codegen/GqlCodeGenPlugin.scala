@@ -50,8 +50,6 @@ object GqlCodeGenPlugin extends AutoPlugin {
       val invokeCodeGen = taskKey[Seq[File]]("Invoke the code generator")
 
       val libraryVersion = settingKey[String]("The CLI library version")
-
-      val validate = settingKey[Boolean]("Validate the query against the schema")
     }
   }
 
@@ -59,7 +57,6 @@ object GqlCodeGenPlugin extends AutoPlugin {
 
   override def projectSettings: Seq[Setting[_]] =
     List(
-      Gql.validate := true,
       Gql.resourceGroups := Seq(Gql.DefaultResourceGroup),
       Gql.findResources := {
         val rs = Gql.resourceGroups.value
@@ -142,7 +139,7 @@ object GqlCodeGenPlugin extends AutoPlugin {
             "-cp"
           ) ++ List(cp.map(_.data.toString()).mkString(":")) ++ List(
             "gql.client.codegen.GeneratorCli"
-          ) ++ (if(Gql.validate.value) List("--validate") else Nil) ++ List(
+          ) ++ List(
             "--input"
           ) ++ cmd.map(_._1)
 
