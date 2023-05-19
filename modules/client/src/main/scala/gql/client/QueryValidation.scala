@@ -28,8 +28,38 @@ import cats._
 import io.circe.Json
 import gql.parser.ParserUtil
 import gql.parser.TypeSystemAst
+import gql.parser.{ Type => PType }
+import io.circe.JsonObject
+import io.circe.syntax._
 
 object QueryValidation {
+  def generateStubInput(
+    tpe: PType,
+    ast: Map[String, TypeDefinition]
+  ): ValidatedNec[String, Json] = {
+    val ms = ModifierStack.fromType(tpe).invert
+    // Any modifer has a monoid
+    ms.modifiers.headOption match {
+      case Some(InverseModifier.List) => Json.arr().validNec
+      case Some(InverseModifier.Optional) => Json.Null.validNec
+      case None =>
+        ast.get(ms.inner) match {
+          case None => s"Could not find type ${ms.inner}".invalidNec
+          case Some(_: TypeDefinition.ScalarTypeDefinition) => Json.fromString("").validNec
+          case Some(e: TypeDefinition.EnumTypeDefinition) => Json.fromString(e.values.head.name).validNec
+          case Some(i: TypeDefinition.InputObjectTypeDefinition) =>
+            i.inputFields.traverse{ x =>
+              x.defaultValue match {
+                case Some(_) => JsonObject.empty.validNec
+                case None => generateStubInput(x.tpe, ast).map(v => JsonObject.singleton(x.name, v))
+              }
+            }
+            .map(_.reduceLeft(_ deepMerge _).asJson)
+          case _ => s"Type ${ms.inner} is not an input type".invalidNec
+        }
+    }
+  }
+
   def validateQuery(
       q: String,
       ast: Map[String, TypeDefinition],

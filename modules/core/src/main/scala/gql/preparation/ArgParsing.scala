@@ -85,9 +85,26 @@ object ArgParsing {
 
                 lazy val against = s"argument type `${at.show(_.name)}` and variable type `${vt.show(identity)}`"
 
-                // We must verify if the variable may occur here by comparing the type of the variable with the type of the arg
-                // If we don't do this, variables will be structurally typed (e.g variable [[[A]]] is compatible with ?)
-                // Var should be more constrained than the arg
+                /*
+                 * We must verify if the variable may occur here by comparing the type of the variable with the type of the arg
+                 * If we don't do this, variables will be structurally typed (e.g variable [[[A]]] is compatible with ?)
+                 * Var should be more constrained than the arg
+                 * a ::= [a] | a! | A
+                 * v ::= [v] | v! | V
+                 * a compat v ::= ok | fail
+                 * 
+                 *  a  compat  v  -> outcome
+                 * --------------------------
+                 *  A  compat  V  -> ok
+                 *  a! compat  v! -> a compat v
+                 *  a! compat [v] -> fail
+                 *  a! compat  V  -> fail
+                 * [a] compat  v! -> [a] compat v
+                 *  A  compat  v! -> A compat v
+                 * [a] compat [v] -> [a] compat [v]
+                 * [a] compat  V  -> fail
+                 *  A  compat [v] -> fail
+                 */
                 def verifyTypeShape(argShape: List[Modifier], varShape: List[Modifier]): F[Unit] =
                   (argShape, varShape) match {
                     // A compat V
@@ -96,7 +113,11 @@ object ArgParsing {
                     // a! compat v! -> ok
                     case (Modifier.NonNull :: xs, Modifier.NonNull :: ys) => verifyTypeShape(xs, ys)
                     // a! compat ([v] | V) -> fail
-                    case (Modifier.NonNull :: xs, ys) => verifyTypeShape(xs, ys)
+                    case (Modifier.NonNull :: xs, (Modifier.List :: _) | Nil) => 
+                      raise(
+                        s"${prefix}, remaining argument type modifiers were `${at.copy(modifiers = xs).show(_.name)}` when verifying $against",
+                        Nil
+                      )
                     // ([a] | A) compat v! -> ok
                     case (xs, Modifier.NonNull :: ys) => verifyTypeShape(xs, ys)
 
