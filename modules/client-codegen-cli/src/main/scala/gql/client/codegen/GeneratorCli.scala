@@ -71,15 +71,15 @@ object GeneratorCli
       }
     }
 
-  Opts.flag("validate", "validate the schema and queries").orFalse
+  val validateOpt = Opts.flag("validate", "validate the schema and queries").orFalse
 
   override def main: Opts[IO[ExitCode]] =
-    kvPairs.map { kvs =>
+    (validateOpt, kvPairs).mapN { case (validate, kvs) =>
       fs2.Stream
         .emits(kvs.toList)
         .lift[IO]
         .evalMap { i =>
-          Generator.mainGenerate[IO](i.schema, i.shared) {
+          Generator.mainGenerate[IO](i.schema, i.shared, validate) {
             i.queries.toList.map { q =>
               Generator.Input(
                 q.query,
@@ -92,7 +92,7 @@ object GeneratorCli
         .foldMonoid
         .flatMap {
           case Nil => IO.unit
-          case xs  => IO.raiseError(new Exception(s"Failed to generate code for ${xs.mkString(", ")}"))
+          case xs  => IO.raiseError(new Exception(s"Failed to generate code with error: ${xs.mkString(", ")}"))
         }
         .as(ExitCode.Success)
     }

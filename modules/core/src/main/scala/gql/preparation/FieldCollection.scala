@@ -57,12 +57,12 @@ object FieldCollection {
   )(implicit
       F: Monad[F],
       E: ErrorAlg[F, C],
-      PA: PathAlg[F],
       L: Local[F, CycleSet],
       C: Local[F, Cursor],
       P: Positioned[P, C],
       A: ArgParsing[F]
   ) = {
+    implicit val PA = PathAlg[F]
     import E._
     import PA._
 

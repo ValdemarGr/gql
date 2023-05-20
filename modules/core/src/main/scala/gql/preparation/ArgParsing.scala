@@ -87,7 +87,7 @@ object ArgParsing {
 
                 /*
                  * We must verify if the variable may occur here by comparing the type of the variable with the type of the arg
-                 * If we don't do this, variables will be structurally typed (e.g variable [[[A]]] is compatible with ?)
+                 * If we don't do this, variables will be structurally typed
                  * Var should be more constrained than the arg
                  * a ::= [a] | a! | A
                  * v ::= [v] | v! | V
@@ -109,7 +109,6 @@ object ArgParsing {
                   (argShape, varShape) match {
                     // A compat V
                     case (Nil, Nil) => F.unit
-
                     // a! compat v! -> ok
                     case (Modifier.NonNull :: xs, Modifier.NonNull :: ys) => verifyTypeShape(xs, ys)
                     // a! compat ([v] | V) -> fail
@@ -120,7 +119,6 @@ object ArgParsing {
                       )
                     // ([a] | A) compat v! -> ok
                     case (xs, Modifier.NonNull :: ys) => verifyTypeShape(xs, ys)
-
                     // [a] compat [v] -> ok
                     case (Modifier.List :: xs, Modifier.List :: ys) => verifyTypeShape(xs, ys)
                     // [a] compat V -> fail

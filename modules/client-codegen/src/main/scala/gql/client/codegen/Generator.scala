@@ -30,6 +30,13 @@ import gql.parser.Pos
 import cats.mtl.Tell
 import cats.mtl.Handle
 import cats.mtl.Stateful
+import gql.preparation.Positioned
+import cats.parse.Caret
+import gql.parser.QueryAst
+import gql.client.QueryValidation
+import io.circe.Json
+import gql.preparation.RootPreparation
+import gql.parser.ParserUtil
 
 object Generator {
   def modifyHead(f: Char => Char): String => String = { str =>
@@ -856,19 +863,88 @@ object Generator {
         .map(f => Env(m, f.map(fi => fi.name -> fi).toMap))
     }
 
-  def readAndGenerate[F[_]](schemaPath: Path, sharedPath: Path)(
+  final case class PositionalInfo(
+      caret: Caret,
+      input: Input,
+      sourceQuery: String
+  )
+
+  final case class PosWithFile[A](
+      value: A,
+      pos: PositionalInfo
+  )
+
+  object PosWithFile {
+    def fromPosK(input: Input, sourceQuery: String): Pos ~> PosWithFile = new (Pos ~> PosWithFile) {
+      override def apply[A](fa: Pos[A]): PosWithFile[A] =
+        PosWithFile(fa.value, PositionalInfo(fa.caret, input, sourceQuery))
+    }
+
+    implicit val functor: Functor[PosWithFile] = new Functor[PosWithFile] {
+      def map[A, B](fa: PosWithFile[A])(f: A => B): PosWithFile[B] =
+        fa.copy(value = f(fa.value))
+    }
+
+    implicit val positionedForPosWithFile: Positioned[PosWithFile, PositionalInfo] = new Positioned[PosWithFile, PositionalInfo] {
+      override def apply[A](p: PosWithFile[A]): A =
+        p.value
+
+      override def position[A](p: PosWithFile[A]): PositionalInfo =
+        p.pos
+    }
+  }
+
+  def readAndGenerate[F[_]](schemaPath: Path, sharedPath: Path, validate: Boolean)(
       data: List[Input]
   )(implicit F: Async[F], E: Err[F]): F[Unit] =
     readEnv[F](schemaPath)(data).flatMap { e =>
       data
-        .flatTraverse { d =>
-          generateForInput[F](e, d).flatMap { case (_, used, x, _) =>
-            writeStream[F](x.path, x.doc).compile.drain.as(used.toList)
+        .traverse(d => generateForInput[F](e, d) tupleLeft d)
+        .flatMap { xs =>
+          val translated: List[ExecutableDefinition[PosWithFile]] = xs.flatMap { case (i, (q, _, _, eds)) =>
+            eds.toList.map(_.mapK(PosWithFile.fromPosK(i, q)))
           }
+          val allFrags = translated.collect { case f: ExecutableDefinition.Fragment[PosWithFile] => f }
+          val allOps = translated.collect { case op: ExecutableDefinition.Operation[PosWithFile] => op }
+          lazy val errors = QueryValidation.getSchema(e.schema).flatMap { stubSchema =>
+            allOps.parTraverse { op =>
+              val full: NonEmptyList[ExecutableDefinition[PosWithFile]] = NonEmptyList(op, allFrags)
+              val vars: ValidatedNec[String, Map[String, Json]] = op.o.value match {
+                case QueryAst.OperationDefinition.Simple(_) => Map.empty.validNec
+                case QueryAst.OperationDefinition.Detailed(_, _, vds, _) =>
+                  vds.toList
+                    .flatMap(_.nel.toList)
+                    .traverse(x => QueryValidation.generateVariableStub(x.value, e.schema))
+                    .map(_.foldLeft(Map.empty[String, Json])(_ ++ _))
+              }
+              vars.toEither.flatMap { variables =>
+                RootPreparation
+                  .prepareRun(full, stubSchema, variables, None)
+                  .leftMap(_.map { pe =>
+                    val pos = pe.position.formatted
+                    val caretErrs = pe.caret.distinct
+                      .map { c =>
+                        val (msg, _, _) = ParserUtil.showVirtualTextLine(c.sourceQuery, c.caret.offset)
+                        s"in file ${c.input.query}\n" + msg
+                      }
+                    val msg = pe.message
+                    s"$msg at $pos\n${caretErrs.mkString_("\n")}"
+                  })
+              }
+            }
+          }
+
+          lazy val validateF = errors.leftTraverse[F, Unit](E.raise(_))
+
+          val writeF: F[Unit] =
+            xs.flatTraverse { case (_, (_, used, x, _)) =>
+              writeStream[F](x.path, x.doc).compile.drain.as(used.toList)
+            }.flatMap(_.distinct.toNel.traverse_(nel => writeStream[F](sharedPath, generateInputs(e, nel.toList)).compile.drain))
+
+          F.whenA(validate)(validateF) *> writeF
         }
-        .flatMap(_.distinct.toNel.traverse_(nel => writeStream[F](sharedPath, generateInputs(e, nel.toList)).compile.drain))
     }
 
-  def mainGenerate[F[_]: Async](schemaPath: Path, sharedPath: Path)(data: List[Input]): F[List[String]] =
-    readAndGenerate[EitherT[F, NonEmptyChain[String], *]](schemaPath, sharedPath)(data).value.map(_.fold(_.toList, _ => Nil))
+  def mainGenerate[F[_]: Async](schemaPath: Path, sharedPath: Path, validate: Boolean)(data: List[Input]): F[List[String]] =
+    readAndGenerate[EitherT[F, NonEmptyChain[String], *]](schemaPath, sharedPath, validate)(data).value.map(_.fold(_.toList, _ => Nil))
 }

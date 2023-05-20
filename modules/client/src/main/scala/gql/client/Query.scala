@@ -27,21 +27,32 @@ import gql.parser.GraphqlRender
 import io.circe.syntax._
 import gql.parser.TypeSystemAst
 
+trait QueryLike {
+  def queryString: String
+
+  def validate(ast: Map[String, TypeSystemAst.TypeDefinition]): List[String] =
+    QueryValidation.validateQuery(queryString, ast)
+}
+
 final case class SimpleQuery[A](
     operationType: P.OperationType,
     selectionSet: SelectionSet[A]
-) {
+) extends QueryLike {
+  lazy val queryString: String = Query.renderQuery(this)
+
   def compile: Query.Compiled[A] = Query.Compiled(
     Query.queryDecoder(selectionSet),
-    Query.renderQuery(this),
+    queryString,
     this
   )
 }
 
-final case class NamedQuery[A](name: String, query: SimpleQuery[A]) {
+final case class NamedQuery[A](name: String, query: SimpleQuery[A]) extends QueryLike {
+  lazy val queryString: String = Query.renderQuery(query, name.some)
+
   def compile: Query.Compiled[A] = Query.Compiled(
     Query.queryDecoder(query.selectionSet),
-    Query.renderQuery(query, name.some),
+    queryString,
     query
   )
 }
@@ -50,10 +61,12 @@ final case class ParameterizedQuery[A, V](
     name: String,
     query: SimpleQuery[A],
     variables: Var.Impl[V]
-) {
+) extends QueryLike {
+  lazy val queryString: String =  Query.renderQuery(query, name.some, variables.written.map(_.toList))
+
   def compile(v: V): Query.Compiled[A] = Query.Compiled(
     Query.queryDecoder(query.selectionSet),
-    Query.renderQuery(query, name.some, variables.written.map(_.toList)),
+    queryString,
     query,
     variables.value.encodeObject(v).some
   )
@@ -65,14 +78,7 @@ object Query {
       query: String,
       origin: SimpleQuery[A],
       variables: Option[JsonObject] = None
-  ) {
-    def validate(schema: Map[String, TypeSystemAst.TypeDefinition]) = 
-      QueryValidation.validateQuery(
-        query, 
-        schema, 
-        variables.map(_.toMap).getOrElse(Map.empty)
-      )
-  }
+  )
 
   def matchAlias(typename: String): String =
     s"__matchedOn$typename"
