@@ -80,7 +80,7 @@ object ParserUtil {
     val virtualLineIndicators = math.min(virtualLineStartChar + virtualN, virtualN)
 
     val virtualErrorLine =
-      (">" * virtualLineStartChar) + ("^" * (virtualLineIndicators + 1 + virtualN)) + s" line:$ln code:${conflictingCharacter.toInt}"
+      (">" * virtualLineStartChar) + ("^" * (virtualLineIndicators + 1 + virtualN)) + s" line:$ln, column:${column}, offset:${offset}, character code code:${conflictingCharacter.toInt}"
 
     val green = AnsiColor.RESET + AnsiColor.GREEN
 
