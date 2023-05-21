@@ -42,9 +42,9 @@ object QueryParser {
       .between(t('('), t(')'))
       .map(VariableDefinitions(_))
 
-  lazy val variableDefinition = 
-    Pos.pos(variable ~ (t(':') *> `type`) ~ defaultValue(constValue).?).map { case Pos(c, ((n, t), d)) => 
-      VariableDefinition(n, t, d, c) 
+  lazy val variableDefinition =
+    Pos.pos(variable ~ (t(':') *> `type`) ~ defaultValue(constValue).?).map { case Pos(c, ((n, t), d)) =>
+      VariableDefinition(n, t, d, c)
     }
 
   lazy val operationType = {
@@ -68,7 +68,8 @@ object QueryParser {
   }
 
   lazy val field: P[Field[Caret]] = P.defer {
-    Pos.pos(P.backtrack(alias).?.with1 ~ name ~ arguments.? ~ selectionSet.?)
+    Pos
+      .pos(P.backtrack(alias).?.with1 ~ name ~ arguments.? ~ selectionSet.?)
       .map { case Pos(c, (((a, n), args), s)) => Field(a, n, args, s, c) }
   }
 

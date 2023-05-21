@@ -40,7 +40,7 @@ trait ArgParsing[F[_], C] {
   def decodeArg[A](
       arg: Arg[A],
       values: Map[String, V[AnyValue, List[C]]],
-      ambigiousEnum: Boolean, 
+      ambigiousEnum: Boolean,
       context: List[C]
   ): F[A]
 }
@@ -93,7 +93,7 @@ object ArgParsing {
                  * a ::= [a] | a! | A
                  * v ::= [v] | v! | V
                  * a compat v ::= ok | fail
-                 * 
+                 *
                  *  a  compat  v  -> outcome
                  * --------------------------
                  *  A  compat  V  -> ok
@@ -113,7 +113,7 @@ object ArgParsing {
                     // a! compat v! -> ok
                     case (Modifier.NonNull :: xs, Modifier.NonNull :: ys) => verifyTypeShape(xs, ys)
                     // a! compat ([v] | V) -> fail
-                    case (Modifier.NonNull :: xs, (Modifier.List :: _) | Nil) => 
+                    case (Modifier.NonNull :: xs, (Modifier.List :: _) | Nil) =>
                       raise(
                         s"${prefix}, remaining argument type modifiers were `${at.copy(modifiers = xs).show(_.name)}` when verifying $against",
                         Nil
@@ -153,10 +153,10 @@ object ArgParsing {
           val fa: F[(String, List[C])] = v match {
             case V.EnumValue(s, cs)                    => F.pure((s, cs))
             case V.StringValue(s, cs) if ambigiousEnum => F.pure((s, cs))
-            case _                                 => raise(s"Enum value expected for `$name`, but got ${pValueName(v)}.", v.c)
+            case _                                     => raise(s"Enum value expected for `$name`, but got ${pValueName(v)}.", v.c)
           }
 
-          fa.flatMap[A] { case (s, cs)  =>
+          fa.flatMap[A] { case (s, cs) =>
             e.m.lookup(s) match {
               case Some(x) => F.pure(x)
               case None =>
@@ -181,7 +181,7 @@ object ArgParsing {
             }
             .flatMap[c](a.fromSeq(_).fold(raise(_, cs), F.pure(_)))
         case (_: InOpt[a], V.NullValue(_)) => F.pure(Option.empty[a])
-        case (opt: InOpt[a], v)           => decodeIn(opt.of, v, ambigiousEnum).map(Option(_))
+        case (opt: InOpt[a], v)            => decodeIn(opt.of, v, ambigiousEnum).map(Option(_))
         case (i, v) => raise(s"Expected type `${ModifierStack.fromIn(i).show(_.name)}`, but got value ${pValueName(value)}.", v.c)
       }
     }

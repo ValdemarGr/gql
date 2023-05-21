@@ -26,7 +26,6 @@ import org.typelevel.paiges.Doc
 import cats.implicits._
 import gql._
 import cats.mtl.Local
-import gql.parser.Pos
 import cats.mtl.Tell
 import cats.mtl.Handle
 import cats.mtl.Stateful
@@ -290,7 +289,7 @@ object Generator {
       case IntValue(v, _)     => Doc.text(s"V.IntValue(${v.toString()})")
       case StringValue(v, _)  => Doc.text(s"""V.StringValue("$v")""")
       case FloatValue(v, _)   => Doc.text(s"""V.FloatValue("$v")""")
-      case NullValue(_)     => Doc.text(s"""V.NullValue()""")
+      case NullValue(_)       => Doc.text(s"""V.NullValue()""")
       case BooleanValue(v, _) => Doc.text(s"""V.BooleanValue(${v.toString()})""")
       case ListValue(v, _) =>
         Doc.text(s"V.ListValue[${tpe}, Unit](") +

@@ -41,7 +41,7 @@ object QueryAst {
         variableDefinitions: Option[VariableDefinitions[C]],
         selectionSet: SelectionSet[C]
     ) extends OperationDefinition[C] {
-      def map[A](f: C => A): OperationDefinition[A] = 
+      def map[A](f: C => A): OperationDefinition[A] =
         Detailed(tpe, name, variableDefinitions.map(_.map(f)), selectionSet.map(f))
     }
 
@@ -83,14 +83,14 @@ object QueryAst {
       selectionSet: Option[SelectionSet[C]],
       caret: C
   ) {
-    def map[A](f: C => A): Field[A] = 
+    def map[A](f: C => A): Field[A] =
       Field(
-        alias, 
-        name, 
-        arguments.map(_.map(f)), 
+        alias,
+        name,
+        arguments.map(_.map(f)),
         selectionSet.map(_.map(f)),
         f(caret)
-         )
+      )
   }
 
   final case class Arguments[C](nel: NonEmptyList[Argument[C]]) {
@@ -113,17 +113,17 @@ object QueryAst {
       selectionSet: SelectionSet[C],
       caret: C
   ) {
-    def map[A](f: C => A): FragmentDefinition[A] = 
+    def map[A](f: C => A): FragmentDefinition[A] =
       FragmentDefinition(name, typeCnd, selectionSet.map(f), f(caret))
   }
 
   final case class VariableDefinitions[C](nel: NonEmptyList[VariableDefinition[C]]) {
-    def map[A](f: C => A): VariableDefinitions[A] = 
+    def map[A](f: C => A): VariableDefinitions[A] =
       VariableDefinitions(nel.map(_.map(f)))
   }
 
   final case class VariableDefinition[C](name: String, tpe: Type, defaultValue: Option[V[gql.parser.Const, C]], c: C) {
-    def map[A](f: C => A): VariableDefinition[A] = 
+    def map[A](f: C => A): VariableDefinition[A] =
       VariableDefinition(name, tpe, defaultValue.map(_.map(f)), f(c))
   }
 }

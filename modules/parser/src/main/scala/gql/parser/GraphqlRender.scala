@@ -24,7 +24,7 @@ object GraphqlRender {
       case IntValue(v, _)     => Doc.text(v.toString)
       case StringValue(v, _)  => Doc.text(s""""$v"""")
       case FloatValue(v, _)   => Doc.text(v.toString)
-      case NullValue(_)     => Doc.text("null")
+      case NullValue(_)       => Doc.text("null")
       case BooleanValue(v, _) => Doc.text(v.toString)
       case ListValue(v, _) =>
         Doc.intercalate(Doc.comma + Doc.line, v.map(renderValue)).tightBracketBy(Doc.char('['), Doc.char(']'))

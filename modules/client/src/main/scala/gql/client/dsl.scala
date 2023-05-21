@@ -32,7 +32,9 @@ object dsl {
   def sel[A](fieldName: String, argHd: P.Argument[Unit], argTl: P.Argument[Unit]*)(implicit sq: SubQuery[A]): SelectionSet[A] =
     SelectionSet.lift(Selection.Field(fieldName, None, argHd :: argTl.toList, sq))
 
-  def sel[A](fieldName: String, alias: String, argHd: P.Argument[Unit], argTl: P.Argument[Unit]*)(implicit sq: SubQuery[A]): SelectionSet[A] =
+  def sel[A](fieldName: String, alias: String, argHd: P.Argument[Unit], argTl: P.Argument[Unit]*)(implicit
+      sq: SubQuery[A]
+  ): SelectionSet[A] =
     SelectionSet.lift(Selection.Field(fieldName, Some(alias), argHd :: argTl.toList, sq))
 
   def inlineFrag[A](on: String)(implicit q: SelectionSet[A]): SelectionSet[Option[A]] =

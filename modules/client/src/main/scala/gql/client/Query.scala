@@ -62,7 +62,7 @@ final case class ParameterizedQuery[A, V](
     query: SimpleQuery[A],
     variables: Var.Impl[V]
 ) extends QueryLike {
-  lazy val queryString: String =  Query.renderQuery(query, name.some, variables.written.map(_.toList))
+  lazy val queryString: String = Query.renderQuery(query, name.some, variables.written.map(_.toList))
 
   def compile(v: V): Query.Compiled[A] = Query.Compiled(
     Query.queryDecoder(query.selectionSet),

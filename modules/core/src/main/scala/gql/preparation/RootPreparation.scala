@@ -92,9 +92,9 @@ object RootPreparation {
           ops: List[(QA.OperationDefinition[C], C)],
           operationName: Option[String]
       ): F[QA.OperationDefinition[C]] = {
-        lazy val applied = ops.map{ case (x, _) => x }
+        lazy val applied = ops.map { case (x, _) => x }
 
-        lazy val positions = ops.map{ case (_, x) => x }
+        lazy val positions = ops.map { case (_, x) => x }
 
         lazy val possible = applied
           .collect { case d: QA.OperationDefinition.Detailed[C] => d.name }

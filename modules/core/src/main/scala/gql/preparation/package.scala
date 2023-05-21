@@ -38,7 +38,7 @@ package object preparation {
       case ListValue(_, _)     => "list"
       case V.EnumValue(_, _)   => "enum"
       case BooleanValue(_, _)  => "boolean"
-      case NullValue(_)     => "null"
+      case NullValue(_)        => "null"
       case FloatValue(_, _)    => "float"
       case IntValue(_, _)      => "int"
       case VariableValue(_, _) => "variable"

@@ -32,7 +32,6 @@ import gql.parser.{Type => PType}
 import io.circe.JsonObject
 import io.circe.syntax._
 import gql.parser.QueryAst
-import gql.parser.Pos
 import cats.parse.Caret
 
 object QueryValidation {
