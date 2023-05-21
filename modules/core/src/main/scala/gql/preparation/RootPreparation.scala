@@ -31,19 +31,19 @@ import gql.parser.{QueryAst => QA}
 import gql.parser.{Value => V}
 import io.circe._
 
-trait RootPreparation[F[_], G[_], P[_]] {
+trait RootPreparation[F[_], G[_], C] {
   def pickRootOperation(
-      ops: List[P[QA.OperationDefinition[P]]],
+      ops: List[(QA.OperationDefinition[C], C)],
       operationName: Option[String]
-  ): F[QA.OperationDefinition[P]]
+  ): F[QA.OperationDefinition[C]]
 
   def variables(
-      op: QA.OperationDefinition[P],
+      op: QA.OperationDefinition[C],
       variableMap: Map[String, Json]
-  ): F[VariableMap]
+  ): F[VariableMap[C]]
 
   def prepareRoot[Q, M, S](
-      executabels: NonEmptyList[QA.ExecutableDefinition[P]],
+      executabels: NonEmptyList[QA.ExecutableDefinition[C]],
       schema: SchemaShape[G, Q, M, S],
       variableMap: Map[String, Json],
       operationName: Option[String]
@@ -66,18 +66,17 @@ object RootPreparation {
     }
   }
 
-  def prepareRun[G[_], P[_], C, Q, M, S](
-      executabels: NonEmptyList[QA.ExecutableDefinition[P]],
+  def prepareRun[G[_], C, Q, M, S](
+      executabels: NonEmptyList[QA.ExecutableDefinition[C]],
       schema: SchemaShape[G, Q, M, S],
       variableMap: Map[String, Json],
       operationName: Option[String]
-  )(implicit P: Positioned[P, C]): EitherNec[PositionalError[C], PreparedRoot[G, Q, M, S]] = Stack.runK[C] {
-    apply[Stack[C, *], G, P, C].prepareRoot(executabels, schema, variableMap, operationName)
+  ): EitherNec[PositionalError[C], PreparedRoot[G, Q, M, S]] = Stack.runK[C] {
+    apply[Stack[C, *], G, C].prepareRoot(executabels, schema, variableMap, operationName)
   }
 
-  def apply[F[_]: Parallel, G[_], P[_], C](implicit
+  def apply[F[_]: Parallel, G[_], C](implicit
       F: MonadError[F, NonEmptyChain[PositionalError[C]]],
-      P: Positioned[P, C],
       C: Local[F, Cursor],
       L: Local[F, FieldCollection.CycleSet],
       S: Stateful[F, Int],
@@ -88,40 +87,40 @@ object RootPreparation {
     import EA._
     import PA._
 
-    new RootPreparation[F, G, P] {
+    new RootPreparation[F, G, C] {
       override def pickRootOperation(
-          ops: List[P[QA.OperationDefinition[P]]],
+          ops: List[(QA.OperationDefinition[C], C)],
           operationName: Option[String]
-      ): F[QA.OperationDefinition[P]] = {
-        lazy val applied = ops.map(P(_))
+      ): F[QA.OperationDefinition[C]] = {
+        lazy val applied = ops.map { case (x, _) => x }
 
-        lazy val positions = ops.map(P.position(_))
+        lazy val positions = ops.map { case (_, x) => x }
 
         lazy val possible = applied
-          .collect { case d: QA.OperationDefinition.Detailed[P] => d.name }
+          .collect { case d: QA.OperationDefinition.Detailed[C] => d.name }
           .collect { case Some(x) => s"'$x'" }
           .mkString(", ")
-        (ops, operationName) match {
+        (applied, operationName) match {
           case (Nil, _)      => raise(s"No operations provided.", Nil)
-          case (x :: Nil, _) => F.pure(P(x))
+          case (x :: Nil, _) => F.pure(x)
           case (_, _) if applied.exists {
-                case _: QA.OperationDefinition.Simple[P]                     => true
-                case x: QA.OperationDefinition.Detailed[P] if x.name.isEmpty => true
+                case _: QA.OperationDefinition.Simple[C]                     => true
+                case x: QA.OperationDefinition.Detailed[C] if x.name.isEmpty => true
                 case _                                                       => false
               } =>
             raise(s"Exactly one operation must be suplied if the operations include at least one unnamed operation.", positions)
           case (_, None) =>
             raise(s"Operation name must be supplied when supplying multiple operations, provided operations are $possible.", positions)
           case (_, Some(name)) =>
-            val o = applied.collectFirst { case d: QA.OperationDefinition.Detailed[P] if d.name.contains(name) => d }
+            val o = applied.collectFirst { case d: QA.OperationDefinition.Detailed[C] if d.name.contains(name) => d }
             raiseOpt(o, s"Unable to find operation '$name', provided possible operations are $possible.", positions)
         }
       }
 
       override def variables(
-          op: QA.OperationDefinition[P],
+          op: QA.OperationDefinition[C],
           variableMap: Map[String, Json]
-      ): F[VariableMap] = {
+      ): F[VariableMap[C]] = {
         val AP = ArgParsing[F, C](Map.empty)
         /*
          * Convert the variable signature into a gql arg and parse both the default value and the provided value
@@ -132,17 +131,17 @@ object RootPreparation {
           case QA.OperationDefinition.Detailed(_, _, variableDefinitions, _) =>
             variableDefinitions.toList
               .flatMap(_.nel.toList)
-              .parTraverse[F, (String, Variable)] { pvd =>
-                val pos = P.position(pvd)
-                val vd = P(pvd)
+              .parTraverse[F, (String, Variable[C])] { pvd =>
+                val pos = pvd.c
+                val vd = pvd
 
                 val ms = ModifierStack.fromType(vd.tpe)
 
-                val oe: Option[Either[Json, V[Const]]] = (variableMap.get(vd.name).map(_.asLeft) orElse vd.defaultValue.map(_.asRight))
+                val oe: Option[Either[Json, V[Const, C]]] = (variableMap.get(vd.name).map(_.asLeft) orElse vd.defaultValue.map(_.asRight))
 
-                val fo: F[Either[Json, V[Const]]] = oe match {
+                val fo: F[Either[Json, V[Const, C]]] = oe match {
                   case None =>
-                    if (ms.invert.modifiers.headOption.contains(InverseModifier.Optional)) F.pure(Right(V.NullValue()))
+                    if (ms.invert.modifiers.headOption.contains(InverseModifier.Optional)) F.pure(Right(V.NullValue(pos)))
                     else raise(s"Variable '$$${vd.name}' is required but was not provided.", List(pos))
                   case Some(x) =>
                     val stubTLArg: gql.ast.InToplevel[Unit] = gql.ast.Scalar[Unit](ms.inner, _ => V.NullValue(), _ => Right(()))
@@ -153,10 +152,10 @@ object RootPreparation {
                       t match {
                         case in: gql.ast.In[a] =>
                           val (v, amb) = x match {
-                            case Left(j)  => (V.fromJson(j), true)
+                            case Left(j)  => (V.fromJson(j).as(pos), true)
                             case Right(v) => (v, false)
                           }
-                          AP.decodeIn[a](in, v, ambigiousEnum = amb).void
+                          AP.decodeIn[a](in, v.map(List(_)), ambigiousEnum = amb).void
                       }
                     } as x
                 }
@@ -168,18 +167,17 @@ object RootPreparation {
       }
 
       override def prepareRoot[Q, M, S](
-          executabels: NonEmptyList[QA.ExecutableDefinition[P]],
+          executabels: NonEmptyList[QA.ExecutableDefinition[C]],
           schema: SchemaShape[G, Q, M, S],
           variableMap: Map[String, Json],
           operationName: Option[String]
       ): F[PreparedRoot[G, Q, M, S]] = {
         val (ops, frags) = executabels.toList.partitionEither {
-          case QA.ExecutableDefinition.Operation(op)  => Left(op)
-          case QA.ExecutableDefinition.Fragment(frag) => Right(frag)
+          case QA.ExecutableDefinition.Operation(op, c)  => Left((op, c))
+          case QA.ExecutableDefinition.Fragment(frag, _) => Right(frag)
         }
 
         pickRootOperation(ops, operationName).flatMap { od =>
-          variables(od, variableMap)
           val (ot, ss) = od match {
             case QA.OperationDefinition.Simple(ss)             => (QA.OperationType.Query, ss)
             case QA.OperationDefinition.Detailed(ot, _, _, ss) => (ot, ss)
@@ -187,9 +185,9 @@ object RootPreparation {
 
           def runWith[A](o: gql.ast.Type[G, A]): F[NonEmptyList[PreparedSpecification[G, A, _]]] =
             variables(od, variableMap).flatMap { vm =>
-              implicit val AP: ArgParsing[F] = ArgParsing[F, C](vm)
-              val fragMap = frags.map(x => P(x).name -> x).toMap
-              val FC: FieldCollection[F, G, P, C] = FieldCollection[F, G, P, C](schema.discover.implementations, fragMap)
+              implicit val AP: ArgParsing[F, C] = ArgParsing[F, C](vm)
+              val fragMap = frags.map(x => x.name -> x).toMap
+              val FC: FieldCollection[F, G, C] = FieldCollection[F, G, C](schema.discover.implementations, fragMap)
               val FM = FieldMerging[F, C]
               val QP = QueryPreparation[F, G, C](vm, schema.discover.implementations)
               val prog = FC.collectSelectionInfo(o, ss).flatMap { root =>

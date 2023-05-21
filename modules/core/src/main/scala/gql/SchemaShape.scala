@@ -172,25 +172,25 @@ object SchemaShape {
       .value
   }
 
-  def renderValueDoc(v: V[AnyValue]): Doc = {
+  def renderValueDoc[C](v: V[AnyValue, C]): Doc = {
     import V._
     v match {
-      case IntValue(v)     => Doc.text(v.toString)
-      case StringValue(v)  => Doc.text(s""""$v"""")
-      case FloatValue(v)   => Doc.text(v.toString)
-      case NullValue()     => Doc.text("null")
-      case BooleanValue(v) => Doc.text(v.toString)
-      case ListValue(v) =>
+      case IntValue(v, _)     => Doc.text(v.toString)
+      case StringValue(v, _)  => Doc.text(s""""$v"""")
+      case FloatValue(v, _)   => Doc.text(v.toString)
+      case NullValue(_)       => Doc.text("null")
+      case BooleanValue(v, _) => Doc.text(v.toString)
+      case ListValue(v, _) =>
         Doc.intercalate(Doc.comma + Doc.line, v.map(renderValueDoc)).tightBracketBy(Doc.char('['), Doc.char(']'))
-      case ObjectValue(fields) =>
+      case ObjectValue(fields, _) =>
         Doc
           .intercalate(
             Doc.comma + Doc.line,
             fields.map { case (k, v) => Doc.text(k) + Doc.text(": ") + renderValueDoc(v) }
           )
           .bracketBy(Doc.char('{'), Doc.char('}'))
-      case EnumValue(v)     => Doc.text(v)
-      case VariableValue(v) => Doc.text(v)
+      case EnumValue(v, _)     => Doc.text(v)
+      case VariableValue(v, _) => Doc.text(v)
     }
   }
   def render[F[_]](shape: SchemaShape[F, ?, ?, ?]) = {

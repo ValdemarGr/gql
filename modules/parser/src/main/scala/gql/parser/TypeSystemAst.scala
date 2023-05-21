@@ -16,6 +16,7 @@
 package gql.parser
 
 import cats.data.NonEmptyList
+import cats.parse.Caret
 
 object TypeSystemAst {
   sealed trait TypeDefinition { def name: String }
@@ -50,7 +51,7 @@ object TypeSystemAst {
       description: Option[String],
       name: String,
       tpe: Type,
-      defaultValue: Option[Value[Const]]
+      defaultValue: Option[Value[Const, Caret]]
   )
 
   final case class FieldDefinition(

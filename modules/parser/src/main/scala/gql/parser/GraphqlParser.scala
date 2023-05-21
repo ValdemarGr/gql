@@ -19,6 +19,7 @@ import cats.implicits._
 import cats.parse.{Parser => P}
 import cats.parse.Rfc5234
 import cats.parse.Numbers
+import cats.parse.Caret
 
 // https://spec.graphql.org/June2018/#sec-Source-Text
 object GraphqlParser {
@@ -46,33 +47,40 @@ object GraphqlParser {
     (begin ~ tl.rep0).map { case (c, s) => s"$c${s.mkString}" }
   }
 
-  def constValueFields[A >: Const <: AnyValue](vp: => P[Value[A]]): P[Value[A]] = P.defer {
+  def constValueFields[A >: Const <: AnyValue](vp: => P[Value[A, Caret]]): P[Value[A, Caret]] = P.defer {
     import Value._
-    val p1: P[Value[Const]] = p(Numbers.jsonNumber).map { s =>
-      val n = BigDecimal(s)
-      if (n.scale <= 0) Value.IntValue(n.toBigInt)
-      else Value.FloatValue(n)
-    } |
-      stringValue.map(StringValue(_)) |
-      booleanValue.map(BooleanValue(_)) |
-      nullValue.as(NullValue()) |
-      enumValue.map(EnumValue(_))
+    val numParser: P[Value[Const, Caret]] = Pos.pos(p(Numbers.jsonNumber)).map { ps =>
+      val n = BigDecimal(ps.value)
+      if (n.scale <= 0) Value.IntValue[Caret](n.toBigInt, ps.caret)
+      else Value.FloatValue[Caret](n, ps.caret)
+    }
 
-    val p2: P[Value[A]] =
-      listValue(vp).map(ListValue[A](_)) |
-        objectValue(vp).map(ObjectValue[A](_))
+    val strParser: P[Value[Const, Caret]] = Pos.pos(stringValue).map(p => StringValue(p.value, p.caret))
+    val boolParser: P[Value[Const, Caret]] = Pos.pos(booleanValue).map(p => BooleanValue(p.value, p.caret))
+    val nullParser: P[Value[Const, Caret]] = Pos.pos(nullValue).map(p => NullValue(p.caret))
+    val enumParser: P[Value[Const, Caret]] = Pos.pos(enumValue).map(p => EnumValue(p.value, p.caret))
+
+    val p1: P[Value[Const, Caret]] = numParser |
+      strParser |
+      boolParser |
+      nullParser |
+      enumParser
+
+    val p2: P[Value[A, Caret]] =
+      Pos.pos(listValue(vp)).map(p => ListValue[A, Caret](p.value, p.caret)) |
+        Pos.pos(objectValue(vp)).map(p => ObjectValue[A, Caret](p.value, p.caret))
 
     p1 | p2
   }
 
-  lazy val anyValueFields: P[Value[AnyValue]] = P.defer {
+  lazy val anyValueFields: P[Value[AnyValue, Caret]] = P.defer {
     import Value._
-    variable.map(VariableValue(_))
+    Pos.pos(variable).map(p => VariableValue(p.value, p.caret))
   }
 
-  lazy val constValue: P[Value[Const]] = constValueFields(constValue)
+  lazy val constValue: P[Value[Const, Caret]] = constValueFields(constValue)
 
-  lazy val value: P[Value[AnyValue]] = anyValueFields | constValueFields(value)
+  lazy val value: P[Value[AnyValue, Caret]] = anyValueFields | constValueFields(value)
 
   lazy val booleanValue =
     s("true").as(true) |
@@ -84,19 +92,19 @@ object GraphqlParser {
   lazy val enumValue: P[String] =
     (!(booleanValue | nullValue)).with1 *> name
 
-  def listValue[A <: AnyValue](vp: P[Value[A]]): P[List[Value[A]]] =
+  def listValue[A <: AnyValue](vp: P[Value[A, Caret]]): P[List[Value[A, Caret]]] =
     vp.rep0.with1.between(t('['), t(']'))
 
-  def objectValue[A <: AnyValue](vp: P[Value[A]]): P[List[(String, Value[A])]] =
+  def objectValue[A <: AnyValue](vp: P[Value[A, Caret]]): P[List[(String, Value[A, Caret])]] =
     objectField(vp).rep.between(t('{'), t('}')).map(_.toList)
 
-  def objectField[A <: AnyValue](vp: P[Value[A]]): P[(String, Value[A])] =
+  def objectField[A <: AnyValue](vp: P[Value[A, Caret]]): P[(String, Value[A, Caret])] =
     name ~ (t(':') *> vp)
 
   lazy val variable =
     t('$') *> name
 
-  def defaultValue[A <: AnyValue](p: => P[Value[A]]) = t('=') *> p
+  def defaultValue[A <: AnyValue](p: => P[Value[A, Caret]]) = t('=') *> p
 
   lazy val namedType: P[NonNullType] = name.map(Type.Named(_))
 

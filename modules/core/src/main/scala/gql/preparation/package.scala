@@ -24,24 +24,24 @@ import gql.resolver._
 import io.circe._
 
 package object preparation {
-  final case class Variable(
+  final case class Variable[C](
       tpe: gql.parser.Type,
-      value: Either[Json, V[Const]]
+      value: Either[Json, V[Const, C]]
   )
-  type VariableMap = Map[String, Variable]
+  type VariableMap[C] = Map[String, Variable[C]]
 
-  def pValueName(v: V[AnyValue]): String = {
+  def pValueName(v: V[AnyValue, ?]): String = {
     import V._
     v match {
-      case ObjectValue(_)   => "object"
-      case StringValue(_)   => "string"
-      case ListValue(_)     => "list"
-      case V.EnumValue(_)   => "enum"
-      case BooleanValue(_)  => "boolean"
-      case NullValue()      => "null"
-      case FloatValue(_)    => "float"
-      case IntValue(_)      => "int"
-      case VariableValue(_) => "variable"
+      case ObjectValue(_, _)   => "object"
+      case StringValue(_, _)   => "string"
+      case ListValue(_, _)     => "list"
+      case V.EnumValue(_, _)   => "enum"
+      case BooleanValue(_, _)  => "boolean"
+      case NullValue(_)        => "null"
+      case FloatValue(_, _)    => "float"
+      case IntValue(_, _)      => "int"
+      case VariableValue(_, _) => "variable"
     }
   }
 

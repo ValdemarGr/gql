@@ -16,6 +16,7 @@
 package gql.parser
 
 import cats.parse.{Parser => P}
+import cats.parse.Caret
 
 // https://spec.graphql.org/June2018/#sec-Source-Text
 object QueryParser {
@@ -24,11 +25,11 @@ object QueryParser {
 
   lazy val executableDefinition = {
     import ExecutableDefinition._
-    Pos.pos(fragmentDefinition).map(Fragment(_)) |
-      Pos.pos(operationDefinition).map(Operation(_))
+    Pos.pos(fragmentDefinition).map(p => Fragment(p.value, p.caret)) |
+      Pos.pos(operationDefinition).map(p => Operation(p.value, p.caret))
   }
 
-  lazy val operationDefinition: P[OperationDefinition[Pos]] = {
+  lazy val operationDefinition: P[OperationDefinition[Caret]] = {
     import OperationDefinition._
     P.backtrack(selectionSet).map(Simple(_)) |
       (operationType ~ name.? ~ variableDefinitions.? ~ selectionSet).map { case (((opt, name), vars), ss) =>
@@ -41,9 +42,10 @@ object QueryParser {
       .between(t('('), t(')'))
       .map(VariableDefinitions(_))
 
-  lazy val variableDefinition = Pos.pos {
-    (variable ~ (t(':') *> `type`) ~ defaultValue(constValue).?).map { case ((n, t), d) => VariableDefinition(n, t, d) }
-  }
+  lazy val variableDefinition =
+    Pos.pos(variable ~ (t(':') *> `type`) ~ defaultValue(constValue).?).map { case Pos(c, ((n, t), d)) =>
+      VariableDefinition(n, t, d, c)
+    }
 
   lazy val operationType = {
     import OperationType._
@@ -53,21 +55,22 @@ object QueryParser {
       s("subscription").as(Subscription)
   }
 
-  lazy val selectionSet: P[SelectionSet[Pos]] = P.defer {
-    Pos.pos(selection).rep.between(t('{'), t('}')).map(SelectionSet(_))
+  lazy val selectionSet: P[SelectionSet[Caret]] = P.defer {
+    selection.rep.between(t('{'), t('}')).map(SelectionSet(_))
   }
 
-  lazy val selection: P[Selection[Pos]] = {
+  lazy val selection: P[Selection[Caret]] = {
     import Selection._
-    field.map(FieldSelection(_)) |
+    Pos.pos(field).map(p => FieldSelection(p.value, p.caret)) |
       // expects on, backtrack on failure
-      inlineFragment.map(InlineFragmentSelection(_)) |
-      fragmentSpread.map(FragmentSpreadSelection(_))
+      Pos.pos(inlineFragment).map(p => InlineFragmentSelection(p.value, p.caret)) |
+      Pos.pos(fragmentSpread).map(p => FragmentSpreadSelection(p.value, p.caret))
   }
 
-  lazy val field: P[Field[Pos]] = P.defer {
-    (P.backtrack(alias).?.with1 ~ name ~ arguments.? ~ Pos.pos0(selectionSet.?))
-      .map { case (((a, n), args), s) => Field(a, n, args, s) }
+  lazy val field: P[Field[Caret]] = P.defer {
+    Pos
+      .pos(P.backtrack(alias).?.with1 ~ name ~ arguments.? ~ selectionSet.?)
+      .map { case Pos(c, (((a, n), args), s)) => Field(a, n, args, s, c) }
   }
 
   lazy val alias = name <* t(':')
@@ -85,8 +88,8 @@ object QueryParser {
     ((s("...") *> typeCondition.?).soft ~ selectionSet).map { case (t, s) => InlineFragment(t, s) }
 
   lazy val fragmentDefinition =
-    (s("fragment") *> fragmentName ~ typeCondition ~ selectionSet).map { case ((n, t), s) =>
-      FragmentDefinition(n, t, s)
+    Pos.pos(s("fragment") *> fragmentName ~ typeCondition ~ selectionSet).map { case Pos(c, ((n, t), s)) =>
+      FragmentDefinition(n, t, s, c)
     }
 
   lazy val fragmentName: P[String] =

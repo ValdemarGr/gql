@@ -20,30 +20,39 @@ import io.circe._
 import org.typelevel.paiges._
 import cats.implicits._
 import cats._
-import cats.data._
 import gql.client.Selection.Fragment
 import gql.client.Selection.Field
 import gql.client.Selection.InlineFragment
-//import gql.parser.TypeSystemAst
-//import gql.SchemaShape
 import gql.parser.GraphqlRender
 import io.circe.syntax._
+import gql.parser.TypeSystemAst
+
+trait QueryLike {
+  def queryString: String
+
+  def validate(ast: Map[String, TypeSystemAst.TypeDefinition]): List[String] =
+    QueryValidation.validateQuery(queryString, ast)
+}
 
 final case class SimpleQuery[A](
     operationType: P.OperationType,
     selectionSet: SelectionSet[A]
-) {
+) extends QueryLike {
+  lazy val queryString: String = Query.renderQuery(this)
+
   def compile: Query.Compiled[A] = Query.Compiled(
     Query.queryDecoder(selectionSet),
-    Query.renderQuery(this),
+    queryString,
     this
   )
 }
 
-final case class NamedQuery[A](name: String, query: SimpleQuery[A]) {
+final case class NamedQuery[A](name: String, query: SimpleQuery[A]) extends QueryLike {
+  lazy val queryString: String = Query.renderQuery(query, name.some)
+
   def compile: Query.Compiled[A] = Query.Compiled(
     Query.queryDecoder(query.selectionSet),
-    Query.renderQuery(query, name.some),
+    queryString,
     query
   )
 }
@@ -52,10 +61,12 @@ final case class ParameterizedQuery[A, V](
     name: String,
     query: SimpleQuery[A],
     variables: Var.Impl[V]
-) {
+) extends QueryLike {
+  lazy val queryString: String = Query.renderQuery(query, name.some, variables.written.map(_.toList))
+
   def compile(v: V): Query.Compiled[A] = Query.Compiled(
     Query.queryDecoder(query.selectionSet),
-    Query.renderQuery(query, name.some, variables.written.map(_.toList)),
+    queryString,
     query,
     variables.value.encodeObject(v).some
   )
@@ -67,15 +78,7 @@ object Query {
       query: String,
       origin: SimpleQuery[A],
       variables: Option[JsonObject] = None
-  ) {
-    /*
-    def validate(schema: SchemaShape[fs2.Pure, ?, ?, ?]) = {
-      // Consider folding into the query ast instead of a string
-      // Then render the ast to a string
-      // Or pass the ast to the preparation function
-      val frags = findFragments(origin.selectionSet)
-    }*/
-  }
+  )
 
   def matchAlias(typename: String): String =
     s"__matchedOn$typename"
@@ -183,27 +186,6 @@ object Query {
     }
   }
 
-  object ParserAst {
-    type F[A] = Writer[List[Fragment[?]], A]
-    val F = Monad[F]
-    /*
-    def convertSelectionSet(ss: SelectionSet[?]): F[P.SelectionSet] = {
-      ss.impl.enumerate.map{
-        case f: Fragment[?] => Writer(List(f), P.Selection.FragmentSpreadSelection(P.FragmentSpread(f.name)))
-        case f: InlineFragment[?] =>
-          convertSelectionSet(f.subSelection)
-            .map(ss => P.Selection.InlineFragmentSelection(P.InlineFragment(Some(f.on), ss)))
-        case f: Field[?] =>
-          def unrollSubQuery(sq: SubQuery[?]): Option[P.SelectionSet] = sq match {
-            case ListModifier(subQuery) => unrollSubQuery(subQuery)
-            case OptionModifier(subQuery) => unrollSubQuery(subQuery)
-            case Terminal(_) => F.pure(Nil)
-          }
-      }
-      ???
-    }*/
-  }
-
   object Render {
     def renderOperationType(op: P.OperationType): Doc =
       op match {
@@ -220,7 +202,7 @@ object Query {
       Doc.text(s"$$${v.name.name}") + Doc.space + Doc.char(':') + Doc.space + Doc.text(v.tpe) + default
     }
 
-    def renderArg(a: P.Argument): Doc =
+    def renderArg(a: P.Argument[Unit]): Doc =
       Doc.text(a.name) + Doc.char(':') + Doc.space + GraphqlRender.renderValue(a.value)
 
     def matchTypename(on: String): SelectionSet[String] =

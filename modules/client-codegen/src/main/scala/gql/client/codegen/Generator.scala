@@ -26,10 +26,15 @@ import org.typelevel.paiges.Doc
 import cats.implicits._
 import gql._
 import cats.mtl.Local
-import gql.parser.Pos
 import cats.mtl.Tell
 import cats.mtl.Handle
 import cats.mtl.Stateful
+import cats.parse.Caret
+import gql.parser.QueryAst
+import gql.client.QueryValidation
+import io.circe.Json
+import gql.preparation.RootPreparation
+import gql.parser.ParserUtil
 
 object Generator {
   def modifyHead(f: Char => Char): String => String = { str =>
@@ -81,7 +86,7 @@ object Generator {
   case class CaseClassField(
       name: String,
       tpe: InverseModifierStack[String],
-      default: Option[V[AnyValue]]
+      default: Option[V[AnyValue, Caret]]
   ) {
     val isOmittable = default.isDefined || tpe.modifiers.headOption.contains(InverseModifier.Optional)
 
@@ -161,7 +166,7 @@ object Generator {
     ) extends ContextInfo
     final case class Operation(
         op: OperationType,
-        variables: List[VariableDefinition]
+        variables: List[VariableDefinition[Caret]]
     ) extends ContextInfo
   }
   final case class Part(
@@ -277,23 +282,23 @@ object Generator {
     }
   }
 
-  def generateValue(v: V[AnyValue], anyValue: Boolean): Doc = {
+  def generateValue[C](v: V[AnyValue, C], anyValue: Boolean): Doc = {
     import V._
     val tpe = if (anyValue) "AnyValue" else "Const"
     v match {
-      case IntValue(v)     => Doc.text(s"V.IntValue(${v.toString()})")
-      case StringValue(v)  => Doc.text(s"""V.StringValue("$v")""")
-      case FloatValue(v)   => Doc.text(s"""V.FloatValue("$v")""")
-      case NullValue()     => Doc.text(s"""V.NullValue()""")
-      case BooleanValue(v) => Doc.text(s"""V.BooleanValue(${v.toString()})""")
-      case ListValue(v) =>
-        Doc.text(s"V.ListValue[${tpe}](") +
+      case IntValue(v, _)     => Doc.text(s"V.IntValue(${v.toString()})")
+      case StringValue(v, _)  => Doc.text(s"""V.StringValue("$v")""")
+      case FloatValue(v, _)   => Doc.text(s"""V.FloatValue("$v")""")
+      case NullValue(_)       => Doc.text(s"""V.NullValue()""")
+      case BooleanValue(v, _) => Doc.text(s"""V.BooleanValue(${v.toString()})""")
+      case ListValue(v, _) =>
+        Doc.text(s"V.ListValue[${tpe}, Unit](") +
           Doc
             .intercalate(Doc.comma + Doc.line, v.map(generateValue(_, anyValue)))
             .tightBracketBy(Doc.text("List("), Doc.char(')')) +
           Doc.text(")")
-      case ObjectValue(fields) =>
-        Doc.text(s"V.ObjectValue[${tpe}](") +
+      case ObjectValue(fields, _) =>
+        Doc.text(s"V.ObjectValue[${tpe}, Unit](") +
           Doc
             .intercalate(
               Doc.comma + Doc.line,
@@ -301,8 +306,8 @@ object Generator {
             )
             .bracketBy(Doc.text("List("), Doc.char(')')) +
           Doc.text(")")
-      case EnumValue(v)     => Doc.text(s"""V.EnumValue("$v")""")
-      case VariableValue(v) => Doc.text(s"""V.VariableValue("$v")""")
+      case EnumValue(v, _)     => Doc.text(s"""V.EnumValue("$v")""")
+      case VariableValue(v, _) => Doc.text(s"""V.VariableValue("$v")""")
     }
   }
 
@@ -345,7 +350,7 @@ object Generator {
   def generateField[F[_]: Parallel](
       companionName: String,
       env: Env,
-      f: Field[Pos],
+      f: Field[Caret],
       fd: FieldDefinition
   )(implicit
       P: CurrentPath[F],
@@ -363,8 +368,8 @@ object Generator {
     val putUsedInputsF = existingProvided.values.toList.traverse_(x => partitionEmittableInputType[F](env, x.tpe))
 
     putUsedInputsF &>
-      f.selectionSet.value
-        .map(_.selections.map(_.value))
+      f.selectionSet
+        .map(_.selections)
         .parTraverse(generateTypeDef[F](env, n, ms.inner, _, None))
         .map { subPart =>
           val argPart = f.arguments.toList.flatMap(_.nel.toList).map { x =>
@@ -394,14 +399,14 @@ object Generator {
       companionName: String,
       env: Env,
       fieldMap: Map[String, FieldDefinition],
-      sel: Selection[Pos]
+      sel: Selection[Caret]
   )(implicit
       P: CurrentPath[F],
       U: UsedInputTypes[F],
       F: MonadError[F, NonEmptyChain[String]]
   ): F[FieldPart] = {
     sel match {
-      case fs: Selection.FieldSelection[Pos] =>
+      case fs: Selection.FieldSelection[Caret] =>
         val f = fs.field
         fieldMap.get(f.name) match {
           case None => raise[F, FieldPart](s"Field '${f.name}' not found in type '$companionName'")
@@ -410,7 +415,7 @@ object Generator {
               generateField[F](companionName, env, f, x)
             }
         }
-      case frag: Selection.FragmentSpreadSelection[Pos] =>
+      case frag: Selection.FragmentSpreadSelection[Caret] =>
         val fs = frag.fragmentSpread
 
         val f = env.fragmentInfos.get(fs.fragmentName)
@@ -439,9 +444,9 @@ object Generator {
             f.map(_.on)
           )
         }
-      case inlineFrag: Selection.InlineFragmentSelection[Pos] =>
+      case inlineFrag: Selection.InlineFragmentSelection[Caret] =>
         val ilf = inlineFrag.inlineFragment
-        val ss = ilf.selectionSet.selections.map(_.value)
+        val ss = ilf.selectionSet.selections
         val cnd = ilf.typeCondition.get
 
         val name = s"Inline${cnd}"
@@ -474,7 +479,7 @@ object Generator {
       env: Env,
       name: String,
       typename: String,
-      sels: NonEmptyList[Selection[Pos]],
+      sels: NonEmptyList[Selection[Caret]],
       contextInfo: Option[ContextInfo]
   )(implicit
       P: CurrentPath[F],
@@ -585,29 +590,28 @@ object Generator {
   )
 
   def gatherFragmentInfos(
-      xs: NonEmptyList[ExecutableDefinition[Pos]]
+      xs: NonEmptyList[ExecutableDefinition[Caret]]
   ): List[FragmentInfo] =
-    xs.collect { case ExecutableDefinition.Fragment(f) =>
-      val x = f.value
-      FragmentInfo(x.name, x.typeCnd)
+    xs.collect { case ExecutableDefinition.Fragment(f, _) =>
+      FragmentInfo(f.name, f.typeCnd)
     }
 
   def generateExecutableDefs[F[_]: Parallel](
       env: Env,
-      query: NonEmptyList[ExecutableDefinition[Pos]]
+      query: NonEmptyList[ExecutableDefinition[Caret]]
   )(implicit
       P: CurrentPath[F],
       U: UsedInputTypes[F],
       F: MonadError[F, NonEmptyChain[String]]
   ) = {
     val bodyF: F[NonEmptyList[Part]] = query.parTraverse {
-      case ExecutableDefinition.Operation(o) =>
-        o.value match {
+      case ExecutableDefinition.Operation(o, _) =>
+        o match {
           case OperationDefinition.Simple(_) =>
             raise[F, Part]("Simple operations are not supported, please name all your operations")
-          case d: OperationDefinition.Detailed[Pos] =>
+          case d: OperationDefinition.Detailed[Caret] =>
             in(s"operation-${d.name.get}") {
-              val vds = d.variableDefinitions.toList.flatMap(_.nel.toList).map(_.value)
+              val vds = d.variableDefinitions.toList.flatMap(_.nel.toList)
               val usedF = vds.traverse_(vd => partitionEmittableInputType[F](env, vd.tpe))
 
               usedF *>
@@ -615,25 +619,24 @@ object Generator {
                   env,
                   d.name.get,
                   d.tpe.toString(),
-                  d.selectionSet.selections.map(_.value),
+                  d.selectionSet.selections,
                   Some(
                     ContextInfo.Operation(
                       d.tpe,
-                      d.variableDefinitions.toList.flatMap(_.nel.toList.map(_.value))
+                      d.variableDefinitions.toList.flatMap(_.nel.toList)
                     )
                   )
                 )
             }
         }
-      case ExecutableDefinition.Fragment(f) =>
-        in(s"fragment-${f.value.name}") {
-          val f2 = f.value
+      case ExecutableDefinition.Fragment(f, _) =>
+        in(s"fragment-${f.name}") {
           generateTypeDef[F](
             env,
-            f2.name,
-            f2.typeCnd,
-            f2.selectionSet.selections.map(_.value),
-            Some(ContextInfo.Fragment(Some(f2.name), f2.typeCnd))
+            f.name,
+            f.typeCnd,
+            f.selectionSet.selections,
+            Some(ContextInfo.Fragment(Some(f.name), f.typeCnd))
           )
         }
 
@@ -789,7 +792,7 @@ object Generator {
 
   def generateFor[F[_]](
       env: Env,
-      query: NonEmptyList[ExecutableDefinition[Pos]]
+      query: NonEmptyList[ExecutableDefinition[Caret]]
   )(implicit E: Err[F], F: Applicative[F]): F[(Set[UsedInput], Doc)] = {
     type F[A] = WriterT[EitherT[Kleisli[Eval, Chain[String], *], NonEmptyChain[String], *], Set[UsedInput], A]
     generateExecutableDefs[F](env, query).run.value.run(Chain.empty).value.fold(E.raise, F.pure)
@@ -810,24 +813,29 @@ object Generator {
   def readInputData[F[_]](i: Input)(implicit
       E: Err[F],
       F: Async[F]
-  ): F[NonEmptyList[ExecutableDefinition[Pos]]] =
+  ): F[(String, NonEmptyList[ExecutableDefinition[Caret]])] =
     Files[F]
       .readAll(i.query)
       .through(fs2.text.utf8.decode[F])
       .compile
       .foldMonoid
-      .flatMap(x => gql.parser.parseQuery(x).leftFlatMap(_.prettyError.value.leftNec).fold(E.raise, F.pure))
+      .flatMap { x =>
+        val fa: F[NonEmptyList[ExecutableDefinition[Caret]]] =
+          gql.parser.parseQuery(x).leftFlatMap(_.prettyError.value.leftNec).fold(E.raise, F.pure)
+
+        fa tupleLeft x
+      }
 
   def generateForInput[F[_]: Async: Err](
       env: Env,
       i: Input
-  ): F[(Set[UsedInput], Output)] =
+  ): F[(String, Set[UsedInput], Output, NonEmptyList[ExecutableDefinition[Caret]])] =
     readInputData[F](i)
-      .flatMap(generateFor(env, _))
-      .map { case (usedInputs, doc) => (usedInputs, Output(i.output, doc)) }
+      .flatMap { case (q, eds) => generateFor(env, eds) tupleLeft ((q, eds)) }
+      .map { case ((q, eds), (usedInputs, doc)) => (q, usedInputs, Output(i.output, doc), eds) }
 
   def gatherFragInfo[F[_]: Async: Err](i: Input): F[List[FragmentInfo]] =
-    readInputData[F](i).map(gatherFragmentInfos(_))
+    readInputData[F](i).map { case (_, eds) => gatherFragmentInfos(eds) }
 
   def writeStream[F[_]: Async](path: Path, doc: Doc) =
     fs2.Stream
@@ -851,18 +859,63 @@ object Generator {
         .map(f => Env(m, f.map(fi => fi.name -> fi).toMap))
     }
 
-  def readAndGenerate[F[_]](schemaPath: Path, sharedPath: Path)(
+  final case class PositionalInfo(
+      caret: Caret,
+      input: Input,
+      sourceQuery: String
+  )
+
+  def readAndGenerate[F[_]](schemaPath: Path, sharedPath: Path, validate: Boolean)(
       data: List[Input]
   )(implicit F: Async[F], E: Err[F]): F[Unit] =
     readEnv[F](schemaPath)(data).flatMap { e =>
       data
-        .flatTraverse { d =>
-          generateForInput[F](e, d)
-            .flatMap { case (used, x) => writeStream[F](x.path, x.doc).compile.drain.as(used.toList) }
+        .traverse(d => generateForInput[F](e, d) tupleLeft d)
+        .flatMap { xs =>
+          val translated: List[ExecutableDefinition[PositionalInfo]] = xs.flatMap { case (i, (q, _, _, eds)) =>
+            eds.toList.map(_.map(c => PositionalInfo(c, i, q)))
+          }
+          val allFrags = translated.collect { case f: ExecutableDefinition.Fragment[PositionalInfo] => f }
+          val allOps = translated.collect { case op: ExecutableDefinition.Operation[PositionalInfo] => op }
+          lazy val errors = QueryValidation.getSchema(e.schema).flatMap { stubSchema =>
+            allOps.parTraverse { op =>
+              val full: NonEmptyList[ExecutableDefinition[PositionalInfo]] = NonEmptyList(op, allFrags)
+              val vars: ValidatedNec[String, Map[String, Json]] = op.o match {
+                case QueryAst.OperationDefinition.Simple(_) => Map.empty.validNec
+                case QueryAst.OperationDefinition.Detailed(_, _, vds, _) =>
+                  vds.toList
+                    .flatMap(_.nel.toList)
+                    .traverse(x => QueryValidation.generateVariableStub(x, e.schema))
+                    .map(_.foldLeft(Map.empty[String, Json])(_ ++ _))
+              }
+              vars.toEither.flatMap { variables =>
+                RootPreparation
+                  .prepareRun(full, stubSchema, variables, None)
+                  .leftMap(_.map { pe =>
+                    val pos = pe.position.formatted
+                    val caretErrs = pe.caret.distinct
+                      .map { c =>
+                        val (msg, _, _) = ParserUtil.showVirtualTextLine(c.sourceQuery, c.caret.offset)
+                        s"in file ${c.input.query}\n" + msg
+                      }
+                    val msg = pe.message
+                    s"$msg at $pos\n${caretErrs.mkString_("\n")}"
+                  })
+              }
+            }
+          }
+
+          lazy val validateF = errors.leftTraverse[F, Unit](E.raise(_))
+
+          val writeF: F[Unit] =
+            xs.flatTraverse { case (_, (_, used, x, _)) =>
+              writeStream[F](x.path, x.doc).compile.drain.as(used.toList)
+            }.flatMap(_.distinct.toNel.traverse_(nel => writeStream[F](sharedPath, generateInputs(e, nel.toList)).compile.drain))
+
+          F.whenA(validate)(validateF) *> writeF
         }
-        .flatMap(_.distinct.toNel.traverse_(nel => writeStream[F](sharedPath, generateInputs(e, nel.toList)).compile.drain))
     }
 
-  def mainGenerate[F[_]: Async](schemaPath: Path, sharedPath: Path)(data: List[Input]): F[List[String]] =
-    readAndGenerate[EitherT[F, NonEmptyChain[String], *]](schemaPath, sharedPath)(data).value.map(_.fold(_.toList, _ => Nil))
+  def mainGenerate[F[_]: Async](schemaPath: Path, sharedPath: Path, validate: Boolean)(data: List[Input]): F[List[String]] =
+    readAndGenerate[EitherT[F, NonEmptyChain[String], *]](schemaPath, sharedPath, validate)(data).value.map(_.fold(_.toList, _ => Nil))
 }

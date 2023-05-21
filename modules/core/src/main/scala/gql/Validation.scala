@@ -303,7 +303,7 @@ object Validation {
           .traverse_[G, Unit] { case (a: ArgValue[a], pv) =>
             RootPreparation.Stack.runK[Unit] {
               ArgParsing[RootPreparation.Stack[Unit, *], Unit](Map.empty)
-                .decodeIn[a](a.input.value, pv, ambigiousEnum = false)
+                .decodeIn[a](a.input.value, pv.map(List(_)), ambigiousEnum = false)
             } match {
               case Left(errs) =>
                 errs.traverse_ { err =>

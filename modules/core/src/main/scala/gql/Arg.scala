@@ -15,22 +15,23 @@
  */
 package gql
 
-import cats.data._
 import cats._
+import cats.data._
 import cats.implicits._
 import gql.ast._
-import gql.parser.{Value => V, Const, AnyValue}
+import gql.parser.Const
+import gql.parser.{Value => V}
 import gql.std.FreeApply
 
 final case class ArgValue[A](
     name: String,
     input: Eval[In[A]],
-    defaultValue: Option[V[Const]],
+    defaultValue: Option[V[Const, Unit]],
     description: Option[String]
 ) {
   def document(description: String) = copy(description = Some(description))
 
-  def default(value: V[Const]) = copy(defaultValue = Some(value))
+  def default(value: V[Const, Unit]) = copy(defaultValue = Some(value))
 }
 
 final case class ArgParam[A](
@@ -48,11 +49,6 @@ final case class Arg[+A](impl: FreeApply[Arg.Impl, ValidatedNec[String, A]]) {
     Arg(impl.map(_.andThen(f(_).toValidatedNec)))
 
   def entries: NonEmptyChain[ArgValue[?]] = impl.enumerate.map(_.av)
-
-  def decode(
-      avail: Map[String, V[AnyValue]],
-      inCompiler: Arg.ContIn ~> ValidatedNec[String, *]
-  ): ValidatedNec[String, A] = impl.foldMap(Arg.argCompiler(avail, inCompiler)).andThen(x => x)
 }
 
 object Arg {
@@ -74,29 +70,4 @@ object Arg {
     override def ap[A, B](ff: Arg[A => B])(fa: Arg[A]): Arg[B] =
       Arg((fa.impl, ff.impl).mapN(_ ap _))
   }
-
-  type ContIn[A] = (In[A], V[AnyValue], ArgValue[?])
-  def argCompiler(
-      avail: Map[String, V[AnyValue]],
-      inCompiler: ContIn ~> ValidatedNec[String, *]
-  ): Impl ~> ValidatedNec[String, *] =
-    new (Impl ~> ValidatedNec[String, *]) {
-      override def apply[A](fa: Impl[A]): ValidatedNec[String, A] = fa match {
-        case fa: DecodedArgValue[a, A] =>
-          def compileWith(x: V[AnyValue], default: Boolean) =
-            inCompiler((fa.av.input.value, x, fa.av)).andThen(a => fa.decode(ArgParam(default, a)).toValidatedNec)
-
-          avail
-            .get(fa.av.name)
-            .map(compileWith(_, false))
-            .orElse(fa.av.defaultValue.map(compileWith(_, true)))
-            .getOrElse {
-              fa.av.input.value match {
-                case _: gql.ast.InOpt[a] => fa.decode(ArgParam(true, None)).toValidatedNec
-                case _ =>
-                  s"Missing argument for '${fa.av.name}' and no default value was found.".invalidNec
-              }
-            }
-      }
-    }
 }

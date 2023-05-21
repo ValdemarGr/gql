@@ -75,9 +75,9 @@ final case class PreparedSpecification[F[_], I, A](
 ) extends PreparedField[F, I]
 
 final case class PreparedMeta(
-    variables: VariableMap,
+    variables: VariableMap[Unit],
     alias: Option[String],
-    args: Option[QA.Arguments]
+    args: Option[QA.Arguments[Unit]]
 )
 
 final case class UniqueBatchInstance[K, V](id: Int) extends AnyVal
