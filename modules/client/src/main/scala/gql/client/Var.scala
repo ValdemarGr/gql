@@ -42,7 +42,7 @@ object VariableClosure {
 
 // Don't construct such an instance directly
 final case class VariableName[A](name: String) extends AnyVal {
-  def asValue: V[AnyValue] = V.VariableValue(name)
+  def asValue: V[AnyValue, Unit] = V.VariableValue(name)
 }
 
 final case class Var[V, B](
@@ -89,7 +89,7 @@ object Var {
   final case class One[A](
       name: VariableName[A],
       tpe: String,
-      default: Option[V[AnyValue]]
+      default: Option[V[AnyValue, Unit]]
   )
 
   def apply[A](name: String, tpe: String)(implicit
@@ -100,7 +100,7 @@ object Var {
     new Var(Writer(NonEmptyChain.one(One(vn, tpe, None)), enc), vn)
   }
 
-  def apply[A](name: String, tpe: String, default: Option[V[AnyValue]])(implicit
+  def apply[A](name: String, tpe: String, default: Option[V[AnyValue, Unit]])(implicit
       encoder: io.circe.Encoder[A]
   ): Var[Option[A], VariableName[A]] = {
     val vn = VariableName[A](name)

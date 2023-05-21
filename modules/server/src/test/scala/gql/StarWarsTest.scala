@@ -312,7 +312,7 @@ class StarWarsTest extends CatsEffectSuite {
             "locations": [
               {
                 "line": 1,
-                "column": 45
+                "column": 29
               }
             ]
           }
@@ -610,7 +610,7 @@ class StarWarsTest extends CatsEffectSuite {
     "message" : "Field 'cors' is not a member of `Query`.",
     "locations" : [
       {
-        "line" : 3,
+        "line" : 2,
         "column" : 8
       }
     ]
@@ -619,7 +619,7 @@ class StarWarsTest extends CatsEffectSuite {
     "message" : "Field 'horse' is not a member of `Character`.",
     "locations" : [
       {
-        "line" : 7,
+        "line" : 6,
         "column" : 10
       }
     ],
@@ -631,8 +631,8 @@ class StarWarsTest extends CatsEffectSuite {
     "message" : "Field 'dorse' is not a member of `Character`.",
     "locations" : [
       {
-        "line" : 8,
-        "column" : 8
+        "line" : 7,
+        "column" : 10
       }
     ],
     "path" : [

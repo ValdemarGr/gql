@@ -39,9 +39,9 @@ trait FieldMerging[F[_], C] {
 
   // These technically don't need to be in the trait, but it's convenient because of error handling
   // If needed, they can always be moved
-  def compareArguments(name: String, aa: QA.Arguments, ba: QA.Arguments, caret: Option[C]): F[Unit]
+  def compareArguments(name: String, aa: QA.Arguments[C], ba: QA.Arguments[C], caret: Option[C]): F[Unit]
 
-  def compareValues(av: V[AnyValue], bv: V[AnyValue], caret: Option[C]): F[Unit]
+  def compareValues(av: V[AnyValue, C], bv: V[AnyValue, C], caret: Option[C]): F[Unit]
 }
 
 object FieldMerging {
@@ -175,15 +175,15 @@ object FieldMerging {
 
       }
 
-      override def compareArguments(name: String, aa: QueryAst.Arguments, ba: QueryAst.Arguments, caret: Option[C]): F[Unit] = {
-        def checkUniqueness(x: QA.Arguments): F[Map[String, QA.Argument]] =
+      override def compareArguments(name: String, aa: QueryAst.Arguments[C], ba: QueryAst.Arguments[C], caret: Option[C]): F[Unit] = {
+        def checkUniqueness(x: QA.Arguments[C]): F[Map[String, QA.Argument[C]]] =
           x.nel.toList
             .groupBy(_.name)
             .toList
             .parTraverse {
               case (k, v :: Nil) => F.pure(k -> v)
               case (k, _) =>
-                raise[(String, QA.Argument)](s"Argument '$k' of field $name was not unique.", caret.toList)
+                raise[(String, QA.Argument[C])](s"Argument '$k' of field $name was not unique.", caret.toList)
             }
             .map(_.toMap)
 
@@ -198,58 +198,59 @@ object FieldMerging {
         }
       }
 
-      override def compareValues(av: V[AnyValue], bv: V[AnyValue], caret: Option[C]): F[Unit] = {
+      override def compareValues(av: V[AnyValue, C], bv: V[AnyValue, C], caret: Option[C]): F[Unit] = {
+        val cs = av.c :: bv.c :: caret.toList
         (av, bv) match {
-          case (V.VariableValue(avv), V.VariableValue(bvv)) =>
+          case (V.VariableValue(avv, _), V.VariableValue(bvv, _)) =>
             if (avv === bvv) F.unit
-            else raise(s"Variable '$avv' and '$bvv' are not equal.", caret.toList)
-          case (V.IntValue(ai), V.IntValue(bi)) =>
+            else raise(s"Variable '$avv' and '$bvv' are not equal.", cs)
+          case (V.IntValue(ai, _), V.IntValue(bi, _)) =>
             if (ai === bi) F.unit
-            else raise(s"Int '$ai' and '$bi' are not equal.", caret.toList)
-          case (V.FloatValue(af), V.FloatValue(bf)) =>
+            else raise(s"Int '$ai' and '$bi' are not equal.", cs)
+          case (V.FloatValue(af, _), V.FloatValue(bf, _)) =>
             if (af === bf) F.unit
-            else raise(s"Float '$af' and '$bf' are not equal.", caret.toList)
-          case (V.StringValue(as), V.StringValue(bs)) =>
+            else raise(s"Float '$af' and '$bf' are not equal.", cs)
+          case (V.StringValue(as, _), V.StringValue(bs, _)) =>
             if (as === bs) F.unit
-            else raise(s"String '$as' and '$bs' are not equal.", caret.toList)
-          case (V.BooleanValue(ab), V.BooleanValue(bb)) =>
+            else raise(s"String '$as' and '$bs' are not equal.", cs)
+          case (V.BooleanValue(ab, _), V.BooleanValue(bb, _)) =>
             if (ab === bb) F.unit
-            else raise(s"Boolean '$ab' and '$bb' are not equal.", caret.toList)
-          case (V.EnumValue(ae), V.EnumValue(be)) =>
+            else raise(s"Boolean '$ab' and '$bb' are not equal.", cs)
+          case (V.EnumValue(ae, _), V.EnumValue(be, _)) =>
             if (ae === be) F.unit
-            else raise(s"Enum '$ae' and '$be' are not equal.", caret.toList)
-          case (V.NullValue(), V.NullValue()) => F.unit
-          case (V.ListValue(al), V.ListValue(bl)) =>
+            else raise(s"Enum '$ae' and '$be' are not equal.", cs)
+          case (V.NullValue(_), V.NullValue(_)) => F.unit
+          case (V.ListValue(al, _), V.ListValue(bl, _)) =>
             if (al.length === bl.length) {
               al.zip(bl).zipWithIndex.parTraverse_ { case ((a, b), i) => ambientIndex(i)(compareValues(a, b, caret)) }
             } else
-              raise(s"Lists are not af same size. Found list of length ${al.length} versus list of length ${bl.length}.", caret.toList)
-          case (V.ObjectValue(ao), V.ObjectValue(bo)) =>
+              raise(s"Lists are not af same size. Found list of length ${al.length} versus list of length ${bl.length}.", cs)
+          case (V.ObjectValue(ao, _), V.ObjectValue(bo, _)) =>
             if (ao.size =!= bo.size)
               raise(
                 s"Objects are not af same size. Found object of length ${ao.size} versus object of length ${bo.size}.",
-                caret.toList
+                cs
               )
             else {
-              def checkUniqueness(xs: List[(String, V[AnyValue])]) =
+              def checkUniqueness(xs: List[(String, V[AnyValue, C])]) =
                 xs.groupMap { case (k, _) => k } { case (_, v) => v }
                   .toList
                   .parTraverse {
                     case (k, v :: Nil) => F.pure(k -> v)
-                    case (k, _)        => raise[(String, V[AnyValue])](s"Key '$k' is not unique in object.", caret.toList)
+                    case (k, _)        => raise[(String, V[AnyValue, C])](s"Key '$k' is not unique in object.", cs)
                   }
                   .map(_.toMap)
 
               (checkUniqueness(ao), checkUniqueness(bo)).parTupled.flatMap { case (amap, bmap) =>
                 // TODO test that verifies that order does not matter
                 (amap align bmap).toList.parTraverse_[F, Unit] {
-                  case (k, Ior.Left(_))    => raise(s"Key '$k' is missing in object.", caret.toList)
-                  case (k, Ior.Right(_))   => raise(s"Key '$k' is missing in object.", caret.toList)
+                  case (k, Ior.Left(_))    => raise(s"Key '$k' is missing in object.", cs)
+                  case (k, Ior.Right(_))   => raise(s"Key '$k' is missing in object.", cs)
                   case (k, Ior.Both(l, r)) => ambientField(k)(compareValues(l, r, caret))
                 }
               }
             }
-          case _ => raise(s"Values are not same type, got ${pValueName(av)} and ${pValueName(bv)}.", caret.toList)
+          case _ => raise(s"Values are not same type, got ${pValueName(av)} and ${pValueName(bv)}.", cs)
         }
       }
     }

@@ -21,8 +21,8 @@ final case class Pos[+A](caret: Caret, value: A)
 
 object Pos {
   def pos[A](p: P[A]): P[Pos[A]] =
-    (p ~ P.caret).map { case (a, c) => Pos(c, a) }
+    (P.caret.with1 ~ p).map { case (c, a) => Pos(c, a) }
 
   def pos0[A](p: P0[A]): P0[Pos[A]] =
-    (p ~ P.caret).map { case (a, c) => Pos(c, a) }
+    (P.caret ~ p).map { case (c, a) => Pos(c, a) }
 }

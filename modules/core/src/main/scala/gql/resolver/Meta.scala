@@ -22,6 +22,6 @@ import gql.preparation.VariableMap
 final case class Meta(
     cursor: Cursor,
     alias: Option[String],
-    args: Option[P.Arguments],
-    variables: VariableMap
+    args: Option[P.Arguments[Unit]],
+    variables: VariableMap[Unit]
 )

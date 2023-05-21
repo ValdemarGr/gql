@@ -202,7 +202,7 @@ object Query {
       Doc.text(s"$$${v.name.name}") + Doc.space + Doc.char(':') + Doc.space + Doc.text(v.tpe) + default
     }
 
-    def renderArg(a: P.Argument): Doc =
+    def renderArg(a: P.Argument[Unit]): Doc =
       Doc.text(a.name) + Doc.char(':') + Doc.space + GraphqlRender.renderValue(a.value)
 
     def matchTypename(on: String): SelectionSet[String] =

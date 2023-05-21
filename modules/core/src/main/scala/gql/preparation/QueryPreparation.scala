@@ -31,12 +31,12 @@ import gql.SchemaShape
 trait QueryPreparation[F[_], G[_], C] {
   import QueryPreparation._
 
-  def prepareStep[I, O](step: Step[G, I, O], fieldMeta: FieldMeta): H[F, PreparedStep[G, I, O]]
+  def prepareStep[I, O](step: Step[G, I, O], fieldMeta: FieldMeta[C]): H[F, PreparedStep[G, I, O]]
 
   def prepare[A](
       fi: MergedFieldInfo[G, C],
       t: Out[G, A],
-      fieldMeta: FieldMeta
+      fieldMeta: FieldMeta[C]
   ): H[F, Prepared[G, A]]
 
   def prepareField[I, O](
@@ -60,11 +60,11 @@ object QueryPreparation {
   type H[F[_], A] = Kleisli[F, UniqueEdgeCursor, A]
 
   def apply[F[_]: Parallel, G[_], C](
-      variables: VariableMap,
+      variables: VariableMap[C],
       implementations: SchemaShape.Implementations[G]
   )(implicit
       F: Monad[F],
-      AP: ArgParsing[F],
+      AP: ArgParsing[F, C],
       S: Stateful[F, Int],
       EA: ErrorAlg[F, C]
   ) = {
@@ -109,7 +109,7 @@ object QueryPreparation {
     new QueryPreparation[F, G, C] {
       override def prepareStep[I, O](
           step: Step[G, I, O],
-          fieldMeta: FieldMeta
+          fieldMeta: FieldMeta[C]
       ): H[F, PreparedStep[G, I, O]] = {
 
         def rec[I2, O2](
@@ -132,7 +132,18 @@ object QueryPreparation {
             val left = rec[a, c](alg.fac, "choice-left")
             val right = rec[b, d](alg.fab, "choice-right")
             (left, right).parMapN((l, r) => PreparedStep.Choose[G, a, b, c, d](l, r))
-          case Step.Alg.GetMeta() => pure(PreparedStep.GetMeta(PreparedMeta(variables, fieldMeta.alias, fieldMeta.args)))
+          case Step.Alg.GetMeta() =>
+            pure(
+              PreparedStep.GetMeta(
+                PreparedMeta(
+                  variables.map { case (k, v) =>
+                    k -> v.copy(value = v.value.map(_.void))
+                  },
+                  fieldMeta.alias,
+                  fieldMeta.args.map(_.map(_ => ()))
+                )
+              )
+            )
           case alg: Step.Alg.Batch[?, k, v] =>
             lift(nextId.map(i => PreparedStep.Batch[G, k, v](alg.id, UniqueBatchInstance(i))))
           case alg: Step.Alg.First[?, i, o, c] =>
@@ -141,7 +152,7 @@ object QueryPreparation {
             val expected = alg.arg.entries.toList.map(_.name).toSet
             val fields = fieldMeta.fields.filter { case (k, _) => expected.contains(k) }
             lift {
-              AP.decodeArg(alg.arg, fields, ambigiousEnum = false)
+              AP.decodeArg(alg.arg, fields.fmap(_.map(List(_))), ambigiousEnum = false, context = Nil)
                 .map[PreparedStep[G, I, O]](o => PreparedStep.Lift[G, I, O](_ => o))
             }
         }
@@ -150,7 +161,7 @@ object QueryPreparation {
       override def prepare[A](
           fi: MergedFieldInfo[G, C],
           t: Out[G, A],
-          fieldMeta: FieldMeta
+          fieldMeta: FieldMeta[C]
       ): H[F, Prepared[G, A]] =
         (t, fi.selections.toNel) match {
           case (out: gql.ast.OutArr[g, a, c, b], _) =>
@@ -185,7 +196,7 @@ object QueryPreparation {
       ): F[PreparedDataField[G, I]] = {
         val rootUniqueName = UniqueEdgeCursor(s"${currentTypename}_${fi.name}")
 
-        val meta: FieldMeta = FieldMeta(fi.alias, fi.args)
+        val meta: FieldMeta[C] = FieldMeta(fi.alias, fi.args)
 
         def findArgs(o: Out[G, ?]): Chain[Arg[?]] = o match {
           case x: OutArr[g, a, c, b] => collectArgs(x.resolver.underlying) ++ findArgs(x.of)
@@ -341,7 +352,7 @@ object QueryPreparation {
 final case class MergedFieldInfo[G[_], C](
     name: String,
     alias: Option[String],
-    args: Option[QA.Arguments],
+    args: Option[QA.Arguments[C]],
     selections: List[SelectionInfo[G, C]],
     // TODO these two should probably be lists
     caret: C,
@@ -357,9 +368,9 @@ final case class MergedImplementation[G[_], A, B, C](
     specify: A => Option[B]
 )
 
-final case class FieldMeta(
+final case class FieldMeta[C](
     alias: Option[String],
-    args: Option[QA.Arguments]
+    args: Option[QA.Arguments[C]]
 ) {
   lazy val fields = args.map(_.nel.toList).getOrElse(Nil).map(x => x.name -> x.value).toMap
 }

@@ -20,19 +20,19 @@ import gql.parser.{Value => V}
 
 object QueryAst {
   sealed trait ExecutableDefinition[C] {
-    def translate[A](f: C => A): ExecutableDefinition[A]
+    def map[A](f: C => A): ExecutableDefinition[A]
   }
   object ExecutableDefinition {
     final case class Operation[C](o: OperationDefinition[C], c: C) extends ExecutableDefinition[C] {
-      def translate[A](f: C => A): ExecutableDefinition[A] = Operation(o.translate(f), f(c))
+      def map[A](f: C => A): ExecutableDefinition[A] = Operation(o.map(f), f(c))
     }
     final case class Fragment[C](f: FragmentDefinition[C], c: C) extends ExecutableDefinition[C] {
-      def translate[A](g: C => A): ExecutableDefinition[A] = Fragment(f.translate(g), g(c))
+      def map[A](g: C => A): ExecutableDefinition[A] = Fragment(f.map(g), g(c))
     }
   }
 
   sealed trait OperationDefinition[C] {
-    def translate[A](f: C => A): OperationDefinition[A]
+    def map[A](f: C => A): OperationDefinition[A]
   }
   object OperationDefinition {
     final case class Detailed[C](
@@ -41,12 +41,12 @@ object QueryAst {
         variableDefinitions: Option[VariableDefinitions[C]],
         selectionSet: SelectionSet[C]
     ) extends OperationDefinition[C] {
-      def translate[A](f: C => A): OperationDefinition[A] = 
-        Detailed(tpe, name, variableDefinitions.map(_.translate(f)), selectionSet.translate(f))
+      def map[A](f: C => A): OperationDefinition[A] = 
+        Detailed(tpe, name, variableDefinitions.map(_.map(f)), selectionSet.map(f))
     }
 
     final case class Simple[C](selectionSet: SelectionSet[C]) extends OperationDefinition[C] {
-      def translate[A](f: C => A): OperationDefinition[A] = Simple(selectionSet.translate(f))
+      def map[A](f: C => A): OperationDefinition[A] = Simple(selectionSet.map(f))
     }
   }
 
@@ -58,21 +58,21 @@ object QueryAst {
   }
 
   final case class SelectionSet[C](selections: NonEmptyList[Selection[C]]) {
-    def translate[A](f: C => A): SelectionSet[A] = SelectionSet(selections.map(_.translate(f)))
+    def map[A](f: C => A): SelectionSet[A] = SelectionSet(selections.map(_.map(f)))
   }
 
   sealed trait Selection[C] {
-    def translate[A](f: C => A): Selection[A]
+    def map[A](f: C => A): Selection[A]
   }
   object Selection {
     final case class FieldSelection[C](field: Field[C], c: C) extends Selection[C] {
-      def translate[A](f: C => A): Selection[A] = FieldSelection(field.translate(f), f(c))
+      def map[A](f: C => A): Selection[A] = FieldSelection(field.map(f), f(c))
     }
     final case class FragmentSpreadSelection[C](fragmentSpread: FragmentSpread, c: C) extends Selection[C] {
-      def translate[A](f: C => A): Selection[A] = FragmentSpreadSelection(fragmentSpread, f(c))
+      def map[A](f: C => A): Selection[A] = FragmentSpreadSelection(fragmentSpread, f(c))
     }
     final case class InlineFragmentSelection[C](inlineFragment: InlineFragment[C], c: C) extends Selection[C] {
-      def translate[A](f: C => A): Selection[A] = InlineFragmentSelection(inlineFragment.translate(f), f(c))
+      def map[A](f: C => A): Selection[A] = InlineFragmentSelection(inlineFragment.map(f), f(c))
     }
   }
 
@@ -83,28 +83,28 @@ object QueryAst {
       selectionSet: Option[SelectionSet[C]],
       caret: C
   ) {
-    def translate[A](f: C => A): Field[A] = 
+    def map[A](f: C => A): Field[A] = 
       Field(
         alias, 
         name, 
-        arguments.map(_.translate(f)), 
-        selectionSet.map(_.translate(f)),
+        arguments.map(_.map(f)), 
+        selectionSet.map(_.map(f)),
         f(caret)
          )
   }
 
   final case class Arguments[C](nel: NonEmptyList[Argument[C]]) {
-    def translate[A](f: C => A): Arguments[A] = Arguments(nel.map(_.translate(f)))
+    def map[A](f: C => A): Arguments[A] = Arguments(nel.map(_.map(f)))
   }
 
   final case class Argument[C](name: String, value: V[AnyValue, C]) {
-    def translate[A](f: C => A): Argument[A] = Argument(name, value.translate(f))
+    def map[A](f: C => A): Argument[A] = Argument(name, value.map(f))
   }
 
   final case class FragmentSpread(fragmentName: String)
 
   final case class InlineFragment[C](typeCondition: Option[String], selectionSet: SelectionSet[C]) {
-    def translate[A](f: C => A): InlineFragment[A] = InlineFragment(typeCondition, selectionSet.translate(f))
+    def map[A](f: C => A): InlineFragment[A] = InlineFragment(typeCondition, selectionSet.map(f))
   }
 
   final case class FragmentDefinition[C](
@@ -113,17 +113,17 @@ object QueryAst {
       selectionSet: SelectionSet[C],
       caret: C
   ) {
-    def translate[A](f: C => A): FragmentDefinition[A] = 
-      FragmentDefinition(name, typeCnd, selectionSet.translate(f), f(caret))
+    def map[A](f: C => A): FragmentDefinition[A] = 
+      FragmentDefinition(name, typeCnd, selectionSet.map(f), f(caret))
   }
 
   final case class VariableDefinitions[C](nel: NonEmptyList[VariableDefinition[C]]) {
-    def translate[A](f: C => A): VariableDefinitions[A] = 
-      VariableDefinitions(nel.map(_.translate(f)))
+    def map[A](f: C => A): VariableDefinitions[A] = 
+      VariableDefinitions(nel.map(_.map(f)))
   }
 
   final case class VariableDefinition[C](name: String, tpe: Type, defaultValue: Option[V[gql.parser.Const, C]], c: C) {
-    def translate[A](f: C => A): VariableDefinition[A] = 
-      VariableDefinition(name, tpe, defaultValue.map(_.translate(f)), f(c))
+    def map[A](f: C => A): VariableDefinition[A] = 
+      VariableDefinition(name, tpe, defaultValue.map(_.map(f)), f(c))
   }
 }

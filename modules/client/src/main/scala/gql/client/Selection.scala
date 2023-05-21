@@ -87,7 +87,7 @@ object Selection {
   final case class Field[A](
       fieldName: String,
       alias: Option[String],
-      args: List[P.Argument],
+      args: List[P.Argument[Unit]],
       subQuery: SubQuery[A]
   ) extends Selection[A]
 

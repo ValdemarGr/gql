@@ -17,6 +17,7 @@ package gql.parser
 
 import io.circe._
 import io.circe.syntax._
+import cats._
 
 sealed trait AnyValue
 sealed trait Const extends AnyValue
@@ -28,39 +29,42 @@ sealed trait Const extends AnyValue
  * shouldn't be allowed as an enum value.
  */
 sealed trait Value[+V <: AnyValue, C] extends Product with Serializable {
-  def translate[A](f: C => A): Value[V, A]
+  def map[A](f: C => A): Value[V, A]
+
+  def c: C
 }
+
 sealed trait NonVar[C] extends Value[Const, C]
 object Value {
   // Const can safely be converted to AnyValue (With variable)
   // AnyValue cannot safely be converted to Const, since that would lose the variables
   // That is, Const is a subtype of AnyValue
   final case class VariableValue[C](v: String, c: C = ()) extends Value[AnyValue, C] {
-    def translate[A](f: C => A): Value[AnyValue, A] = VariableValue(v, f(c))
+    def map[A](f: C => A): Value[AnyValue, A] = VariableValue(v, f(c))
   }
   final case class IntValue[C](v: BigInt, c: C = ()) extends NonVar[C] {
-    def translate[A](f: C => A): Value[Const, A] = IntValue(v, f(c))
+    def map[A](f: C => A): Value[Const, A] = IntValue(v, f(c))
   }
   final case class FloatValue[C](v: BigDecimal, c: C = ()) extends NonVar[C] {
-    def translate[A](f: C => A): Value[Const, A] = FloatValue(v, f(c))
+    def map[A](f: C => A): Value[Const, A] = FloatValue(v, f(c))
   }
   final case class StringValue[C](v: String, c: C = ()) extends NonVar[C] {
-    def translate[A](f: C => A): Value[Const, A] = StringValue(v, f(c))
+    def map[A](f: C => A): Value[Const, A] = StringValue(v, f(c))
   }
   final case class BooleanValue[C](v: Boolean, c: C = ()) extends NonVar[C] {
-    def translate[A](f: C => A): Value[Const, A] = BooleanValue(v, f(c))
+    def map[A](f: C => A): Value[Const, A] = BooleanValue(v, f(c))
   }
   final case class NullValue[C](c: C = ()) extends NonVar[C] {
-    def translate[A](f: C => A): Value[Const, A] = NullValue(f(c))
+    def map[A](f: C => A): Value[Const, A] = NullValue(f(c))
   }
   final case class EnumValue[C](v: String, c: C = ()) extends NonVar[C] {
-    def translate[A](f: C => A): Value[Const, A] = EnumValue(v, f(c))
+    def map[A](f: C => A): Value[Const, A] = EnumValue(v, f(c))
   }
   final case class ListValue[+V <: AnyValue, C](v: List[Value[V, C]], c: C = ()) extends Value[V, C] {
-    def translate[A](f: C => A): Value[V, A] = ListValue(v.map(_.translate(f)), f(c))
+    def map[A](f: C => A): Value[V, A] = ListValue(v.map(_.map(f)), f(c))
   }
   final case class ObjectValue[+V <: AnyValue, C](v: List[(String, Value[V, C])], c: C = ()) extends Value[V, C] {
-    def translate[A](f: C => A): Value[V, A] = ObjectValue(v.map { case (k, v) => k -> v.translate(f) }, f(c))
+    def map[A](f: C => A): Value[V, A] = ObjectValue(v.map { case (k, v) => k -> v.map(f) }, f(c))
   }
 
   def fromJson(j: Json): Value[Const, Unit] = j.fold[Value[Const, Unit]](
@@ -83,5 +87,9 @@ object Value {
     case e: EnumValue[C]          => e.v.asJson
     case l: ListValue[Const, C]   => l.v.map(_.asJson).asJson
     case o: ObjectValue[Const, C] => JsonObject.fromIterable(o.v.map { case (k, v) => k -> v.asJson }).asJson
+  }
+
+  implicit val functorForValue: Functor[Value[Const, *]] = new Functor[Value[Const, *]] {
+    def map[A, B](fa: Value[Const, A])(f: A => B): Value[Const, B] = fa.map(f)
   }
 }

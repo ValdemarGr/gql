@@ -131,8 +131,8 @@ object ast extends AstImplicits.Implicits {
 
   final case class Scalar[A](
       name: String,
-      encoder: A => V[Const],
-      decoder: V[Const] => Either[String, A],
+      encoder: A => V[Const, Unit],
+      decoder: V[Const, Unit] => Either[String, A],
       description: Option[String] = None
   ) extends OutToplevel[fs2.Pure, A]
       with InToplevel[A] {

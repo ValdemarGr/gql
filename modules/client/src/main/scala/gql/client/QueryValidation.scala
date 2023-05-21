@@ -33,6 +33,7 @@ import io.circe.JsonObject
 import io.circe.syntax._
 import gql.parser.QueryAst
 import gql.parser.Pos
+import cats.parse.Caret
 
 object QueryValidation {
   def generateStubInput(
@@ -67,8 +68,8 @@ object QueryValidation {
     }
   }
 
-  def generateVariableStub(
-      vd: QueryAst.VariableDefinition,
+  def generateVariableStub[C](
+      vd: QueryAst.VariableDefinition[C],
       ast: Map[String, TypeDefinition]
   ): ValidatedNec[String, Map[String, Json]] = {
     val fa = vd.defaultValue match {
@@ -80,16 +81,15 @@ object QueryValidation {
 
   def validateExecutables(
       originQuery: String,
-      executables: NonEmptyList[QueryAst.ExecutableDefinition[Pos]],
+      executables: NonEmptyList[QueryAst.ExecutableDefinition[Caret]],
       ast: Map[String, TypeDefinition]
   ): List[String] =
     getSchema(ast)
       .flatMap { x =>
         val vs = executables
-          .collect { case QueryAst.ExecutableDefinition.Operation(op) => op.value }
+          .collect { case QueryAst.ExecutableDefinition.Operation(op, _) => op }
           .collect { case QueryAst.OperationDefinition.Detailed(_, _, vds, _) => vds.toList.flatMap(_.nel.toList) }
           .flatten
-          .map(_.value)
           .traverse(generateVariableStub(_, ast))
 
         vs.toEither.map(_.foldLeft(Map.empty[String, Json])(_ ++ _)).flatMap { variables =>
@@ -245,7 +245,7 @@ object QueryValidation {
 
     def liftArg(a: InputValueDefinition): EitherNec[String, ArgValue[?]] = {
       val t = resolveInputType(a.tpe)
-      t.map { case i: Eval[In[a]] => ArgValue(a.name, i, a.defaultValue, None) }
+      t.map { case i: Eval[In[a]] => ArgValue(a.name, i, a.defaultValue.map(_.map(_ => ())), None) }
     }
 
     def liftArgs(xs: NonEmptyList[InputValueDefinition]): EitherNec[String, Arg[Unit]] =

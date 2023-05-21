@@ -29,7 +29,7 @@ import gql.parser.Pos
 import gql.parser.QueryAst
 import gql.parser.{QueryAst => QA}
 
-trait FieldCollection[F[_], G[_], P[_], C] {
+trait FieldCollection[F[_], G[_], C] {
   def matchType(
       name: String,
       sel: Selectable[G, ?],
@@ -38,12 +38,12 @@ trait FieldCollection[F[_], G[_], P[_], C] {
 
   def collectSelectionInfo(
       sel: Selectable[G, ?],
-      ss: QA.SelectionSet[P]
+      ss: QA.SelectionSet[C]
   ): F[NonEmptyList[SelectionInfo[G, C]]]
 
   def collectFieldInfo(
       qf: AbstractField[G, ?],
-      f: QA.Field[P],
+      f: QA.Field[C],
       caret: C
   ): F[FieldInfo[G, C]]
 }
@@ -51,26 +51,25 @@ trait FieldCollection[F[_], G[_], P[_], C] {
 object FieldCollection {
   type CycleSet = Set[String]
 
-  def apply[F[_]: Parallel, G[_], P[_], C](
+  def apply[F[_]: Parallel, G[_], C](
       implementations: SchemaShape.Implementations[G],
-      fragments: Map[String, P[QA.FragmentDefinition[P]]]
+      fragments: Map[String, QA.FragmentDefinition[C]]
   )(implicit
       F: Monad[F],
       E: ErrorAlg[F, C],
       L: Local[F, CycleSet],
       C: Local[F, Cursor],
-      P: Positioned[P, C],
-      A: ArgParsing[F]
+      A: ArgParsing[F, C]
   ) = {
     implicit val PA = PathAlg[F]
     import E._
     import PA._
 
-    new FieldCollection[F, G, P, C] {
+    new FieldCollection[F, G, C] {
       def inFragment[A](
           fragmentName: String,
           carets: List[C]
-      )(faf: P[QA.FragmentDefinition[P]] => F[A]): F[A] =
+      )(faf: QA.FragmentDefinition[C] => F[A]): F[A] =
         L.ask[CycleSet]
           .map(_.contains(fragmentName))
           .ifM(
@@ -129,9 +128,9 @@ object FieldCollection {
         }
       }
 
-      override def collectSelectionInfo(sel: Selectable[G, ?], ss: QueryAst.SelectionSet[P]): F[NonEmptyList[SelectionInfo[G, C]]] = {
-        val all = ss.selections.map(p => (P.position(p), P(p)))
-        val fields = all.collect { case (caret, QA.Selection.FieldSelection(field)) => (caret, field) }
+      override def collectSelectionInfo(sel: Selectable[G, ?], ss: QueryAst.SelectionSet[C]): F[NonEmptyList[SelectionInfo[G, C]]] = {
+        val all = ss.selections
+        val fields = all.collect { case QA.Selection.FieldSelection(field, c) => (c, field) }
 
         val actualFields =
           sel.abstractFieldMap + ("__typename" -> AbstractField(None, Eval.now(stringScalar), None))
@@ -146,7 +145,7 @@ object FieldCollection {
           .map(_.toNel.toList.map(SelectionInfo(sel, _, None)))
 
         val realInlines = all
-          .collect { case (caret, QA.Selection.InlineFragmentSelection(f)) => (caret, f) }
+          .collect { case QA.Selection.InlineFragmentSelection(f, c) => (c, f) }
           .parFlatTraverse { case (caret, f) =>
             f.typeCondition.traverse(matchType(_, sel, caret)).map(_.getOrElse(sel)).flatMap { t =>
               collectSelectionInfo(t, f.selectionSet).map(_.toList)
@@ -154,13 +153,11 @@ object FieldCollection {
           }
 
         val realFragments = all
-          .collect { case (caret, QA.Selection.FragmentSpreadSelection(f)) => (caret, f) }
+          .collect { case QA.Selection.FragmentSpreadSelection(f, c) => (c, f) }
           .parFlatTraverse { case (caret, f) =>
             val fn = f.fragmentName
-            inFragment(fn, List(caret)) { p =>
-              val caret = P.position(p)
-              val f = P(p)
-              matchType(f.typeCnd, sel, caret).flatMap { t =>
+            inFragment(fn, List(caret)) { f =>
+              matchType(f.typeCnd, sel, f.caret).flatMap { t =>
                 collectSelectionInfo(t, f.selectionSet)
                   .map(_.toList.map(_.copy(fragmentName = Some(fn))))
               }
@@ -172,12 +169,14 @@ object FieldCollection {
           .map(_.toNel.get)
       }
 
-      override def collectFieldInfo(qf: AbstractField[G, _], f: QueryAst.Field[P], caret: C): F[FieldInfo[G, C]] = {
+      override def collectFieldInfo(qf: AbstractField[G, _], f: QueryAst.Field[C], caret: C): F[FieldInfo[G, C]] = {
         val fields = f.arguments.toList.flatMap(_.nel.toList).map(x => x.name -> x.value).toMap
-        val verifyArgsF = qf.arg.traverse_ { case a: Arg[a] => A.decodeArg[a](a, fields, ambigiousEnum = false).void }
+        val verifyArgsF = qf.arg.traverse_ { case a: Arg[a] => 
+          A.decodeArg[a](a, fields.fmap(_.map(List(_))), ambigiousEnum = false, context = List(caret)).void 
+        }
 
-        val c = P.position(f.selectionSet)
-        val x = P(f.selectionSet)
+        val c = f.caret
+        val x = f.selectionSet
         val ims = InverseModifierStack.fromOut(qf.output.value)
         val tl = ims.inner
         val i: F[TypeInfo[G, C]] = tl match {
@@ -246,7 +245,7 @@ final case class SelectionInfo[G[_], C](
 final case class FieldInfo[G[_], C](
     name: String,
     alias: Option[String],
-    args: Option[QA.Arguments],
+    args: Option[QA.Arguments[C]],
     tpe: InverseModifierStack[TypeInfo[G, C]],
     caret: C,
     path: Cursor

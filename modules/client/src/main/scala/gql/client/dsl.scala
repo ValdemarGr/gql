@@ -29,10 +29,10 @@ object dsl {
   def sel[A](fieldName: String)(implicit sq: SubQuery[A]): SelectionSet[A] =
     SelectionSet.lift(Selection.Field(fieldName, None, Nil, sq))
 
-  def sel[A](fieldName: String, argHd: P.Argument, argTl: P.Argument*)(implicit sq: SubQuery[A]): SelectionSet[A] =
+  def sel[A](fieldName: String, argHd: P.Argument[Unit], argTl: P.Argument[Unit]*)(implicit sq: SubQuery[A]): SelectionSet[A] =
     SelectionSet.lift(Selection.Field(fieldName, None, argHd :: argTl.toList, sq))
 
-  def sel[A](fieldName: String, alias: String, argHd: P.Argument, argTl: P.Argument*)(implicit sq: SubQuery[A]): SelectionSet[A] =
+  def sel[A](fieldName: String, alias: String, argHd: P.Argument[Unit], argTl: P.Argument[Unit]*)(implicit sq: SubQuery[A]): SelectionSet[A] =
     SelectionSet.lift(Selection.Field(fieldName, Some(alias), argHd :: argTl.toList, sq))
 
   def inlineFrag[A](on: String)(implicit q: SelectionSet[A]): SelectionSet[Option[A]] =
@@ -60,7 +60,7 @@ object dsl {
       encoder: io.circe.Encoder[A]
   ): Var[A, VariableName[A]] = Var[A](name, tn.stack.invert.show(identity))
 
-  def omittableVariable[A](name: String, default: V[Const])(implicit
+  def omittableVariable[A](name: String, default: V[Const, Unit])(implicit
       tn: Typename[A],
       encoder: io.circe.Encoder[A]
   ): Var[Option[A], VariableName[A]] = Var[A](name, tn.stack.invert.show(identity), Some(default))
@@ -73,13 +73,13 @@ object dsl {
   def value[A](a: A)(implicit enc: io.circe.Encoder[A]) =
     V.fromJson(enc(a))
 
-  def arg(name: String, value: V[AnyValue]): P.Argument =
+  def arg(name: String, value: V[AnyValue, Unit]): P.Argument[Unit] =
     P.Argument(name, value)
 
-  def arg(name: String, vn: VariableName[?]): P.Argument =
+  def arg(name: String, vn: VariableName[?]): P.Argument[Unit] =
     P.Argument(name, vn.asValue)
 
-  def arg[A](name: String, a: A)(implicit enc: io.circe.Encoder[A]): P.Argument =
+  def arg[A](name: String, a: A)(implicit enc: io.circe.Encoder[A]): P.Argument[Unit] =
     P.Argument(name, value(a))
 
   def embed[A](implicit ss: SelectionSet[A]): SelectionSet[A] = ss

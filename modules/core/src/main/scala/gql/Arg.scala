@@ -25,12 +25,12 @@ import gql.std.FreeApply
 final case class ArgValue[A](
     name: String,
     input: Eval[In[A]],
-    defaultValue: Option[V[Const]],
+    defaultValue: Option[V[Const, Unit]],
     description: Option[String]
 ) {
   def document(description: String) = copy(description = Some(description))
 
-  def default(value: V[Const]) = copy(defaultValue = Some(value))
+  def default(value: V[Const, Unit]) = copy(defaultValue = Some(value))
 }
 
 final case class ArgParam[A](
