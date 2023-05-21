@@ -201,32 +201,6 @@ object FieldCollection {
   }
 }
 
-trait Positioned[P[_], C] {
-  def apply[A](p: P[A]): A
-
-  def position[A](p: P[A]): C
-}
-
-object Positioned {
-  import cats.data.Const
-
-  def apply[P[_], C](position: P ~> Const[C, *])(get: P ~> Id): Positioned[P, C] = {
-    val p0 = position
-    new Positioned[P, C] {
-      def apply[A](p: P[A]): A = get(p)
-      def position[A](p: P[A]): C = p0(p).getConst
-    }
-  }
-
-  implicit val parserPos: Positioned[Pos, Caret] = apply[Pos, Caret](
-    new (Pos ~> Const[Caret, *]) {
-      def apply[A](fa: Pos[A]): Const[Caret, A] = Const(fa.caret)
-    }
-  )(new (Pos ~> Id) {
-    override def apply[A](fa: Pos[A]): Id[A] = fa.value
-  })
-}
-
 sealed trait TypeInfo[+G[_], +C] {
   def name: String
 }

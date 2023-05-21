@@ -30,7 +30,6 @@ import gql.parser.Pos
 import cats.mtl.Tell
 import cats.mtl.Handle
 import cats.mtl.Stateful
-import gql.preparation.Positioned
 import cats.parse.Caret
 import gql.parser.QueryAst
 import gql.client.QueryValidation
@@ -294,13 +293,13 @@ object Generator {
       case NullValue(_)     => Doc.text(s"""V.NullValue()""")
       case BooleanValue(v, _) => Doc.text(s"""V.BooleanValue(${v.toString()})""")
       case ListValue(v, _) =>
-        Doc.text(s"V.ListValue[${tpe}](") +
+        Doc.text(s"V.ListValue[${tpe}, Unit](") +
           Doc
             .intercalate(Doc.comma + Doc.line, v.map(generateValue(_, anyValue)))
             .tightBracketBy(Doc.text("List("), Doc.char(')')) +
           Doc.text(")")
       case ObjectValue(fields, _) =>
-        Doc.text(s"V.ObjectValue[${tpe}](") +
+        Doc.text(s"V.ObjectValue[${tpe}, Unit](") +
           Doc
             .intercalate(
               Doc.comma + Doc.line,

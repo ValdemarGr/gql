@@ -1,4 +1,4 @@
-query AlienQuery($name: String!, $struct: FindDogInput, $dogCommand: DogCommand! = DOWNN) {
+query AlienQuery($name: String!, $struct: FindDogInput, $dogCommand: DogCommand! = DOWN) {
   dog {
     ... DogFragment
     ... on Dog {
