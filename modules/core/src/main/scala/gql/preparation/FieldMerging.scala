@@ -250,7 +250,7 @@ object FieldMerging {
                 }
               }
             }
-          case _ => raise(s"Values are not same type, got ${pValueName(av)} and ${pValueName(bv)}.", cs)
+          case _ => raise(s"Values are not the same type, got ${pValueName(av)} and ${pValueName(bv)}.", cs)
         }
       }
     }

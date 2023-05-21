@@ -15,11 +15,12 @@
  */
 package gql
 
-import cats.data._
 import cats._
+import cats.data._
 import cats.implicits._
 import gql.ast._
-import gql.parser.{Value => V, Const, AnyValue}
+import gql.parser.Const
+import gql.parser.{Value => V}
 import gql.std.FreeApply
 
 final case class ArgValue[A](

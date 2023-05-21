@@ -216,7 +216,19 @@ object QueryValidation {
       }
 
     def convertScalar(s: ScalarType): Scalar[Unit] =
-      Scalar(s.x.name, _ => V.NullValue(), _ => Right(()))
+      Scalar(
+        s.x.name,
+        _ => V.NullValue(),
+        { x =>
+          s.x.name match {
+            case "String"  => gql.ast.stringScalar.decoder(x).void
+            case "Int"     => gql.ast.intScalar.decoder(x).void
+            case "Float"   => gql.ast.floatScalar.decoder(x).void
+            case "Boolean" => gql.ast.booleanScalar.decoder(x).void
+            case _         => Right(())
+          }
+        }
+      )
 
     def convertEnum(e: EnumType): Enum[Unit] =
       Enum(e.x.name, e.x.values.map(x => x.name -> EnumValue(())))

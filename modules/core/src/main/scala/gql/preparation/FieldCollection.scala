@@ -19,13 +19,11 @@ import cats._
 import cats.data._
 import cats.implicits._
 import cats.mtl._
-import cats.parse.Caret
 import gql.Arg
 import gql.Cursor
 import gql.InverseModifierStack
 import gql.SchemaShape
 import gql.ast._
-import gql.parser.Pos
 import gql.parser.QueryAst
 import gql.parser.{QueryAst => QA}
 

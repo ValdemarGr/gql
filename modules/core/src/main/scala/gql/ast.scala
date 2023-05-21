@@ -236,7 +236,7 @@ object ast extends AstImplicits.Implicits {
         value =>
           dec.decodeJson(value.asJson).leftMap { case df: io.circe.DecodingFailure =>
             val maybeAt = if (df.history.size > 1) s" at ${io.circe.CursorOp.opsToPath(df.history)}" else ""
-            s"decoding failure for type $name$maybeAt with message ${df.message}"
+            s"decoding failure for type `$name`$maybeAt with message ${df.message}"
           }
       )
     }
