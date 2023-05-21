@@ -11,7 +11,7 @@ const config = {
     mermaid: true
   },
   title: 'gql',
-  tagline: 'A functional GraphQL implementation for Scala',
+  tagline: 'A functional server and client GraphQL implementation for Scala',
   url: 'https://github.com',
   baseUrl: '/gql/',
   onBrokenLinks: 'throw',

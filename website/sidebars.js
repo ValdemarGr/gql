@@ -28,36 +28,42 @@ const sidebars = {
     {
       collapsed: false,
       type: 'category',
-      label: "Schema",
+      label: "Server",
       items: [
-        "schema/output_types",
-        "schema/input_types",
-        "schema/dsl",
-        "schema/resolvers",
-        "schema/schema",
-        "schema/context",
-        "schema/error_handling",
-        "schema/compiler",
-        "schema/graph_philosophy",
-      ]
-    },
-    {
-      collapsed: true,
-      type: 'category',
-      label: "Execution",
-      items: [
-        "execution/planning",
-        "execution/statistics",
-      ]
-    },
-    {
-      collapsed: false,
-      type: 'category',
-      label: "Integrations",
-      items: [
-        "integrations/http4s",
-        "integrations/graphqlws",
-        "integrations/natchez",
+        {
+          collapsed: false,
+          type: 'category',
+          label: "Schema",
+          items: [
+            "server/schema/output_types",
+            "server/schema/input_types",
+            "server/schema/dsl",
+            "server/schema/resolvers",
+            "server/schema/schema",
+            "server/schema/context",
+            "server/schema/error_handling",
+            "server/schema/compiler",
+          ]
+        },
+        {
+          collapsed: true,
+          type: 'category',
+          label: "Execution",
+          items: [
+            "server/execution/planning",
+            "server/execution/statistics",
+          ]
+        },
+        {
+          collapsed: false,
+          type: 'category',
+          label: "Integrations",
+          items: [
+            "server/integrations/http4s",
+            "server/integrations/graphqlws",
+            "server/integrations/natchez",
+          ]
+        }
       ]
     }
   ]
@@ -70,13 +76,13 @@ const sidebars = {
   //     // items: ["test"],
   //   }
   // ]
-    // 'intro',
-    // 'hello',
-    // {
-    //   type: 'category',
-    //   label: 'Tutorial',
-    //   items: ['tutorial-basics/create-a-document'],
-    // },
+  // 'intro',
+  // 'hello',
+  // {
+  //   type: 'category',
+  //   label: 'Tutorial',
+  //   items: ['tutorial-basics/create-a-document'],
+  // },
   // ],
 };
 

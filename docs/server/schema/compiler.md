@@ -35,8 +35,8 @@ trait Logger[F[_]] {
 def lg: Logger[IO] = ???
 
 def logSlowQueries(
-  compiler: CompilerParameters => Application[IO]
-): CompilerParameters => Application[IO] = cp => 
+  compiler: QueryParameters => Application[IO]
+): QueryParameters => Application[IO] = cp => 
   compiler(cp) match {
     case Application.Query(fa) => 
       Application.Query {

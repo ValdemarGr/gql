@@ -21,7 +21,6 @@ The `intercept` is the important of the two, since it allows us to compare batch
 import cats.effect._
 import gql._
 import scala.concurrent.duration._
-
 import cats.effect.unsafe.implicits.global
 
 Statistics[IO].flatMap{ stats =>

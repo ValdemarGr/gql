@@ -274,7 +274,7 @@ lazy val docs = project
     ),
     tlFatalWarnings := false
   )
-  .dependsOn(server % "compile->compile;test->test")
+  .dependsOn(server % "compile->compile;test->test;compile->test")
   .dependsOn(core % "compile->compile;compile->test")
   .dependsOn(serverHttp4s)
   .dependsOn(serverGraphqlWs)

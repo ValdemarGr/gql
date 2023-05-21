@@ -26,14 +26,14 @@ const FeatureList: Feature[] = [
     // Svg: require('@site/static/img/undraw_docusaurus_tree.svg').default,
     description: (
       <>
-        gql distills what it means to be a GraphQL resolver into a very concise and elegant algebra that composes.
+        gql distills what it means to be a GraphQL resolver into a concise algebra that composes.
       </>
     ),
     code: (
       <CodeBlock language='scala'>
         {`"friends" -> resolve(_
   .evalMap(getFriends)
-  .stream(is => peopleEvents(is.map(_.id)))
+  .streamMap(is => peopleEvents(is.map(_.id)))
   .rethrow
   .arg(limitArg) andThen batchGetPeople
 )`}
@@ -45,7 +45,7 @@ const FeatureList: Feature[] = [
     //Svg: require('@site/static/img/undraw_docusaurus_react.svg').default,
     description: (
       <>
-        Comes with syntax and a DSL for succinctly defining schemas.
+        gql comes with syntax and a DSL for succinctly defining schemas.
       </>
     ),
     code: (
@@ -64,7 +64,7 @@ const FeatureList: Feature[] = [
     description: (
       <>
         gql adopts a simple and predictable approach to GraphQL.
-        No macros or code generation, just plain functional Scala.
+        No macros, just plain functional Scala.
       </>
     ),
     code: (
@@ -81,8 +81,7 @@ const FeatureList: Feature[] = [
     // Svg: require('@site/static/img/undraw_docusaurus_mountain.svg').default,
     description: (
       <>
-        gql features a unique query planner that enables not just near optimal query performance, but also an extremely expressive batching api that helps the user optimize their schema in a complely typed functional manner.
-        Is your problem monadic? Is it applicative? Is it a stream? gql can express any combination.
+        gql features a query planner heuristic that enables better-than-naive query performance and an expressive batching api that helps the user optimize their schema in a complely typed functional manner.
       </>
     ),
     code: (
@@ -103,9 +102,9 @@ const FeatureList: Feature[] = [
     code: (
       <CodeBlock language='scala'>
         {`"data" -> resolve(_
-  .stream(subscribeToIds)
+  .streamMap(subscribeToIds)
   .andThen(batchGetData)
-  .stream(subscribeToSubIds)
+  .streamMap(subscribeToSubIds)
 )`}
       </CodeBlock>
     )
@@ -125,6 +124,28 @@ const FeatureList: Feature[] = [
     code: (
       <CodeBlock language='scala'>
         {`gql.http4s.Http4sRoutes.ws(queryCompiler, _)`}
+      </CodeBlock>
+    )
+  },
+  {
+    title: 'Client-side dsl',
+    // Svg: require('@site/static/img/undraw_docusaurus_mountain.svg').default,
+    description: (
+      <>
+      gql also features a client which can either be declared via the dsl or code generated from a graphql query.
+      <br/>
+      <br/>
+      gql is modular and as such, client queries can be validated against the same implementation rules as a gql server.
+      </>
+    ),
+    code: (
+      <CodeBlock language='scala'>
+        {`fragment("PersonFragment", "Person") {
+  (
+    sel[String]("name"),
+    sel[Option[Int]]("age")
+  ).mapN(Person.apply)
+}`}
       </CodeBlock>
     )
   },
@@ -151,13 +172,13 @@ function Feature({ Svg, title, description, code }: Feature) {
 export default function HomepageFeatures() {
   return (
     <section className={styles.features}>
-      <div className="container">
-        <div className="row">
-          {FeatureList.map((props, idx) => (
-            <Feature key={idx} {...props} />
-          ))}
-        </div>
+    <div className="container">
+      <div className="row">
+        {FeatureList.map((props, idx) => (
+          <Feature key={idx} {...props} />
+        ))}
       </div>
-    </section>
+    </div>
+  </section>
   );
 }

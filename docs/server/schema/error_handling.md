@@ -22,6 +22,7 @@ import cats.implicits._
 import cats.data._
 import cats.effect._
 import cats.effect.unsafe.implicits.global
+import io.circe.syntax._
   
 def multifailSchema = 
   tpe[IO, Unit](
@@ -38,9 +39,9 @@ def go(query: String, tpe: Type[IO, Unit] = multifailSchema) =
     Compiler[IO].compile(sch, query) match {
       case Left(err) => 
         println(err)
-        IO.pure(err.asGraphQL)
+        IO.pure(err.asJson)
       case Right(Application.Query(fa)) => 
-        fa.map{x => println(x.errors);x.asGraphQL }
+        fa.map{x => println(x.errors);x.asJson }
     }
   }.unsafeRunSync()
   
@@ -99,7 +100,7 @@ val res =
     }
   }.unsafeRunSync()
   
-res.errors.headOption.flatMap(_.error.swap.toOption) match {
+res.errors.headOption.flatMap(_.error.left.toOption) match {
   case Some(MyException(_, data)) => println(s"Got data: $data")
   case _ => println("No data")
 }

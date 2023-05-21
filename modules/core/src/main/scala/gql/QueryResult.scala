@@ -27,9 +27,11 @@ final case class QueryResult(
 
 object QueryResult {
   final case class Error(
-      message: String,
+      error: Either[Throwable, String],
       path: Chain[Json]
-  )
+  ) {
+    val message = error.toOption.getOrElse("internal error")
+  }
 
   object Error {
     implicit val encoder: Encoder.AsObject[Error] = Encoder.AsObject.instance[Error] { err =>

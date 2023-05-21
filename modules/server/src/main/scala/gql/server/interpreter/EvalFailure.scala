@@ -37,10 +37,7 @@ trait EvalFailure {
         case GraphArc.Field(name) => Some(name.asJson)
         case GraphArc.Index(idx)  => Some(idx.asJson)
       }
-      QueryResult.Error(
-        error.getOrElse("internal error"),
-        filteredPath
-      )
+      QueryResult.Error(error, filteredPath)
     }
 }
 object EvalFailure {

@@ -19,6 +19,7 @@ import cats.implicits._
 import io.circe._
 import cats.effect._
 import cats.effect.unsafe.implicits.global
+import io.circe.syntax._
 
 final case class Context(
   userId: String
@@ -46,7 +47,7 @@ Statistics[IO].flatMap{ stats =>
     case Right(Application.Query(fa)) => 
       fa
         .run(Context("john_doe"))
-        .map(_.asGraphQL)
+        .map(_.asJson)
   }
 }.unsafeRunSync()
 ```

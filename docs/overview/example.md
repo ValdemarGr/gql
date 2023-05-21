@@ -223,13 +223,15 @@ def query = """
 Now we can parse, plan and evaluate the query:
 
 ```scala mdoc:passthrough
+import io.circe.syntax._
 mdoc.IORunPrint(
 schema[IO]
   .map(Compiler[IO].compile(_, query))
-  .flatMap { case Right(Application.Query(run)) => run.map(_.asGraphQL) }
+  .flatMap { case Right(Application.Query(run)) => run.map(_.asJson) }
 )("""
+import io.circe.syntax._
 schema[IO]
   .map(Compiler[IO].compile(_, query))
-  .flatMap { case Right(Application.Query(run)) => run.map(_.asGraphQL) }
+  .flatMap { case Right(Application.Query(run)) => run.map(_.asJson) }
 """)
 ```

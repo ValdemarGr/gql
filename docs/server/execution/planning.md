@@ -400,6 +400,7 @@ import cats.effect.unsafe.implicits.global
 import cats.effect._
 import cats.implicits._
 import gql._
+import gql.server.planner._
 
 def schemaF = gql.StarWarsSchema.schema
 ```
@@ -407,10 +408,9 @@ If we explicitly invoke the planner on our schema, we can ask to see a rendered 
 ```scala mdoc
 def loggedSchema = schemaF.map{ schema =>
   schema.copy(planner = new Planner[IO] {
-    def plan(naive: Planner.NodeTree): IO[Planner.PlannedNodeTree] =
+    def plan(naive: NodeTree): IO[OptimizedDAG] =
       schema.planner.plan(naive).map { output =>
-        println(naive.show(ansiColors = false, plan=Some(output.plan)))
-        println(s"naive: ${naive.naiveCost}")
+        println(output.show(ansiColors = false))
         println(s"optimized: ${output.totalCost}")
         output
       }
