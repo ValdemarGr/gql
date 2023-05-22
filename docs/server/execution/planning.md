@@ -2,6 +2,91 @@
 title: Planning
 ---
 ## Planner algorithm
+### The high-level idea
+When planning for a query the planner assigns weights to every edge/field, optionally labels them with their batch names (if a batch resolver was used) and finally converts the problem to a simpler DAG (directed asyclic graph) form.
+:::tip
+For information on how the planner assigns weights, check out the [statistics](./statistics).
+:::
+The goal now is to form batches by contracting nodes that are batchable (jobs of the same family in scheduling/OR jargon).
+
+For instance, assume the following DAG is in question:
+```mermaid
+flowchart LR
+    Query((Query)) ---> a(a<br/>batch: z<br/>cost: 2)
+    a --> A((A))
+
+    Query --> b(b<br/>cost: 1)
+    b --> B((B))
+    
+      B ---> c(c<br/>batch: z<br/>cost: 2)
+      c --> C((C))
+```
+Now consider the following plan, where a possible contraction is colored red:
+```mermaid
+flowchart LR
+    Query((Query)) -----> a(a<br/>batch: z<br/>cost: 2)
+    a --> A((A))
+
+    Query --> b(b<br/>cost: 1)
+    b --> B((B))
+    
+      B ---> c(c<br/>batch: z<br/>cost: 2)
+      c --> C((C))
+
+style a stroke:#f66,stroke-dasharray: 5 5
+style c stroke:#f66,stroke-dasharray: 5 5
+```
+And contracted it becomes:
+```mermaid
+flowchart LR
+    Query((Query)) --> b(b<br/>cost: 1)
+    b --> B((B))
+    
+      B ---> ac("{a,c}"<br/>batch: z<br/>cost: 2)
+      ac --> A((A))
+      ac --> C((C))
+
+style ac stroke:#f66,stroke-dasharray: 5 5
+```
+
+### Default planner intuition
+The default planner heuristic in gql lazily enumerates all plans, imposing a locally greedy order to the enumerated plans.
+The default planner also employs some simple but powerful pruning rules to eliminate trivially uninteresting plan variantions.
+
+The planner works through the problem from the root(s) and down through the DAG.
+The algorithm keeps some state regarding what batches have been visited and what nodes are scheduled in the "current plan".
+In a round of planning the algorithm will figure out what nodes are schedulable by looking at it's state.
+
+The planner will lazily generate all combinations of possible batches of schedulable nodes.
+:::note
+One can easily cause a combinatorial explosion by generation of combinations.
+Fortunately we don't consider every plan (and in fact, the default algorithm only pulls $O(|V|)$ plans).
+Furthermore, most problems will have less than n plans.
+:::
+The planner will always generate the largest batches first, hence the "locally greedy" ordering.
+
+Trivially schedulable nodes are always scheduled first if possible; a pruning rules makes sure of this.
+For a given scheduleable node, if no other un-scheduled node exists of the same family (excluding it's own descendants), then that node's only and optimal batch is the singleton batch containing only that node.
+
+There are other pruning rules that have been considered, but don't seem necessary for practical problems since most problems produce very few plans.
+
+One such pruning rule consideres "optimal" generated batch combinations.
+If the largest batch that the planner can generate $n \choose n$ contains nodes that all have the same "latest ending parent", then all other combinations ${n \choose k} \text{ where } k < n$ are trivially fruitless.
+
+Once the planner has constructed a lazy list of batches, it then consideres every plan that _could_ exist for every batch, hence a computational difficulty of finding the **best** plan.
+:::info
+If you want to understand the algorithm better, consider taking a look at the source code.
+:::
+
+### Converting a query to a problem
+gql considers only resolvers when running query planning.
+Every field that is traversed in a query is expanded to all the resolvers it consists such that it becomes a digraph.
+
+As an example, consider the following instance:
+```scala mdoc
+
+```
+
 Initially there must be a schema and query:
 ```scala mdoc
 type B = String
@@ -32,10 +117,6 @@ def q = """
 """
 ```
 
-Then the planner assigns weights to every edge/field, and optionally labels them with their batch names (if a batch resolver was used):
-:::tip
-For information on how the planner assigns weights, check out the [statistics](./statistics).
-:::
 
 import Treemap from '@site/src/components/Treemap';
 
