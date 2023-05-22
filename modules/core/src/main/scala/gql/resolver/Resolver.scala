@@ -70,11 +70,11 @@ object Resolver extends ResolverInstances {
   def id[F[_], I]: Resolver[F, I, I] =
     lift(identity)
 
-  def liftFullF[F[_], I, O](f: I => F[O]): Resolver[F, I, O] =
+  def liftFFull[F[_], I, O](f: I => F[O]): Resolver[F, I, O] =
     liftFull(f).andThen(new Resolver(Step.embedEffect))
 
   final class PartiallAppliedLiftF[F[_], I](private val dummy: Boolean = true) extends AnyVal {
-    def apply[O](f: I => F[O]): Resolver[F, I, O] = liftFullF(f)
+    def apply[O](f: I => F[O]): Resolver[F, I, O] = liftFFull(f)
   }
 
   def liftF[F[_], I]: PartiallAppliedLiftF[F, I] = new PartiallAppliedLiftF[F, I]

@@ -83,8 +83,75 @@ gql considers only resolvers when running query planning.
 Every field that is traversed in a query is expanded to all the resolvers it consists such that it becomes a digraph.
 
 As an example, consider the following instance:
-```scala mdoc
+```scala mdoc:silent
+import gql._
+import gql.dsl._
+import gql.server.planner._
+import gql.resolver._
+import scala.concurrent.duration._
+import cats.implicits._
+import cats.effect._
+import cats.effect.unsafe.implicits.global
 
+case object Child
+
+def wait[I](ms: Int) = Resolver.liftF[IO, I](_ => IO.sleep(50.millis))
+
+val schem = Schema.stateful{
+  Resolver.batch[IO, Unit, Int](_ => IO(Map(() -> 42))).flatMap{ b1 =>
+    Resolver.batch[IO, Unit, String](_ => IO(Map(() -> "42"))).map{ b2 =>
+      implicit lazy val child = builder[IO, Child.type]{ b =>
+        b.tpe(
+          "Child",
+          "b1" -> b.from(wait(50) andThen b1.optional map (_.get)),
+          "b2" -> b.from(wait(100) andThen b2.optional map (_.get)),
+        )
+      }
+
+      SchemaShape.make[IO](
+        query = builder[IO, Unit]{ b =>
+          b.tpe(
+            "Query",
+            "child" -> b.from(wait(42) as Child),
+            "b2" -> b.from(wait(25) andThen b2.optional map (_.get))
+          )
+        }
+      )
+    }
+  }
+}.unsafeRunSync()
+```
+Now let's define our query and modify our schema so the planner logs:
+```scala mdoc:silent
+val qry = """
+  query {
+    child {
+      b1
+      b2
+    }
+    b2
+  }
+"""
+
+val withLoggedPlanner = schem.copy(planner = new Planner[IO] {
+  def plan(naive: NodeTree): IO[OptimizedDAG] =
+    schem.planner.plan(naive).map { output =>
+      println(output.show(ansiColors = false))
+      println(s"optimized: ${output.totalCost}")
+      output
+    }
+})
+```
+And we plan for it inspect the result:
+```scala mdoc
+def runQry() = {
+  Compiler[IO]
+    .compile(withLoggedPlanner, qry)
+    .traverse_{ case Application.Query(fa) => fa }
+    .unsafeRunSync()
+}
+
+runQry()
 ```
 
 Initially there must be a schema and query:
@@ -476,7 +543,7 @@ For instance, maybe you have more information about an edge that would improve t
 ## Debugging
 We can print the query plan and show the improvement in comparison to the naive plan.
 Let's pull out the Star Wars schema:
-```scala mdoc
+```scala
 import cats.effect.unsafe.implicits.global
 import cats.effect._
 import cats.implicits._
@@ -486,7 +553,7 @@ import gql.server.planner._
 def schemaF = gql.StarWarsSchema.schema
 ```
 If we explicitly invoke the planner on our schema, we can ask to see a rendered version of the query plan:
-```scala mdoc
+```scala
 def loggedSchema = schemaF.map{ schema =>
   schema.copy(planner = new Planner[IO] {
     def plan(naive: NodeTree): IO[OptimizedDAG] =

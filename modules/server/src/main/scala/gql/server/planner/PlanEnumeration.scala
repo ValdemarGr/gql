@@ -58,10 +58,26 @@ object PlanEnumeration {
       forbidden: Set[Set[NodeId]]
   )
 
+  var n = 0
   def enumerateAll(problem: Problem): LazyList[Map[NodeId, Batch]] = {
     def go(current: EnumerationState): LazyList[EnumerationState] =
       if (current.scheduled.size === problem.all.size) LazyList(current)
-      else enumerateNextRound(problem, current).flatMap(go)
+      else {
+        val ll = 
+        enumerateNextRound(problem, current)
+
+
+        n = n + 1
+        if (n > 5) {
+          val relevant = problem.all.filter { id =>
+            (problem.reverseArcs.getOrElse(id, Set.empty) subsetOf current.scheduled.keySet) &&
+            !current.scheduled.contains(id)
+          }.toSet
+          throw new Exception(s"${ll.toList.map(_.scheduled.size)}\nsolutions: ${ll.size}\n${relevant}\n${current.scheduled.size}\n${problem.all.size}\n${problem.arcs}\n${problem.all.toList}\n${ll.toList.toString()}")
+        }
+        
+        ll.flatMap(go)
+      }
 
     go(EnumerationState(Map.empty, Set.empty)).map(_.scheduled)
   }
