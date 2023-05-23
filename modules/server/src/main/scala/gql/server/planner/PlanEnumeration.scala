@@ -89,25 +89,31 @@ object PlanEnumeration {
 
     pruneable.toNel match {
       case Some(p) =>
-        val news = p.toList.mapFilter { n =>
-          if (state.forbidden.contains(Set(n))) None
-          else {
+        // pruneable nodes will never have any other solutions, so we can just schedule them
+        // if any of the pruneable nodes are in the forbidden set, that means that we have already checked a plan
+        // that includes scheduling that one pruneable node, so we can skip this plan entirely
+        // since the other plan that scheduled that one node must have checked the same schedule
+        val isDuplicate = p.exists(n => state.forbidden.contains(Set(n)))
+
+        if (isDuplicate) LazyList.empty
+        else {
+          val news = p.toList.map { n =>
             val parents = problem.reverseArcs.getOrElse(n, Set.empty)
             val maxParentEnd: EndTime = parents
               .map(p => state.scheduled(p).end)
               .maxOption
               .getOrElse(EndTime(0))
             val thisEnd = EndTime(maxParentEnd.time + problem.families(problem.familyMap(n).id).cost)
-            Some(n -> Batch(Set(n), thisEnd))
+            n -> Batch(Set(n), thisEnd)
           }
-        }
 
-        LazyList(
-          EnumerationState(
-            scheduled = state.scheduled ++ news,
-            forbidden = state.forbidden
+          LazyList(
+            EnumerationState(
+              scheduled = state.scheduled ++ news,
+              forbidden = state.forbidden
+            )
           )
-        )
+        }
       case None =>
         val m = grouped.toList.map(_._2.size).maxOption.getOrElse(0)
         val o: LazyList[Set[NodeId]] = LazyList

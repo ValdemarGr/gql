@@ -63,6 +63,14 @@ object Analyzer {
     def addNode(node: Node): F[Unit] =
       S.modify(s => s.copy(nodes = s.nodes :+ node))
 
+    def getAndSetParents(parents: Set[NodeId]): F[Set[NodeId]] =
+      S.inspect(_.parents) <* S.modify(s => s.copy(parents = parents))
+
+    def resetParents[A](fa: F[A]): F[A] =
+      S.inspect(_.parents).flatMap { parents =>
+        fa <* S.modify(s => s.copy(parents = parents))
+      }
+
     new Analyzer[F] {
       def analyzeStep[G[_]](step: PreparedStep[G, ?, ?]): F[Unit] = {
         def goParallel(l: PreparedStep[G, ?, ?], r: PreparedStep[G, ?, ?]): F[Unit] = {
@@ -90,7 +98,7 @@ object Analyzer {
           case alg: First[G, ?, ?, ?]              => analyzeStep[G](alg.step)
           case Batch(_, _) | EmbedEffect(_) | EmbedStream(_, _) =>
             val name = step match {
-              case Batch(id, _)           => s"batch_$id"
+              case Batch(id, _)           => s"batch_${id.id}"
               case EmbedEffect(cursor)    => cursor.asString
               case EmbedStream(_, cursor) => cursor.asString
               case _                      => ???
@@ -102,7 +110,7 @@ object Analyzer {
 
             costF.flatMap { cost =>
               getId.flatMap { id =>
-                S.inspect(_.parents).flatMap { parentIds =>
+                getAndSetParents(Set(id)).flatMap { parentIds =>
                   addNode {
                     Node(
                       id,
@@ -123,10 +131,12 @@ object Analyzer {
       }
 
       def analyzeFields[G[_]](prepared: NonEmptyList[PreparedField[G, ?]]): F[Unit] =
-        prepared.toList.traverse_ { pf =>
-          pf match {
-            case PreparedDataField(_, _, cont)          => analyzeCont[G](cont.edges, cont.cont)
-            case PreparedSpecification(_, _, selection) => analyzeFields[G](selection)
+        prepared.toList.traverse_ { p =>
+          resetParents {
+            p match {
+              case PreparedDataField(_, _, cont)          => analyzeCont[G](cont.edges, cont.cont)
+              case PreparedSpecification(_, _, selection) => analyzeFields[G](selection)
+            }
           }
         }
 

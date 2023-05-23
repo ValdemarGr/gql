@@ -2,7 +2,7 @@
 title: Statistics
 ---
 An instance of `Statistics` captures the runtime statistics of resolvers.
-The `Statistics` structure uses an online linear regression algorithm to compute the relationship between batch size and execution time, such that memory usage is very minimal.
+The `Statistics` structure uses an online linear regression algorithm to compute the relationship between batch size and execution time, such that memory usage is minimal.
 
 The `Statistics` object records a mapping from `String` to:
 * `count`: the number of points the regression contains.

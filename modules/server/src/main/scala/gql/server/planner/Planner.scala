@@ -60,12 +60,13 @@ object Planner {
       PlanEnumeration.Family(hd.cost, gs.map { case (_, x) => PlanEnumeration.NodeId(x.id.id) }.toSet)
     }
 
-    val prob = PlanEnumeration.Problem(
-      (trivialFamilies ++ batchFamilies).toArray,
-      tree.reverseLookup.map { case (k, vs) =>
-        PlanEnumeration.NodeId(k.id) -> vs.toList.map(v => PlanEnumeration.NodeId(v.id)).toSet
-      }
-    )
+    val rl = tree.reverseLookup.map { case (k, vs) =>
+      PlanEnumeration.NodeId(k.id) -> vs.toList.map(v => PlanEnumeration.NodeId(v.id)).toSet
+    }
+
+    val nodes = (trivialFamilies ++ batchFamilies).toArray
+
+    val prob = PlanEnumeration.Problem(nodes, rl)
 
     PlanEnumeration.enumerateAll(prob)
   }

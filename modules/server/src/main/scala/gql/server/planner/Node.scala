@@ -60,7 +60,7 @@ final case class NodeTree(all: List[Node]) {
             .flatTap(e => State.modify(_ + (id -> e)))
       }
 
-    roots.traverse_(x => go(x.id)).runS(Map.empty).value
+    all.traverse_(x => go(x.id)).runS(Map.empty).value
   }
 }
 
@@ -70,8 +70,12 @@ final case class OptimizedDAG(
 ) {
   lazy val batches: Set[(Set[NodeId], PlanEnumeration.EndTime)] = plan.values.toSet
 
-  lazy val totalCost: Double =
-    batches.map { case (b, _) => b }.unorderedFoldMap(b => tree.lookup(b.head).cost * b.size)
+  lazy val batchesWithCosts: List[(Double, Set[NodeId])] =
+    batches.toList.map { case (b, _) => (tree.lookup(b.head).cost, b) }
+
+  lazy val totalCost: Double = batchesWithCosts.foldMap { case (cost, b) => cost * b.size }
+
+  lazy val optimizedCost: Double = batchesWithCosts.foldMap { case (cost, _) => cost }
 
   def show(ansiColors: Boolean = false) = {
     val lookup = tree.lookup
@@ -89,17 +93,20 @@ final case class OptimizedDAG(
 
     val prefix =
       if (ansiColors)
-        plan.as {
-          s"""|
+        s"""|
           |${red}old field schedule$reset
           |${green}new field offset (deferral of execution)$reset
           |""".stripMargin
-        }.mkString
       else ""
 
     val per = math.max((maxEnd / 40d), 1)
 
-    val enumeratedBatches = plan.toList.zipWithIndex.map { case ((k, (v1, v2)), i) => (k, (v1, v2, i)) }.toMap
+    val batchIndexes = batches.toList.zipWithIndex.flatMap { case ((s, _), i) =>
+      s.map(n => (n, i)).toList
+    }.toMap
+
+    val planLookup =
+      plan.toList.map { case (k, (v1, v2)) => (k, (v1, v2)) }.toMap
 
     def go(nodes: List[NodeId]): String = {
       nodes
@@ -109,16 +116,20 @@ final case class OptimizedDAG(
           val nEnd = endTimes(n.id)
           val nStart = nEnd - n.cost
           val basePrefix = " " * (nStart / per).toInt
-          val showDisp = enumeratedBatches
-            .get(n.id)
-            .filter { case (_, d, _) => d.time != nEnd }
-            .map { case (_, dEnd, i) =>
-              val dStart = dEnd.time - n.cost
-              val pushedPrefix = blue + ">" * ((dStart - nStart) / per).toInt + green
-              s"$basePrefix${pushedPrefix}name: ${n.name}, cost: ${n.cost}, end: ${dEnd}$reset, batch: $i"
-            }
+          val (_, ebEnd) = planLookup(n.id)
+          val i = batchIndexes(n.id)
+          def fmtDec(d: Double) = BigDecimal(d).setScale(2, BigDecimal.RoundingMode.CEILING).toString()
+          val costFmt = fmtDec(n.cost)
+          val showDisp = if (ebEnd.time != nEnd) Some {
+            val dStart = ebEnd.time - n.cost
+            val prefixLength = (BigDecimal(dStart - nStart) / per).setScale(0, BigDecimal.RoundingMode.HALF_UP).toInt
+            val pushedPrefix = blue + ">" * prefixLength + green
+            s"$basePrefix${pushedPrefix}name: ${n.name}, cost: ${costFmt}, end: ${fmtDec(ebEnd.time)}, batch: $i$reset"
+          }
+          else None
+
           val showHere =
-            s"$basePrefix${if (showDisp.isDefined) red else ""}name: ${n.name}, cost: ${n.cost}, end: ${nEnd}$reset"
+            s"$basePrefix${if (showDisp.isDefined) red else ""}name: ${n.name}, cost: ${costFmt}, end: ${fmtDec(nEnd)}, batch: $i$reset"
 
           val all = showHere + showDisp.map("\n" + _).mkString
           val cs = go(children.get(n.id).map(_.toList).getOrElse(Nil))
