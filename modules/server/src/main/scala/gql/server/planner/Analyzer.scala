@@ -64,7 +64,7 @@ object Analyzer {
       S.modify(s => s.copy(nodes = s.nodes :+ node))
 
     def getAndSetParents(parents: Set[NodeId]): F[Set[NodeId]] =
-      S.inspect(_.parents) <* S.modify(s => s.copy(parents = parents)) 
+      S.inspect(_.parents) <* S.modify(s => s.copy(parents = parents))
 
     def resetParents[A](fa: F[A]): F[A] =
       S.inspect(_.parents).flatMap { parents =>
@@ -131,7 +131,7 @@ object Analyzer {
       }
 
       def analyzeFields[G[_]](prepared: NonEmptyList[PreparedField[G, ?]]): F[Unit] =
-        prepared.toList.traverse_ { p => 
+        prepared.toList.traverse_ { p =>
           resetParents {
             p match {
               case PreparedDataField(_, _, cont)          => analyzeCont[G](cont.edges, cont.cont)
