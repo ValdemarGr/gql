@@ -27,11 +27,6 @@ import org.http4s.websocket.WebSocketFrame
 import org.typelevel.ci._
 import gql.graphqlws.GraphqlWSServer
 
-final case class Http4sCompilerParametes(
-    queryParameters: QueryParameters,
-    headers: Headers
-)
-
 object Http4sRoutes {
   implicit protected lazy val cd: Decoder[QueryParameters] =
     io.circe.generic.semiauto.deriveDecoder[QueryParameters]
