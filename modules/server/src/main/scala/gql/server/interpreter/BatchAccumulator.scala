@@ -125,7 +125,7 @@ object BatchAccumulator {
                             .update(EvalFailure.BatchResolution(allCursors, err) :: _)
                             .as(None)
                         case Right((dur, res)) =>
-                          stats.updateStats(s"batch_${id}", dur, allKeysSet.size) as Some(res)
+                          stats.updateStats(s"batch_${batcherKey.id}", dur, allKeysSet.size) as Some(res)
                       }
                       .flatMap(res => xs.parTraverse_ { case Batch(complete, _) => complete(res) })
                 } >> ret.get

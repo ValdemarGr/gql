@@ -98,7 +98,7 @@ object Analyzer {
           case alg: First[G, ?, ?, ?]              => analyzeStep[G](alg.step)
           case Batch(_, _) | EmbedEffect(_) | EmbedStream(_, _) =>
             val name = step match {
-              case Batch(id, _)           => s"batch_$id"
+              case Batch(id, _)           => s"batch_${id.id}"
               case EmbedEffect(cursor)    => cursor.asString
               case EmbedStream(_, cursor) => cursor.asString
               case _                      => ???
