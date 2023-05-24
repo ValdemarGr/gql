@@ -112,5 +112,5 @@ object TypeSystemParser {
 
   lazy val typeSystemDefinition: P[TypeSystemDefinition] =
     directiveDefinition.map(TypeSystemDefinition.DirectiveDefinition(_)) |
-      typeDefinition.map(TypeSystemDefinition.TypeDefinition)
+      typeDefinition.map(TypeSystemDefinition.TypeDefinition(_))
 }
