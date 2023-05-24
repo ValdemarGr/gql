@@ -72,7 +72,7 @@ fragment standardProfilePic on User {
   """,
     """
 query inlineFragmentTyping {
-  profiles(handles: ["zuck", "cocacola"]) {
+  profiles(handles: ["zuck", "cocacola"]) @hey {
     handle
     ... on User {
       friends {
@@ -120,7 +120,7 @@ query {
 }
 """,
     s"""
-query withNestedFragments {
+query withNestedFragments @imADirective(name: "hey") {
   getData {
     ... on Data {
       a
@@ -142,7 +142,7 @@ query withNestedFragments {
 
     fragment NestedData on Data {
       a
-      b
+      b @gimmeArgs(a: $$a)
       c {
         ... NestedData2
       }

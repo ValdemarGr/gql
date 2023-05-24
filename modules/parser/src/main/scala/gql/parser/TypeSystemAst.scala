@@ -61,6 +61,43 @@ object TypeSystemAst {
     ) extends TypeDefinition
   }
 
+  sealed trait DirectiveLocation
+  object DirectiveLocation {
+    case object QUERY extends DirectiveLocation
+    case object MUTATION extends DirectiveLocation
+    case object SUBSCRIPTION extends DirectiveLocation
+    case object FIELD extends DirectiveLocation
+    case object FRAGMENT_DEFINITION extends DirectiveLocation
+    case object FRAGMENT_SPREAD extends DirectiveLocation
+    case object INLINE_FRAGMENT extends DirectiveLocation
+    case object VARIABLE_DEFINITION extends DirectiveLocation
+    case object SCHEMA extends DirectiveLocation
+    case object SCALAR extends DirectiveLocation
+    case object OBJECT extends DirectiveLocation
+    case object FIELD_DEFINITION extends DirectiveLocation
+    case object ARGUMENT_DEFINITION extends DirectiveLocation
+    case object INTERFACE extends DirectiveLocation
+    case object UNION extends DirectiveLocation
+    case object ENUM extends DirectiveLocation
+    case object ENUM_VALUE extends DirectiveLocation
+    case object INPUT_OBJECT extends DirectiveLocation
+    case object INPUT_FIELD_DEFINITION extends DirectiveLocation
+  }
+
+  final case class DirectiveDefinition(
+      description: Option[String],
+      name: String,
+      argumentsDefinition: Option[NonEmptyList[InputValueDefinition]],
+      repeatable: Boolean,
+      locations: NonEmptyList[DirectiveLocation]
+  )
+
+  sealed trait TypeSystemDefinition
+  object TypeSystemDefinition {
+    final case class TypeDefinition(definition: TypeSystemAst.TypeDefinition) extends TypeSystemDefinition
+    final case class DirectiveDefinition(definition: TypeSystemAst.DirectiveDefinition) extends TypeSystemDefinition
+  }
+
   final case class InputValueDefinition(
       description: Option[String],
       name: String,

@@ -61,7 +61,7 @@ object TypeSystemParser {
       .map { case ((((d, n), i), ds), fs) => TypeDefinition.InterfaceTypeDefinition(d, n, i.map(_.toList).getOrElse(Nil), ds, fs) }
 
   lazy val unionTypeDefinition: P[TypeDefinition.UnionTypeDefinition] =
-    ((stringValue.?.with1.soft <* s("union")) ~ name ~ directivesConst.? ~ (s("=") *> name.repSep(t('|'))))
+    ((stringValue.?.with1.soft <* s("union")) ~ name ~ directivesConst.? ~ (s("=") *> t('|').? *> name.repSep(t('|'))))
       .map { case (((d, n), ds), m) => TypeDefinition.UnionTypeDefinition(d, n, ds, m) }
 
   lazy val inputObjectTypeDefinition: P[TypeDefinition.InputObjectTypeDefinition] =
@@ -75,4 +75,42 @@ object TypeSystemParser {
       unionTypeDefinition |
       enumTypeDefinition |
       inputObjectTypeDefinition
+
+  lazy val directiveLocation = P.oneOf(
+    List(
+      P.string("QUERY").as(DirectiveLocation.QUERY),
+      P.string("MUTATION").as(DirectiveLocation.MUTATION),
+      P.string("SUBSCRIPTION").as(DirectiveLocation.SUBSCRIPTION),
+      P.string("FIELD").as(DirectiveLocation.FIELD),
+      P.string("FRAGMENT_DEFINITION").as(DirectiveLocation.FRAGMENT_DEFINITION),
+      P.string("FRAGMENT_SPREAD").as(DirectiveLocation.FRAGMENT_SPREAD),
+      P.string("INLINE_FRAGMENT").as(DirectiveLocation.INLINE_FRAGMENT),
+      P.string("VARIABLE_DEFINITION").as(DirectiveLocation.SCHEMA),
+      P.string("SCHEMA").as(DirectiveLocation.SCHEMA),
+      P.string("SCALAR").as(DirectiveLocation.SCALAR),
+      P.string("OBJECT").as(DirectiveLocation.OBJECT),
+      P.string("FIELD_DEFINITION").as(DirectiveLocation.FIELD_DEFINITION),
+      P.string("ARGUMENT_DEFINITION").as(DirectiveLocation.ARGUMENT_DEFINITION),
+      P.string("INTERFACE").as(DirectiveLocation.INTERFACE),
+      P.string("UNION").as(DirectiveLocation.UNION),
+      P.string("ENUM").as(DirectiveLocation.ENUM),
+      P.string("ENUM_VALUE").as(DirectiveLocation.ENUM_VALUE),
+      P.string("INPUT_OBJECT").as(DirectiveLocation.INPUT_OBJECT),
+      P.string("INPUT_FIELD_DEFINITION").as(DirectiveLocation.INPUT_FIELD_DEFINITION)
+    )
+  )
+
+  lazy val directiveLocations: P[NonEmptyList[DirectiveLocation]] =
+    t('|').?.with1 *> directiveLocation.repSep(t('|'))
+
+  lazy val directiveDefinition = {
+    ((stringValue.?.with1.soft <* s("directive")) ~ (t('@') *> name) ~
+      inputValueDefinition.repSep(t(',')).between(t('('), t(')')).? ~
+      (s("repeatable").?.map(_.isDefined) <* s("on")) ~ directiveLocations)
+      .map { case ((((d, n), iv), rep), dl) => DirectiveDefinition(d, n, iv, rep, dl) }
+  }
+
+  lazy val typeSystemDefinition: P[TypeSystemDefinition] =
+    directiveDefinition.map(TypeSystemDefinition.DirectiveDefinition(_)) |
+      typeDefinition.map(TypeSystemDefinition.TypeDefinition)
 }

@@ -58,5 +58,8 @@ package object parser {
     parseFor(str, QueryParser.executableDefinition.rep)
 
   def parseSchema(str: String): Either[ParseError, NonEmptyList[TypeSystemAst.TypeDefinition]] =
-    parseFor(str, TypeSystemParser.typeDefinition.rep)
+    parseFor(
+      str,
+      TypeSystemParser.typeSystemDefinition.rep.map(_.collect { case TypeSystemAst.TypeSystemDefinition.TypeDefinition(t) => t }.toNel.get)
+    )
 }
