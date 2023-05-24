@@ -128,7 +128,7 @@ object RootPreparation {
          */
         op match {
           case QA.OperationDefinition.Simple(_) => F.pure(Map.empty)
-          case QA.OperationDefinition.Detailed(_, _, variableDefinitions, _) =>
+          case QA.OperationDefinition.Detailed(_, _, variableDefinitions, _, _) =>
             variableDefinitions.toList
               .flatMap(_.nel.toList)
               .parTraverse[F, (String, Variable[C])] { pvd =>
@@ -179,8 +179,8 @@ object RootPreparation {
 
         pickRootOperation(ops, operationName).flatMap { od =>
           val (ot, ss) = od match {
-            case QA.OperationDefinition.Simple(ss)             => (QA.OperationType.Query, ss)
-            case QA.OperationDefinition.Detailed(ot, _, _, ss) => (ot, ss)
+            case QA.OperationDefinition.Simple(ss)                => (QA.OperationType.Query, ss)
+            case QA.OperationDefinition.Detailed(ot, _, _, _, ss) => (ot, ss)
           }
 
           def runWith[A](o: gql.ast.Type[G, A]): F[NonEmptyList[PreparedSpecification[G, A, _]]] =

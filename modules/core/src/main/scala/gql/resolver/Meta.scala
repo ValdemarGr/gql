@@ -18,10 +18,11 @@ package gql.resolver
 import gql.parser.{QueryAst => P}
 import gql.Cursor
 import gql.preparation.VariableMap
+import gql.parser.AnyValue
 
 final case class Meta(
     cursor: Cursor,
     alias: Option[String],
-    args: Option[P.Arguments[Unit]],
+    args: Option[P.Arguments[Unit, AnyValue]],
     variables: VariableMap[Unit]
 )

@@ -20,6 +20,7 @@ import cats.parse.{Parser => P}
 import cats.parse.Rfc5234
 import cats.parse.Numbers
 import cats.parse.Caret
+import QueryAst._
 
 // https://spec.graphql.org/June2018/#sec-Source-Text
 object GraphqlParser {
@@ -78,9 +79,22 @@ object GraphqlParser {
     Pos.pos(variable).map(p => VariableValue(p.value, p.caret))
   }
 
-  lazy val constValue: P[Value[Const, Caret]] = constValueFields(constValue)
+  lazy val constValue: P[Value[Const, Caret]] = constValueFields(constValue) /* {
+    lazy val l: P[Value[Const, Caret]] = constValueFields(l)
+    l
+  } | value.flatMap(_ => P.failWith("Variable must not occur in a const context"))*/
 
   lazy val value: P[Value[AnyValue, Caret]] = anyValueFields | constValueFields(value)
+
+  def arguments[A >: Const <: AnyValue](vp: => P[Value[A, Caret]]) =
+    argument(vp).rep.between(t('('), t(')')).map(QueryAst.Arguments.apply)
+
+  def argument[A >: Const <: AnyValue](vp: => P[Value[A, Caret]]) =
+    (name ~ (t(':') *> vp)).map { case (n, v) => QueryAst.Argument(n, v) }
+
+  lazy val argumentsConst = arguments(constValue)
+
+  lazy val argumentsAny = arguments(value)
 
   lazy val booleanValue =
     s("true").as(true) |
@@ -151,4 +165,14 @@ object GraphqlParser {
 
   lazy val listType: P[NonNullType] =
     `type`.between(t('['), t(']')).map(Type.List(_))
+
+  def directives[A >: Const <: AnyValue](vp: => P[Value[A, Caret]]): P[Directives[Caret, A]] =
+    directive[A](vp).rep.map(Directives(_))
+
+  def directive[A >: Const <: AnyValue](vp: => P[Value[A, Caret]]): P[Directive[Caret, A]] =
+    (s("@") *> name ~ arguments(vp).?).map { case (n, a) => Directive(n, a) }
+
+  lazy val directivesConst = directives(constValue)
+
+  lazy val directivesAny = directives(value)
 }

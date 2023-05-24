@@ -32,8 +32,8 @@ object QueryParser {
   lazy val operationDefinition: P[OperationDefinition[Caret]] = {
     import OperationDefinition._
     P.backtrack(selectionSet).map(Simple(_)) |
-      (operationType ~ name.? ~ variableDefinitions.? ~ selectionSet).map { case (((opt, name), vars), ss) =>
-        Detailed(opt, name, vars, ss)
+      (operationType ~ name.? ~ variableDefinitions.? ~ directivesAny.? ~ selectionSet).map { case ((((opt, name), vars), ds), ss) =>
+        Detailed(opt, name, vars, ds, ss)
       }
   }
 
@@ -43,8 +43,8 @@ object QueryParser {
       .map(VariableDefinitions(_))
 
   lazy val variableDefinition =
-    Pos.pos(variable ~ (t(':') *> `type`) ~ defaultValue(constValue).?).map { case Pos(c, ((n, t), d)) =>
-      VariableDefinition(n, t, d, c)
+    Pos.pos(variable ~ (t(':') *> `type`) ~ defaultValue(constValue).? ~ directivesConst.?).map { case Pos(c, (((n, t), d), ds)) =>
+      VariableDefinition(n, t, d, ds, c)
     }
 
   lazy val operationType = {
@@ -69,27 +69,21 @@ object QueryParser {
 
   lazy val field: P[Field[Caret]] = P.defer {
     Pos
-      .pos(P.backtrack(alias).?.with1 ~ name ~ arguments.? ~ selectionSet.?)
-      .map { case Pos(c, (((a, n), args), s)) => Field(a, n, args, s, c) }
+      .pos(P.backtrack(alias).?.with1 ~ name ~ argumentsAny.? ~ directivesAny.? ~ selectionSet.?)
+      .map { case Pos(c, ((((a, n), args), ds), s)) => Field(a, n, args, ds, s, c) }
   }
 
   lazy val alias = name <* t(':')
 
-  lazy val arguments =
-    argument.rep.between(t('('), t(')')).map(Arguments.apply)
-
-  lazy val argument =
-    (name ~ (t(':') *> value)).map { case (n, v) => Argument(n, v) }
-
   lazy val fragmentSpread =
-    (s("...") *> fragmentName).map(FragmentSpread.apply)
+    (s("...") *> fragmentName ~ directivesAny.?).map { case (n, ds) => FragmentSpread.apply(n, ds) }
 
   lazy val inlineFragment =
-    ((s("...") *> typeCondition.?).soft ~ selectionSet).map { case (t, s) => InlineFragment(t, s) }
+    ((s("...") *> typeCondition.? ~ directivesAny.?).soft ~ selectionSet).map { case ((t, ds), s) => InlineFragment(t, ds, s) }
 
   lazy val fragmentDefinition =
-    Pos.pos(s("fragment") *> fragmentName ~ typeCondition ~ selectionSet).map { case Pos(c, ((n, t), s)) =>
-      FragmentDefinition(n, t, s, c)
+    Pos.pos(s("fragment") *> fragmentName ~ typeCondition ~ directivesAny.? ~ selectionSet).map { case Pos(c, (((n, t), ds), s)) =>
+      FragmentDefinition(n, t, ds, s, c)
     }
 
   lazy val fragmentName: P[String] =

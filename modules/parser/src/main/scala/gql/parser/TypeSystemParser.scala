@@ -26,42 +26,47 @@ object TypeSystemParser {
 
   val badNames = Set("true", "false", "null")
   lazy val enumValueDefinition: P[EnumValueDefinition] =
-    (stringValue.?.with1 ~ name.filterNot(badNames.contains)).map { case (d, n) => EnumValueDefinition(d, n) }
+    (stringValue.?.with1 ~ name.filterNot(badNames.contains) ~ directivesConst.?).map { case ((d, n), ds) => EnumValueDefinition(d, n, ds) }
 
   lazy val enumTypeDefinition: P[TypeDefinition.EnumTypeDefinition] =
-    ((stringValue.?.with1.soft <* s("enum")) ~ name ~ enumValueDefinition.rep.between(t('{'), t('}'))).map { case ((d, n), vs) =>
-      TypeDefinition.EnumTypeDefinition(d, n, vs)
+    ((stringValue.?.with1.soft <* s("enum")) ~ name ~ directivesConst.? ~ enumValueDefinition.rep.between(t('{'), t('}'))).map {
+      case (((d, n), ds), vs) =>
+        TypeDefinition.EnumTypeDefinition(d, n, ds, vs)
     }
 
   lazy val scalarTypeDefinition: P[TypeDefinition.ScalarTypeDefinition] =
-    ((stringValue.?.with1.soft <* s("scalar")) ~ name).map { case (d, n) => TypeDefinition.ScalarTypeDefinition(d, n) }
+    ((stringValue.?.with1.soft <* s("scalar")) ~ name ~ directivesConst.?).map { case ((d, n), ds) =>
+      TypeDefinition.ScalarTypeDefinition(d, n, ds)
+    }
 
   lazy val inputValueDefinition: P[InputValueDefinition] =
-    (stringValue.?.with1 ~ name ~ (t(':') *> `type`) ~ defaultValue(constValue).?)
-      .map { case (((d, n), t), dv) => InputValueDefinition(d, n, t, dv) }
+    (stringValue.?.with1 ~ name ~ (t(':') *> `type`) ~ defaultValue(constValue).? ~ directivesConst.?)
+      .map { case ((((d, n), t), dv), ds) => InputValueDefinition(d, n, t, dv, ds) }
 
   lazy val fieldDefinition: P[FieldDefinition] =
-    (stringValue.?.with1 ~ name ~ inputValueDefinition.rep.between(t('('), t(')')).? ~ (t(':') *> `type`))
-      .map { case (((d, n), args), t) => FieldDefinition(d, n, args.map(_.toList).getOrElse(Nil), t) }
+    (stringValue.?.with1 ~ name ~ inputValueDefinition.rep.between(t('('), t(')')).? ~ (t(':') *> `type`) ~ directivesConst.?)
+      .map { case ((((d, n), args), t), ds) => FieldDefinition(d, n, args.map(_.toList).getOrElse(Nil), t, ds) }
 
   lazy val implementsInterface: P[NonEmptyList[String]] =
     s("implements") *> name.repSep(t('&'))
 
   lazy val objectTypeDefinition: P[TypeDefinition.ObjectTypeDefinition] =
-    ((stringValue.?.with1.soft <* s("type")) ~ name ~ implementsInterface.? ~ fieldDefinition.rep.between(t('{'), t('}')))
-      .map { case (((d, n), i), fs) => TypeDefinition.ObjectTypeDefinition(d, n, i.map(_.toList).getOrElse(Nil), fs) }
+    ((stringValue.?.with1.soft <* s("type")) ~ name ~ implementsInterface.? ~ directivesConst.? ~
+      fieldDefinition.rep.between(t('{'), t('}')))
+      .map { case ((((d, n), i), ds), fs) => TypeDefinition.ObjectTypeDefinition(d, n, i.map(_.toList).getOrElse(Nil), ds, fs) }
 
   lazy val interfaceTypeDefinition: P[TypeDefinition.InterfaceTypeDefinition] =
-    ((stringValue.?.with1.soft <* s("interface")) ~ name ~ implementsInterface.? ~ fieldDefinition.rep.between(t('{'), t('}')))
-      .map { case (((d, n), i), fs) => TypeDefinition.InterfaceTypeDefinition(d, n, i.map(_.toList).getOrElse(Nil), fs) }
+    ((stringValue.?.with1.soft <* s("interface")) ~ name ~ implementsInterface.? ~ directivesConst.? ~
+      fieldDefinition.rep.between(t('{'), t('}')))
+      .map { case ((((d, n), i), ds), fs) => TypeDefinition.InterfaceTypeDefinition(d, n, i.map(_.toList).getOrElse(Nil), ds, fs) }
 
   lazy val unionTypeDefinition: P[TypeDefinition.UnionTypeDefinition] =
-    ((stringValue.?.with1.soft <* s("union")) ~ name ~ (s("=") *> name.repSep(t('|'))))
-      .map { case ((d, n), m) => TypeDefinition.UnionTypeDefinition(d, n, m) }
+    ((stringValue.?.with1.soft <* s("union")) ~ name ~ directivesConst.? ~ (s("=") *> name.repSep(t('|'))))
+      .map { case (((d, n), ds), m) => TypeDefinition.UnionTypeDefinition(d, n, ds, m) }
 
   lazy val inputObjectTypeDefinition: P[TypeDefinition.InputObjectTypeDefinition] =
-    ((stringValue.?.with1.soft <* s("input")) ~ name ~ inputValueDefinition.rep.between(t('{'), t('}')))
-      .map { case ((d, n), fs) => TypeDefinition.InputObjectTypeDefinition(d, n, fs) }
+    ((stringValue.?.with1.soft <* s("input")) ~ name ~ directivesConst.? ~ inputValueDefinition.rep.between(t('{'), t('}')))
+      .map { case (((d, n), ds), fs) => TypeDefinition.InputObjectTypeDefinition(d, n, ds, fs) }
 
   lazy val typeDefinition: P[TypeDefinition] =
     scalarTypeDefinition |

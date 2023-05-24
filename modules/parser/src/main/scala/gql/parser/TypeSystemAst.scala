@@ -17,32 +17,46 @@ package gql.parser
 
 import cats.data.NonEmptyList
 import cats.parse.Caret
+import gql.parser.{QueryAst => QA}
 
 object TypeSystemAst {
   sealed trait TypeDefinition { def name: String }
   object TypeDefinition {
-    final case class ScalarTypeDefinition(description: Option[String], name: String) extends TypeDefinition
+    final case class ScalarTypeDefinition(
+        description: Option[String],
+        name: String,
+        directives: Option[QA.Directives[Caret, Const]]
+    ) extends TypeDefinition
     final case class ObjectTypeDefinition(
         description: Option[String],
         name: String,
         interfaces: List[String],
+        directives: Option[QA.Directives[Caret, Const]],
         fieldDefinitions: NonEmptyList[FieldDefinition]
     ) extends TypeDefinition
     final case class InterfaceTypeDefinition(
         description: Option[String],
         name: String,
         interfaces: List[String],
+        directives: Option[QA.Directives[Caret, Const]],
         fieldDefinitions: NonEmptyList[FieldDefinition]
     ) extends TypeDefinition
-    final case class UnionTypeDefinition(description: Option[String], name: String, types: NonEmptyList[String]) extends TypeDefinition
+    final case class UnionTypeDefinition(
+        description: Option[String],
+        name: String,
+        directives: Option[QA.Directives[Caret, Const]],
+        types: NonEmptyList[String]
+    ) extends TypeDefinition
     final case class EnumTypeDefinition(
         description: Option[String],
         name: String,
+        directives: Option[QA.Directives[Caret, Const]],
         values: NonEmptyList[EnumValueDefinition]
     ) extends TypeDefinition
     final case class InputObjectTypeDefinition(
         description: Option[String],
         name: String,
+        directives: Option[QA.Directives[Caret, Const]],
         inputFields: NonEmptyList[InputValueDefinition]
     ) extends TypeDefinition
   }
@@ -51,15 +65,21 @@ object TypeSystemAst {
       description: Option[String],
       name: String,
       tpe: Type,
-      defaultValue: Option[Value[Const, Caret]]
+      defaultValue: Option[Value[Const, Caret]],
+      directives: Option[QA.Directives[Caret, Const]]
   )
 
   final case class FieldDefinition(
       description: Option[String],
       name: String,
       argumentsDefinition: List[InputValueDefinition],
-      tpe: Type
+      tpe: Type,
+      directives: Option[QA.Directives[Caret, Const]]
   )
 
-  final case class EnumValueDefinition(description: Option[String], name: String)
+  final case class EnumValueDefinition(
+      description: Option[String],
+      name: String,
+      directives: Option[QA.Directives[Caret, Const]]
+  )
 }

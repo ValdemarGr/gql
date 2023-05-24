@@ -39,7 +39,7 @@ trait FieldMerging[F[_], C] {
 
   // These technically don't need to be in the trait, but it's convenient because of error handling
   // If needed, they can always be moved
-  def compareArguments(name: String, aa: QA.Arguments[C], ba: QA.Arguments[C], caret: Option[C]): F[Unit]
+  def compareArguments(name: String, aa: QA.Arguments[C, AnyValue], ba: QA.Arguments[C, AnyValue], caret: Option[C]): F[Unit]
 
   def compareValues(av: V[AnyValue, C], bv: V[AnyValue, C], caret: Option[C]): F[Unit]
 }
@@ -175,15 +175,20 @@ object FieldMerging {
 
       }
 
-      override def compareArguments(name: String, aa: QueryAst.Arguments[C], ba: QueryAst.Arguments[C], caret: Option[C]): F[Unit] = {
-        def checkUniqueness(x: QA.Arguments[C]): F[Map[String, QA.Argument[C]]] =
+      override def compareArguments(
+          name: String,
+          aa: QueryAst.Arguments[C, AnyValue],
+          ba: QueryAst.Arguments[C, AnyValue],
+          caret: Option[C]
+      ): F[Unit] = {
+        def checkUniqueness(x: QA.Arguments[C, AnyValue]): F[Map[String, QA.Argument[C, AnyValue]]] =
           x.nel.toList
             .groupBy(_.name)
             .toList
             .parTraverse {
               case (k, v :: Nil) => F.pure(k -> v)
               case (k, _) =>
-                raise[(String, QA.Argument[C])](s"Argument '$k' of field $name was not unique.", caret.toList)
+                raise[(String, QA.Argument[C, AnyValue])](s"Argument '$k' of field $name was not unique.", caret.toList)
             }
             .map(_.toMap)
 

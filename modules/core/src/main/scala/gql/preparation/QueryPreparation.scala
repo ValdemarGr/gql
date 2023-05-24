@@ -27,6 +27,7 @@ import io.circe._
 import gql.ModifierStack
 import gql.Arg
 import gql.SchemaShape
+import gql.parser.AnyValue
 
 trait QueryPreparation[F[_], G[_], C] {
   import QueryPreparation._
@@ -352,7 +353,7 @@ object QueryPreparation {
 final case class MergedFieldInfo[G[_], C](
     name: String,
     alias: Option[String],
-    args: Option[QA.Arguments[C]],
+    args: Option[QA.Arguments[C, AnyValue]],
     selections: List[SelectionInfo[G, C]],
     // TODO these two should probably be lists
     caret: C,
@@ -370,7 +371,7 @@ final case class MergedImplementation[G[_], A, B, C](
 
 final case class FieldMeta[C](
     alias: Option[String],
-    args: Option[QA.Arguments[C]]
+    args: Option[QA.Arguments[C, AnyValue]]
 ) {
   lazy val fields = args.map(_.nel.toList).getOrElse(Nil).map(x => x.name -> x.value).toMap
 }

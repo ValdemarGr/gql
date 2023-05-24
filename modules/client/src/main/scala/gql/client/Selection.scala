@@ -20,6 +20,7 @@ import cats._
 import cats.implicits._
 import gql.std.FreeApply
 import gql.parser.{QueryAst => P}
+import gql.parser.AnyValue
 
 /*
  * A SubQuery is either:
@@ -87,7 +88,7 @@ object Selection {
   final case class Field[A](
       fieldName: String,
       alias: Option[String],
-      args: List[P.Argument[Unit]],
+      args: List[P.Argument[Unit, AnyValue]],
       subQuery: SubQuery[A]
   ) extends Selection[A]
 

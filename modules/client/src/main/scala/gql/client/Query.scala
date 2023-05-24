@@ -26,6 +26,7 @@ import gql.client.Selection.InlineFragment
 import gql.parser.GraphqlRender
 import io.circe.syntax._
 import gql.parser.TypeSystemAst
+import gql.parser.AnyValue
 
 trait QueryLike {
   def queryString: String
@@ -202,7 +203,7 @@ object Query {
       Doc.text(s"$$${v.name.name}") + Doc.space + Doc.char(':') + Doc.space + Doc.text(v.tpe) + default
     }
 
-    def renderArg(a: P.Argument[Unit]): Doc =
+    def renderArg(a: P.Argument[Unit, AnyValue]): Doc =
       Doc.text(a.name) + Doc.char(':') + Doc.space + GraphqlRender.renderValue(a.value)
 
     def matchTypename(on: String): SelectionSet[String] =

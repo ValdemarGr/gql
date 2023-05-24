@@ -87,7 +87,7 @@ object QueryValidation {
       .flatMap { x =>
         val vs = executables
           .collect { case QueryAst.ExecutableDefinition.Operation(op, _) => op }
-          .collect { case QueryAst.OperationDefinition.Detailed(_, _, vds, _) => vds.toList.flatMap(_.nel.toList) }
+          .collect { case QueryAst.OperationDefinition.Detailed(_, _, vds, _, _) => vds.toList.flatMap(_.nel.toList) }
           .flatten
           .traverse(generateVariableStub(_, ast))
 
@@ -272,7 +272,7 @@ object QueryValidation {
       ast
         .get(name)
         .map(partition)
-        .getOrElse(ScalarType(TypeSystemAst.TypeDefinition.ScalarTypeDefinition(None, name)))
+        .getOrElse(ScalarType(TypeSystemAst.TypeDefinition.ScalarTypeDefinition(None, name, None)))
 
     def resolveStackedType(t: gql.parser.Type): (String, Ior[Eval[Out[fs2.Pure, ?]], Eval[In[?]]]) = {
       val t2 = ModifierStack.fromType(t).invert

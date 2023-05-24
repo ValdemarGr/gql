@@ -15,7 +15,7 @@
  */
 package gql.parser
 
-import cats.data._
+import cats.data.NonEmptyList
 import gql.parser.{Value => V}
 
 object QueryAst {
@@ -39,10 +39,11 @@ object QueryAst {
         tpe: OperationType,
         name: Option[String],
         variableDefinitions: Option[VariableDefinitions[C]],
+        directives: Option[Directives[C, AnyValue]],
         selectionSet: SelectionSet[C]
     ) extends OperationDefinition[C] {
       def map[A](f: C => A): OperationDefinition[A] =
-        Detailed(tpe, name, variableDefinitions.map(_.map(f)), selectionSet.map(f))
+        Detailed(tpe, name, variableDefinitions.map(_.map(f)), directives.map(_.map(f)), selectionSet.map(f))
     }
 
     final case class Simple[C](selectionSet: SelectionSet[C]) extends OperationDefinition[C] {
@@ -68,8 +69,8 @@ object QueryAst {
     final case class FieldSelection[C](field: Field[C], c: C) extends Selection[C] {
       def map[A](f: C => A): Selection[A] = FieldSelection(field.map(f), f(c))
     }
-    final case class FragmentSpreadSelection[C](fragmentSpread: FragmentSpread, c: C) extends Selection[C] {
-      def map[A](f: C => A): Selection[A] = FragmentSpreadSelection(fragmentSpread, f(c))
+    final case class FragmentSpreadSelection[C](fragmentSpread: FragmentSpread[C], c: C) extends Selection[C] {
+      def map[A](f: C => A): Selection[A] = FragmentSpreadSelection(fragmentSpread.map(f), f(c))
     }
     final case class InlineFragmentSelection[C](inlineFragment: InlineFragment[C], c: C) extends Selection[C] {
       def map[A](f: C => A): Selection[A] = InlineFragmentSelection(inlineFragment.map(f), f(c))
@@ -79,7 +80,8 @@ object QueryAst {
   final case class Field[C](
       alias: Option[String],
       name: String,
-      arguments: Option[Arguments[C]],
+      arguments: Option[Arguments[C, AnyValue]],
+      directives: Option[Directives[C, AnyValue]],
       selectionSet: Option[SelectionSet[C]],
       caret: C
   ) {
@@ -88,33 +90,52 @@ object QueryAst {
         alias,
         name,
         arguments.map(_.map(f)),
+        directives.map(_.map(f)),
         selectionSet.map(_.map(f)),
         f(caret)
       )
   }
 
-  final case class Arguments[C](nel: NonEmptyList[Argument[C]]) {
-    def map[A](f: C => A): Arguments[A] = Arguments(nel.map(_.map(f)))
+  final case class Arguments[C, A >: Const <: AnyValue](nel: NonEmptyList[Argument[C, A]]) {
+    def map[B](f: C => B): Arguments[B, A] = Arguments(nel.map(_.map(f)))
   }
 
-  final case class Argument[C](name: String, value: V[AnyValue, C]) {
-    def map[A](f: C => A): Argument[A] = Argument(name, value.map(f))
+  final case class Argument[C, A >: Const <: AnyValue](name: String, value: V[A, C]) {
+    def map[B](f: C => B): Argument[B, A] = Argument(name, value.map(f))
   }
 
-  final case class FragmentSpread(fragmentName: String)
+  final case class Directives[C, A >: Const <: AnyValue](nel: NonEmptyList[Directive[C, A]]) {
+    def map[B](f: C => B): Directives[B, A] = Directives(nel.map(_.map(f)))
+  }
 
-  final case class InlineFragment[C](typeCondition: Option[String], selectionSet: SelectionSet[C]) {
-    def map[A](f: C => A): InlineFragment[A] = InlineFragment(typeCondition, selectionSet.map(f))
+  final case class Directive[C, A >: Const <: AnyValue](
+      name: String,
+      arguments: Option[Arguments[C, A]]
+  ) {
+    def map[B](f: C => B): Directive[B, A] = Directive(name, arguments.map(_.map(f)))
+  }
+
+  final case class FragmentSpread[C](fragmentName: String, directives: Option[Directives[C, AnyValue]]) {
+    def map[A](f: C => A): FragmentSpread[A] = FragmentSpread(fragmentName, directives.map(_.map(f)))
+  }
+
+  final case class InlineFragment[C](
+      typeCondition: Option[String],
+      directives: Option[Directives[C, AnyValue]],
+      selectionSet: SelectionSet[C]
+  ) {
+    def map[A](f: C => A): InlineFragment[A] = InlineFragment(typeCondition, directives.map(_.map(f)), selectionSet.map(f))
   }
 
   final case class FragmentDefinition[C](
       name: String,
       typeCnd: String,
+      directives: Option[Directives[C, AnyValue]],
       selectionSet: SelectionSet[C],
       caret: C
   ) {
     def map[A](f: C => A): FragmentDefinition[A] =
-      FragmentDefinition(name, typeCnd, selectionSet.map(f), f(caret))
+      FragmentDefinition(name, typeCnd, directives.map(_.map(f)), selectionSet.map(f), f(caret))
   }
 
   final case class VariableDefinitions[C](nel: NonEmptyList[VariableDefinition[C]]) {
@@ -122,8 +143,14 @@ object QueryAst {
       VariableDefinitions(nel.map(_.map(f)))
   }
 
-  final case class VariableDefinition[C](name: String, tpe: Type, defaultValue: Option[V[gql.parser.Const, C]], c: C) {
+  final case class VariableDefinition[C](
+      name: String,
+      tpe: Type,
+      defaultValue: Option[V[Const, C]],
+      directives: Option[Directives[C, Const]],
+      c: C
+  ) {
     def map[A](f: C => A): VariableDefinition[A] =
-      VariableDefinition(name, tpe, defaultValue.map(_.map(f)), f(c))
+      VariableDefinition(name, tpe, defaultValue.map(_.map(f)), directives.map(_.map(f)), f(c))
   }
 }

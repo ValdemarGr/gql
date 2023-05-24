@@ -491,16 +491,16 @@ object Generator {
       case Some(td) =>
         in(s"type-definition-${typename}") {
           val fieldMapF: F[Map[String, FieldDefinition]] = td match {
-            case TypeDefinition.ObjectTypeDefinition(_, _, _, fds)    => F.pure(fds.toList.map(f => f.name -> f).toMap)
-            case TypeDefinition.InterfaceTypeDefinition(_, _, _, fds) => F.pure(fds.toList.map(f => f.name -> f).toMap)
-            case TypeDefinition.UnionTypeDefinition(_, _, _)          => F.pure(Map.empty[String, FieldDefinition])
+            case TypeDefinition.ObjectTypeDefinition(_, _, _, _, fds)    => F.pure(fds.toList.map(f => f.name -> f).toMap)
+            case TypeDefinition.InterfaceTypeDefinition(_, _, _, _, fds) => F.pure(fds.toList.map(f => f.name -> f).toMap)
+            case TypeDefinition.UnionTypeDefinition(_, _, _, _)          => F.pure(Map.empty[String, FieldDefinition])
             case _ =>
               raise[F, Map[String, FieldDefinition]](
                 s"Type tried to perform selection on`$typename`, but it is not an object, interface or union"
               )
           }
 
-          val tn = FieldDefinition(None, "__typename", Nil, gql.parser.Type.NonNull(gql.parser.Type.Named("String")))
+          val tn = FieldDefinition(None, "__typename", Nil, gql.parser.Type.NonNull(gql.parser.Type.Named("String")), None)
 
           fieldMapF.flatMap { fm =>
             sels
@@ -882,7 +882,7 @@ object Generator {
               val full: NonEmptyList[ExecutableDefinition[PositionalInfo]] = NonEmptyList(op, allFrags)
               val vars: ValidatedNec[String, Map[String, Json]] = op.o match {
                 case QueryAst.OperationDefinition.Simple(_) => Map.empty.validNec
-                case QueryAst.OperationDefinition.Detailed(_, _, vds, _) =>
+                case QueryAst.OperationDefinition.Detailed(_, _, vds, _, _) =>
                   vds.toList
                     .flatMap(_.nel.toList)
                     .traverse(x => QueryValidation.generateVariableStub(x, e.schema))

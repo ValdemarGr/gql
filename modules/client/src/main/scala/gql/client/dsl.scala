@@ -29,10 +29,12 @@ object dsl {
   def sel[A](fieldName: String)(implicit sq: SubQuery[A]): SelectionSet[A] =
     SelectionSet.lift(Selection.Field(fieldName, None, Nil, sq))
 
-  def sel[A](fieldName: String, argHd: P.Argument[Unit], argTl: P.Argument[Unit]*)(implicit sq: SubQuery[A]): SelectionSet[A] =
+  def sel[A](fieldName: String, argHd: P.Argument[Unit, AnyValue], argTl: P.Argument[Unit, AnyValue]*)(implicit
+      sq: SubQuery[A]
+  ): SelectionSet[A] =
     SelectionSet.lift(Selection.Field(fieldName, None, argHd :: argTl.toList, sq))
 
-  def sel[A](fieldName: String, alias: String, argHd: P.Argument[Unit], argTl: P.Argument[Unit]*)(implicit
+  def sel[A](fieldName: String, alias: String, argHd: P.Argument[Unit, AnyValue], argTl: P.Argument[Unit, AnyValue]*)(implicit
       sq: SubQuery[A]
   ): SelectionSet[A] =
     SelectionSet.lift(Selection.Field(fieldName, Some(alias), argHd :: argTl.toList, sq))
@@ -75,13 +77,13 @@ object dsl {
   def value[A](a: A)(implicit enc: io.circe.Encoder[A]) =
     V.fromJson(enc(a))
 
-  def arg(name: String, value: V[AnyValue, Unit]): P.Argument[Unit] =
+  def arg(name: String, value: V[AnyValue, Unit]): P.Argument[Unit, AnyValue] =
     P.Argument(name, value)
 
-  def arg(name: String, vn: VariableName[?]): P.Argument[Unit] =
+  def arg(name: String, vn: VariableName[?]): P.Argument[Unit, AnyValue] =
     P.Argument(name, vn.asValue)
 
-  def arg[A](name: String, a: A)(implicit enc: io.circe.Encoder[A]): P.Argument[Unit] =
+  def arg[A](name: String, a: A)(implicit enc: io.circe.Encoder[A]): P.Argument[Unit, AnyValue] =
     P.Argument(name, value(a))
 
   def embed[A](implicit ss: SelectionSet[A]): SelectionSet[A] = ss

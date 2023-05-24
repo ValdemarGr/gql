@@ -26,6 +26,7 @@ import gql.SchemaShape
 import gql.ast._
 import gql.parser.QueryAst
 import gql.parser.{QueryAst => QA}
+import gql.parser.AnyValue
 
 trait FieldCollection[F[_], G[_], C] {
   def matchType(
@@ -217,7 +218,7 @@ final case class SelectionInfo[G[_], C](
 final case class FieldInfo[G[_], C](
     name: String,
     alias: Option[String],
-    args: Option[QA.Arguments[C]],
+    args: Option[QA.Arguments[C, AnyValue]],
     tpe: InverseModifierStack[TypeInfo[G, C]],
     caret: C,
     path: Cursor
