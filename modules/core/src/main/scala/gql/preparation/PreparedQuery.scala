@@ -72,7 +72,7 @@ final case class PreparedDataField[F[_], A](
 final case class PreparedSpecification[F[_], I, A](
     typename: String,
     specify: I => Option[A],
-    selection: NonEmptyList[PreparedDataField[F, A]]
+    selection: List[PreparedDataField[F, A]]
 ) extends PreparedField[F, I]
 
 final case class PreparedMeta(

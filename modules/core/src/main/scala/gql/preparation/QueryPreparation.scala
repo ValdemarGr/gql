@@ -44,7 +44,7 @@ trait QueryPreparation[F[_], G[_], C] {
       fi: MergedFieldInfo[G, C],
       field: Field[G, I, O],
       currentTypename: String
-  ): F[PreparedDataField[G, I]]
+  ): F[List[PreparedDataField[G, I]]]
 
   def mergeImplementations[A](
       base: Selectable[G, A],
@@ -194,7 +194,7 @@ object QueryPreparation {
           fi: MergedFieldInfo[G, C],
           field: Field[G, I, O],
           currentTypename: String
-      ): F[PreparedDataField[G, I]] = {
+      ): F[List[PreparedDataField[G, I]]] = {
         val rootUniqueName = UniqueEdgeCursor(s"${currentTypename}_${fi.name}")
 
         val meta: FieldMeta[C] = FieldMeta(fi.alias, fi.args)
@@ -227,7 +227,7 @@ object QueryPreparation {
           prepare(fi, field.output.value, meta)
         ).parMapN(PreparedCont(_, _)).map(PreparedDataField(fi.name, fi.alias, _))
 
-        verifyTooManyF &> preparedF.run(rootUniqueName)
+        verifyTooManyF &> preparedF.run(rootUniqueName).map(List(_))
       }
 
       override def mergeImplementations[A](
@@ -337,7 +337,7 @@ object QueryPreparation {
       ): F[NonEmptyList[PreparedSpecification[G, A, _]]] =
         mergeImplementations[A](s, sis).flatMap { impls =>
           impls.parTraverse[F, PreparedSpecification[G, A, ?]] { case impl: MergedImplementation[G, A, b, C] =>
-            val fa = impl.selections.parTraverse { sel =>
+            val fa = impl.selections.toList.parFlatTraverse { sel =>
               sel.field match {
                 case field: Field[G, b2, t] => prepareField[b, t](sel.info, field, impl.leaf.name)
               }
