@@ -8,6 +8,12 @@ final case class Directive[A](
     arg: DirectiveArg[A] = DirectiveArg.Empty
 )
 
+object Directive {
+  val skipDirective = Directive("skip", DirectiveArg.WithArg(gql.dsl.arg[Boolean]("if")))
+
+  val includeDirective = Directive("include", DirectiveArg.WithArg(gql.dsl.arg[Boolean]("if")))
+}
+
 // Ad-hoc Applicative (pure, empty structure) from Apply
 sealed trait DirectiveArg[A]
 object DirectiveArg {

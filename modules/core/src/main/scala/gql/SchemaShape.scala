@@ -29,7 +29,6 @@ final case class SchemaShape[F[_], Q, M, S](
     subscription: Option[Type[F, S]] = Option.empty[Type[F, Unit]],
     outputTypes: List[OutToplevel[F, ?]] = Nil,
     inputTypes: List[InToplevel[?]] = Nil,
-    directives: List[Directive[?]] = Nil,
     positions: List[Position[F, ?]] = Nil
 ) {
   def addOutputTypes(t: OutToplevel[F, ?]*): SchemaShape[F, Q, M, S] =
