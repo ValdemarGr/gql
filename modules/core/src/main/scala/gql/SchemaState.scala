@@ -15,7 +15,6 @@
  */
 package gql
 
-import cats._
 import gql.resolver.Step.BatchKey
 
 final case class SchemaState[F[_]](

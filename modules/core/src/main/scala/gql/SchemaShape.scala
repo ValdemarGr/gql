@@ -546,11 +546,12 @@ object SchemaShape {
       "description" -> lift(_ => Option.empty[String]),
       "locations" -> lift { dir =>
         val ys = d.positions.getOrElse(dir.name, Nil)
-        ys.map {
+        val zs: List[DirectiveLocation] = ys.map {
           case Position.Field(_, _)                => DirectiveLocation.FIELD
           case Position.FragmentSpread(_, _)       => DirectiveLocation.FRAGMENT_SPREAD
           case Position.InlineFragmentSpread(_, _) => DirectiveLocation.INLINE_FRAGMENT
         }
+        zs
       },
       "args" -> lift(inclDeprecated) { (_, dir) =>
         dir.arg match {
