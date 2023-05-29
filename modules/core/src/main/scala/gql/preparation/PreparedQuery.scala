@@ -35,7 +35,7 @@ object PreparedStep {
   final case class Compose[F[_], I, A, O](left: PreparedStep[F, I, A], right: PreparedStep[F, A, O])
       extends AnyRef
       with PreparedStep[F, I, O]
-  final case class GetMeta[F[_], I](meta: PreparedMeta) extends AnyRef with PreparedStep[F, I, Meta]
+  final case class GetMeta[F[_], I](meta: PreparedMeta) extends AnyRef with PreparedStep[F, I, FieldMeta]
   final case class First[F[_], I, O, C](step: PreparedStep[F, I, O]) extends AnyRef with PreparedStep[F, (I, C), (O, C)]
   final case class Batch[F[_], K, V](id: Step.BatchKey[K, V], globalEdgeId: UniqueBatchInstance[K, V])
       extends AnyRef
@@ -53,7 +53,7 @@ final case class PreparedCont[F[_], I, A](
     cont: Prepared[F, A]
 )
 
-final case class Selection[F[_], I](fields: NonEmptyList[PreparedField[F, I]]) extends Prepared[F, I]
+final case class Selection[F[_], I](fields: List[PreparedField[F, I]]) extends Prepared[F, I]
 
 final case class PreparedList[F[_], A, C, B](of: PreparedCont[F, A, B], toSeq: C => Seq[A]) extends Prepared[F, C]
 

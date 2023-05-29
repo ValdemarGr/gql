@@ -15,21 +15,15 @@
  */
 package gql
 
-import cats._
 import gql.resolver.Step.BatchKey
 
 final case class SchemaState[F[_]](
     nextId: Int,
-    batchFunctions: Map[BatchKey[?, ?], SchemaState.BatchFunction[F, ?, ?]]
-) {
-  def mapK[G[_]](fk: F ~> G): SchemaState[G] =
-    SchemaState(
-      nextId,
-      batchFunctions.map { case (k, v) => k -> SchemaState.BatchFunction(v.f.andThen(fk.apply)) }
-    )
-}
+    batchFunctions: Map[BatchKey[?, ?], SchemaState.BatchFunction[F, ?, ?]],
+    positions: List[Position[F, ?]]
+)
 
 object SchemaState {
   final case class BatchFunction[F[_], K, V](f: Set[K] => F[Map[K, V]])
-  def empty[F[_]] = SchemaState[F](nextId = 0, batchFunctions = Map.empty)
+  def empty[F[_]] = SchemaState[F](nextId = 0, batchFunctions = Map.empty, Nil)
 }

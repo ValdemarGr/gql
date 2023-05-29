@@ -21,7 +21,7 @@ import gql.ast._
 import gql.resolver._
 import cats.data._
 import scala.reflect.ClassTag
-import gql.parser.{Value => V, Const}
+import gql.parser.{Value => V, Const, QueryAst => QA}
 
 object dsl {
   type Fields[F[_], -A] = NonEmptyList[(String, Field[F, A, ?])]
@@ -105,6 +105,30 @@ object dsl {
       tl: (String, AbstractField[F, ?])*
   ): AbstractFields[F] =
     NonEmptyList(hd, tl.toList)
+
+  def directive(name: String): Directive[Unit] =
+    Directive(name)
+
+  def directive[A](name: String, arg: Arg[A]): Directive[A] =
+    Directive(name, DirectiveArg.WithArg(arg))
+
+  protected def addPosition[F[_], A, Pos <: Position[F, A]](pos: Pos): State[SchemaState[F], Pos] =
+    State(s => (s.copy(positions = pos :: s.positions), pos))
+
+  def onField[F[_], A](directive: Directive[A], handler: Position.FieldHandler[F, A]): State[SchemaState[F], Position.Field[F, A]] =
+    addPosition[F, A, Position.Field[F, A]](Position.Field(directive, handler))
+
+  def onFragmentSpread[F[_], A](
+      directive: Directive[A],
+      handler: Position.QueryHandler[QA.FragmentSpread, A]
+  ): State[SchemaState[F], Position.FragmentSpread[A]] =
+    addPosition[F, A, Position.FragmentSpread[A]](Position.FragmentSpread(directive, handler))
+
+  def onInlineFragmentSpread[F[_], A](
+      directive: Directive[A],
+      handler: Position.QueryHandler[QA.InlineFragment, A]
+  ): State[SchemaState[F], Position.InlineFragmentSpread[A]] =
+    addPosition[F, A, Position.InlineFragmentSpread[A]](Position.InlineFragmentSpread(directive, handler))
 
   def enumVal[A](value: A): EnumValue[A] =
     EnumValue(value)

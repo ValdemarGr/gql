@@ -39,7 +39,7 @@ object Step {
 
     final case class Choose[F[_], A, B, C, D](fac: Step[F, A, C], fab: Step[F, B, D]) extends Step[F, Either[A, B], Either[C, D]]
 
-    final case class GetMeta[I]() extends Step[Nothing, I, Meta]
+    final case class GetMeta[I]() extends Step[Nothing, I, FieldMeta]
 
     final case class First[F[_], A, B, C](step: Step[F, A, B]) extends Step[F, (A, C), (B, C)]
 
@@ -70,7 +70,7 @@ object Step {
   def choose[F[_], A, B, C, D](fac: Step[F, A, C], fab: Step[F, B, D]): Step[F, Either[A, B], Either[C, D]] =
     Alg.Choose(fac, fab)
 
-  def getMeta[F[_]]: Step[F, Any, Meta] =
+  def getMeta[F[_]]: Step[F, Any, FieldMeta] =
     Alg.GetMeta()
 
   def first[F[_], A, B, C](step: Step[F, A, B]): Step[F, (A, C), (B, C)] =

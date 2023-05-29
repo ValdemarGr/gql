@@ -61,7 +61,7 @@ object TypeSystemAst {
     ) extends TypeDefinition
   }
 
-  sealed trait DirectiveLocation
+  sealed trait DirectiveLocation extends Product with Serializable
   object DirectiveLocation {
     case object QUERY extends DirectiveLocation
     case object MUTATION extends DirectiveLocation
