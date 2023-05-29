@@ -517,29 +517,7 @@ object SchemaShape {
       "deprecationReason" -> lift(_ => Option.empty[String])
     )
 
-    sealed trait DirectiveLocation
-    object DirectiveLocation {
-      case object QUERY extends DirectiveLocation
-      case object MUTATION extends DirectiveLocation
-      case object SUBSCRIPTION extends DirectiveLocation
-      case object FIELD extends DirectiveLocation
-      case object FRAGMENT_DEFINITION extends DirectiveLocation
-      case object FRAGMENT_SPREAD extends DirectiveLocation
-      case object INLINE_FRAGMENT extends DirectiveLocation
-      case object VARIABLE_DEFINITION extends DirectiveLocation
-      case object SCHEMA extends DirectiveLocation
-      case object SCALAR extends DirectiveLocation
-      case object OBJECT extends DirectiveLocation
-      case object FIELD_DEFINITION extends DirectiveLocation
-      case object ARGUMENT_DEFINITION extends DirectiveLocation
-      case object INTERFACE extends DirectiveLocation
-      case object UNION extends DirectiveLocation
-      case object ENUM extends DirectiveLocation
-      case object ENUM_VALUE extends DirectiveLocation
-      case object INPUT_OBJECT extends DirectiveLocation
-      case object INPUT_FIELD_DEFINITION extends DirectiveLocation
-    }
-
+    import gql.parser.TypeSystemAst.DirectiveLocation
     implicit lazy val directiveLocation: Enum[DirectiveLocation] = enumType[DirectiveLocation](
       "__DirectiveLocation",
       "QUERY" -> enumVal(DirectiveLocation.QUERY),
@@ -563,13 +541,24 @@ object SchemaShape {
       "INPUT_FIELD_DEFINITION" -> enumVal(DirectiveLocation.INPUT_FIELD_DEFINITION)
     )
 
-    case object PhantomDirective
-    implicit lazy val directive: Type[F, PhantomDirective.type] = tpe[F, PhantomDirective.type](
+    implicit lazy val directive: Type[F, Directive[?]] = tpe[F, Directive[?]](
       "__Directive",
-      "name" -> lift(_ => ""),
+      "name" -> lift(_.name),
       "description" -> lift(_ => Option.empty[String]),
-      "locations" -> lift(_ => List.empty[DirectiveLocation]),
-      "args" -> lift(inclDeprecated)((_, _) => List.empty[ArgValue[?]]),
+      "locations" -> lift { dir =>
+        val ys = d.positions.getOrElse(dir.name, Nil)
+        ys.map {
+          case Position.Field(_, _)                => DirectiveLocation.FIELD
+          case Position.FragmentSpread(_, _)       => DirectiveLocation.FRAGMENT_SPREAD
+          case Position.InlineFragmentSpread(_, _) => DirectiveLocation.INLINE_FRAGMENT
+        }
+      },
+      "args" -> lift(inclDeprecated) { (_, dir) =>
+        dir.arg match {
+          case DirectiveArg.Empty      => Nil
+          case DirectiveArg.WithArg(a) => a.entries.toList
+        }
+      },
       "isRepeatable" -> lift(_ => false)
     )
 
@@ -585,7 +574,7 @@ object SchemaShape {
       "queryType" -> lift(_ => TypeInfo.OutInfo(ss.query): TypeInfo),
       "mutationType" -> lift(_ => ss.mutation.map[TypeInfo](TypeInfo.OutInfo(_))),
       "subscriptionType" -> lift(_ => ss.subscription.map[TypeInfo](TypeInfo.OutInfo(_))),
-      "directives" -> lift(_ => List.empty[PhantomDirective.type])
+      "directives" -> lift(_ => List.empty[Directive[?]])
     )
 
     lazy val rootFields: NonEmptyList[(String, Field[F, Unit, ?])] =
