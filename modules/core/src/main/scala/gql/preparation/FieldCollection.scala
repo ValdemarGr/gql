@@ -27,6 +27,7 @@ import gql.ast._
 import gql.parser.QueryAst
 import gql.parser.{QueryAst => QA}
 import gql.parser.AnyValue
+import gql.Position
 
 trait FieldCollection[F[_], G[_], C] {
   def matchType(
@@ -38,7 +39,7 @@ trait FieldCollection[F[_], G[_], C] {
   def collectSelectionInfo(
       sel: Selectable[G, ?],
       ss: QA.SelectionSet[C]
-  ): F[NonEmptyList[SelectionInfo[G, C]]]
+  ): F[List[SelectionInfo[G, C]]]
 
   def collectFieldInfo(
       qf: AbstractField[G, ?],
@@ -58,7 +59,8 @@ object FieldCollection {
       E: ErrorAlg[F, C],
       L: Local[F, CycleSet],
       C: Local[F, Cursor],
-      A: ArgParsing[F, C]
+      A: ArgParsing[F, C],
+      DA: DirectiveAlg[F, G, C]
   ) = {
     implicit val PA: PathAlg[F] = PathAlg.pathAlgForLocal[F]
     import E._
@@ -127,7 +129,7 @@ object FieldCollection {
         }
       }
 
-      override def collectSelectionInfo(sel: Selectable[G, ?], ss: QueryAst.SelectionSet[C]): F[NonEmptyList[SelectionInfo[G, C]]] = {
+      override def collectSelectionInfo(sel: Selectable[G, ?], ss: QueryAst.SelectionSet[C]): F[List[SelectionInfo[G, C]]] = {
         val all = ss.selections
         val fields = all.collect { case QA.Selection.FieldSelection(field, c) => (c, field) }
 
@@ -143,17 +145,28 @@ object FieldCollection {
           }
           .map(_.toNel.toList.map(SelectionInfo(sel, _, None)))
 
-        val realInlines = all
-          .collect { case QA.Selection.InlineFragmentSelection(f, c) => (c, f) }
-          .parFlatTraverse { case (caret, f) =>
-            f.typeCondition.traverse(matchType(_, sel, caret)).map(_.getOrElse(sel)).flatMap { t =>
-              collectSelectionInfo(t, f.selectionSet).map(_.toList)
+        val realInlines =
+          all
+            .collect { case QA.Selection.InlineFragmentSelection(f, c) => (c, f) }
+            .parFlatTraverse { case (caret, f) =>
+              DA.foldDirectives[Position.InlineFragmentSpread](f.directives, List(caret))(f) { case (f, p: Position.InlineFragmentSpread[a], d) =>
+                DA.parseArg(p, d.arguments, List(caret)).map(p.handler(_, f)).flatMap(raiseEither(_, List(caret)))
+              }.map(_ tupleLeft caret)
             }
-          }
+            .flatMap(_.parFlatTraverse { case (caret, f) =>
+              f.typeCondition.traverse(matchType(_, sel, caret)).map(_.getOrElse(sel)).flatMap { t =>
+                collectSelectionInfo(t, f.selectionSet).map(_.toList)
+              }
+            })
 
         val realFragments = all
           .collect { case QA.Selection.FragmentSpreadSelection(f, c) => (c, f) }
           .parFlatTraverse { case (caret, f) =>
+            DA.foldDirectives[Position.FragmentSpread](f.directives, List(caret))(f) { case (f, p: Position.FragmentSpread[a], d) =>
+              DA.parseArg(p, d.arguments, List(caret)).map(p.handler(_, f)).flatMap(raiseEither(_, List(caret)))
+            }.map(_ tupleLeft caret)
+          }
+          .flatMap(_.parFlatTraverse { case (caret, f) =>
             val fn = f.fragmentName
             inFragment(fn, List(caret)) { f =>
               matchType(f.typeCnd, sel, f.caret).flatMap { t =>
@@ -161,11 +174,9 @@ object FieldCollection {
                   .map(_.toList.map(_.copy(fragmentName = Some(fn))))
               }
             }
-          }
+          })
 
         (validateFieldsF :: realInlines :: realFragments :: Nil).parFlatSequence
-          // Unfortunate, but is always safe here since nel is input
-          .map(_.toNel.get)
       }
 
       override def collectFieldInfo(qf: AbstractField[G, _], f: QueryAst.Field[C], caret: C): F[FieldInfo[G, C]] = {
@@ -194,7 +205,9 @@ object FieldCollection {
             else raise(s"Field `${f.name}` of scalar type `${tl.name}` must not have a selection set.", List(c))
         }
 
-        verifyArgsF &> i.flatMap(fi => C.ask.map(c => FieldInfo[G, C](f.name, f.alias, f.arguments, ims.copy(inner = fi), caret, c)))
+        verifyArgsF &> i.flatMap { fi =>
+          C.ask.map(c => FieldInfo[G, C](f.name, f.alias, f.arguments, ims.copy(inner = fi), f.directives, caret, c))
+        }
       }
     }
   }
@@ -206,7 +219,7 @@ sealed trait TypeInfo[+G[_], +C] {
 object TypeInfo {
   final case class Scalar(name: String) extends TypeInfo[Nothing, Nothing]
   final case class Enum(name: String) extends TypeInfo[Nothing, Nothing]
-  final case class Selectable[G[_], C](name: String, selection: NonEmptyList[SelectionInfo[G, C]]) extends TypeInfo[G, C]
+  final case class Selectable[G[_], C](name: String, selection: List[SelectionInfo[G, C]]) extends TypeInfo[G, C]
 }
 
 final case class SelectionInfo[G[_], C](
@@ -220,6 +233,7 @@ final case class FieldInfo[G[_], C](
     alias: Option[String],
     args: Option[QA.Arguments[C, AnyValue]],
     tpe: InverseModifierStack[TypeInfo[G, C]],
+    directives: Option[QA.Directives[C, AnyValue]],
     caret: C,
     path: Cursor
 ) {

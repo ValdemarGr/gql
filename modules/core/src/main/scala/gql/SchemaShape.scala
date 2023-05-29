@@ -28,7 +28,9 @@ final case class SchemaShape[F[_], Q, M, S](
     mutation: Option[Type[F, M]] = Option.empty[Type[F, Unit]],
     subscription: Option[Type[F, S]] = Option.empty[Type[F, Unit]],
     outputTypes: List[OutToplevel[F, ?]] = Nil,
-    inputTypes: List[InToplevel[?]] = Nil
+    inputTypes: List[InToplevel[?]] = Nil,
+    directives: List[Directive[?]] = Nil,
+    positions: List[Position[F, ?]] = Nil
 ) {
   def addOutputTypes(t: OutToplevel[F, ?]*): SchemaShape[F, Q, M, S] =
     copy(outputTypes = t.toList ++ outputTypes)
@@ -79,7 +81,8 @@ object SchemaShape {
   final case class DiscoveryState[F[_]](
       inputs: Map[String, InToplevel[?]],
       outputs: Map[String, OutToplevel[F, ?]],
-      implementations: Implementations[F]
+      implementations: Implementations[F],
+      positions: Map[String, List[Position[F, ?]]]
   )
 
   def discover[F[_]](shape: SchemaShape[F, ?, ?, ?]): DiscoveryState[F] = {
@@ -167,8 +170,10 @@ object SchemaShape {
 
     val ins = shape.inputTypes.traverse_(goInput[State[DiscoveryState[F], *]])
 
+    val positionGroups = shape.positions.groupBy(_.directive.name)
+
     (ins, outs).tupled
-      .runS(DiscoveryState(Map.empty, Map.empty, Map.empty))
+      .runS(DiscoveryState(Map.empty, Map.empty, Map.empty, positionGroups))
       .value
   }
 
@@ -336,7 +341,8 @@ object SchemaShape {
       val out = DiscoveryState[F](
         ds.inputs ++ withoutQuery.inputs,
         ds.outputs ++ withoutQuery.outputs,
-        ds.implementations ++ withoutQuery.implementations
+        ds.implementations ++ withoutQuery.implementations,
+        ds.positions ++ withoutQuery.positions
       )
       // Omit duplicate types
       out.copy(inputs = out.inputs -- ds.outputs.keySet)

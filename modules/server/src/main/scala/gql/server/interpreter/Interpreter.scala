@@ -43,7 +43,7 @@ trait Interpreter[F[_]] {
       cont: StepCont[F, I, O]
   ): W[Chain[(Int, Json)]]
 
-  def runFields[I](dfs: NonEmptyList[PreparedField[F, I]], in: Chain[EvalNode[F, I]]): W[Chain[Map[String, Json]]]
+  def runFields[I](dfs: List[PreparedField[F, I]], in: Chain[EvalNode[F, I]]): W[Chain[Map[String, Json]]]
 
   def startNext[I](s: Prepared[F, I], in: Chain[EvalNode[F, I]]): W[Chain[Json]]
 
@@ -134,7 +134,7 @@ object Interpreter {
 
   def constructStream[F[_]: Statistics, A](
       rootInput: A,
-      rootSel: NonEmptyList[PreparedField[F, A]],
+      rootSel: List[PreparedField[F, A]],
       schemaState: SchemaState[F],
       openTails: Boolean,
       debug: DebugPrinter[F],
@@ -230,7 +230,7 @@ object Interpreter {
 
   def runStreamed[F[_]: Statistics: Planner, A](
       rootInput: A,
-      rootSel: NonEmptyList[PreparedField[F, A]],
+      rootSel: List[PreparedField[F, A]],
       schemaState: SchemaState[F],
       debug: DebugPrinter[F],
       accumulate: Option[FiniteDuration]
@@ -239,7 +239,7 @@ object Interpreter {
 
   def runSync[F[_]: Async: Statistics: Planner, A](
       rootInput: A,
-      rootSel: NonEmptyList[PreparedField[F, A]],
+      rootSel: List[PreparedField[F, A]],
       schemaState: SchemaState[F],
       debug: DebugPrinter[F]
   ): F[(Chain[EvalFailure], JsonObject)] =
@@ -458,7 +458,7 @@ class InterpreterImpl[F[_]](
           (leftF, rightF).parMapN(_ ++ _)
         }
       case GetMeta(pm) =>
-        runNext(inputs.map(in => in as FieldMeta(QueryMeta(in.node.cursor, pm.args, pm.variables), pm.alias)))
+        runNext(inputs.map(in => in as FieldMeta(QueryMeta(in.node.cursor, pm.variables), pm.args, pm.alias)))
       case alg: First[F @unchecked, i2, o2, c2] =>
         // (o2, c2) <:< C
         // (i2, c2) <:< I
@@ -517,7 +517,7 @@ class InterpreterImpl[F[_]](
   def unflatten[A](ns: Vector[Int], dat: Vector[A]): Vector[Vector[A]] =
     ns.mapAccumulate(dat)((ds, n) => ds.splitAt(n).swap)._2
 
-  def runFields[I](dfs: NonEmptyList[PreparedField[F, I]], in: Chain[EvalNode[F, I]]): W[Chain[Map[String, Json]]] = {
+  def runFields[I](dfs: List[PreparedField[F, I]], in: Chain[EvalNode[F, I]]): W[Chain[Map[String, Json]]] = {
     Chain
       .fromSeq(dfs.toList)
       .parFlatTraverse {

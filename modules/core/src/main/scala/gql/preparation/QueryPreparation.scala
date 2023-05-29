@@ -28,6 +28,7 @@ import gql.ModifierStack
 import gql.Arg
 import gql.SchemaShape
 import gql.parser.AnyValue
+import gql.Position
 
 trait QueryPreparation[F[_], G[_], C] {
   import QueryPreparation._
@@ -67,7 +68,8 @@ object QueryPreparation {
       F: Monad[F],
       AP: ArgParsing[F, C],
       S: Stateful[F, Int],
-      EA: ErrorAlg[F, C]
+      EA: ErrorAlg[F, C],
+      DA: DirectiveAlg[F, G, C]
   ) = {
     import EA._
 
@@ -178,7 +180,7 @@ object QueryPreparation {
             (compiledStep, compiledCont)
               .parMapN((s, c) => PreparedOption(PreparedCont(s, c)))
           case (s: Selectable[G, a], Some(ss)) =>
-            lift(prepareSelectable[a](s, ss).map(Selection(_)))
+            lift(prepareSelectable[a](s, ss).map(xs => Selection(xs.toList)))
           case (e: Enum[a], None) =>
             pure(PreparedLeaf(e.name, x => Json.fromString(e.revm(x))))
           case (s: Scalar[a], None) =>
@@ -195,39 +197,47 @@ object QueryPreparation {
           field: Field[G, I, O],
           currentTypename: String
       ): F[List[PreparedDataField[G, I]]] = {
-        val rootUniqueName = UniqueEdgeCursor(s"${currentTypename}_${fi.name}")
+        DA
+          .foldDirectives[Position.Field[G, *]][List, (Field[G, I, ?], MergedFieldInfo[G, C])](fi.directives, List(fi.caret))(
+            (field, fi)
+          ) { case ((f: Field[G, I, ?], fi), p: Position.Field[G, a], d) =>
+            DA.parseArg(p, d.arguments, List(fi.caret)).map(p.handler(_, f, fi)).flatMap(raiseEither(_, List(fi.caret)))
+          }
+          .flatMap(_.parTraverse { case (field: Field[G, I, o2], fi) =>
+            val rootUniqueName = UniqueEdgeCursor(s"${currentTypename}_${fi.name}")
 
-        val meta: PartialFieldMeta[C] = PartialFieldMeta(fi.alias, fi.args)
+            val meta: PartialFieldMeta[C] = PartialFieldMeta(fi.alias, fi.args)
 
-        def findArgs(o: Out[G, ?]): Chain[Arg[?]] = o match {
-          case x: OutArr[g, a, c, b] => collectArgs(x.resolver.underlying) ++ findArgs(x.of)
-          case x: OutOpt[g, a, b]    => collectArgs(x.resolver.underlying) ++ findArgs(x.of)
-          case _                     => Chain.empty
-        }
+            def findArgs(o: Out[G, ?]): Chain[Arg[?]] = o match {
+              case x: OutArr[g, a, c, b] => collectArgs(x.resolver.underlying) ++ findArgs(x.of)
+              case x: OutOpt[g, a, b]    => collectArgs(x.resolver.underlying) ++ findArgs(x.of)
+              case _                     => Chain.empty
+            }
 
-        val providedArgNames = meta.fields.keySet
+            val providedArgNames = meta.fields.keySet
 
-        val declaredArgs: Chain[Arg[?]] = collectArgs(field.resolve.underlying) ++ findArgs(field.output.value)
-        val declaredArgNames = declaredArgs.toList.flatMap(_.entries.toList.map(_.name)).toSet
+            val declaredArgs: Chain[Arg[?]] = collectArgs(field.resolve.underlying) ++ findArgs(field.output.value)
+            val declaredArgNames = declaredArgs.toList.flatMap(_.entries.toList.map(_.name)).toSet
 
-        val tooMany = providedArgNames -- declaredArgNames
+            val tooMany = providedArgNames -- declaredArgNames
 
-        val verifyTooManyF: F[Unit] =
-          if (tooMany.isEmpty) F.unit
-          else
-            raise(
-              s"Too many arguments provided for field `${fi.name}`. Provided: ${providedArgNames.toList
-                .map(x => s"'$x'")
-                .mkString(", ")}. Declared: ${declaredArgNames.toList.map(x => s"'$x'").mkString(", ")}",
-              List(fi.caret)
-            )
+            val verifyTooManyF: F[Unit] =
+              if (tooMany.isEmpty) F.unit
+              else
+                raise(
+                  s"Too many arguments provided for field `${fi.name}`. Provided: ${providedArgNames.toList
+                    .map(x => s"'$x'")
+                    .mkString(", ")}. Declared: ${declaredArgNames.toList.map(x => s"'$x'").mkString(", ")}",
+                  List(fi.caret)
+                )
 
-        val preparedF = (
-          prepareStep(field.resolve.underlying, meta),
-          prepare(fi, field.output.value, meta)
-        ).parMapN(PreparedCont(_, _)).map(PreparedDataField(fi.name, fi.alias, _))
+            val preparedF = (
+              prepareStep(field.resolve.underlying, meta),
+              prepare(fi, field.output.value, meta)
+            ).parMapN(PreparedCont(_, _)).map(PreparedDataField(fi.name, fi.alias, _))
 
-        verifyTooManyF &> preparedF.run(rootUniqueName).map(List(_))
+            verifyTooManyF &> preparedF.run(rootUniqueName)
+          })
       }
 
       override def mergeImplementations[A](
@@ -293,6 +303,7 @@ object QueryPreparation {
             fields.head.alias,
             fields.head.args,
             sels,
+            fields.head.directives,
             fields.head.caret,
             fields.head.path
           )
@@ -355,6 +366,7 @@ final case class MergedFieldInfo[G[_], C](
     alias: Option[String],
     args: Option[QA.Arguments[C, AnyValue]],
     selections: List[SelectionInfo[G, C]],
+    directives: Option[QA.Directives[C, AnyValue]],
     // TODO these two should probably be lists
     caret: C,
     path: Cursor

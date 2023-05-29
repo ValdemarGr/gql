@@ -22,11 +22,11 @@ import gql.parser.AnyValue
 
 final case class QueryMeta(
     cursor: Cursor,
-    args: Option[P.Arguments[Unit, AnyValue]],
     variables: VariableMap[Unit]
 )
 
 final case class FieldMeta(
     queryMeta: QueryMeta,
+    args: Option[P.Arguments[Unit, AnyValue]],
     alias: Option[String]
 )

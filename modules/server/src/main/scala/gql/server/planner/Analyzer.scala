@@ -25,7 +25,7 @@ import cats.implicits._
 trait Analyzer[F[_]] {
   def analyzeStep[G[_]](step: PreparedStep[G, ?, ?]): F[Unit]
 
-  def analyzeFields[G[_]](prepared: NonEmptyList[PreparedField[G, ?]]): F[Unit]
+  def analyzeFields[G[_]](prepared: List[PreparedField[G, ?]]): F[Unit]
 
   def analyzePrepared[G[_]](p: Prepared[G, ?]): F[Unit]
 
@@ -130,12 +130,12 @@ object Analyzer {
         }
       }
 
-      def analyzeFields[G[_]](prepared: NonEmptyList[PreparedField[G, ?]]): F[Unit] =
-        prepared.toList.traverse_ { p =>
+      def analyzeFields[G[_]](prepared: List[PreparedField[G, ?]]): F[Unit] =
+        prepared.traverse_ { p =>
           resetParents {
             p match {
               case PreparedDataField(_, _, cont)          => analyzeCont[G](cont.edges, cont.cont)
-              case PreparedSpecification(_, _, selection) => selection.toNel.traverse_(analyzeFields[G](_))
+              case PreparedSpecification(_, _, selection) => analyzeFields[G](selection)
             }
           }
         }

@@ -53,7 +53,7 @@ final case class PreparedCont[F[_], I, A](
     cont: Prepared[F, A]
 )
 
-final case class Selection[F[_], I](fields: NonEmptyList[PreparedField[F, I]]) extends Prepared[F, I]
+final case class Selection[F[_], I](fields: List[PreparedField[F, I]]) extends Prepared[F, I]
 
 final case class PreparedList[F[_], A, C, B](of: PreparedCont[F, A, B], toSeq: C => Seq[A]) extends Prepared[F, C]
 

@@ -183,15 +183,21 @@ object RootPreparation {
             case QA.OperationDefinition.Detailed(ot, _, _, _, ss) => (ot, ss)
           }
 
-          def runWith[A](o: gql.ast.Type[G, A]): F[NonEmptyList[PreparedSpecification[G, A, _]]] =
+          def runWith[A](o: gql.ast.Type[G, A]): F[List[PreparedSpecification[G, A, _]]] =
             variables(od, variableMap).flatMap { vm =>
               implicit val AP: ArgParsing[F, C] = ArgParsing[F, C](vm)
+              implicit val DA: DirectiveAlg[F, G, C] = DirectiveAlg.forPositions[F, G, C](schema.discover.positions)
               val fragMap = frags.map(x => x.name -> x).toMap
-              val FC: FieldCollection[F, G, C] = FieldCollection[F, G, C](schema.discover.implementations, fragMap)
+              val FC: FieldCollection[F, G, C] = FieldCollection[F, G, C](
+                schema.discover.implementations,
+                fragMap
+              )
               val FM = FieldMerging[F, C]
               val QP = QueryPreparation[F, G, C](vm, schema.discover.implementations)
               val prog = FC.collectSelectionInfo(o, ss).flatMap { root =>
-                FM.checkSelectionsMerge(root) >> QP.prepareSelectable(o, root)
+                root.toNel.toList.flatTraverse { r =>
+                  FM.checkSelectionsMerge(r) >> QP.prepareSelectable(o, r).map(_.toList)
+                }
               }
               LI.listen(prog).flatMap { case (res, used) =>
                 val unused = vm.keySet -- used
@@ -223,7 +229,7 @@ object RootPreparation {
 
 sealed trait PreparedRoot[G[_], Q, M, S]
 object PreparedRoot {
-  final case class Query[G[_], Q, M, S](query: NonEmptyList[PreparedField[G, Q]]) extends PreparedRoot[G, Q, M, S]
-  final case class Mutation[G[_], Q, M, S](mutation: NonEmptyList[PreparedField[G, M]]) extends PreparedRoot[G, Q, M, S]
-  final case class Subscription[G[_], Q, M, S](subscription: NonEmptyList[PreparedField[G, S]]) extends PreparedRoot[G, Q, M, S]
+  final case class Query[G[_], Q, M, S](query: List[PreparedField[G, Q]]) extends PreparedRoot[G, Q, M, S]
+  final case class Mutation[G[_], Q, M, S](mutation: List[PreparedField[G, M]]) extends PreparedRoot[G, Q, M, S]
+  final case class Subscription[G[_], Q, M, S](subscription: List[PreparedField[G, S]]) extends PreparedRoot[G, Q, M, S]
 }
