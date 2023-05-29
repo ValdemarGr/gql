@@ -32,12 +32,12 @@ import gql.parser.AnyValue
 trait QueryPreparation[F[_], G[_], C] {
   import QueryPreparation._
 
-  def prepareStep[I, O](step: Step[G, I, O], fieldMeta: FieldMeta[C]): H[F, PreparedStep[G, I, O]]
+  def prepareStep[I, O](step: Step[G, I, O], fieldMeta: PartialFieldMeta[C]): H[F, PreparedStep[G, I, O]]
 
   def prepare[A](
       fi: MergedFieldInfo[G, C],
       t: Out[G, A],
-      fieldMeta: FieldMeta[C]
+      fieldMeta: PartialFieldMeta[C]
   ): H[F, Prepared[G, A]]
 
   def prepareField[I, O](
@@ -110,7 +110,7 @@ object QueryPreparation {
     new QueryPreparation[F, G, C] {
       override def prepareStep[I, O](
           step: Step[G, I, O],
-          fieldMeta: FieldMeta[C]
+          fieldMeta: PartialFieldMeta[C]
       ): H[F, PreparedStep[G, I, O]] = {
 
         def rec[I2, O2](
@@ -162,7 +162,7 @@ object QueryPreparation {
       override def prepare[A](
           fi: MergedFieldInfo[G, C],
           t: Out[G, A],
-          fieldMeta: FieldMeta[C]
+          fieldMeta: PartialFieldMeta[C]
       ): H[F, Prepared[G, A]] =
         (t, fi.selections.toNel) match {
           case (out: gql.ast.OutArr[g, a, c, b], _) =>
@@ -197,7 +197,7 @@ object QueryPreparation {
       ): F[List[PreparedDataField[G, I]]] = {
         val rootUniqueName = UniqueEdgeCursor(s"${currentTypename}_${fi.name}")
 
-        val meta: FieldMeta[C] = FieldMeta(fi.alias, fi.args)
+        val meta: PartialFieldMeta[C] = PartialFieldMeta(fi.alias, fi.args)
 
         def findArgs(o: Out[G, ?]): Chain[Arg[?]] = o match {
           case x: OutArr[g, a, c, b] => collectArgs(x.resolver.underlying) ++ findArgs(x.of)
@@ -369,7 +369,7 @@ final case class MergedImplementation[G[_], A, B, C](
     specify: A => Option[B]
 )
 
-final case class FieldMeta[C](
+final case class PartialFieldMeta[C](
     alias: Option[String],
     args: Option[QA.Arguments[C, AnyValue]]
 ) {

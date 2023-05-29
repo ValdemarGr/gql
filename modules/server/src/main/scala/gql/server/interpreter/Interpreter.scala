@@ -458,7 +458,7 @@ class InterpreterImpl[F[_]](
           (leftF, rightF).parMapN(_ ++ _)
         }
       case GetMeta(pm) =>
-        runNext(inputs.map(in => in as Meta(in.node.cursor, pm.alias, pm.args, pm.variables)))
+        runNext(inputs.map(in => in as FieldMeta(QueryMeta(in.node.cursor, pm.args, pm.variables), pm.alias)))
       case alg: First[F @unchecked, i2, o2, c2] =>
         // (o2, c2) <:< C
         // (i2, c2) <:< I

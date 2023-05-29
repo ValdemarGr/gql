@@ -20,9 +20,13 @@ import gql.Cursor
 import gql.preparation.VariableMap
 import gql.parser.AnyValue
 
-final case class Meta(
+final case class QueryMeta(
     cursor: Cursor,
-    alias: Option[String],
     args: Option[P.Arguments[Unit, AnyValue]],
     variables: VariableMap[Unit]
+)
+
+final case class FieldMeta(
+    queryMeta: QueryMeta,
+    alias: Option[String]
 )
