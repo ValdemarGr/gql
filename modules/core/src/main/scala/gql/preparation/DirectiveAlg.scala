@@ -1,3 +1,18 @@
+/*
+ * Copyright 2023 Valdemar Grange
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package gql.preparation
 
 import gql.parser._
@@ -15,7 +30,8 @@ trait DirectiveAlg[F[_], G[_], C] {
 object DirectiveAlg {
   trait PartiallyAppliedFold[F[_], G[_], C, P[x] <: Position[G, x]] {
     def apply[H[_]: Traverse, A](
-        directives: Option[QueryAst.Directives[C, AnyValue]], context: List[C]
+        directives: Option[QueryAst.Directives[C, AnyValue]],
+        context: List[C]
     )(base: A)(f: PartialFunction[(A, P[?], QueryAst.Directive[C, AnyValue]), F[H[A]]])(implicit H: Monad[H]): F[H[A]]
   }
 
@@ -30,12 +46,12 @@ object DirectiveAlg {
     new DirectiveAlg[F, G, C] {
       override def parseArg[P[x] <: Position[G, x], A](p: P[A], args: Option[QueryAst.Arguments[C, AnyValue]], context: List[C]): F[A] = {
         p.directive.arg match {
-          case DirectiveArg.Empty => 
+          case DirectiveArg.Empty =>
             args match {
               case Some(_) => raise(s"Directive '${p.directive.name}' does not expect arguments", context)
-              case None => F.unit
+              case None    => F.unit
             }
-          case DirectiveArg.WithArg(a) => 
+          case DirectiveArg.WithArg(a) =>
             val argFields = args.toList.flatMap(_.nel.toList).map(a => a.name -> a.value.map(List(_))).toMap
             AP.decodeArg(a, argFields, ambigiousEnum = false, context)
         }
@@ -56,7 +72,7 @@ object DirectiveAlg {
                     case Some(d) =>
                       val faOpt = d.map(p => (accum, p, x)).collectFirst { case f(fa) => fa }
                       raiseOpt(faOpt, s"Directive '$name' cannot appear here", context).flatten
-                      .flatMap(_.flatTraverse(a => foldNext(xs, a)))
+                        .flatMap(_.flatTraverse(a => foldNext(xs, a)))
                   }
               }
 

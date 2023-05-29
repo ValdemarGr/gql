@@ -521,6 +521,7 @@ class InterpreterImpl[F[_]](
     Chain
       .fromSeq(dfs.toList)
       .parFlatTraverse {
+        case PreparedSpecification(_, _, Nil)             => W.pure(Chain(in.as(Map.empty[String, Json])))
         case PreparedSpecification(_, specify, selection) =>
           // Partition into what inputs satisfy the fragment and what don't
           // Run the ones that do

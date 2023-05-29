@@ -29,7 +29,7 @@ final case class SchemaShape[F[_], Q, M, S](
     subscription: Option[Type[F, S]] = Option.empty[Type[F, Unit]],
     outputTypes: List[OutToplevel[F, ?]] = Nil,
     inputTypes: List[InToplevel[?]] = Nil,
-    positions: List[Position[F, ?]] = Nil
+    positions: List[Position[F, ?]] = Directive.skipPositions[F] ++ Directive.includePositions[F]
 ) {
   def addOutputTypes(t: OutToplevel[F, ?]*): SchemaShape[F, Q, M, S] =
     copy(outputTypes = t.toList ++ outputTypes)

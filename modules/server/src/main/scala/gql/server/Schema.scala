@@ -39,8 +39,8 @@ object Schema {
   def stateful[F[_]: Applicative, Q, M, S](
       statistics: Statistics[F]
   )(fa: State[SchemaState[F], SchemaShape[F, Q, M, S]]): Schema[F, Q, M, S] = {
-    val (state, shape) = fa.run(SchemaState(0, Map.empty)).value
-    Schema(shape, state, statistics, Planner[F])
+    val (state, shape) = fa.run(SchemaState(0, Map.empty, Nil)).value
+    Schema(shape.copy(positions = shape.positions ++ state.positions), state, statistics, Planner[F])
   }
 
   def stateful[F[_]: Async, Q, M, S](fa: State[SchemaState[F], SchemaShape[F, Q, M, S]]): F[Schema[F, Q, M, S]] =

@@ -149,8 +149,9 @@ object FieldCollection {
           all
             .collect { case QA.Selection.InlineFragmentSelection(f, c) => (c, f) }
             .parFlatTraverse { case (caret, f) =>
-              DA.foldDirectives[Position.InlineFragmentSpread](f.directives, List(caret))(f) { case (f, p: Position.InlineFragmentSpread[a], d) =>
-                DA.parseArg(p, d.arguments, List(caret)).map(p.handler(_, f)).flatMap(raiseEither(_, List(caret)))
+              DA.foldDirectives[Position.InlineFragmentSpread](f.directives, List(caret))(f) {
+                case (f, p: Position.InlineFragmentSpread[a], d) =>
+                  DA.parseArg(p, d.arguments, List(caret)).map(p.handler(_, f)).flatMap(raiseEither(_, List(caret)))
               }.map(_ tupleLeft caret)
             }
             .flatMap(_.parFlatTraverse { case (caret, f) =>
