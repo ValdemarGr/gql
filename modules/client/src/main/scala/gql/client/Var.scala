@@ -28,6 +28,9 @@ final case class VariableClosure[A, V](
 ) {
   def ~[C, D](that: VariableClosure[C, D]): VariableClosure[(A, C), (V, D)] =
     VariableClosure(Var.Impl.product(variables, that.variables), (query, that.query).tupled)
+
+  def modify[B](f: SelectionSet[A] => SelectionSet[B]): VariableClosure[B, V] =
+    VariableClosure(variables, f(query))
 }
 
 object VariableClosure {

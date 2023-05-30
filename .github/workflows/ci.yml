@@ -205,7 +205,7 @@ jobs:
             ~/Library/Caches/Coursier/v1
           key: ${{ runner.os }}-sbt-cache-v2-${{ hashFiles('**/*.sbt') }}-${{ hashFiles('project/build.properties') }}
 
-      - run: git fetch --all --tags
+      - run: git fetch --all --tags --force
 
       - run: sbt '++ ${{ matrix.scala }}' docs/mdoc
 

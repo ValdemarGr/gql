@@ -38,7 +38,7 @@ ThisBuild / githubWorkflowAddedJobs +=
       List(
         WorkflowStep.Run(
           List(
-            "git fetch --all --tags"
+            "git fetch --all --tags --force"
           )
         ),
         WorkflowStep.Sbt(List("docs/mdoc")),
@@ -284,5 +284,7 @@ lazy val docs = project
   .dependsOn(serverGraphqlWs)
   .dependsOn(serverNatchez)
   .dependsOn(serverGoi)
+  .dependsOn(client)
+  .dependsOn(http4sClient)
   .dependsOn(mdocExt)
   .enablePlugins(MdocPlugin, DocusaurusPlugin, NoPublishPlugin)
