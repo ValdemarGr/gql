@@ -65,6 +65,14 @@ const sidebars = {
           ]
         }
       ]
+    },
+    {
+      collapsed: false,
+      type: 'category',
+      label: "Client",
+      items: [
+        "client/dsl"
+      ]
     }
   ]
 
