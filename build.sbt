@@ -27,35 +27,35 @@ ThisBuild / mimaFailOnProblem := false
 ThisBuild / mimaPreviousArtifacts := Set.empty
 //ThisBuild / tlFatalWarnings := true
 
-/* ThisBuild / githubWorkflowAddedJobs += */
-/*   WorkflowJob( */
-/*     id = "docs", */
-/*     name = "Run mdoc docs", */
-/*     scalas = List(scala213Version), */
-/*     steps = WorkflowStep.Checkout :: */
-/*       WorkflowStep.SetupJava(githubWorkflowJavaVersions.value.toList) ++ */
-/*       githubWorkflowGeneratedCacheSteps.value ++ */
-/*       List( */
-/*         WorkflowStep.Sbt(List("docs/mdoc")), */
-/*         WorkflowStep.Use( */
-/*           UseRef.Public("actions", "setup-node", "v3"), */
-/*           params = Map("node-version" -> "18") */
-/*         ), */
-/*         WorkflowStep.Run(List("cd website && yarn install")), */
-/*         WorkflowStep.Run( */
-/*           List( */
-/*             "git config --global user.name ValdemarGr", */
-/*             "git config --global user.email randomvald0069@gmail.com", */
-/*             "cd website && yarn deploy" */
-/*           ), */
-/*           env = Map( */
-/*             "GIT_USER" -> "valdemargr", */
-/*             "GIT_PASS" -> "${{ secrets.GITHUB_TOKEN }}" */
-/*           ) */
-/*         ) */
-/*       ), */
-/*     cond = Some("""github.event_name != 'pull_request' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')""") */
-/*   ) */
+ThisBuild / githubWorkflowAddedJobs +=
+  WorkflowJob(
+    id = "docs",
+    name = "Run mdoc docs",
+    scalas = List(scala213Version),
+    steps = WorkflowStep.Checkout ::
+      WorkflowStep.SetupJava(githubWorkflowJavaVersions.value.toList) ++
+      githubWorkflowGeneratedCacheSteps.value ++
+      List(
+        WorkflowStep.Sbt(List("docs/mdoc")),
+        WorkflowStep.Use(
+          UseRef.Public("actions", "setup-node", "v3"),
+          params = Map("node-version" -> "18")
+        ),
+        WorkflowStep.Run(List("cd website && yarn install")),
+        WorkflowStep.Run(
+          List(
+            "git config --global user.name ValdemarGr",
+            "git config --global user.email randomvald0069@gmail.com",
+            "cd website && yarn deploy"
+          ),
+          env = Map(
+            "GIT_USER" -> "valdemargr",
+            "GIT_PASS" -> "${{ secrets.GITHUB_TOKEN }}"
+          )
+        )
+      ),
+    cond = Some("""github.event_name != 'pull_request' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')""")
+  )
 
 lazy val sharedSettings = Seq(
   organization := "io.github.valdemargr",
