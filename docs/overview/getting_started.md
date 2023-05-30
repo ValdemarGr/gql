@@ -4,8 +4,23 @@ title: Getting started
 
 Get it here
 ```scala
+// core
 libraryDependencies += "io.github.valdemargr" %% "gql-core" % "@VERSION@"
-libraryDependencies += "io.github.valdemargr" %% "gql-http4s" % "@VERSION@"
+
+// server
+libraryDependencies += "io.github.valdemargr" %% "gql-server" % "@VERSION@"
+libraryDependencies += "io.github.valdemargr" %% "gql-server-http4s" % "@VERSION@"
 libraryDependencies += "io.github.valdemargr" %% "gql-natchez" % "@VERSION@"
-libraryDependencies += "io.github.valdemargr" %% "gql-graphqlws" % "@VERSION@"
+libraryDependencies += "io.github.valdemargr" %% "gql-server-graphqlws" % "@VERSION@"
+libraryDependencies += "io.github.valdemargr" %% "gql-server-goi" % "@VERSION@"
+
+// client
+libraryDependencies += "io.github.valdemargr" %% "gql-client" % "@VERSION@"
+libraryDependencies += "io.github.valdemargr" %% "gql-client-http4s" % "@VERSION@"
+
+addSbtPlugin("io.github.valdemargr" % "gql-client-codegen-sbt" % "@VERSION@")
+// and in build.sbt
+myBuild
+  .enablePlugins(GqlCodeGenPlugin)
+
 ```

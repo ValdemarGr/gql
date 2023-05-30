@@ -36,6 +36,11 @@ ThisBuild / githubWorkflowAddedJobs +=
       WorkflowStep.SetupJava(githubWorkflowJavaVersions.value.toList) ++
       githubWorkflowGeneratedCacheSteps.value ++
       List(
+        WorkflowStep.Run(
+          List(
+            "git fetch --all --tags"
+          )
+        ),
         WorkflowStep.Sbt(List("docs/mdoc")),
         WorkflowStep.Use(
           UseRef.Public("actions", "setup-node", "v3"),
