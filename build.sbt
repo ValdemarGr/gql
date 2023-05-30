@@ -32,33 +32,39 @@ ThisBuild / githubWorkflowAddedJobs +=
     id = "docs",
     name = "Run mdoc docs",
     scalas = List(scala213Version),
-    steps = WorkflowStep.Checkout ::
-      WorkflowStep.SetupJava(githubWorkflowJavaVersions.value.toList) ++
-      githubWorkflowGeneratedCacheSteps.value ++
-      List(
-        WorkflowStep.Run(
-          List(
-            "git fetch --all --tags --force"
-          )
-        ),
-        WorkflowStep.Sbt(List("docs/mdoc")),
-        WorkflowStep.Use(
-          UseRef.Public("actions", "setup-node", "v3"),
-          params = Map("node-version" -> "18")
-        ),
-        WorkflowStep.Run(List("cd website && yarn install")),
-        WorkflowStep.Run(
-          List(
-            "git config --global user.name ValdemarGr",
-            "git config --global user.email randomvald0069@gmail.com",
-            "cd website && yarn deploy"
+    steps =
+      // We need all commits to track down the tag for the VERSION variable
+      WorkflowStep.Use(
+        UseRef.Public("actions", "checkout", "v3"),
+        name = Some("Checkout current branch (fast)"),
+        params = Map("fetch-depth" -> "0")
+      ) ::
+        WorkflowStep.SetupJava(githubWorkflowJavaVersions.value.toList) ++
+        githubWorkflowGeneratedCacheSteps.value ++
+        List(
+          WorkflowStep.Run(
+            List(
+              "git fetch --all --tags --force"
+            )
           ),
-          env = Map(
-            "GIT_USER" -> "valdemargr",
-            "GIT_PASS" -> "${{ secrets.GITHUB_TOKEN }}"
+          WorkflowStep.Sbt(List("docs/mdoc")),
+          WorkflowStep.Use(
+            UseRef.Public("actions", "setup-node", "v3"),
+            params = Map("node-version" -> "18")
+          ),
+          WorkflowStep.Run(List("cd website && yarn install")),
+          WorkflowStep.Run(
+            List(
+              "git config --global user.name ValdemarGr",
+              "git config --global user.email randomvald0069@gmail.com",
+              "cd website && yarn deploy"
+            ),
+            env = Map(
+              "GIT_USER" -> "valdemargr",
+              "GIT_PASS" -> "${{ secrets.GITHUB_TOKEN }}"
+            )
           )
-        )
-      ),
+        ),
     cond = Some("""github.event_name != 'pull_request' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')""")
   )
 
