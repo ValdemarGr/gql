@@ -201,18 +201,17 @@ lazy val http4sClient = project
     )
   )
 
-/*
-lazy val natchez = project
-  .in(file("modules/natchez"))
+lazy val serverNatchez = project
+  .in(file("modules/server-natchez"))
   .settings(sharedSettings)
   .settings(
     name := "gql-natchez",
     libraryDependencies ++= Seq(
-      "org.tpolecat" %% "natchez-core" % "0.1.4",
-      "org.tpolecat" %% "natchez-noop" % "0.1.4"
+      "org.tpolecat" %% "natchez-core" % "0.3.2"
     )
   )
-  .dependsOn(core)*/
+  .dependsOn(core)
+  .dependsOn(server)
 
 lazy val graphqlWs = project
   .in(file("modules/graphql-ws"))
@@ -278,6 +277,7 @@ lazy val docs = project
   .dependsOn(core % "compile->compile;compile->test")
   .dependsOn(serverHttp4s)
   .dependsOn(serverGraphqlWs)
-  /* .dependsOn(goi) */
+  .dependsOn(serverNatchez)
+  .dependsOn(serverGoi)
   .dependsOn(mdocExt)
   .enablePlugins(MdocPlugin, DocusaurusPlugin, NoPublishPlugin)

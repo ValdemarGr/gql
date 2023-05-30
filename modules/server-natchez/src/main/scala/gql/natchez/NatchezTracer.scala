@@ -20,96 +20,88 @@ import gql._
 import _root_.natchez._
 import cats._
 import cats.implicits._
-import cats.data._
-import gql.parser.{QueryParser => P, _}
-import cats.effect.std.Queue
+import gql.server.planner._
+import io.circe.syntax._
+import io.circe._
 
 object NatchezTracer {
-  def traceParser[F[_]: Trace](
-      parser: String => F[Either[ParseError, NonEmptyList[P.ExecutableDefinition]]]
-  )(implicit F: Monad[F]): String => F[Either[ParseError, NonEmptyList[P.ExecutableDefinition]]] = query =>
-    Trace[F].span("graphql.parse") {
-      Trace[F].put("graphql.query" -> query) >>
-        parser(query).flatMap {
-          case Left(pe) =>
-            Trace[F].span("graphql.parse.error") {
-              Trace[F].put(
-                "graphql.parse.error.message" -> TraceValue.stringToTraceValue(pe.prettyError.value)
-              ) as Left(pe)
-            }
-          case Right(eds) => F.pure(Right(eds))
-        }
-    }
-
-  def tracePreparation[F[_]: Trace, A](
-      prepare: F[EitherNec[PreparedQuery.PositionalError, A]]
-  )(implicit F: Monad[F]): F[EitherNec[PreparedQuery.PositionalError, A]] =
-    Trace[F].span("graphql.preparation") {
-      prepare.flatMap {
-        case Left(pes) =>
-          Trace[F].span("graphql.preparation.error") {
-            pes.traverseWithIndexM { case (pe, i) =>
-              Trace[F].put(
-                s"graphql.preparation.error.$i.message" -> pe.message,
-                s"graphql.preparation.error.$i.path" -> pe.position.position.map(_.name).mkString_(".")
-              )
-            } as Left(pes)
-          }
-        case Right(pfs) => F.pure(Right(pfs))
-      }
-    }
-
-  def traceApplication[F[_]: Trace](app: Application[F])(implicit F: Concurrent[F]): Application[F] =
-    app match {
-      case Application.Mutation(run)     => Application.Mutation(Trace[F].span("graphql.mutation")(run))
-      case Application.Query(run)        => Application.Query(Trace[F].span("graphql.query")(run))
-      case Application.Subscription(run) =>
-        /*
-         * This is a hack, but Trace cannot form F ~> F
-         * If you have a natchez extension in scope that does something like:
-         * ```
-         * spanFK[A](name: String): Resource[F, F ~> F]
-         * ```
-         * Then by all means use that instead.
-         */
-        Application.Subscription {
-          fs2.Stream.eval(Queue.bounded[F, QueryResult](32)).flatMap { q =>
-            fs2.Stream.fromQueueUnterminated(q).concurrently {
-              fs2.Stream.eval {
-                Trace[F].span("graphql.subscription") {
-                  run
-                    .evalTap { _ =>
-                      // TODO Consider doing something with errors
-                      Trace[F].span("graphql.subscription.result") {
-                        F.unit
-                      }
-                    }
-                    .enqueueUnterminated(q)
-                    .compile
-                    .drain
-                }
+  def traceCompilation[F[_]: Trace](
+      query: String,
+      variables: Map[String, Json],
+      operationName: Option[String]
+  )(outcome: => Compiler.Outcome[F])(implicit F: Monad[F]): F[Compiler.Outcome[F]] =
+    Trace[F].span("graphql.compilation") {
+      Trace[F].put(
+        "graphql.compilation.query" -> query,
+        "graphql.compilation.variables" -> io.circe.JsonObject.fromMap(variables).asJson.noSpaces,
+        "graphql.compilation.operationName" -> operationName.mkString
+      ) >>
+        F.unit.flatMap { _ =>
+          val o = outcome
+          val putF = o match {
+            case Left(CompilationError.Parse(err)) =>
+              Trace[F].put("graphql.compilation.parsing.error" -> err.prettyError.value)
+            case Left(CompilationError.Preparation(errs)) =>
+              errs.zipWithIndex.traverse_ { case (pe, i) =>
+                Trace[F].put(
+                  s"graphql.preparation.error.${i}.message" -> pe.message,
+                  s"graphql.preparation.error.${i}.path" -> pe.position.formatted
+                )
               }
-            }
+            case Right(_) => F.unit
+          }
+
+          putF.as(o)
+        }
+    }
+
+  def traceApplication[F[_]: Trace: MonadCancelThrow](app: Application[F]): Application[F] = {
+    def traceQr(opName: String, qr: QueryResult): F[Unit] =
+      qr.errors.zipWithIndex.traverse_ { case (e, i) =>
+        val path = e.path.mkString_(",")
+        val msgF = e.error match {
+          case Left(ex)   => Trace[F].attachError(ex)
+          case Right(msg) => Trace[F].put(s"graphql.${opName}.error.${i}.message" -> msg)
+        }
+        Trace[F].put(s"graphql.${opName}.error.${i}.path" -> path) >> msgF
+      }
+
+    app match {
+      case Application.Query(run) =>
+        Application.Query(Trace[F].span("graphql.query")(run.flatTap(traceQr("query", _))))
+      case Application.Mutation(run) =>
+        Application.Mutation(Trace[F].span("graphql.mutation")(run.flatTap(traceQr("mutation", _))))
+      case Application.Subscription(run) =>
+        Application.Subscription {
+          Trace[fs2.Stream[F, *]].span("graphql.subscription") {
+            run.evalTap(traceQr("subscription", _))
           }
         }
     }
+  }
+
+  def traceQuery[F[_]: Trace: MonadCancelThrow](
+      query: String,
+      variables: Map[String, Json],
+      operationName: Option[String]
+  )(outcome: => Compiler.Outcome[F]): F[Compiler.Outcome[F]] =
+    traceCompilation(query, variables, operationName)(outcome).map(_.map(traceApplication[F]))
 
   def tracePlanner[F[_]: Trace](planner: Planner[F])(implicit F: Monad[F]): Planner[F] =
     new Planner[F] {
-      override def plan(naive: Planner.NodeTree): F[Planner.PlannedNodeTree] =
-        Trace[F].span("graphql.planner") {
-          Trace[F].put("graphql.planner.naive.totalcost" -> naive.naiveCost.toString()) >> {
-            val optimizedF = Trace[F].span("graphql.planner.planning") {
-              planner.plan(naive)
-            }
-
-            optimizedF.flatTap { optimized =>
+      override def plan(naive: NodeTree): F[OptimizedDAG] =
+        Trace[F].span("graphql.planner.plan") {
+          val et = naive.endTimes.values.maxOption.getOrElse(0d)
+          Trace[F].put(
+            "graphql.planner.plan.size" -> naive.all.size,
+            "graphql.planner.plan.endTime" -> et
+          ) >>
+            planner.plan(naive).flatTap { plan =>
               Trace[F].put(
-                "graphql.planner.optimized.totalcost" -> optimized.totalCost.toString()
-                // "graphql.planner.optimized.plandiff" -> optimized.show(showImprovement = true)
+                "graphql.planner.plan.totalCost" -> plan.totalCost,
+                "graphql.planner.plan.optimized" -> plan.optimizedCost
               )
             }
-          }
         }
     }
 
