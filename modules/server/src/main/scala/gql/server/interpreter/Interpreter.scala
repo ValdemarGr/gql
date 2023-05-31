@@ -371,7 +371,7 @@ class InterpreterImpl[F[_]](
       case alg: EmbedEffect[F @unchecked, i] =>
         val cursor = alg.stableUniqueEdgeName
         inputs
-          .parFlatTraverse { id =>
+          .flatTraverse { id =>
             val runF = attemptTimed(cursor, e => EvalFailure.EffectResolution(id.node.cursor, Left(e))) {
               id.sequence[F, i]
             }
@@ -394,7 +394,7 @@ class InterpreterImpl[F[_]](
         val contR: StepCont[F, a, O] = StepCont.Continue[F, a, C, O](alg.right, cont)
         runStep[I, a, O](inputs, alg.left, contR)
       case alg: EmbedStream[F @unchecked, i] =>
-        inputs.parFlatTraverse { id =>
+        inputs.flatTraverse { id =>
           // We modify the cont for the next stream emission
           // We need to get rid of the skips since they are a part of THIS evaluation, not the next
           val ridded = StepCont.visit(cont)(new StepCont.Visitor[F] {
