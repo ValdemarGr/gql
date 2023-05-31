@@ -22,6 +22,7 @@ import cats.data._
 import gql.ast._
 import org.typelevel.paiges.Doc
 import gql.parser.{Value => V, AnyValue}
+import gql.util.SchemaUtil
 
 final case class SchemaShape[F[_], Q, M, S](
     query: Type[F, Q],
@@ -44,6 +45,13 @@ final case class SchemaShape[F[_], Q, M, S](
   lazy val render = SchemaShape.render[F](this)
 
   lazy val introspection = SchemaShape.introspect[F](this)
+
+  lazy val ast = SchemaUtil.toAst[F](this)
+
+  // This is safe by construction
+  lazy val stub = SchemaUtil.stubSchema(ast).toOption.get
+
+  lazy val stubInputs = SchemaShape.discover(stub).inputs
 }
 
 object SchemaShape {
