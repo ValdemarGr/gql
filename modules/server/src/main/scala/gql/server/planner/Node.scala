@@ -66,7 +66,7 @@ final case class NodeTree(all: List[Node]) {
 
 final case class OptimizedDAG(
     tree: NodeTree,
-    plan: Map[NodeId, (Set[NodeId], PlanEnumeration.EndTime)]
+    plan: OptimizedDAG.Plan
 ) {
   lazy val batches: Set[(Set[NodeId], PlanEnumeration.EndTime)] = plan.values.toSet
 
@@ -143,5 +143,7 @@ final case class OptimizedDAG(
 }
 
 object OptimizedDAG {
+  type Plan = Map[NodeId, (Set[NodeId], PlanEnumeration.EndTime)]
+
   implicit lazy val showForPlannedNodeTree: Show[OptimizedDAG] = Show.show[OptimizedDAG](_.show())
 }

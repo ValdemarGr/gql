@@ -15,6 +15,7 @@
  */
 package gql.server.planner
 
+import fs2.{Pure, Stream}
 import cats.implicits._
 import cats._
 import gql.server.planner.PlanEnumeration
@@ -34,8 +35,15 @@ object Planner {
     def plan(tree: NodeTree): F[OptimizedDAG] = F.pure {
       // The best solution has lease amount of nodes in the contracted DAG
       val plan = enumerateAllPlanner[F](tree)
-        .take(tree.all.size)
-        .minByOption(m => m.values.toSet.size)
+        .map(plan => (plan, plan.values.toSet.size))
+        .take(tree.all.size.toLong)
+        .compile
+        .fold(Option.empty[(Map[PlanEnumeration.NodeId, PlanEnumeration.Batch], Int)]) {
+          case (None, (nextPlan, s))                                                => Some((nextPlan, s))
+          case (Some((_, bestSize)), (nextPlan, nextSize)) if (nextSize < bestSize) => Some((nextPlan, nextSize))
+          case (best, _)                                                            => best
+        }
+        .map { case (bestPlan, _) => bestPlan }
         .map(_.map { case (k, v) => (NodeId(k.id), (v.nodes.map(n => NodeId(n.id)), v.end)) })
         .getOrElse(Map.empty)
 
@@ -43,7 +51,7 @@ object Planner {
     }
   }
 
-  def enumerateAllPlanner[F[_]](tree: NodeTree) = {
+  def enumerateAllPlanner[F[_]](tree: NodeTree): Stream[Pure, Map[PlanEnumeration.NodeId, PlanEnumeration.Batch]] = {
     val all = tree.all
 
     val trivials = all.filter(_.batchId.isEmpty)

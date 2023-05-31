@@ -16,19 +16,20 @@
 package gql.server.planner
 
 import cats.implicits._
+import fs2.{Pure, Stream}
 
 object PlanEnumeration {
   final case class NodeId(id: Int) extends AnyVal
   final case class FamilyId(id: Int) extends AnyVal
 
   final case class Family(
-      cost: Double,
-      nodes: Set[NodeId]
+    cost: Double,
+    nodes: Set[NodeId]
   )
 
   final case class Problem(
-      families: Array[Family],
-      arcs: Map[NodeId, Set[NodeId]]
+    families: Array[Family],
+    arcs: Map[NodeId, Set[NodeId]]
   ) {
     val all: Array[NodeId] = families.flatMap(_.nodes.toArray)
 
@@ -49,25 +50,25 @@ object PlanEnumeration {
   }
 
   final case class Batch(
-      nodes: Set[NodeId],
-      end: EndTime
+    nodes: Set[NodeId],
+    end: EndTime
   )
 
   final case class EnumerationState(
-      scheduled: Map[NodeId, Batch],
-      forbidden: Set[Set[NodeId]]
+    scheduled: Map[NodeId, Batch],
+    forbidden: Set[Set[NodeId]]
   )
 
-  def enumerateAll(problem: Problem): LazyList[Map[NodeId, Batch]] = {
-    def go(current: EnumerationState): LazyList[EnumerationState] =
-      if (current.scheduled.size === problem.all.size) LazyList(current)
+  def enumerateAll(problem: Problem): Stream[Pure, Map[NodeId, Batch]] = {
+    def go(current: EnumerationState): Stream[Pure, EnumerationState] =
+      if (current.scheduled.size === problem.all.size) Stream(current)
       else enumerateNextRound(problem, current).flatMap(go)
 
     go(EnumerationState(Map.empty, Set.empty)).map(_.scheduled)
   }
 
   // Actual performance of this function can be significantly improved by efficiently recomputing various metrics
-  def enumerateNextRound(problem: Problem, state: EnumerationState): LazyList[EnumerationState] = {
+  def enumerateNextRound(problem: Problem, state: EnumerationState): Stream[Pure, EnumerationState] = {
     def scanFamilies(x: NodeId): Set[FamilyId] =
       problem.arcs.getOrElse(x, Nil).flatMap(scanFamilies).toSet ++ problem.familyMap.get(x).toList
 
@@ -95,7 +96,7 @@ object PlanEnumeration {
         // since the other plan that scheduled that one node must have checked the same schedule
         val isDuplicate = p.exists(n => state.forbidden.contains(Set(n)))
 
-        if (isDuplicate) LazyList.empty
+        if (isDuplicate) Stream.empty
         else {
           val news = p.toList.map { n =>
             val parents = problem.reverseArcs.getOrElse(n, Set.empty)
@@ -107,7 +108,7 @@ object PlanEnumeration {
             n -> Batch(Set(n), thisEnd)
           }
 
-          LazyList(
+          Stream(
             EnumerationState(
               scheduled = state.scheduled ++ news,
               forbidden = state.forbidden
@@ -116,11 +117,11 @@ object PlanEnumeration {
         }
       case None =>
         val m = grouped.toList.map(_._2.size).maxOption.getOrElse(0)
-        val o: LazyList[Set[NodeId]] = LazyList
-          .from((1 to m).reverse)
+        val o: Stream[Pure, Set[NodeId]] = Stream
+          .emits((1 to m).reverse)
           .flatMap { size =>
             val relevantHere = grouped.values.filter(_.size >= size).toList
-            LazyList.from(relevantHere).flatMap(_.toSeq.combinations(size))
+            Stream.emits(relevantHere).flatMap(c => fs2.Stream.iterable(Iterable.from(c.toSeq.combinations(size))))
           }
           .map(_.toSet)
           .filter(s => !state.forbidden.contains(s))
@@ -139,7 +140,7 @@ object PlanEnumeration {
             state.scheduled ++ batch.map(b => b -> Batch(batch, thisEnd)),
             forbid + batch
           )
-        }._2
+        }.map { case (_, x) => x }
     }
   }
 }
