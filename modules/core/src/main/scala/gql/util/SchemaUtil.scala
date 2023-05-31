@@ -44,6 +44,17 @@ object SchemaUtil {
         }
       )
 
+    def convertArg(a: Arg[?]) = a.entries.toNonEmptyList.map { av =>
+      val ms = ModifierStack.fromIn(av.input.value)
+      InputValueDefinition(
+        av.description,
+        av.name,
+        ms.set(ms.inner.name).toType,
+        av.defaultValue.map(_.map(_ => Caret(0, 0, 0))),
+        None
+      )
+    }
+
     val convertedInputs = d.inputs.values.toList.map {
       case s: ast.Scalar[?] => convertScalar(s)
       case e: ast.Enum[?]   => convertEnum(e)
@@ -52,20 +63,20 @@ object SchemaUtil {
           i.description,
           i.name,
           None,
-          i.fields.entries.toNonEmptyList.map { av =>
-            val ms = ModifierStack.fromIn(av.input.value)
-            InputValueDefinition(
-              av.description,
-              av.name,
-              ms.set(ms.inner.name).toType,
-              av.defaultValue.map(_.map(_ => Caret(0, 0, 0))),
-              None
-            )
-          }
+          convertArg(i.fields)
         )
     }
 
-    def convertField(name: String, f: ast.AbstractField[F, ?]): FieldDefinition = ???
+    def convertField(name: String, f: ast.AbstractField[F, ?]): FieldDefinition = {
+      val ms = ModifierStack.fromOut(f.output.value)
+      FieldDefinition(
+        f.description,
+        name,
+        f.arg.map(convertArg(_).toList).getOrElse(Nil),
+        ms.set(ms.inner.name).toType,
+        None
+      )
+    }
 
     val convertedOutputs = d.outputs.values.toList.map {
       case s: ast.Scalar[?] => convertScalar(s)
