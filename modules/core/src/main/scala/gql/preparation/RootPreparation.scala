@@ -39,7 +39,8 @@ trait RootPreparation[F[_], G[_], C] {
 
   def variables(
       op: QA.OperationDefinition[C],
-      variableMap: Map[String, Json]
+      variableMap: Map[String, Json],
+      schema: SchemaShape[G, ?, ?, ?]
   ): F[VariableMap[C]]
 
   def prepareRoot[Q, M, S](
@@ -119,7 +120,8 @@ object RootPreparation {
 
       override def variables(
           op: QA.OperationDefinition[C],
-          variableMap: Map[String, Json]
+          variableMap: Map[String, Json],
+          schema: SchemaShape[G, ?, ?, ?]
       ): F[VariableMap[C]] = {
         val AP = ArgParsing[F, C](Map.empty)
         /*
@@ -144,20 +146,26 @@ object RootPreparation {
                     if (ms.invert.modifiers.headOption.contains(InverseModifier.Optional)) F.pure(Right(V.NullValue(pos)))
                     else raise(s"Variable '$$${vd.name}' is required but was not provided.", List(pos))
                   case Some(x) =>
-                    val stubTLArg: gql.ast.InToplevel[Unit] = gql.ast.Scalar[Unit](ms.inner, _ => V.NullValue(), _ => Right(()))
+                    schema.stubInputs.get(ms.inner) match {
+                      case None =>
+                        raise(
+                          s"Variable '$$${vd.name}' referenced type `${ms.inner}`, but `${ms.inner}` does not exist in the schema.",
+                          List(pos)
+                        )
+                      case Some(stubTLArg) =>
+                        val t = InverseModifierStack.toIn(ms.copy(inner = stubTLArg).invert)
 
-                    val t = InverseModifierStack.toIn(ms.copy(inner = stubTLArg).invert)
-
-                    ambientField(vd.name) {
-                      t match {
-                        case in: gql.ast.In[a] =>
-                          val (v, amb) = x match {
-                            case Left(j)  => (V.fromJson(j).as(pos), true)
-                            case Right(v) => (v, false)
+                        ambientField(vd.name) {
+                          t match {
+                            case in: gql.ast.In[a] =>
+                              val (v, amb) = x match {
+                                case Left(j)  => (V.fromJson(j).as(pos), true)
+                                case Right(v) => (v, false)
+                              }
+                              AP.decodeIn[a](in, v.map(List(_)), ambigiousEnum = amb).void
                           }
-                          AP.decodeIn[a](in, v.map(List(_)), ambigiousEnum = amb).void
-                      }
-                    } as x
+                        } as x
+                    }
                 }
 
                 fo.map(e => vd.name -> Variable(vd.tpe, e))
@@ -184,7 +192,7 @@ object RootPreparation {
           }
 
           def runWith[A](o: gql.ast.Type[G, A]): F[List[PreparedSpecification[G, A, _]]] =
-            variables(od, variableMap).flatMap { vm =>
+            variables(od, variableMap, schema).flatMap { vm =>
               implicit val AP: ArgParsing[F, C] = ArgParsing[F, C](vm)
               implicit val DA: DirectiveAlg[F, G, C] = DirectiveAlg.forPositions[F, G, C](schema.discover.positions)
               val fragMap = frags.map(x => x.name -> x).toMap

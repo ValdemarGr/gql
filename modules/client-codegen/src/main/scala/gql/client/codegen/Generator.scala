@@ -35,6 +35,7 @@ import gql.client.QueryValidation
 import io.circe.Json
 import gql.preparation.RootPreparation
 import gql.parser.ParserUtil
+import gql.util.SchemaUtil
 
 object Generator {
   def modifyHead(f: Char => Char): String => String = { str =>
@@ -877,7 +878,7 @@ object Generator {
           }
           val allFrags = translated.collect { case f: ExecutableDefinition.Fragment[PositionalInfo] => f }
           val allOps = translated.collect { case op: ExecutableDefinition.Operation[PositionalInfo] => op }
-          lazy val errors = QueryValidation.getSchema(e.schema).flatMap { stubSchema =>
+          lazy val errors = SchemaUtil.stubSchema(e.schema).flatMap { stubSchema =>
             allOps.parTraverse { op =>
               val full: NonEmptyList[ExecutableDefinition[PositionalInfo]] = NonEmptyList(op, allFrags)
               val vars: ValidatedNec[String, Map[String, Json]] = op.o match {

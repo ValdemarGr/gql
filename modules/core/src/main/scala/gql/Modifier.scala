@@ -53,6 +53,13 @@ final case class ModifierStack[+T](modifiers: List[Modifier], inner: T) {
     case Modifier.List :: rest    => s"[${ModifierStack(rest, inner).show(showInner)}]"
     case Modifier.NonNull :: rest => s"${ModifierStack(rest, inner).show(showInner)}!"
   }
+
+  import gql.parser.{Type, NonNullType}
+  def toType(implicit ev: T <:< String): Type =
+    modifiers.foldLeft(Type.Named(ev(inner)): Type) {
+      case (accum: NonNullType, Modifier.NonNull) => Type.NonNull(accum)
+      case (accum, _)                             => Type.List(accum)
+    }
 }
 
 object ModifierStack {
