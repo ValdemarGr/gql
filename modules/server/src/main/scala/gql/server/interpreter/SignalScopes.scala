@@ -99,8 +99,9 @@ object SignalScopes {
           debug.eval(printTreeF.map(tree => s"unconsing with current tree:\n$tree")) >>
             bps.listen
               .use { sig =>
-                sig.awaitNonEmpty >>
-                  accumulate.traverse_(F.sleep(_)) >>
+                debug("got state, awaiting a non-empty state (publication)") >>
+                  sig.awaitNonEmpty >>
+                  accumulate.traverse_(d => debug(s"got non-empty state, awaiting ${d}") >> F.sleep(d)) >>
                   fs2.Stream
                     .repeatEval(sig.uncons)
                     .map(xs => Chunk.seq(xs.values.toList))
@@ -184,12 +185,16 @@ object SignalScopes {
               .openChild { parentScope =>
                 val si = StreamInfo(parentScope, signal, cursor)
                 def publish1(idx: Long, a: A, scope: Scope[F]): F[Unit] =
-                  if (idx === 0L) head.complete((scope, a)).void
-                  else
-                    bps.publish(ResourceInfo(a, si, scope, idx)).flatMap { await =>
-                      if (signal) await
-                      else F.unit
-                    }
+                  debug(s"publishing at index $idx at ${cursor.show}") >> {
+                    if (idx === 0L) head.complete((scope, a)).void
+                    else
+                      bps.publish(ResourceInfo(a, si, scope, idx)).flatMap { await =>
+                        debug(s"done publishing at index $idx at ${cursor.show}, await? $signal") >> {
+                          if (!signal) await >> debug(s"done awaiting at index $idx at ${cursor.show}")
+                          else F.unit
+                        }
+                      }
+                  }
 
                 stream0.zipWithIndex
                   .evalMap { case (a, i) =>
