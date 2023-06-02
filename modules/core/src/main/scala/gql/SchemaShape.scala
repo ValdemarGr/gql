@@ -86,27 +86,22 @@ object SchemaShape {
   type Implementations[F[_]] = Map[String, Map[String, InterfaceImpl[F, ?]]]
 
   final case class DiscoveryState[F[_]](
-      inputs: Map[String, InToplevel[?]],
-      outputs: Map[String, OutToplevel[F, ?]],
+      toplevels: Map[String, Toplevel[F, ?]],
       implementations: Implementations[F],
       positions: Map[String, List[Position[F, ?]]]
-  )
+  ) {
+    lazy val inputs: Map[String, InToplevel[?]] = toplevels.collect { case (k, v: InToplevel[?]) => k -> v }
+
+    lazy val outputs: Map[String, OutToplevel[F, ?]] = toplevels.collect { case (k, v: OutToplevel[F, ?]) => k -> v }
+  }
 
   def discover[F[_]](shape: SchemaShape[F, ?, ?, ?]): DiscoveryState[F] = {
-    def inputNotSeen[G[_], A](
-        tl: InToplevel[?]
+    def toplevelNotSeen[G[_], A](
+        tl: Toplevel[F, ?]
     )(ga: => G[A])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]], M: Monoid[A]): G[A] =
       S.get.flatMap { s =>
-        if (s.inputs.contains(tl.name)) G.pure(M.empty)
-        else S.modify(_.copy(inputs = s.inputs + (tl.name -> tl))) *> ga
-      }
-
-    def outputNotSeen[G[_], A](
-        tl: OutToplevel[F, ?]
-    )(ga: => G[A])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]], M: Monoid[A]): G[A] =
-      S.get.flatMap { s =>
-        if (s.outputs.contains(tl.name)) G.pure(M.empty)
-        else S.modify(_.copy(outputs = s.outputs + (tl.name -> tl))) *> ga
+        if (s.toplevels.contains(tl.name)) G.pure(M.empty)
+        else S.modify(_.copy(toplevels = s.toplevels + (tl.name -> tl))) *> ga
       }
 
     type InterfaceName = String
@@ -133,7 +128,7 @@ object SchemaShape {
         case o: OutArr[?, ?, ?, ?] => goOutput[G](o.of)
         case o: OutOpt[?, ?, ?]    => goOutput[G](o.of)
         case t: OutToplevel[F, ?] =>
-          outputNotSeen(t) {
+          toplevelNotSeen(t) {
             def handleFields(o: ObjectLike[F, ?]): G[Unit] =
               o.abstractFields.traverse_ { case (_, x) =>
                 goOutput[G](x.output.value) >>
@@ -163,7 +158,7 @@ object SchemaShape {
         case InArr(of, _) => goInput[G](of)
         case InOpt(of)    => goInput[G](of)
         case t: InToplevel[?] =>
-          inputNotSeen(t) {
+          toplevelNotSeen(t) {
             t match {
               case Input(_, fields, _) =>
                 fields.entries.traverse_(x => goInput[G](x.input.value))
@@ -180,7 +175,7 @@ object SchemaShape {
     val positionGroups = shape.positions.groupBy(_.directive.name)
 
     (ins, outs).tupled
-      .runS(DiscoveryState(Map.empty, Map.empty, Map.empty, positionGroups))
+      .runS(DiscoveryState(Map.empty, Map.empty, positionGroups))
       .value
   }
 
@@ -221,7 +216,7 @@ object SchemaShape {
           o + Doc.hardLine
       }
 
-    def renderModifierStack(ms: ModifierStack[Toplevel[?]]) =
+    def renderModifierStack[G[_]](ms: ModifierStack[Toplevel[G, ?]]) =
       ms.modifiers.foldLeft(Doc.text(ms.inner.name)) {
         case (accum, Modifier.List)    => accum.tightBracketBy(Doc.char('['), Doc.char(']'))
         case (accum, Modifier.NonNull) => accum + Doc.char('!')
@@ -344,15 +339,12 @@ object SchemaShape {
         )
       )
       // Omit Query
-      val withoutQuery = introspectionDiscovery.copy(outputs = introspectionDiscovery.outputs - "Query")
-      val out = DiscoveryState[F](
-        ds.inputs ++ withoutQuery.inputs,
-        ds.outputs ++ withoutQuery.outputs,
+      val withoutQuery = introspectionDiscovery.copy(toplevels = introspectionDiscovery.toplevels - "Query")
+      DiscoveryState[F](
+        ds.toplevels ++ withoutQuery.toplevels,
         ds.implementations ++ withoutQuery.implementations,
         ds.positions ++ withoutQuery.positions
       )
-      // Omit duplicate types
-      out.copy(inputs = out.inputs -- ds.outputs.keySet)
     }
 
     implicit lazy val __typeKind: Enum[__TypeKind] = enumType[__TypeKind](
@@ -395,7 +387,7 @@ object SchemaShape {
     )
 
     sealed trait TypeInfo extends Product with Serializable {
-      def asToplevel: Option[Toplevel[?]]
+      def asToplevel: Option[Toplevel[F, ?]]
       def next: Option[TypeInfo]
     }
     sealed trait InnerTypeInfo extends TypeInfo {
@@ -403,10 +395,10 @@ object SchemaShape {
     }
     object TypeInfo {
       final case class OutInfo(t: OutToplevel[F, ?]) extends InnerTypeInfo {
-        def asToplevel: Option[Toplevel[?]] = Some(t)
+        def asToplevel: Option[Toplevel[F, ?]] = Some(t)
       }
       final case class InInfo(t: InToplevel[?]) extends InnerTypeInfo {
-        def asToplevel: Option[Toplevel[?]] = Some(t)
+        def asToplevel: Option[Toplevel[F, ?]] = Some(t)
       }
 
       final case class NEModifierStack(modifiers: NonEmptyList[Modifier], inner: InnerTypeInfo) extends TypeInfo {
@@ -575,9 +567,10 @@ object SchemaShape {
       "__Schema",
       "description" -> lift(_ => Option.empty[String]),
       "types" -> lift { _ =>
-        val outs = d.outputs.values.toList.map(TypeInfo.OutInfo(_))
-        val ins = d.inputs.values.toList.map(TypeInfo.InInfo(_))
-        (outs ++ ins): List[TypeInfo]
+        d.toplevels.values.toList.map {
+          case x: OutToplevel[F, ?] => TypeInfo.OutInfo(x)
+          case x: InToplevel[?]     => TypeInfo.InInfo(x)
+        }: List[TypeInfo]
       },
       "queryType" -> lift(_ => TypeInfo.OutInfo(ss.query): TypeInfo),
       "mutationType" -> lift(_ => ss.mutation.map[TypeInfo](TypeInfo.OutInfo(_))),

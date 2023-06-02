@@ -24,8 +24,11 @@ object Modifier {
 }
 
 final case class ModifierStack[+T](modifiers: List[Modifier], inner: T) {
+  def map[T2](f: T => T2): ModifierStack[T2] =
+    ModifierStack(modifiers, f(inner))
+
   def set[T2](t: T2): ModifierStack[T2] =
-    ModifierStack(modifiers, t)
+    map(_ => t)
 
   def push(m: Modifier): ModifierStack[T] =
     ModifierStack(m :: modifiers, inner)

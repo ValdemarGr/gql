@@ -82,9 +82,28 @@ object ArgParsing {
                 val vt: ModifierStack[String] = ModifierStack.fromType(v.tpe)
                 val at = ModifierStack.fromIn(a)
 
-                lazy val prefix = s"Variable '${vn}' was not compatible with argument"
+                def showType(xs: List[Modifier], name: String): String =
+                  ModifierStack(xs, name).show(identity)
 
-                lazy val against = s"argument type `${at.show(_.name)}` and variable type `${vt.show(identity)}`"
+                def showVarType(xs: List[Modifier]): String =
+                  showType(xs, vt.inner)
+
+                def showArgType(xs: List[Modifier]): String =
+                  showType(xs, at.inner.name)
+
+                lazy val prefix =
+                  s"Variable '$$${vn}' of type `${vt.show(identity)}` was not compatible with expected argument type `${at.map(_.name).show(identity)}`"
+
+                def remaining(vs: List[Modifier], as: List[Modifier]): String =
+                  if (vs.size == vt.modifiers.size && as.size == at.modifiers.size) "."
+                  else
+                    s". The remaining type for the variable `${showVarType(vs)}` is not compatible with the remaining type for the argument `${showArgType(as)}`"
+
+                def showModifier(m: Option[Modifier]): String = m match {
+                  case None                   => "no modifiers"
+                  case Some(Modifier.NonNull) => "a non-null modifier"
+                  case Some(Modifier.List)    => "a list modifier"
+                }
 
                 /*
                  * We must verify if the variable may occur here by comparing the type of the variable with the type of the arg
@@ -113,25 +132,27 @@ object ArgParsing {
                     // a! compat v! -> ok
                     case (Modifier.NonNull :: xs, Modifier.NonNull :: ys) => verifyTypeShape(xs, ys)
                     // a! compat ([v] | V) -> fail
-                    case (Modifier.NonNull :: xs, (Modifier.List :: _) | Nil) =>
+                    case (Modifier.NonNull :: _, (Modifier.List :: _) | Nil) =>
                       raise(
-                        s"${prefix}, remaining argument type modifiers were `${at.copy(modifiers = xs).show(_.name)}` when verifying $against",
-                        Nil
+                        s"${prefix}, because the argument expected a not-null (!) modifier, but was given ${showModifier(
+                          varShape.headOption
+                        )}${remaining(varShape, argShape)}",
+                        cs
                       )
                     // ([a] | A) compat v! -> ok
                     case (xs, Modifier.NonNull :: ys) => verifyTypeShape(xs, ys)
                     // [a] compat [v] -> ok
                     case (Modifier.List :: xs, Modifier.List :: ys) => verifyTypeShape(xs, ys)
                     // [a] compat V -> fail
-                    case (xs @ (Modifier.List :: _), Nil) =>
+                    case (Modifier.List :: _, Nil) =>
                       raise(
-                        s"${prefix}, remaining argument type modifiers were `${at.copy(modifiers = xs).show(_.name)}` when verifying $against",
+                        s"${prefix}, because the argumented expected a list modifier ([A]) but no more modifiers were provided${remaining(varShape, argShape)}",
                         cs
                       )
                     // A compat [v] -> fail
-                    case (Nil, Modifier.List :: ys) =>
+                    case (Nil, Modifier.List :: _) =>
                       raise(
-                        s"${prefix}, remaining variable type modifiers were `${vt.copy(modifiers = ys).show(identity)}` when verifying $against",
+                        s"${prefix}, because the argumented expected no more modifiers but was given a list modifier ([A])${remaining(varShape, argShape)}",
                         cs
                       )
                   }
@@ -146,7 +167,7 @@ object ArgParsing {
                       cs
                     )
 
-                verifiedF &> verifiedTypenameF &> parseInnerF
+                verifiedF *> verifiedTypenameF *> parseInnerF
             }
           }
         case (e @ Enum(name, _, _), v) =>

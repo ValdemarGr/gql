@@ -23,13 +23,13 @@ object PlanEnumeration {
   final case class FamilyId(id: Int) extends AnyVal
 
   final case class Family(
-    cost: Double,
-    nodes: Set[NodeId]
+      cost: Double,
+      nodes: Set[NodeId]
   )
 
   final case class Problem(
-    families: Array[Family],
-    arcs: Map[NodeId, Set[NodeId]]
+      families: Array[Family],
+      arcs: Map[NodeId, Set[NodeId]]
   ) {
     val all: Array[NodeId] = families.flatMap(_.nodes.toArray)
 
@@ -50,13 +50,13 @@ object PlanEnumeration {
   }
 
   final case class Batch(
-    nodes: Set[NodeId],
-    end: EndTime
+      nodes: Set[NodeId],
+      end: EndTime
   )
 
   final case class EnumerationState(
-    scheduled: Map[NodeId, Batch],
-    forbidden: Set[Set[NodeId]]
+      scheduled: Map[NodeId, Batch],
+      forbidden: Set[Set[NodeId]]
   )
 
   def enumerateAll(problem: Problem): Stream[Pure, Map[NodeId, Batch]] = {
