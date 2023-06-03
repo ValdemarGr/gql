@@ -23,6 +23,9 @@ import gql.parser.Const
 import gql.parser.{Value => V}
 import gql.std.FreeApply
 
+/** A GraphQL argument declaration with an optional default value. The argument references an input type, which is suspended in Eval for
+  * recursion.
+  */
 final case class ArgValue[A](
     name: String,
     input: Eval[In[A]],
@@ -34,16 +37,33 @@ final case class ArgValue[A](
   def default(value: V[Const, Unit]) = copy(defaultValue = Some(value))
 }
 
+/** A GraphQL argument value suppled in respect to a declared [[ArgValue]], usually provided by a calling client.
+  */
 final case class ArgParam[A](
     defaulted: Boolean,
     value: A
 )
 
-final case class DecodedArgValue[A, B](
+/** A combination of an argument declaration [[ArgParam]] and a decoder function for [[ArgParam]]. This structure is more specialized than
+  * just decoding with [[Arg]], since you will have access to field specific information such as if the argument was provided explicitly or
+  * the default was used.
+  *
+  * The trivial implementation of an [[ArgDecoder]] given an [[ArgValue]]:
+  * {{{
+  *   val av: ArgValue[A] = ???
+  *   ArgDecoder[A, A](av, _.value.asRight)
+  * }}}
+  */
+final case class ArgDecoder[A, B](
     av: ArgValue[A],
     decode: ArgParam[A] => Either[String, B]
 )
 
+/** A small free algebra for combining arguments and decoding them. [[ArgDecoder]] can trivially be lifted into [[Arg]] with loss of
+  * field-level information.
+  *
+  * Note that [[Arg]] must be non-empty, and therefore it does not form an [[cats.Applicative]], but instead it forms [[cats.Apply]].
+  */
 final case class Arg[+A](impl: FreeApply[Arg.Impl, ValidatedNec[String, A]]) {
   def emap[B](f: A => Either[String, B]): Arg[B] =
     Arg(impl.map(_.andThen(f(_).toValidatedNec)))
@@ -52,9 +72,11 @@ final case class Arg[+A](impl: FreeApply[Arg.Impl, ValidatedNec[String, A]]) {
 }
 
 object Arg {
-  type Impl[A] = DecodedArgValue[?, A]
+  // We don't care where we came from, only that we can decode it.
+  type Impl[A] = ArgDecoder[?, A]
+
   def makeFrom[A, B](av: ArgValue[A])(f: ArgParam[A] => Either[String, B]): Arg[B] = {
-    val fa: Impl[B] = DecodedArgValue[A, B](av, f)
+    val fa: Impl[B] = ArgDecoder[A, B](av, f)
     val lifted: FreeApply[Impl, B] = FreeApply.lift(fa)
     val mapped: FreeApply[Impl, ValidatedNec[String, B]] = lifted.map(_.validNec[String])
     Arg(mapped)

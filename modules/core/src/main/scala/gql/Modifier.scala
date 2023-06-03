@@ -23,11 +23,13 @@ object Modifier {
   case object NonNull extends Modifier
 }
 
+/** A very convinient algebra for transforming GraphQL types with modifiers. It can take a GraphQL type to a Scala type and back.
+  */
 final case class ModifierStack[+T](modifiers: List[Modifier], inner: T) {
-  def map[T2](f: T => T2): ModifierStack[T2] =
+  def map[B](f: T => B): ModifierStack[B] =
     ModifierStack(modifiers, f(inner))
 
-  def set[T2](t: T2): ModifierStack[T2] =
+  def set[B](t: B): ModifierStack[B] =
     map(_ => t)
 
   def push(m: Modifier): ModifierStack[T] =
@@ -89,8 +91,13 @@ object InverseModifier {
   case object Optional extends InverseModifier
 }
 
+/** The Scala counterpart to [[ModifierStack]].
+  *
+  * Note that they are not equivalent, since [[ModifierStack]] explicitly declares [[NotNull]], while [[InverseModifierStack]] explicitly
+  * declares the opposite; [[Optional]].
+  */
 final case class InverseModifierStack[+T](modifiers: List[InverseModifier], inner: T) {
-  def set[T2](t: T2): InverseModifierStack[T2] =
+  def set[B](t: B): InverseModifierStack[B] =
     InverseModifierStack(modifiers, t)
 
   def push(m: InverseModifier): InverseModifierStack[T] =

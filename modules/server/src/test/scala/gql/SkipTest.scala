@@ -25,10 +25,9 @@ import gql.dsl._
 class SkipTest extends CatsEffectSuite {
   val effectState = IO.ref(Option.empty[Int]).unsafeRunSync()
 
-  lazy val schemaShape = SchemaShape.make[IO](
+  lazy val schemaShape = SchemaShape.unit[IO](
     builder[IO, Unit] { b =>
-      b.tpe(
-        "Query",
+      b.fields(
         "num" -> b(
           _.evalMap { _ =>
             effectState.get.flatMap {

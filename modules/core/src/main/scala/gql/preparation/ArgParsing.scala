@@ -19,12 +19,7 @@ import cats._
 import cats.data._
 import cats.implicits._
 import cats.mtl._
-import gql.Arg
-import gql.ArgParam
-import gql.Cursor
-import gql.DecodedArgValue
-import gql.Modifier
-import gql.ModifierStack
+import gql._
 import gql.ast._
 import gql.parser.AnyValue
 import gql.parser.NonVar
@@ -218,7 +213,7 @@ object ArgParsing {
 
       val fv = arg.impl.foldMap[F, ValidatedNec[String, A]](new (Arg.Impl ~> F) {
         def apply[A](fa: Arg.Impl[A]): F[A] = fa match {
-          case fa: DecodedArgValue[a, A] =>
+          case fa: ArgDecoder[a, A] =>
             ambientField(fa.av.name) {
               def compileWith(x: V[AnyValue, List[C]], default: Boolean) =
                 decodeIn[a](fa.av.input.value, x, ambigiousEnum)

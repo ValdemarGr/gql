@@ -19,11 +19,15 @@ import gql.parser.{QueryAst => QA}
 import gql.preparation.MergedFieldInfo
 import gql.parser.QueryAst
 
+/** A [[Directive]] takes an argument A and performs some context specific ast transformation.
+  */
 final case class Directive[A](
     name: String,
     arg: DirectiveArg[A] = DirectiveArg.Empty
 )
 
+/** Consider taking a look at the skip and include directives as an example.
+  */
 object Directive {
   val skipDirective = Directive("skip", DirectiveArg.WithArg(gql.dsl.arg[Boolean]("if")))
 

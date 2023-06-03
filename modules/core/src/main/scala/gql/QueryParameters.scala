@@ -17,6 +17,8 @@ package gql
 
 import io.circe._
 
+/** The neccessary parameters to execute a GraphQL query. [[QueryParameters]] is usually provided by a calling client.
+  */
 final case class QueryParameters(
     query: String,
     variables: Option[Map[String, Json]],

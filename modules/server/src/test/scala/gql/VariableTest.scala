@@ -27,12 +27,8 @@ class VariableTest extends CatsEffectSuite {
     .eimap[CustomScalar](x => Right(CustomScalar(x)))(_.value)
     .rename("CustomScalar")
 
-  lazy val schemaShape = SchemaShape.make[IO](
-    tpe[IO, Unit](
-      "Query",
-      "getMeAString" -> lift(arg[CustomScalar]("cs"))((cs, _) => cs)
-    )
-  )
+  lazy val schemaShape = SchemaShape
+    .unit[IO](fields("getMeAString" -> lift(arg[CustomScalar]("cs"))((cs, _) => cs)))
 
   lazy val schema = Schema.simple(schemaShape).unsafeRunSync()
 

@@ -23,6 +23,8 @@ import cats.data._
 import scala.reflect.ClassTag
 import gql.parser.{Value => V, Const, QueryAst => QA}
 
+/** A collection of smart-constructors and syntactic extensions for building GraphQL schemas.
+  */
 object dsl {
   type Fields[F[_], -A] = NonEmptyList[(String, Field[F, A, ?])]
 
@@ -217,17 +219,6 @@ object dsl {
     def eff[T](resolver: I => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
       Field(Resolver.liftF(resolver), Eval.later(tpe))
   }
-
-  // final class ArgBuilder[A](private val name: String) extends AnyVal {
-  //   def full[B](g: ArgValue[A] => ArgValue[A])(f: ArgParam[A] => Either[String, B])(implicit in: => In[A]): Arg[B] =
-  //     Arg.makeFrom[A, B](g(ArgValue(name, Eval.later(in), None, None)))(f)
-
-  //   def apply(f: ArgValue[A] => ArgValue[A])(implicit in: => In[A]): Arg[A] =
-  //     full(f)(_.value.asRight)(in)
-  // }
-
-  // def buildArg[A](name: String): ArgBuilder[A] =
-  //   new ArgBuilder[A](name)
 
   final class PartiallyAppliedLift[F[_], I](private val dummy: Boolean = false) extends AnyVal {
     def apply[T, A](arg: Arg[A])(resolver: (A, I) => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =

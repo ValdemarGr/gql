@@ -103,9 +103,8 @@ class ValidationTest extends CatsEffectSuite {
     "four" -> lift(arg[Int]("x")) { case _ => "heya" }
   ).subtypeOf[Catch]
 
-  lazy val schemaShape: SchemaShape[IO, Unit, Unit, Unit] = SchemaShape.make[IO](
-    tpe[IO, Unit](
-      "Query",
+  lazy val schemaShape: SchemaShape[IO, Unit, Unit, Unit] = SchemaShape.unit[IO](
+    fields(
       "badStructure" -> lift(_ => BadStructure()),
       "duplicateUnion" -> lift(_ => (MutuallyRecursive1(42): MutRecUnion)),
       "duplicateInterface" -> lift(_ => (MutuallyRecursive1(42): MutRecInterface)),

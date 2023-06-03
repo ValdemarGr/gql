@@ -20,10 +20,15 @@ import cats.data._
 import cats.implicits._
 import io.circe.syntax._
 
+/** The result of executing a GraphQL query. Errors thrown during evaluation can be handled with a partial function.
+  */
 final case class QueryResult(
     data: JsonObject,
     errors: Chain[QueryResult.Error]
-)
+) {
+  def handleErrors(pf: PartialFunction[Throwable, String]): QueryResult =
+    copy(errors = errors.map(_.handle(pf)))
+}
 
 object QueryResult {
   final case class Error(
@@ -31,6 +36,12 @@ object QueryResult {
       path: Chain[Json]
   ) {
     val message = error.toOption.getOrElse("internal error")
+
+    def handle(pf: PartialFunction[Throwable, String]): Error =
+      copy(error = error.leftFlatMap {
+        case pf(msg) => Right(msg)
+        case err     => Left(err)
+      })
   }
 
   object Error {
@@ -41,6 +52,7 @@ object QueryResult {
       ).collect { case (k, Some(v)) => k -> v }.asJsonObject
     }
   }
+
   implicit val encoder: Encoder.AsObject[QueryResult] = Encoder.AsObject.instance[QueryResult] { r =>
     Map(
       "data" -> Some(r.data).filter(_.nonEmpty).map(_.asJson),

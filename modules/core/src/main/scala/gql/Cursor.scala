@@ -19,6 +19,8 @@ import cats.data._
 import cats.implicits._
 import cats._
 
+/** One arc in a GraphQL path.
+  */
 sealed trait GraphArc {
   def asString: String
 }
@@ -31,6 +33,8 @@ object GraphArc {
   }
 }
 
+/** A collection of GraphQL arcs wraped up with an associated algebra. Usually used for reporting where an error occured.
+  */
 final case class Cursor(path: Chain[GraphArc]) {
   def add(next: GraphArc): Cursor = Cursor(path :+ next)
 

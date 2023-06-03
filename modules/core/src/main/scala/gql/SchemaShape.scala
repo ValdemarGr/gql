@@ -24,6 +24,9 @@ import org.typelevel.paiges.Doc
 import gql.parser.{Value => V, AnyValue}
 import gql.util.SchemaUtil
 
+/** The underlying graph that compiles into a GraphQL schema. Provides a plethora of methods to derive information, perform validation,
+  * render, introspect and generate stub implementations.
+  */
 final case class SchemaShape[F[_], Q, M, S](
     query: Type[F, Q],
     mutation: Option[Type[F, M]] = Option.empty[Type[F, Unit]],
@@ -57,16 +60,30 @@ final case class SchemaShape[F[_], Q, M, S](
 object SchemaShape {
   final class PartiallyAppliedSchemaShape[F[_]](val dummy: Boolean = false) extends AnyVal {
     def apply[Q, M, S](
-        query: Type[F, Q],
-        mutation: Option[Type[F, M]] = Option.empty[Type[F, Unit]],
-        subscription: Option[Type[F, S]] = Option.empty[Type[F, Unit]],
+        query: NonEmptyList[(String, Field[F, Q, ?])],
+        mutation: List[(String, Field[F, M, ?])] = Nil,
+        subscription: List[(String, Field[F, S, ?])] = Nil,
         outputTypes: List[OutToplevel[F, ?]] = Nil,
         inputTypes: List[InToplevel[?]] = Nil
     ): SchemaShape[F, Q, M, S] =
-      SchemaShape(query, mutation, subscription, outputTypes, inputTypes)
+      SchemaShape(
+        gql.dsl.tpe("Query", query.head, query.tail: _*),
+        mutation.toNel.map(x => gql.dsl.tpe("Mutation", x.head, x.tail: _*)),
+        subscription.toNel.map(x => gql.dsl.tpe("Subscription", x.head, x.tail: _*)),
+        outputTypes,
+        inputTypes
+      )
   }
 
   def make[F[_]] = new PartiallyAppliedSchemaShape[F]
+
+  def unit[F[_]](
+      query: NonEmptyList[(String, Field[F, Unit, ?])],
+      mutation: List[(String, Field[F, Unit, ?])] = Nil,
+      subscription: List[(String, Field[F, Unit, ?])] = Nil,
+      outputTypes: List[OutToplevel[F, ?]] = Nil,
+      inputTypes: List[InToplevel[?]] = Nil
+  ) = make[F](query, mutation, subscription, outputTypes, inputTypes)
 
   sealed trait InterfaceImpl[+F[_], A]
   object InterfaceImpl {
@@ -329,15 +346,7 @@ object SchemaShape {
     // We do a little lazy evaluation trick to include the introspection schema in itself
     lazy val d = {
       val ds = ss.discover
-      val introspectionDiscovery = discover[F](
-        SchemaShape.make[F](
-          tpe[F, Unit](
-            "Query",
-            rootFields.head,
-            rootFields.tail: _*
-          )
-        )
-      )
+      val introspectionDiscovery = discover[F](SchemaShape.make[F](rootFields))
       // Omit Query
       val withoutQuery = introspectionDiscovery.copy(toplevels = introspectionDiscovery.toplevels - "Query")
       DiscoveryState[F](

@@ -23,6 +23,8 @@ import gql.resolver._
 import java.util.UUID
 import gql.parser.{Value => V, Const}
 
+/** A tree-like structure representing a GraphQL schema, akin to most schema builders.
+  */
 object ast extends AstImplicits.Implicits {
   sealed trait Out[+F[_], A]
 
@@ -157,7 +159,6 @@ object ast extends AstImplicits.Implicits {
       description: Option[String] = None
   ) extends OutToplevel[fs2.Pure, A]
       with InToplevel[A] {
-
     def document(description: String): Enum[A] = copy(description = Some(description))
 
     lazy val kv = mappings.map { case (k, v) => k -> v.value }
@@ -200,6 +201,7 @@ object ast extends AstImplicits.Implicits {
       compose[F2, I2](Resolver.lift[F2, I2](f))
   }
 
+  // Field, but without any implementation
   final case class AbstractField[+F[_], T](
       arg: Option[Arg[?]],
       output: Eval[Out[F, T]],
@@ -330,23 +332,15 @@ object AstImplicits {
     implicit def gqlInForVector[A](implicit tpe: In[A]): In[Vector[A]] = InArr[A, Vector[A]](tpe, _.toVector.asRight)
     implicit def gqlInForSet[A](implicit tpe: In[A]): In[Set[A]] = InArr[A, Set[A]](tpe, _.toSet.asRight)
     implicit def gqlInForNonEmptyList[A](implicit tpe: In[A]): In[NonEmptyList[A]] =
-      InArr[A, NonEmptyList[A]](tpe, _.toList.toNel.toRight("empty array"))
+      InArr[A, NonEmptyList[A]](tpe, _.toList.toNel.toRight("expected non-empty array, but array was empty"))
     implicit def gqlInForNonEmptyVector[A](implicit tpe: In[A]): In[NonEmptyVector[A]] =
-      InArr[A, NonEmptyVector[A]](tpe, _.toVector.toNev.toRight("empty array"))
+      InArr[A, NonEmptyVector[A]](tpe, _.toVector.toNev.toRight("expected non-empty array, but array was empty"))
     implicit def gqlInForChain[A](implicit tpe: In[A]): In[Chain[A]] =
       InArr[A, Chain[A]](tpe, xs => Chain.fromSeq(xs).asRight)
     implicit def gqlInForNonEmptyChain[A](implicit tpe: In[A]): In[NonEmptyChain[A]] =
-      InArr[A, NonEmptyChain[A]](tpe, xs => NonEmptyChain.fromSeq(xs).toRight("empty array"))
+      InArr[A, NonEmptyChain[A]](tpe, xs => NonEmptyChain.fromSeq(xs).toRight("expected non-empty array, but array was empty"))
 
-    implicit def gqlOutArrForSeqLike[F[_], A, G[x] <: Seq[x]](implicit tpe: Out[F, A]): OutArr[F, A, G[A], A] =
-      OutArr(tpe, _.toList, Resolver.id)
-    implicit def gqlOutArrForNel[F[_], A](implicit tpe: Out[F, A]): OutArr[F, A, NonEmptyList[A], A] =
-      OutArr(tpe, _.toList, Resolver.id)
-    implicit def gqlOutArrForNev[F[_], A](implicit tpe: Out[F, A]): OutArr[F, A, NonEmptyVector[A], A] =
-      OutArr(tpe, _.toList, Resolver.id)
-    implicit def gqlOutArrForNec[F[_], A](implicit tpe: Out[F, A]): OutArr[F, A, NonEmptyChain[A], A] =
-      OutArr(tpe, _.toList, Resolver.id)
-    implicit def gqlOutArrForChain[F[_], A](implicit tpe: Out[F, A]): OutArr[F, A, Chain[A], A] =
+    implicit def gqlOutArrForTraversable[F[_], A, G[_]: Traverse](implicit tpe: Out[F, A]): OutArr[F, A, G[A], A] =
       OutArr(tpe, _.toList, Resolver.id)
   }
 }

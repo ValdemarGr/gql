@@ -201,9 +201,8 @@ object GenTest {
 
   def schema: IO[Schema[IO, Unit, Unit, Unit]] = Schema.simple(
     SchemaShape
-      .make[IO](
-        tpe[IO, Unit](
-          "Query",
+      .unit[IO](
+        fields(
           "dog" -> lift(_ => dogDatabase("Colt")),
           "findDog" -> lift(arg[Option[FindDogInput]]("searchBy")) { case (x, _) =>
             x.flatMap(y => dogDatabase.get(y.name.getOrElse("Colt")))

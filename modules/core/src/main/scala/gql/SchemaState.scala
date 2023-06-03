@@ -17,6 +17,8 @@ package gql
 
 import gql.resolver.Step.BatchKey
 
+/** A structure to accumulate information for building stateful schemas. Needed to build batch functions and directives.
+  */
 final case class SchemaState[F[_]](
     nextId: Int,
     batchFunctions: Map[BatchKey[?, ?], SchemaState.BatchFunction[F, ?, ?]],
