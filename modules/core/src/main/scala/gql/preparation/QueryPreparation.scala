@@ -129,8 +129,8 @@ object QueryPreparation {
             val left = rec[i, a](alg.left, "compose-left")
             val right = rec[a, o](alg.right, "compose-right")
             (left, right).parMapN((l, r) => PreparedStep.Compose[G, i, a, o](l, r))
-          case _: Step.Alg.EmbedEffect[?, i]   => ask.map(PreparedStep.EmbedEffect[G, i](_))
-          case alg: Step.Alg.EmbedStream[?, i] => ask.map(PreparedStep.EmbedStream[G, i](alg.signal, _))
+          case alg: Step.Alg.Effect[?, i, o]   => ask.map(PreparedStep.Effect[G, i, o](alg.f, _))
+          case alg: Step.Alg.Stream[?, i, o] => ask.map(PreparedStep.Stream[G, i, o](alg.f, alg.signal, _))
           case alg: Step.Alg.Choose[?, a, b, c, d] =>
             val left = rec[a, c](alg.fac, "choice-left")
             val right = rec[b, d](alg.fab, "choice-right")

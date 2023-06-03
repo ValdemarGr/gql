@@ -368,12 +368,12 @@ class InterpreterImpl[F[_]](
 
     step match {
       case Lift(f) => runNext(inputs.map(_.map(f)))
-      case alg: EmbedEffect[F @unchecked, i] =>
+      case alg: Effect[F, ?, o] =>
         val cursor = alg.stableUniqueEdgeName
         inputs
           .flatTraverse { id =>
             val runF = attemptTimed(cursor, e => EvalFailure.EffectResolution(id.node.cursor, Left(e))) {
-              id.sequence[F, i]
+              id.traverse[F, o](alg.f)
             }
 
             runF.map(Chain.fromOption(_))
@@ -393,7 +393,7 @@ class InterpreterImpl[F[_]](
       case alg: Compose[F, ?, a, ?] =>
         val contR: StepCont[F, a, O] = StepCont.Continue[F, a, C, O](alg.right, cont)
         runStep[I, a, O](inputs, alg.left, contR)
-      case alg: EmbedStream[F @unchecked, i] =>
+      case alg: Stream[F @unchecked, i, o] =>
         inputs.flatTraverse { id =>
           // We modify the cont for the next stream emission
           // We need to get rid of the skips since they are a part of THIS evaluation, not the next
@@ -405,21 +405,16 @@ class InterpreterImpl[F[_]](
           val runF =
             attemptTimed(alg.stableUniqueEdgeName, e => EvalFailure.StreamHeadResolution(id.node.cursor, Left(e))) {
               id
-                .traverse { (i: fs2.Stream[F, i]) =>
+                .map(alg.f)
+                .traverse { (i: fs2.Stream[F, o]) =>
                   ss
                     .acquireAwait(
-                      i.attempt.map { i =>
-                        Interpreter.StreamingData(
-                          id.index,
-                          ridded,
-                          i
-                        )
-                      },
+                      i.attempt.map(Interpreter.StreamingData(id.index, ridded, _)),
                       id.node.scope,
                       signal = alg.signal,
                       cursor = id.node.cursor
                     )
-                    .map { case (s, sd) => sd.value.map { case i: i @unchecked => (i, s) } }
+                    .map { case (s, sd) => sd.value.map { case o: o => (o, s) } }
                     .rethrow
                 }
             }

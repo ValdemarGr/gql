@@ -96,12 +96,12 @@ object Analyzer {
           case Compose(l, r)                       => analyzeStep[G](l) *> analyzeStep[G](r)
           case alg: Choose[G, ?, ?, ?, ?]          => goParallel(alg.fac, alg.fbc)
           case alg: First[G, ?, ?, ?]              => analyzeStep[G](alg.step)
-          case Batch(_, _) | EmbedEffect(_) | EmbedStream(_, _) =>
+          case Batch(_, _) | Effect(_, _) | Stream(_, _, _) =>
             val name = step match {
-              case Batch(id, _)           => s"batch_${id.id}"
-              case EmbedEffect(cursor)    => cursor.asString
-              case EmbedStream(_, cursor) => cursor.asString
-              case _                      => ???
+              case Batch(id, _)         => s"batch_${id.id}"
+              case Effect(_, cursor)    => cursor.asString
+              case Stream(_, _, cursor) => cursor.asString
+              case _                    => ???
             }
 
             val costF = stats

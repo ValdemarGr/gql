@@ -27,10 +27,16 @@ sealed trait PreparedField[F[_], A] extends Product with Serializable
 sealed trait PreparedStep[F[_], -I, +O] extends Product with Serializable
 object PreparedStep {
   final case class Lift[F[_], I, O](f: I => O) extends AnyRef with PreparedStep[F, I, O]
-  final case class EmbedEffect[F[_], I](stableUniqueEdgeName: UniqueEdgeCursor) extends AnyRef with PreparedStep[F, F[I], I]
-  final case class EmbedStream[F[_], I](signal: Boolean, stableUniqueEdgeName: UniqueEdgeCursor)
-      extends AnyRef
-      with PreparedStep[F, fs2.Stream[F, I], I]
+  final case class Effect[F[_], I, O](
+    f: I => F[O],
+    stableUniqueEdgeName: UniqueEdgeCursor
+  ) extends AnyRef with PreparedStep[F, I, O]
+  final case class Stream[F[_], I, O](
+    f: I => fs2.Stream[F, O],
+    signal: Boolean,
+    stableUniqueEdgeName: UniqueEdgeCursor
+  ) extends AnyRef
+      with PreparedStep[F, I, O]
   final case class EmbedError[F[_], I]() extends AnyRef with PreparedStep[F, Ior[String, I], I]
   final case class Compose[F[_], I, A, O](left: PreparedStep[F, I, A], right: PreparedStep[F, A, O])
       extends AnyRef

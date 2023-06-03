@@ -15,6 +15,8 @@
  */
 package gql.resolver
 
+import cats._
+import cats.implicits._
 import gql._
 import cats.data._
 
@@ -24,12 +26,13 @@ object Step {
   object Alg {
     final case class Lift[I, O](f: I => O) extends AnyRef with Step[Nothing, I, O]
 
-    final case class EmbedEffect[F[_], I]() extends AnyRef with Step[F, F[I], I]
+    final case class Effect[F[_], I, O](f: I => F[O]) extends AnyRef with Step[F, I, O]
 
-    final case class EmbedStream[F[_], I](
+    final case class Stream[F[_], I, O](
+        f: I => fs2.Stream[F, O],
         signal: Boolean
     ) extends AnyRef
-        with Step[F, fs2.Stream[F, I], I]
+        with Step[F, I, O]
 
     final case class EmbedError[I]() extends AnyRef with Step[Nothing, Ior[String, I], I]
 
@@ -37,7 +40,12 @@ object Step {
 
     final case class Compose[F[_], I, A, O](left: Step[F, I, A], right: Step[F, A, O]) extends Step[F, I, O]
 
-    final case class Choose[F[_], A, B, C, D](fac: Step[F, A, C], fab: Step[F, B, D]) extends Step[F, Either[A, B], Either[C, D]]
+    final case class Choose[F[_], A, B, C, D](
+        fac: Step[F, A, C],
+        fab: Step[F, B, D]
+    ) extends Step[F, Either[A, B], Either[C, D]]
+
+    // final case class Parallel[F[_], A, B, C]()
 
     final case class GetMeta[I]() extends Step[Nothing, I, FieldMeta]
 
@@ -49,14 +57,14 @@ object Step {
   def lift[F[_], I, O](f: I => O): Step[F, I, O] =
     Alg.Lift(f)
 
-  def embedEffect[F[_], I]: Step[F, F[I], I] =
-    Alg.EmbedEffect()
+  def embedEffect[F[_], I]: Step[F, F[I], I] = ???
+  // Alg.EmbedEffect()
 
   def embedError[F[_], I]: Step[F, Ior[String, I], I] =
     Alg.EmbedError()
 
-  def embedStreamFull[F[_], I, O](signal: Boolean): Step[F, fs2.Stream[F, I], I] =
-    Alg.EmbedStream(signal)
+  def embedStreamFull[F[_], I, O](signal: Boolean): Step[F, fs2.Stream[F, I], I] = ???
+  // Alg.EmbedStream(signal)
 
   def embedStream[F[_], I, O]: Step[F, fs2.Stream[F, I], I] =
     embedStreamFull(signal = true)
@@ -75,6 +83,45 @@ object Step {
 
   def first[F[_], A, B, C](step: Step[F, A, B]): Step[F, (A, C), (B, C)] =
     Alg.First(step)
+
+  // Attempt attempt
+  // def attempt[F[_], A, B](step: Step[F, A, B])(implicit F: ApplicativeThrow[F]): Step[F, A, Either[Throwable, B]] = {
+  //   def gen[F[_], A, B](step: Step[F, A, B]): Step[F, A, B] = step
+
+  //   step match {
+  //     case Alg.Lift(f)              => Alg.Lift(f.andThen(_.asRight[Throwable]))
+  //     case alg: Alg.Effect[F, A, B] => Alg.Effect[F, A, Either[Throwable, B]](alg.f.andThen(_.attempt))
+  //     case alg: Alg.Stream[F, A, B] => Alg.Stream[F, A, Either[Throwable, B]](alg.f.andThen(_.attempt), alg.signal)
+  //     case _: Alg.EmbedError[a]     => Alg.Compose(Alg.EmbedError[a](), Alg.Lift((b: B) => b.asRight[Throwable]))
+  //     case alg: Alg.Argument[A, B]  => Alg.Argument(alg.arg.map(_.asRight[Throwable]))
+  //     case alg: Alg.Compose[F, a, c, b] =>
+  //       attempt(alg.left).andThen(
+  //         gen(
+  //           Alg.Choose[F, Throwable, c, Throwable, Either[Throwable, b]](
+  //             Alg.Lift((t: Throwable) => t),
+  //             attempt(alg.right)
+  //           )
+  //         ).map(_.flatten)
+  //       )
+  //     case alg: Alg.Choose[F, a, b, c, d] =>
+  //       gen {
+  //         Alg.Choose[F, a, b, Either[Throwable, c], Either[Throwable, d]](
+  //           attempt(alg.fac),
+  //           attempt(alg.fab)
+  //         )
+  //       }.map {
+  //         case Left(Left(t))   => Left(t)
+  //         case Right(Left(t))  => Left(t)
+  //         case Right(Right(d)) => Right(Right(d))
+  //         case Left(Right(c))  => Right(Left(c))
+  //       }
+  //     case _: Alg.GetMeta[A] => (Alg.GetMeta[A](): Step[Nothing, A, FieldMeta]).map(_.asRight[Throwable])
+  //     case alg: Alg.First[F, a, b, c] =>
+  //       gen(Alg.First[F, a, Either[Throwable, b], c](attempt(alg.step))).map{ case (e, c) => e.tupleRight(c) }
+  //     case alg: Alg.Batch[F, k, v] =>
+
+  //   }
+  // }
 
   final case class BatchKey[K, V](id: Int) extends AnyVal
 

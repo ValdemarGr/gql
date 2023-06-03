@@ -19,6 +19,17 @@ import cats.data._
 import cats._
 import gql._
 
+/**
+  * Resolver is one of the core abstractions of gql.
+  * The resolver class contains a collection of methods to aid comosition.
+  *
+  * A Resolver forms an [[cats.arrow.Arrow]]; it can lift a function I => O.
+  * Resolver also forms [[cats.arrow.Choice]] which allows conditional branching.
+  * Furthermore Resolver also forms two [[cats.Applicative]] instances, one for sequential composition and one for parallel.
+  *
+  * Some methods are only available resolvers that have a certain shape.
+  * Consider taking a look at the companion object for more information.
+  */
 final class Resolver[+F[_], -I, +O](private[gql] val underlying: Step[F, I, O]) {
   def andThen[F2[x] >: F[x], O2](that: Resolver[F2, O, O2]): Resolver[F2, I, O2] =
     new Resolver(Step.compose(underlying, that.underlying))
@@ -55,6 +66,9 @@ final class Resolver[+F[_], -I, +O](private[gql] val underlying: Step[F, I, O]) 
 
   def sequentialStreamMap[F2[x] >: F[x], O2](f: O => fs2.Stream[F2, O2]): Resolver[F2, I, O2] =
     this.map(f).embedSequentialStream
+
+  // def attempt[F2[x] >: F[x], O2]: Resolver[F2, I, Either[Throwable, O2]] =
+    
 }
 
 object Resolver extends ResolverInstances {

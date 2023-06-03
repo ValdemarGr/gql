@@ -100,9 +100,9 @@ object DebugPrinter {
     def preparedStepDoced[F[_]]: Doced[PreparedStep[F, ?, ?]] = { pc =>
       import PreparedStep._
       pc match {
-        case Lift(_)        => Doc.text("Lift(...)")
-        case EmbedEffect(_) => Doc.text("EmbedEffect")
-        case EmbedStream(signal, _) =>
+        case Lift(_)     => Doc.text("Lift(...)")
+        case Effect(_, _) => Doc.text("EmbedEffect")
+        case Stream(_, signal, _) =>
           record("EmbedStream", kvs("signal" -> Doc.text(signal.toString())))
         case EmbedError() => Doc.text("EmbedError")
         case Compose(left, right) =>
