@@ -93,8 +93,8 @@ object InverseModifier {
 
 /** The Scala counterpart to [[ModifierStack]].
   *
-  * Note that they are not equivalent, since [[ModifierStack]] explicitly declares [[NotNull]], while [[InverseModifierStack]] explicitly
-  * declares the opposite; [[Optional]].
+  * Note that they are not equivalent, since [[ModifierStack]] explicitly declares [[Modifier.NonNull]], while [[InverseModifierStack]] explicitly
+  * declares the opposite; [[InverseModifier.Optional]].
   */
 final case class InverseModifierStack[+T](modifiers: List[InverseModifier], inner: T) {
   def set[B](t: B): InverseModifierStack[B] =
