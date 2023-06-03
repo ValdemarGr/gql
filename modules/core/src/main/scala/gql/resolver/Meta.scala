@@ -20,11 +20,17 @@ import gql.Cursor
 import gql.preparation.VariableMap
 import gql.parser.AnyValue
 
+/**
+  * Meta information about the current query.
+  */
 final case class QueryMeta(
     cursor: Cursor,
     variables: VariableMap[Unit]
 )
 
+/**
+  * A more specialized version of [[QueryMeta]] that also carries field specific information.
+  */
 final case class FieldMeta(
     queryMeta: QueryMeta,
     args: Option[P.Arguments[Unit, AnyValue]],
