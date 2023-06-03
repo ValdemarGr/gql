@@ -23,7 +23,7 @@ import munit.CatsEffectSuite
 final case class CustomScalar(value: String)
 
 class VariableTest extends CatsEffectSuite {
-  implicit val customScalar = stringScalar
+  implicit val customScalar: Scalar[CustomScalar] = stringScalar
     .eimap[CustomScalar](x => Right(CustomScalar(x)))(_.value)
     .rename("CustomScalar")
 
