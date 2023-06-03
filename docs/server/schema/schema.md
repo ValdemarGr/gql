@@ -14,9 +14,8 @@ import gql._
 import gql.ast._
 import gql.dsl._
 
-def ss = SchemaShape.make[IO](
-  tpe[IO, Unit](
-    "Query",
+def ss = SchemaShape.unit[IO](
+  fields(
     "4hello" -> lift(_ => "world")
   )
 )
@@ -59,12 +58,7 @@ def cyclicType(i: Int): Type[IO, A] = {
 
 implicit lazy val cyclic: Type[IO, A] = cyclicType(0)
 
-def recursiveSchema = SchemaShape.make[IO](
-  tpe[IO, Unit](
-    "Query",
-    "a" -> lift(_ => A())
-  )
-)
+def recursiveSchema = SchemaShape.unit[IO](fields("a" -> lift(_ => A())))
 
 recursiveSchema.validate.toList.mkString("\n")
 ```

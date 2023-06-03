@@ -395,9 +395,9 @@ def query = """
   }
 """
 
-def schema = SchemaShape.make[IO](
-  query = tpe[IO, Unit]("Query", "ping" -> lift(_ => "pong")),
-  subscription = Some(tpe[IO, Unit]("Subscription", "streamed" -> lift(_ => Streamed(0))))
+def schema = SchemaShape.unit[IO](
+  fields("ping" -> lift(_ => "pong")),
+  subscription = Some(fields("streamed" -> lift(_ => Streamed(0))))
 )
 
 Schema.simple(schema)

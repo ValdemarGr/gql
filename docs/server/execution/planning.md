@@ -108,10 +108,9 @@ val schem = Schema.stateful{
         )
       }
 
-      SchemaShape.make[IO](
-        query = builder[IO, Unit]{ b =>
-          b.tpe(
-            "Query",
+      SchemaShape.unit[IO](
+        builder[IO, Unit]{ b =>
+          b.fields(
             "child" -> b.from(wait(42) as Child),
             "b2" -> b.from(wait(25) andThen b2.optional map (_.get))
           )

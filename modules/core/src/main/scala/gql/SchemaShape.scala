@@ -61,15 +61,15 @@ object SchemaShape {
   final class PartiallyAppliedSchemaShape[F[_]](val dummy: Boolean = false) extends AnyVal {
     def apply[Q, M, S](
         query: NonEmptyList[(String, Field[F, Q, ?])],
-        mutation: List[(String, Field[F, M, ?])] = Nil,
-        subscription: List[(String, Field[F, S, ?])] = Nil,
+        mutation: Option[NonEmptyList[(String, Field[F, M, ?])]] = None,
+        subscription: Option[NonEmptyList[(String, Field[F, S, ?])]] = None,
         outputTypes: List[OutToplevel[F, ?]] = Nil,
         inputTypes: List[InToplevel[?]] = Nil
     ): SchemaShape[F, Q, M, S] =
       SchemaShape(
         gql.dsl.tpe("Query", query.head, query.tail: _*),
-        mutation.toNel.map(x => gql.dsl.tpe("Mutation", x.head, x.tail: _*)),
-        subscription.toNel.map(x => gql.dsl.tpe("Subscription", x.head, x.tail: _*)),
+        mutation.map(x => gql.dsl.tpe("Mutation", x.head, x.tail: _*)),
+        subscription.map(x => gql.dsl.tpe("Subscription", x.head, x.tail: _*)),
         outputTypes,
         inputTypes
       )
@@ -79,8 +79,8 @@ object SchemaShape {
 
   def unit[F[_]](
       query: NonEmptyList[(String, Field[F, Unit, ?])],
-      mutation: List[(String, Field[F, Unit, ?])] = Nil,
-      subscription: List[(String, Field[F, Unit, ?])] = Nil,
+      mutation: Option[NonEmptyList[(String, Field[F, Unit, ?])]] = None,
+      subscription: Option[NonEmptyList[(String, Field[F, Unit, ?])]] = None,
       outputTypes: List[OutToplevel[F, ?]] = Nil,
       inputTypes: List[InToplevel[?]] = Nil
   ) = make[F](query, mutation, subscription, outputTypes, inputTypes)
