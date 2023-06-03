@@ -18,6 +18,9 @@ package gql.resolver
 import gql._
 import cats.data._
 
+/**
+  * A step is a composable task that takes an input and produces an output.
+  */
 sealed trait Step[+F[_], -I, +O]
 
 object Step {
