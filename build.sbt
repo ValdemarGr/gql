@@ -1,7 +1,7 @@
 val scala213Version = "2.13.9"
 
 ThisBuild / scalaVersion := scala213Version
-ThisBuild / crossScalaVersions := Seq(scala213Version, "3.2.2")
+ThisBuild / crossScalaVersions := Seq(scala213Version, "3.2.2", "3.3.0")
 ThisBuild / organization := "io.github.valdemargr"
 
 ThisBuild / tlBaseVersion := "0.2"
@@ -18,8 +18,6 @@ ThisBuild / headerLicense := Some(HeaderLicense.Custom("Copyright (c) 2023 Valde
 ThisBuild / headerEmptyLine := false
 
 // I might re-enable this later
-// But for now, if a tag fails in CI (I know it's not supposed to happen), then it is really
-// annoying to have to fix the statful "step"
 ThisBuild / tlCiMimaBinaryIssueCheck := false
 ThisBuild / tlMimaPreviousVersions := Set.empty
 ThisBuild / mimaReportSignatureProblems := false
