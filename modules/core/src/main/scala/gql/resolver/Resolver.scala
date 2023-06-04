@@ -22,7 +22,7 @@ import gql._
 /** Resolver is one of the core abstractions of gql. The resolver class contains a collection of methods to aid comosition.
   *
   * A Resolver forms an [[cats.arrow.Arrow]]; it can lift a function I => O. Resolver also forms [[cats.arrow.Choice]] which allows
-  * conditional branching. 
+  * conditional branching.
   *
   * Resolver also forms an [[cats.Applicative]] instance that sequences the operations.
   *

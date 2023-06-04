@@ -97,7 +97,7 @@ object Goi {
                 F.delay(new String(Base64.getDecoder().decode(id.value), StandardCharsets.UTF_8))
                   .flatMap[Ior[String, Option[Node]]] { fullId =>
                     fullId.split(":").toList match {
-                      case typename :: xs =>
+                      case typename :: xs if xs.nonEmpty =>
                         lookup.get(typename) match {
                           case None => F.pure(s"Typename `$typename` with id '$id' does not have a getter.".leftIor)
                           case Some(gid) =>
@@ -105,7 +105,7 @@ object Goi {
                               .leftMap(_.mkString_("\n"))
                               .toIor
                               .traverse(gid.fromId)
-                              .map(_.map(_.map(x => Node(x, fullId))))
+                              .map(_.map(_.map(x => Node(x, typename))))
                         }
                       case xs => F.pure(s"Invalid id parts ${xs.map(s => s"'$s'").mkString(", ")}".leftIor)
                     }

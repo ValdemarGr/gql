@@ -20,9 +20,7 @@ import cats.implicits._
 import cats.data._
 import scala.annotation.nowarn
 
-/**
-  * FreeApply is a Free Applicative, but witout pure.
-  * It has an Apply instance.
+/** FreeApply is a Free Applicative, but witout pure. It has an Apply instance.
   */
 sealed abstract class FreeApply[F[_], +A] extends Product with Serializable {
   def foldMap[G[_], B >: A](fk: F ~> G)(implicit G: Apply[G]): G[B] =

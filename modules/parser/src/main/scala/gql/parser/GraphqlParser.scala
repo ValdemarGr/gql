@@ -134,7 +134,10 @@ object GraphqlParser {
 
   lazy val stringValue: P[String] = p {
     val d = P.char('"')
-    d *> ((d.rep(2, 2) *> (blockStringCharacter.rep0.with1 <* d.rep(3, 3))) | (stringCharacter.rep0.with1 <* d))
+    d *> (
+      ((P.backtrack(d.rep(2, 2)) *> blockStringCharacter.rep0) <* d.rep(3, 3)) |
+        (stringCharacter.rep0.with1 <* d)
+    )
   }.map(_.mkString_(""))
 
   lazy val stringCharacter: P[String] =

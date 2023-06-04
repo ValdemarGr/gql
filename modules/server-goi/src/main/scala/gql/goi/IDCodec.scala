@@ -15,6 +15,7 @@
  */
 package gql.goi
 
+import org.typelevel.twiddles.TwiddleSyntax
 import cats.implicits._
 import cats._
 import cats.data._
@@ -45,7 +46,7 @@ trait IDCodec[A] { self =>
       b => self.encode(g(b))
     )
 
-  def ~[B](that: IDCodec[B]): IDCodec[(A, B)] =
+  def product[B](that: IDCodec[B]): IDCodec[(A, B)] =
     IDCodec(
       self.codecs ++ that.codecs,
       s => {
@@ -59,7 +60,7 @@ trait IDCodec[A] { self =>
     )
 }
 
-object IDCodec {
+object IDCodec extends TwiddleSyntax[IDCodec] {
   def apply[A](
       codecs: NonEmptyChain[String],
       decode: Array[String] => ValidatedNec[String, A],
@@ -95,7 +96,7 @@ object IDCodec {
         override def decode(s: Array[String]): ValidatedNec[String, B] = fa.decode(s).map(f)
       }
 
-    override def product[A, B](fa: IDCodec[A], fb: IDCodec[B]): IDCodec[(A, B)] = fa ~ fb
+    override def product[A, B](fa: IDCodec[A], fb: IDCodec[B]): IDCodec[(A, B)] = fa product fb
   }
 
   implicit val stringInstance: IDCodec[String] = IDCodec.make[String](Right(_), identity, "string")

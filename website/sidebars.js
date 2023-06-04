@@ -62,6 +62,7 @@ const sidebars = {
             "server/integrations/http4s",
             "server/integrations/graphqlws",
             "server/integrations/natchez",
+            "server/integrations/goi",
           ]
         }
       ]
