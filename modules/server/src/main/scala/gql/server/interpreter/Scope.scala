@@ -130,14 +130,7 @@ object Scope {
 
           // None if already closed
           override def child: F[Option[Scope[F]]] =
-            Scope[F](Some(this)).allocated.flatMap { case (s, release) =>
-              state
-                .modify[F[Option[Scope[F]]]] {
-                  case State.Closed()               => State.Closed() -> release.as(None)
-                  case State.Open(leases, children) => State.Open(leases, s :: children) -> F.pure(Some(s))
-                }
-                .flatten
-            }
+            lease(Scope[F](Some(this)))
 
           override def close: F[Unit] =
             state.modify {
