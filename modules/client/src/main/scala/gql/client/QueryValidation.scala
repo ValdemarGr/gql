@@ -43,8 +43,10 @@ object QueryValidation {
         ast.get(ms.inner) match {
           case None =>
             ms.inner match {
-              case "Int" | "Float" | "String" | "Boolean" | "ID" => Json.fromString("").validNec
-              case _                                             => s"Could not find type ${ms.inner}".invalidNec
+              case "Int" | "Float" => Json.fromInt(0).validNec
+              case "String"        => Json.fromString("").validNec
+              case "Boolean"       => Json.fromBoolean(true).validNec
+              case _               => s"Could not find type ${ms.inner}".invalidNec
             }
           case Some(_: TypeDefinition.ScalarTypeDefinition) => Json.fromString("").validNec
           case Some(e: TypeDefinition.EnumTypeDefinition)   => Json.fromString(e.values.head.name).validNec
