@@ -36,7 +36,7 @@ class GenTest extends CatsEffectSuite {
       gql.http4s.Http4sRoutes.syncSimple[IO](qp => IO.pure(Right(Compiler[IO].compileWith(sch, qp)))).orNotFound
     )
 
-    import gql.client.http4s.implicits._
+    import gql.client.http4s.syntax._
     import org.http4s.implicits._
     val res = Request[IO](uri = uri"https://notreal.com/graphql").graphql(q, client)
     res.map(aq => assert(aq.dog.isDefined))

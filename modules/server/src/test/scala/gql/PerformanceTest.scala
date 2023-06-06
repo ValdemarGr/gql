@@ -24,7 +24,7 @@ import cats.effect._
 
 class PerformanceTest extends CatsEffectSuite {
   case object Data
-  implicit lazy val data = builder[IO, Data.type] { b =>
+  implicit lazy val data: Type[IO, Data.type] = builder[IO, Data.type] { b =>
     b.tpe(
       "Data",
       "value" -> b(_.streamMap(_ => (fs2.Stream(1) ++ fs2.Stream(2)))),
