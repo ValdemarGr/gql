@@ -290,6 +290,8 @@ lazy val docs = project
   .dependsOn(serverHttp4s)
   .dependsOn(serverGraphqlWs)
   .dependsOn(serverNatchez)
+  .dependsOn(clientCodegen)
+  .dependsOn(clientCodegenCli)
   .dependsOn(serverGoi)
   .dependsOn(client)
   .dependsOn(http4sClient)

@@ -610,6 +610,8 @@ object Generator {
         o match {
           case OperationDefinition.Simple(_) =>
             raise[F, Part]("Simple operations are not supported, please name all your operations")
+          case d: OperationDefinition.Detailed[Caret] if d.name.isEmpty =>
+            raise[F, Part]("Anonymous operations are not supported, please name all your operations")
           case d: OperationDefinition.Detailed[Caret] =>
             in(s"operation-${d.name.get}") {
               val vds = d.variableDefinitions.toList.flatMap(_.nel.toList)
@@ -770,8 +772,8 @@ object Generator {
           // this, impl1, impl2 -> this
           (td.name :: td.interfaces) tupleRight td.name
         case td: TypeDefinition.UnionTypeDefinition =>
-          // this -> this
-          List(td.name -> td.name)
+          // this -> this, impl1, impl2
+          (td.name :: td.types.toList) tupleLeft td.name
         case td: TypeDefinition.InterfaceTypeDefinition =>
           // this, impl1, impl2 -> this
           (td.name :: td.interfaces) tupleRight td.name

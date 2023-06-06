@@ -72,7 +72,17 @@ const sidebars = {
       type: 'category',
       label: "Client",
       items: [
-        "client/dsl"
+        "client/dsl",
+        "client/code-generation",
+        {
+          collapsed: false,
+          type: 'category',
+          label: "Integrations",
+          items: [
+            "client/integrations/http4s"
+          ]
+        },
+        
       ]
     }
   ]

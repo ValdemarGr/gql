@@ -23,7 +23,7 @@ import cats.effect._
 import org.http4s.EntityDecoder
 import org.http4s._
 
-object implicits {
+object syntax {
   def gqlEntityDecoderInstance[F[_]: Concurrent, A](c: Query.Compiled[A]): EntityDecoder[F, A] = {
     implicit val dec: io.circe.Decoder[A] = c.decoder
     org.http4s.circe.jsonOf[F, A]

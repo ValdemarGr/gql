@@ -92,7 +92,7 @@ object GeneratorCli
         .foldMonoid
         .flatMap {
           case Nil => IO.unit
-          case xs  => IO.raiseError(new Exception(s"Failed to generate code with error: ${xs.mkString(", ")}"))
+          case xs  => IO.raiseError(new Exception(s"Failed to generate code with error: ${xs.mkString("\n")}"))
         }
         .as(ExitCode.Success)
     }
