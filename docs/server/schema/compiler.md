@@ -34,17 +34,14 @@ trait Logger[F[_]] {
 
 def lg: Logger[IO] = ???
 
-def logSlowQueries(
-  compiler: QueryParameters => Application[IO]
-): QueryParameters => Application[IO] = cp => 
-  compiler(cp) match {
-    case Application.Query(fa) => 
-      Application.Query {
-        fa.timed.flatMap{ case (dur, a) =>
-          if (dur > 1.second) lg.warn(s"Slow query: ${cp.query}") as a
-          else IO.pure(a)
-        }
+def logSlowQueries(query: String, app: Application[IO]): Application[IO] = app match {
+  case Application.Query(fa) => 
+    Application.Query {
+      fa.timed.flatMap{ case (dur, a) =>
+        if (dur > 1.second) lg.warn(s"Slow query: $query") as a
+        else IO.pure(a)
       }
-    case x => x
-  }
+    }
+  case x => x
+}
 ```
