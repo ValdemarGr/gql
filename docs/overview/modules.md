@@ -3,6 +3,8 @@ title: Modules
 ---
 
 Gql is published as multiple modules, so you can include what you need.
+
+
 The available modules are:
 ```scala
 // core
