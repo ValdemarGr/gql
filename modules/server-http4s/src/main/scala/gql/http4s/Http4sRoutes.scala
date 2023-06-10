@@ -27,50 +27,128 @@ import org.http4s.websocket.WebSocketFrame
 import org.typelevel.ci._
 import gql.graphqlws.GraphqlWSServer
 
+trait RequestHandler[F[_]] {
+  type A
+
+  def preParsing(headers: Headers): F[Either[Response[F], A]]
+
+  def compile(params: QueryParameters, value: A): F[Either[Response[F], Compiler.Outcome[F]]]
+}
+
+object RequestHandler {
+  type Aux[F[_], A0] = RequestHandler[F] { type A = A0 }
+
+  def apply[F[_], A](
+      preParsing: Headers => F[Either[Response[F], A]],
+      compile: (QueryParameters, A) => F[Either[Response[F], Compiler.Outcome[F]]]
+  ): RequestHandler[F] = {
+    val preParsing0 = preParsing
+    val compile0 = compile
+    type A0 = A
+    new RequestHandler[F] {
+      type A = A0
+      def preParsing(headers: Headers): F[Either[Response[F], A]] = preParsing0(headers)
+      def compile(params: QueryParameters, value: A): F[Either[Response[F], Compiler.Outcome[F]]] = compile0(params, value)
+    }
+  }
+}
+
+trait WSHandler[F[_]] {
+  type A
+
+  def preParsing(headers: Map[String, Json]): F[Either[String, A]]
+
+  def compile(params: QueryParameters, value: A): Resource[F, Compiler.Outcome[F]]
+}
+
+object WSHandler {
+  type Aux[F[_], A0] = WSHandler[F] { type A = A0 }
+
+  def apply[F[_], A](
+      preParsing: Map[String, Json] => F[Either[String, A]],
+      compile: (QueryParameters, A) => Resource[F, Compiler.Outcome[F]]
+  ): WSHandler[F] = {
+    val preParsing0 = preParsing
+    val compile0 = compile
+    type A0 = A
+    new WSHandler[F] {
+      type A = A0
+      def preParsing(headers: Map[String, Json]): F[Either[String, A]] = preParsing0(headers)
+      def compile(params: QueryParameters, value: A): Resource[F, Compiler.Outcome[F]] = compile0(params, value)
+    }
+  }
+}
+
 object Http4sRoutes {
   implicit protected lazy val cd: Decoder[QueryParameters] =
     io.circe.generic.semiauto.deriveDecoder[QueryParameters]
   implicit protected def ed[F[_]: Concurrent]: EntityDecoder[F, QueryParameters] =
     org.http4s.circe.jsonOf[F, QueryParameters]
 
-  type SC[F[_], A] = F[Either[Response[F], A]]
-
-  def syncFull[F[_]](full: Headers => SC[F, QueryParameters => SC[F, Compiler.Outcome[F]]], path: String = "graphql")(implicit
-      F: Concurrent[F]
-  ): HttpRoutes[F] = {
+  def runCompiledSync[F[_]: Concurrent](compiled: Compiler.Outcome[F]) = {
     val d = new Http4sDsl[F] {}
     import d._
     import io.circe.syntax._
     import org.http4s.circe._
 
+    compiled match {
+      case Left(pe: CompilationError.Parse)       => Ok(pe.asJson)
+      case Left(pe: CompilationError.Preparation) => Ok(pe.asJson)
+      case Right(app) =>
+        val fa = app match {
+          case Application.Mutation(run)     => run
+          case Application.Query(run)        => run
+          case Application.Subscription(run) => run.take(1).compile.lastOrError
+        }
+
+        fa.flatMap(qr => Ok(qr.asJson))
+    }
+  }
+
+  type SC[F[_], A] = F[Either[Response[F], A]]
+  def syncFull[F[_]](full: Headers => SC[F, QueryParameters => SC[F, Compiler.Outcome[F]]], path: String = "graphql")(implicit
+      F: Concurrent[F]
+  ): HttpRoutes[F] = {
+    val d = new Http4sDsl[F] {}
+    import d._
+
     HttpRoutes.of[F] { case r @ POST -> Root / `path` =>
-      val fa = full(r.headers)
-      F.flatMap(fa) {
+      F.flatMap(full(r.headers)) {
         case Left(resp) => F.pure(resp)
         case Right(f) =>
           r.as[QueryParameters].flatMap { params =>
             F.flatMap(f(params)) {
-              case Left(resp)                                    => F.pure(resp)
-              case Right(Left(pe: CompilationError.Parse))       => Ok(pe.asJson)
-              case Right(Left(pe: CompilationError.Preparation)) => Ok(pe.asJson)
-              case Right(Right(app)) =>
-                val fa = app match {
-                  case Application.Mutation(run)     => run
-                  case Application.Query(run)        => run
-                  case Application.Subscription(run) => run.take(1).compile.lastOrError
-                }
-
-                fa.flatMap(qr => Ok(qr.asJson))
+              case Left(resp) => F.pure(resp)
+              case Right(c)   => runCompiledSync[F](c)
             }
           }
       }
     }
   }
 
+  def syncHandler[F[_]](
+      handler: RequestHandler[F],
+      path: String = "graphql"
+  )(implicit F: Concurrent[F]): HttpRoutes[F] = syncFull[F](
+    headers => handler.preParsing(headers).map(_.map(a => (qp: QueryParameters) => handler.compile(qp, a))),
+    path
+  )
+
   def syncSimple[F[_]](
       compile: QueryParameters => F[Either[Response[F], Compiler.Outcome[F]]],
       path: String = "graphql"
-  )(implicit F: Concurrent[F]) = syncFull[F]({ _ => F.pure(Right(compile)) }, path)
+  )(implicit F: Concurrent[F]): HttpRoutes[F] = syncFull[F]({ _ => F.pure(Right(compile)) }, path)
+
+  def wsHandler[F[_]](
+      handler: WSHandler[F],
+      wsb: WebSocketBuilder[F],
+      path: String = "ws"
+  )(implicit F: Async[F]): HttpRoutes[F] =
+    ws[F](
+      m => handler.preParsing(m).map(_.map(a => (qp: QueryParameters) => handler.compile(qp, a))),
+      wsb,
+      path
+    )
 
   def ws[F[_]](
       getCompiler: GraphqlWSServer.GetCompiler[F],
@@ -82,25 +160,27 @@ object Http4sRoutes {
     import io.circe.syntax._
 
     HttpRoutes.of[F] { case GET -> Root / `path` =>
-      GraphqlWSServer[F](getCompiler).allocated.flatMap { case ((toClient, fromClient), close) =>
-        wsb
-          .withOnClose(close)
-          .withFilterPingPongs(true)
-          .withHeaders(Headers(Header.Raw(ci"Sec-WebSocket-Protocol", "graphql-transport-ws")))
-          .build(
-            toClient.evalMap[F, WebSocketFrame] {
-              case Left(te) => F.fromEither(WebSocketFrame.Close(te.code.code, te.message))
-              case Right(x) => F.pure(WebSocketFrame.Text(x.asJson.noSpaces))
-            },
-            _.evalMap[F, Option[String]] {
-              case WebSocketFrame.Text(x, true) => F.pure(Some(x))
-              case _: WebSocketFrame.Close      => F.pure(None)
-              // case c: WebSocketFrame.Close if c.closeCode == 1000 => F.pure(None)
-              // case other                                          => F.raiseError(new Exception(s"Unexpected frame: $other"))
-            }.unNone
-              .evalMap(x => F.fromEither(io.circe.parser.decode[GraphqlWS.FromClient](x)))
-              .through(fromClient)
-          )
+      F.uncancelable { _ =>
+        GraphqlWSServer[F](getCompiler).allocated.flatMap { case ((toClient, fromClient), close) =>
+          wsb
+            .withOnClose(close)
+            .withFilterPingPongs(true)
+            .withHeaders(Headers(Header.Raw(ci"Sec-WebSocket-Protocol", "graphql-transport-ws")))
+            .build(
+              toClient.evalMap[F, WebSocketFrame] {
+                case Left(te) => F.fromEither(WebSocketFrame.Close(te.code.code, te.message))
+                case Right(x) => F.pure(WebSocketFrame.Text(x.asJson.noSpaces))
+              },
+              _.evalMap[F, Option[String]] {
+                case WebSocketFrame.Text(x, true) => F.pure(Some(x))
+                case _: WebSocketFrame.Close      => F.pure(None)
+                // case c: WebSocketFrame.Close if c.closeCode == 1000 => F.pure(None)
+                // case other                                          => F.raiseError(new Exception(s"Unexpected frame: $other"))
+              }.unNone
+                .evalMap(x => F.fromEither(io.circe.parser.decode[GraphqlWS.FromClient](x)))
+                .through(fromClient)
+            )
+        }
       }
     }
   }

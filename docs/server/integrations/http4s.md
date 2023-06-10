@@ -27,7 +27,7 @@ However, it is very simple to implement the authorization your application needs
 
 Commonly, authorization is provided in the `Authorization` http header.
 Consider the following authorization implementation, that also threads authorization credentials through the whole graph.
-```scala mdoc:reset
+```scala mdoc
 import org.http4s._
 import org.http4s.headers._
 import org.http4s.dsl.io._
@@ -45,10 +45,13 @@ def schema: Schema[AuthIO, Unit, Unit, Unit] = ???
 
 def authorize(token: String): IO[Option[Creds]] = ???
 
-def routes = Http4sRoutes.syncFull[IO]{ headers =>
-  def unauth(msg: String) = 
-    IO.pure(Left(Response[IO](Status.Unauthorized).withEntity(msg)))
+def authorizeApp(compiled: Compiler.Outcome[AuthIO], creds: Creds): Compiler.Outcome[IO] =
+  compiled.map(_.mapK(Kleisli.applyK[IO, Creds](creds)))
 
+def unauth(msg: String) = 
+  IO.pure(Left(Response[IO](Status.Unauthorized).withEntity(msg)))
+
+def routes = Http4sRoutes.syncFull[IO]{ headers =>
   headers.get[Authorization] match {
     case None => unauth("missing authorization header")
     case Some(Authorization(Credentials.Token(AuthScheme.Bearer, token))) =>
@@ -58,9 +61,7 @@ def routes = Http4sRoutes.syncFull[IO]{ headers =>
           Right { (qp: QueryParameters) =>
             IO.pure{
               Right {
-                Compiler[AuthIO]
-                  .compileWith(schema, qp)
-                  .map(_.mapK(Kleisli.applyK[IO, Creds](creds)))
+                authorizeApp(Compiler[AuthIO].compileWith(schema, qp), creds)
               }
             }
           }
@@ -71,6 +72,30 @@ def routes = Http4sRoutes.syncFull[IO]{ headers =>
 }
 ```
 There is some wrapping in `Either` and `IO`, since we don't want to parse or prepare the query before authorization has been performed.
+
+Constructing higher order functions and using clever closures to construct complicated routes can be a bit messy.
+An alternative is to implement a `RequestHandler` instead:
+```scala mdoc:silent
+val rh = new RequestHandler[IO] {
+  type A = Creds
+
+  def preParsing(headers: Headers): IO[Either[Response[IO], Creds]] =
+    headers.get[Authorization] match {
+      case None => unauth("missing authorization header")
+      case Some(Authorization(Credentials.Token(AuthScheme.Bearer, token))) =>
+        authorize(token).flatMap{
+          case None => unauth("invalid token")
+          case Some(creds) => IO.pure(Right(creds))
+        }
+      case _ => unauth("invalid authorization header, use a Bearer Token")
+    }
+
+  def compile(qp: QueryParameters, value: Creds): IO[Either[Response[IO], Compiler.Outcome[IO]]] =
+    IO(Right(authorizeApp(Compiler[AuthIO].compileWith(schema, qp), value)))
+}
+
+def syncRoutes: HttpRoutes[IO] = Http4sRoutes.syncHandler[IO](rh)
+```
 
 ## Websocket support
 To implement streaming, we use websockets.
@@ -89,3 +114,33 @@ However, the norm is to embed http headers in the payload:
 Returning `Left` of the query handler function lets the application return an error message to the client, which also immideately closes the websocket.
 One can embed errors such as `unauthorized` here.
 The GraphQL over websocket protocol defines no way to communicate arbitary information without closing the connection.
+
+The websocket route also comes in a trait flavor:
+```scala mdoc:silent
+import org.http4s.server.websocket.WebSocketBuilder
+import io.circe._
+
+def wsb: WebSocketBuilder[IO] = ???
+
+val wsh = new WSHandler[IO] {
+  type A = Creds
+
+  def preParsing(headers: Map[String, Json]): IO[Either[String, A]] =
+    headers.get("authorization") match {
+      case None => IO(Left("missing authorization header"))
+      case Some(a) => 
+        a.asString match {
+          case None => IO(Left("authorization token must be a string"))
+          case Some(a) => authorize(a).map{
+            case None => Left("invalid token")
+            case Some(creds) => Right(creds)
+          }
+        }
+    }
+
+  def compile(params: QueryParameters, value: A): Resource[IO, Compiler.Outcome[IO]] =
+    Resource.pure(authorizeApp(Compiler[AuthIO].compileWith(schema, params), value))
+}
+
+def wsRoutes: HttpRoutes[IO] = Http4sRoutes.wsHandler[IO](wsh, wsb)
+```
