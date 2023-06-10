@@ -30,6 +30,7 @@ const sidebars = {
       collapsed: false,
       type: 'category',
       label: "Tutorial",
+      link: {type: 'doc', id: 'tutorial/tutorial'},
       items: [
         "tutorial/tutorial"
       ]
