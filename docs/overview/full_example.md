@@ -1,5 +1,5 @@
 ---
-title: Example
+title: Full example
 ---
 
 For this showcase, Star Wars will be our domain of choice:

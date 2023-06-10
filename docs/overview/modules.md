@@ -1,8 +1,9 @@
 ---
-title: Getting started
+title: Modules
 ---
 
-Get it here
+Gql is published as multiple modules, so you can include what you need.
+The available modules are:
 ```scala
 // core
 libraryDependencies += "io.github.valdemargr" %% "gql-core" % "@VERSION@"
@@ -18,9 +19,8 @@ libraryDependencies += "io.github.valdemargr" %% "gql-server-goi" % "@VERSION@"
 libraryDependencies += "io.github.valdemargr" %% "gql-client" % "@VERSION@"
 libraryDependencies += "io.github.valdemargr" %% "gql-client-http4s" % "@VERSION@"
 
+// project/plugins.sbt
 addSbtPlugin("io.github.valdemargr" % "gql-client-codegen-sbt" % "@VERSION@")
 // and in build.sbt
-myBuild
-  .enablePlugins(GqlCodeGenPlugin)
-
+myBuild.enablePlugins(GqlCodeGenPlugin)
 ```
