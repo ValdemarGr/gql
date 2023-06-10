@@ -20,6 +20,14 @@ const sidebars = {
     {
       collapsed: false,
       type: 'category',
+      label: "Tutorial",
+      items: [
+        "tutorial/tutorial"
+      ]
+    },
+    {
+      collapsed: false,
+      type: 'category',
       label: "Overview",
       items: [
         "overview/full_example",
