@@ -22,7 +22,6 @@ const sidebars = {
       label: "Overview",
       link: {type: 'doc', id: 'overview'},
       items: [
-        "overview/full_example",
         "overview/modules"
       ]
     },
@@ -30,9 +29,8 @@ const sidebars = {
       collapsed: false,
       type: 'category',
       label: "Tutorial",
-      link: {type: 'doc', id: 'tutorial/tutorial'},
       items: [
-        "tutorial/tutorial"
+        "tutorial/introduction"
       ]
     },
     {

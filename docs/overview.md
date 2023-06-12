@@ -16,5 +16,4 @@ For further information consider:
 * The server reference documentation, starting at [Output types](server/schema/output_types)
 * The client reference documentation, starting at [Query DSL](client/dsl)
 * The [modules](overview/modules.md) page for a list of all of gql' modules.
-* The [full example](overview/full_example.md) page for a full example of an executable schema.
 * The official [GraphQL specification](https://spec.graphql.org/draft/)
