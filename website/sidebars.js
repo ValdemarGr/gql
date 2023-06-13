@@ -20,9 +20,17 @@ const sidebars = {
       collapsed: false,
       type: 'category',
       label: "Overview",
+      link: {type: 'doc', id: 'overview'},
       items: [
-        "overview/example",
-        "overview/getting_started"
+        "overview/modules"
+      ]
+    },
+    {
+      collapsed: false,
+      type: 'category',
+      label: "Tutorial",
+      items: [
+        "tutorial/introduction"
       ]
     },
     {
