@@ -321,42 +321,74 @@ def repo: Repository[IO] = new Repository[IO] {
 }
 ```
 
-And now a query:
-```scala mdoc
-def query = """
- query {
-   hero(episode: NEWHOPE) {
-     id
-     name
-     __typename
-     ... on Droid {
-       primaryFunction
-       friends {
-         name
-         __typename
-         appearsIn
-       }
-     }
-     ... HumanDetails
-   }
-   c3po: droid(id: "2000") {
+And now a GraphQL query:
+```graphql
+query {
+  # 1
+  hero(episode: NEWHOPE) {
+    id
     name
-   }
- }
 
- fragment HumanDetails on Human {
-   homePlanet
- }
-"""
+    # 2
+    __typename
+
+    # 3
+    ... on Droid {
+      primaryFunction
+      friends {
+        name
+        __typename
+        appearsIn
+      }
+    }
+    ... HumanDetails
+  }
+  c3po: droid(id: "2000") {
+    name
+  }
+}
+
+# 4
+fragment HumanDetails on Human {
+  homePlanet
+}
 ```
 Some new things are going on in this query:
-* The `... on ` syntax is used to pattern match on specific types.
-Since the `hero` returns a `Character` interface we must match it to a `Droid` to get the `primaryFunction` field.
-* The `__typename` field is used to get the type of the object returned.
+1. `(episode: NEWHOPE)` is used to pass arguments to the `hero` field.
+2. The `__typename` field is used to get the type of the object returned.
 This field is available on all types and interfaces.
-* The `(episode: NEWHOPE)` syntax is used to pass arguments to the `hero` field.
-* The `fragment` syntax is used to define a reusable block of fields akin to a CTE in SQL.
+3. The `... on ` syntax is used to pattern match on specific types.
+Since the `hero` returns a `Character` interface we must match it to a `Droid` to get the `primaryFunction` field.
+4. The `fragment` syntax is used to define a reusable block of fields akin to a CTE in SQL.
 
+Now let us introduce the query in scala:
+```scala mdoc
+def query = """
+  query {
+    hero(episode: NEWHOPE) {
+      id
+      name
+      __typename
+      ... on Droid {
+        primaryFunction
+        friends {
+          name
+          __typename
+          appearsIn
+        }
+      }
+      ... HumanDetails
+    }
+    c3po: droid(id: "2000") {
+      name
+    }
+  }
+
+  fragment HumanDetails on Human {
+    homePlanet
+  }
+"""
+```
 
 Now we can parse, plan and evaluate the query:
 

@@ -112,17 +112,34 @@ object Http4sRoutes {
     val d = new Http4sDsl[F] {}
     import d._
 
-    HttpRoutes.of[F] { case r @ POST -> Root / `path` =>
-      F.flatMap(full(r.headers)) {
+    object QueryParam extends QueryParamDecoderMatcher[String]("query")
+    object OperationName extends OptionalQueryParamDecoderMatcher[String]("operationName")
+    object Variables extends OptionalQueryParamDecoderMatcher[String]("variables")
+
+    def runWith(req: Request[F], parse: F[QueryParameters]) =
+      F.flatMap(full(req.headers)) {
         case Left(resp) => F.pure(resp)
         case Right(f) =>
-          r.as[QueryParameters].flatMap { params =>
+          parse.flatMap { params =>
             F.flatMap(f(params)) {
               case Left(resp) => F.pure(resp)
               case Right(c)   => runCompiledSync[F](c)
             }
           }
       }
+
+    HttpRoutes.of[F] {
+      // https://graphql.github.io/graphql-over-http/draft/#sec-GET
+      case r @ GET -> Root / `path` :? QueryParam(query) :? OperationName(operationName) :? Variables(variables) =>
+        val opName = if (operationName.forall(_.isEmpty)) None else operationName
+        variables.traverse(io.circe.parser.decode[JsonObject](_)) match {
+          case Left(err) => BadRequest(err.getMessage)
+          case Right(variables) =>
+            runWith(r, F.pure(QueryParameters(query, variables.map(_.toMap), opName)))
+        }
+      // https://graphql.github.io/graphql-over-http/draft/#sec-Request
+      // all methods are allowed
+      case r @ (_: Method) -> Root / `path` => runWith(r, r.as[QueryParameters])
     }
   }
 
