@@ -99,7 +99,7 @@ A `Field[F, I, T]` has some structure, most notably:
 The `dsl` functions also lazily capture `Out[F, T]` definitions as implicit parameters.
 :::
 :::tip
-Check out the [resolver section](./resolvers.md) for more info on how resolvers work.
+Check out the [resolver section](resolvers.md) for more info on how resolvers work.
 :::
 
 ## Type (object)

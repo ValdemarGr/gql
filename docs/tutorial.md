@@ -1,5 +1,5 @@
 ---
-title: Introduction
+title: Tutorial
 ---
 
 For this showcase, Star Wars will be our domain of choice.

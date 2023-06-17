@@ -6,11 +6,11 @@ Input types occur as parameters in queries as a way to let the caller provide ar
 
 ## Scalar
 The `Scalar` type defines a terminal input type, and can be any json value.
-`Scalar`s act as both input and output types; refer to [output types](./output_types#scalar) for more information on how scalar types work.
+`Scalar`s act as both input and output types; refer to [output types](output_types.md#scalar) for more information on how scalar types work.
 
 ## Enum
 The `Enum` type defines a mapping from a string to a value (usually a sealed trait) `A`.
-More information can be found in the [output types](./output_types#enum) section.
+More information can be found in the [output types](output_types.md#enum) section.
 
 ## Arg
 The arg type has a couple of uses.
@@ -39,7 +39,7 @@ Default values are not type-safe, so you can pass any value you want.
 The default value will however be checked during schema validation, and again during query evaluation, so you will get an error if you pass a value of the wrong type.
 
 Input objects makes it impossibly difficult to construct a type-safe default value dsl, since input objects might have default values themselves that allow uses of them to only supply a subset of fields.
-Consult the [Default values for input objects](./input_types#default-values-for-input-objects) subsection for more information.
+Consult the [Default values for input objects](#default-values-for-input-objects) subsection for more information.
 :::
 
 Args also have an `Apply` (`Applicative` without pure) instance defined for them:

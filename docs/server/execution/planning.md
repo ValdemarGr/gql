@@ -5,7 +5,7 @@ title: Planning
 ### The high-level idea
 When planning for a query the planner assigns weights to every edge/field, optionally labels them with their batch names (if a batch resolver was used) and finally converts the problem to a simpler DAG (directed asyclic graph) form.
 :::tip
-For information on how the planner assigns weights, check out the [statistics](./statistics).
+For information on how the planner assigns weights, check out the [statistics](statistics.md).
 :::
 The goal now is to form batches by contracting nodes that are batchable (jobs of the same family in scheduling/OR jargon).
 

@@ -185,19 +185,18 @@ implicit val pet = interfaceFromNel[IO, Pet](
   petFields
 )
 
-implicit val dof = tpe[IO, Dog](
+implicit val dog = tpe[IO, Dog](
   "Dog",
   "bark" -> lift(_ => "woof!")
 )
-  .addFields(petFields.toList: _*)
-  .subtypeOf[Pet]
+  .subtypeImpl[Pet](petFields)
 ``` 
 
 ## Input types
-Review the [Input types](./input_types) section for more information.
+Review the [Input types](input_types.md) section for more information.
 
 ## Other output structures
-Examples of other structures can be in the [Output types](./output_types) section.
+Examples of other structures can be in the [Output types](output_types.md) section.
 
 ### Covariant effects
 Output types in gql are covariant in `F`, such that output types written in different effects seamlessly weave together.

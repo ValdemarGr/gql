@@ -41,17 +41,12 @@ Another simple resolver is `liftF` which lifts a function `I => F[O]` into `Reso
 val r = Resolver.liftF[IO, Int](i => IO(i.toLong))
 r.evalMap(l => IO(l.toString()))
 ```
-:::note
-`liftF` is a combination of `lift` and then embedding the effect `F` into resolver.
-The implementation of `liftF` is a composition of `Step.Alg.Lift` and `Step.Alg.EmbedEffect`.
-Most resolvers are implemented or composed on by `lift`ing a function and composing an embedding.
-:::
 
 ### Arguments
 Arguments in gql are provided through resolvers.
 A resolver `Resolver[F, I, A]` can be constructed from an argument `Arg[A]`, through either `argument` or `arg` in method form.
 ```scala mdoc:nest
-val ageArg = arg[Int]("age")
+lazy val ageArg = arg[Int]("age")
 val r = Resolver.argument[IO, Nothing, String](arg[String]("name"))
 val r2 = r.arg(ageArg)
 r2.map{ case (age, name) => s"$name is $age years old" }
@@ -85,14 +80,24 @@ val r = Resolver.lift[IO, Int](i => Ior.Both("I will be in the errors :)", i))
 r.rethrow
 ```
 
+We can also use `emap` to map the current value into an `Ior`.
+```scala mdoc:nest
+val r = Resolver.id[IO, Int].emap(i => Ior.Both("I will be in the errors :)", i))
+```
+
 ### First
-A `Resolver` also implements `first` (`Resolver[F, A, B] => Resolver[F, (A, C), (B, C)]`) which is very convinient since some `Resolver`s are constant functions (they throw away their arguments/`I`).
+A `Resolver` also implements `first` (`Resolver[F, A, B] => Resolver[F, (A, C), (B, C)]`) which is very convinient since some `Resolver`s are constant functions (they throw away their inputs `I`).
+
 Since a `Resolver` does not form a `Monad`, `first` is necessary to implement non-trivial resolver compositions.
+In general, this allows us to trace a value through another resolver composition.
+
 For instance, resolving an argument will ignore the input of the resolver, which is not always the desired semantics.
 
-Lets assume we'd like to implement a resolver, that when given a name, can get a list of friends of the person with that name:
+Or maybe your program contains some a general resolver compositon that is used many places, like say verifying credentials, but you'd like to trace a value through it without having to keep track of tupling output with input.
+
+Assume we'd like to implement a resolver, that when given a name, can get a list of friends of the person with that name.
 ```scala mdoc
-type PersonId = Int
+case class PersonId(value: Int)
 
 case class Person(id: PersonId, name: String)
 
@@ -104,17 +109,12 @@ def getPersonResolver = Resolver.liftF[IO, String](getPerson)
 
 def limitResolver = Resolver.argument[IO, Person, Int](arg[Int]("limit"))
 
-getPersonResolver andThen 
-  limitResolver.first[Person].contramap[Person](p => (p, p)) andThen
-  Resolver.liftF{ case (limit, p) => getFriends(p.id, limit) }
-```
-The above example might be a bit tough to follow, but there methods available to make such formulations less gruesome.
-```scala mdoc:nest
-val limitArg = arg[Int]("limit")
+def limitArg = arg[Int]("limit")
 getPersonResolver
   .arg(limitArg)
   .evalMap{ case (limit, p) => getFriends(p.id, limit) }
 ```
+
 
 ### Batch
 Like most other GraphQL implementations, gql also supports batching.
@@ -128,11 +128,9 @@ Batch declaration and usage occurs as follows:
 
 And now put into practice:
 ```scala mdoc
-case class Person(id: Int, name: String)
+def getPeopleFromDB(ids: Set[PersonId]): IO[List[Person]] = ???
 
-def getPeopleFromDB(ids: Set[Int]): IO[List[Person]] = ???
-
-Resolver.batch[IO, Int, Person]{ keys => 
+Resolver.batch[IO, PersonId, Person]{ keys => 
   getPeopleFromDB(keys).map(_.map(x => x.id -> x).toMap)
 }
 ```
@@ -209,10 +207,8 @@ This `Person` object also exists in a remote api.
 This remote api can tell you, the friends of a `Person` given the object's id and name.
 
 ```scala mdoc:nest:silent
-case class PersonId(id: Int)
-
 def pureFields = fields[IO, PersonId](
-  "id" -> lift(_.id)
+  "id" -> lift(id => id)
 )
 
 case class PersonDB(
@@ -267,10 +263,6 @@ Most batching implementations have compatible signatures and can be adapted into
 For instance, converting `fetch` to gql:
 ```scala mdoc:nest
 import fetch._
-
-case class PersonId(value: Int)
-case class Person(id: PersonId, data: String)
-
 object People extends Data[PersonId, Person] {
   def name = "People"
 
@@ -289,18 +281,14 @@ For instance, a combinator derived from `Choice` is `skippable: Resolver[F, I, O
 If the right side is present we skip the underlying resolver (`Resolver[F, I, O]`) altogether.
 
 More refined variants of this combinator also exist:
-```scala mdoc:silent:nest
-case class PersonId(id: Int)
-
-case class Person(id: PersonId, data: String)
-
+```scala mdoc:nest
 def getPersonForId: Resolver[IO, PersonId, Person] = ???
 
 type CachedPerson = Either[PersonId, Person]
 def cachedPerson = tpe[IO, CachedPerson](
   "Person",
-  "id" -> lift(_.map(_.id).merge.id),
-  "data" -> build[IO, CachedPerson](_.skipThat(getPersonForId).map(_.data))
+  "id" -> lift(_.map(_.id).merge.value),
+  "name" -> build[IO, CachedPerson](_.skipThat(getPersonForId).map(_.name))
 )
 ```
 

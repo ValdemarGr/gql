@@ -10,7 +10,7 @@ title: Overview of gql
 ## Resources
 gql assumes you have knowledge of [cats-effect](https://github.com/typelevel/cats-effect) and [cats](https://github.com/typelevel/cats).
 
-No knowledge of the GraphQL is needed to get started with [gql's tutorial](tutorial/introduction)!
+No knowledge of the GraphQL is needed to get started with [gql's tutorial](tutorial)!
 
 For further information consider:
 * The server reference documentation, starting at [Output types](server/schema/output_types)
