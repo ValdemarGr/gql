@@ -1,10 +1,13 @@
 ---
-title: Introduction
+title: Tutorial
 ---
 
 For this showcase, Star Wars will be our domain of choice.
+
+We'll go through setting up a simple GraphQL schema by first defining idiomatic scala types and then constructing the relevant schema.
 ## Setup
 We'll have to introduce some dependencies first.
+For this tutorial, we'll be pulling everything needed to construct a "server".
 ```scala
 libraryDependencies ++= Seq(
   "io.github.valdemargr" %% "gql-server" % "@VERSION@",
@@ -57,6 +60,7 @@ trait Repository[F[_]] {
   def getDroid(id: String): F[Option[Droid]]
 }
 ```
+The respository is abstract and as such, we can implement it in any way we want.
 
 These types will be the foundation of our GraphQL implementation.
 
@@ -180,9 +184,14 @@ SchemaShape.unit[IO](
 ).render
 ```
 
+Very cool! We have defined our first gql schema.
+Now let's try to add the rest of the types.
+
 ## Schema
 Let's define a schema for our whole Star Wars API:
 ```scala mdoc
+// We define a schema as a class since we want some dependencies
+// in production, you'll likely have one instance of your schema
 final class StarWarsSchema[F[_]](repo: Repository[F])(implicit F: Async[F]) {
   implicit lazy val episode: Enum[Episode] = enumType[Episode](
     "Episode",
@@ -193,8 +202,8 @@ final class StarWarsSchema[F[_]](repo: Repository[F])(implicit F: Async[F]) {
 
   // we can define fields as values such that we can compose
   // them together later on
-  // since gql doesn't feature inheritance we must be explicit about the fields
-  lazy val characterFields = fields[F, Character](
+  // since gql doesn't feature resolvers on abstract types, we need to be explicit about inherited fields
+  val characterFields = fields[F, Character](
     "id" -> lift(_.id),
     "name" -> lift(_.name),
     "friends" -> eff(_.friends.traverse(repo.getCharacter)),
@@ -212,13 +221,13 @@ final class StarWarsSchema[F[_]](repo: Repository[F])(implicit F: Async[F]) {
   implicit lazy val human: Type[F, Human] = tpe[F, Human](
     "Human",
     "homePlanet" -> lift(_.homePlanet)
-  ).subtypeOf[Character].addFields(characterFields.toList: _*)
+  ).subtypeImpl[Character](characterFields)
 
   // Droid has the character fields along with its own unique "primaryFunction" field
   implicit lazy val droid: Type[F, Droid] = tpe[F, Droid](
     "Droid",
     "primaryFunction" -> lift(_.primaryFunction)
-  ).subtypeOf[Character].addFields(characterFields.toList: _*)
+  ).subtypeImpl[Character](characterFields)
 
   // Arguments can be defined as values as well
   val episodeArg = arg[Option[Episode]]("episode")
@@ -229,9 +238,7 @@ final class StarWarsSchema[F[_]](repo: Repository[F])(implicit F: Async[F]) {
       "Query",
       "hero" -> build.from(arged(episodeArg).evalMap(repo.getHero)),
       "human" -> build.from(arged(idArg).evalMap(repo.getHuman)),
-      "droid" -> eff(idArg){ case (id, _) => 
-        repo.getDroid(id) 
-      }
+      "droid" -> eff(idArg){ case (id, _) => repo.getDroid(id) }
     )
   )
 }

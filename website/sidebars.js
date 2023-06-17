@@ -26,13 +26,17 @@ const sidebars = {
       ]
     },
     {
+      id: 'tutorial',
+      type: 'doc'
+    },/*
+    {
       collapsed: false,
       type: 'category',
       label: "Tutorial",
       items: [
         "tutorial/introduction"
       ]
-    },
+    },*/
     {
       collapsed: false,
       type: 'category',

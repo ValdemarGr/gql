@@ -2,12 +2,13 @@
 title: Output types
 ---
 An output type `Out[F[_], A]` is an ast node that can take some `A` as input and produce a graphql value in the effect `F`.
+The concept is very similar to how implicit encoders work in other libraries.
 Output types act as continuations of their input types, such that a schema effectively is a tree of continuations.
 The output types of gql are defined in `gql.ast` and are named after their respective GraphQL types.
 
 :::note
 Most examples use the `dsl` to construct output types.
-The types can naturally be constructed manually as well, but this can be verbose.
+The types can naturally be constructed manually as well, with a bit of ceremony.
 :::
 
 Lets import the things we need: 
@@ -23,11 +24,22 @@ import cats.effect._
 ```
 
 ## Scalar
-`Scalar` types are composed of a name, an encoder and a decoder.
+`Scalar` types contain a name, an encoder and a decoder.
 The `Scalar` type can encode `A => Value` and decode `Value => Either[Error, A]`.
 A `Value` is a graphql value, which is a superset of json.
 
-gql comes with a few predefined scalars, but you can also define your own.
+gql comes with a few predefined scalars, such as:
+* `String`
+* `Int`
+* `Long`
+* `Float`
+* `Double`
+* `BigInt`
+* `BigDecimal`
+* `Boolean`
+* `UUID`
+
+You can also define your own scalars.
 For instance, the `ID` type is defined for any `Scalar` as follows:
 ```scala mdoc
 final case class ID[A](value: A)
@@ -42,13 +54,11 @@ object ID {
            |When expected as an input type, any string (such as `\"4\"`) or integer (such as `4`) input value will be accepted as an ID."""".stripMargin
       )
 }
-  
-implicitly[Scalar[ID[String]]]
 ```
 
 ## Enum
 `Enum` types, like `Scalar` types, are terminal types that consist of a name and non-empty bi-directional mapping from a scala type to a `String`:
-```scala mdoc
+```scala mdoc:silent
 sealed trait Color
 object Color {
   case object Red extends Color
@@ -65,7 +75,7 @@ enumType[Color](
 ```
 
 `Enum` types have no constraints on the values they can encode or decode, so they can in fact, be dynamically typed:
-```scala mdoc
+```scala mdoc:silent
 final case class UntypedEnum(s: String)
 
 enumType[UntypedEnum](
@@ -80,40 +90,27 @@ Therefore, it is recommended to enumerate the image of the enum; only use `seale
 
 ## Field
 `Field` is a type that represents a field in a graphql `type` or `interface`.
-A `Field[F, I, T]` contains a continuation `Out[F, T]` and a resolver that takes `I` to `F[T]`.
-Field also lazily captures `Out[F, T]`, to allow recursive types.
+
+A `Field[F, I, T]` has some structure, most notably:
+* A resolver that takes an `I` and produces an `F[T]` through various transformations.
+* A continuation `Out[F, T]`, which is lazily captured to allow recursion.
+
+:::note
 The `dsl` functions also lazily capture `Out[F, T]` definitions as implicit parameters.
+:::
 :::tip
-Check out the [resolver section](./resolvers.md) for more info on how resolvers work.
+Check out the [resolver section](resolvers.md) for more info on how resolvers work.
 :::
 
 ## Type (object)
 `Type` is the gql equivalent of `type` in GraphQL parlance.
 A `Type` consists of a name and a non-empty list of fields.
-```scala mdoc
+```scala mdoc:silent
 final case class Domain(
   name: String,
   amount: Int
 )
 
-Type[IO, Domain](
-  "Domain",
-  NonEmptyList.of(
-    "name" -> Field[IO, Domain, String](
-      Resolver.lift(_.name),
-      Eval.now(stringScalar)
-    ),
-    "amount" -> Field[IO, Domain, Int](
-      Resolver.lift(_.amount),
-      Eval.now(intScalar)
-    )
-  ),
-  Nil
-)
-```
-
-`Type`s look very rough, but are significantly easier to define with the `dsl`:
-```scala mdoc
 tpe[IO, Domain](
   "Domain",
   "name" -> lift(_.name),
@@ -129,7 +126,7 @@ It is highly reccomended to define all `Type`s, `Union`s and `Interface`s as eit
 ## Union
 `Union` types allow unification of arbitary types.
 The `Union` type defines a set of `PartialFunction`s that can specify the the type.
-```scala mdoc
+```scala mdoc:silent
 sealed trait Animal
 final case class Dog(name: String) extends Animal
 final case class Cat(name: String) extends Animal
@@ -156,7 +153,7 @@ Most GraphQL clients also handle this case gracefully, for backwards compatibili
 
 ### Ad-hoc unions
 In the true spirit of unification, `Union` types can be constructed in a more ad-hoc fashion:
-```scala mdoc
+```scala mdoc:silent
 final case class Entity1(value: String)
 final case class Entity2(value: String)
 
@@ -176,13 +173,13 @@ union[IO, Unification]("Unification")
 ```
 ### For the daring
 Since the specify function is a `PartialFunction`, it is indeed possible to have no unifying type:
-```scala mdoc
+```scala mdoc:silent
 union[IO, Any]("AnyUnification")
   .variant{ case x: Entity1 => x }
   .variant{ case x: Entity2 => x }
 ```
 And also complex routing logic:
-```scala mdoc
+```scala mdoc:silent
 union[IO, Unification]("RoutedUnification")
   .variant{ case Unification.E1(x) if x.value == "Jane" => x }
   .variant{ 
@@ -229,23 +226,6 @@ lazy val company = tpe[IO, Company](
   "id" -> lift(x => ID(x.id))
 ).subtypeOf[Node]
 ```
-
-### A note on interface relationships
-:::info
-This sub-section is a bit of a philosophical digression and can be skipped.
-:::
-
-The nature of the `Interface` type unfortunately causes some complications.
-Since a relation goes from implementation to interface, cases of ambiguity can arise of what interface to consider the "truth".
-Schema validation will catch such cases, but it can still feel like a somewhat arbitrary limitation.
-
-One could argue that the relation could simple be inverted, like unions, but alas such an endeavour has another consequence.
-Conceptually an interface is defined most generally (in a core library or a most general purpose module), where implementations occur in more specific places.
-Inverting the relationships of the interface would mean that the interface would have to be defined in the most specific place instead of the most general.
-That is, inverting the arrows (relationships) of an interface, produces a union instead (with some extra features such as fields).
-
-Now we must define the scala type for the interface in the most general place, but the `Interface` in the most specific?
-Connecting such a graph requires significant effort (exploitation of some laziness) and as such is not the chosen approach.
 
 ## Unreachable types
 gql discovers types by traversing the schema types.

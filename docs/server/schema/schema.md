@@ -81,11 +81,11 @@ For instance, if the whole graph was defined with `def`s, one could very easily 
 A `Schema` is a collection of some components that are required to execute a query.
 The `Schema` contains a `SchemaShape`, a `Statistics` instance, a query `Planner` implementation and state regarding `BatchResolver` implementations.
 :::tip
-Check out the [statistics section](../execution/statistics) for more information on the `Statistics` object.
+Check out the [statistics section](../execution/statistics.md) for more information on the `Statistics` object.
 
-Also, check out the [planning section](../execution/planning) for more information on how the default query planner works.
+Also, check out the [planning section](../execution/planning.md) for more information on how the default query planner works.
 
-Finally, you can look in the [resolver section](./resolvers) for more information on `BatchResolver`s.
+Finally, you can look in the [resolver section](resolvers.md) for more information on `BatchResolver`s.
 :::
 
 The most powerful `Schema` constructor `stateful`, converts a `State[SchemaState[F], SchemaShape[F, Q, M, S]]` to a `Schema[F, Q, M, S]`.

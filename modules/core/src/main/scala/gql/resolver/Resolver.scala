@@ -45,7 +45,7 @@ final class Resolver[+F[_], -I, +O](private[gql] val underlying: Step[F, I, O]) 
   def evalContramap[F2[x] >: F[x], I1 <: I, I2](f: I2 => F2[I1]): Resolver[F2, I2, O] =
     Resolver.liftF(f) andThen this
 
-  def fallibleMap[O2](f: O => Ior[String, O2]): Resolver[F, I, O2] =
+  def emap[O2](f: O => Ior[String, O2]): Resolver[F, I, O2] =
     this.map(f) andThen (new Resolver(Step.embedError))
 
   def first[C]: Resolver[F, (I, C), (O, C)] =
@@ -139,7 +139,7 @@ object Resolver extends ResolverInstances {
     def evalContramap[I2](f: I2 => F[I]): Resolver[F, I2, O] =
       Resolver.liftF(f) andThen self
 
-    def fallibleContraMap[I2](f: I2 => Ior[String, I]): Resolver[F, I2, O] =
+    def econtraMap[I2](f: I2 => Ior[String, I]): Resolver[F, I2, O] =
       (new Resolver(Step.embedError[F, I])).contramap[I2](f) andThen self
 
     def tupleIn: Resolver[F, I, (O, I)] =
