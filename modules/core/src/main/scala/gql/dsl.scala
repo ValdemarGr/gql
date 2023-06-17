@@ -267,8 +267,14 @@ object dsl {
     def subtypeOf[B](implicit ev: A <:< B, tag: ClassTag[A], interface: => Interface[F, B]): Type[F, A] =
       implements[B] { case a: A => a }(interface)
 
-    def addFields(xs: (String, Field[F, A, ?])*) =
+    def addFields(xs: (String, Field[F, A, ?])*): Type[F, A] =
       tpe.copy(fields = tpe.fields concat xs.toList)
+
+    def addFieldsNel(xs: NonEmptyList[(String, Field[F, A, ?])]): Type[F, A] =
+      addFields(xs.toList: _*)
+
+    def subtypeImpl[B](xs: NonEmptyList[(String, Field[F, A, ?])])(implicit ev: A <:< B, tag: ClassTag[A], interface: => Interface[F, B]): Type[F, A] =
+      subtypeOf[B](ev, tag, interface).addFieldsNel(xs)
   }
 
   final case class InterfaceSyntax[F[_], A](private val tpe: Interface[F, A]) extends AnyVal {
@@ -278,8 +284,14 @@ object dsl {
     def addAbstractFields(xs: (String, AbstractField[F, ?])*): Interface[F, A] =
       tpe.copy(fields = tpe.fields concat xs.toList)
 
+    def addAbstractFieldsNel(xs: NonEmptyList[(String, AbstractField[F, ?])]): Interface[F, A] =
+      addAbstractFields(xs.toList: _*)
+
     def addFields(xs: (String, Field[F, A, ?])*): Interface[F, A] =
-      tpe.copy(fields = tpe.fields concat xs.toList.map { case (k, v) => k -> v.asAbstract })
+      addAbstractFields(xs.map{ case (k, v) => k -> v.asAbstract}: _*)
+
+    def addFieldsNel(xs: NonEmptyList[(String, Field[F, A, ?])]): Interface[F, A] =
+      addFields(xs.toList: _*)
   }
 
   final case class UnionSyntax[F[_], A](private val tpe: Union[F, A]) extends AnyVal {

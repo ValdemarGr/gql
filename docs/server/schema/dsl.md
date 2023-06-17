@@ -224,15 +224,3 @@ tpe[IO, Example](
   "entity" -> lift(_ => Entity("John Doe", 42))
 )
 ```
-:::note
-`Pure` will be avaiable with any effect type but `cats.Id` will not.
-When working in `Pure` we have guarenteed that no there are no effects, since no value can inhabit `Nothing`.
-A transformation from `cats.Id` requires walking through the ast and transforming `cats.Id` to `F`.
-```scala mdoc:fail
-tpe[fs2.Pure, Entity](
-  "Entity",
-  "name" -> lift(_.name),
-  "age" -> eff(x => fs2.Pure(x.age))
-)
-```
-:::

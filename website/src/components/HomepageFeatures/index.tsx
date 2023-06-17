@@ -26,7 +26,7 @@ const FeatureList: Feature[] = [
     // Svg: require('@site/static/img/undraw_docusaurus_tree.svg').default,
     description: (
       <>
-        gql distills what it means to be a GraphQL resolver into a concise algebra that composes.
+        gql distills what it means to be a GraphQL resolver into a concise, well-behaved algebra that composes.
       </>
     ),
     code: (
@@ -59,12 +59,12 @@ const FeatureList: Feature[] = [
     )
   },
   {
-    title: 'No magic',
+    title: 'Typed functional graphql',
     // Svg: require('@site/static/img/undraw_docusaurus_mountain.svg').default,
     description: (
       <>
         gql adopts a simple and predictable approach to GraphQL.
-        No macros, just plain functional Scala.
+        Every aspect has been crafted to minimize friction by employing the proper constructions.
       </>
     ),
     code: (

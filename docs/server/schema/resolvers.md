@@ -6,6 +6,9 @@ Resolvers are embedded in fields and act as continuations.
 When gql executes a query it first constructs a tree of continueations from your schema and the supplied GraphQL query.
 
 `Resolver`s act and compose like functions with combinators such as `andThen` and `compose`.
+:::tip
+`Resolver` forms an `Arrow` and `Choice`.
+:::
 
 Lets start off with some imports:
 ```scala mdoc
