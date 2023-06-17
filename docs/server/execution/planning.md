@@ -163,4 +163,4 @@ runQry()
 ```
 
 Plans can also be shown nicely in a terminal with ANSI colors:
-![Terminal output](./plan_image.png)
+![Terminal output](plan_image.png)

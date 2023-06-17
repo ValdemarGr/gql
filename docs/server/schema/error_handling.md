@@ -81,7 +81,7 @@ go(largerQuery)
 ```
 Parser errors also look nice in ANSI terminals:
 
-![Terminal output](./error_image.png)
+![Terminal output](error_image.png)
 
 ### Exception trick
 If for whatever reason you wish to pass information through exceptions, that is also possible:
