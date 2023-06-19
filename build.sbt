@@ -25,6 +25,11 @@ ThisBuild / mimaFailOnProblem := false
 ThisBuild / mimaPreviousArtifacts := Set.empty
 //ThisBuild / tlFatalWarnings := true
 
+ThisBuild / githubWorkflowBuild ++= Seq(
+  WorkflowStep.Sbt(List("docs/mdoc"), name = Some("Compile the documentation scala code")),
+  WorkflowStep.Sbt(List("readme/mdoc"), name = Some("Compile the readme scala code"))
+)
+
 ThisBuild / githubWorkflowAddedJobs +=
   WorkflowJob(
     id = "docs",

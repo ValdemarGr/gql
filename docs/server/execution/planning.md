@@ -86,6 +86,7 @@ As an example, consider the following instance:
 ```scala mdoc:silent
 import gql._
 import gql.dsl._
+import gql.ast._
 import gql.server.planner._
 import gql.resolver._
 import scala.concurrent.duration._
@@ -100,7 +101,7 @@ def wait[I](ms: Int) = Resolver.liftF[IO, I](_ => IO.sleep(50.millis))
 val schem = Schema.stateful{
   Resolver.batch[IO, Unit, Int](_ => IO.sleep(10.millis) as Map(() -> 42)).flatMap{ b1 =>
     Resolver.batch[IO, Unit, String](_ => IO.sleep(15.millis) as Map(() -> "42")).map{ b2 =>
-      implicit lazy val child = builder[IO, Child.type]{ b =>
+      implicit lazy val child: Type[IO, Child.type] = builder[IO, Child.type]{ b =>
         b.tpe(
           "Child",
           "b1" -> b.from(wait(50) andThen b1.optional map (_.get)),

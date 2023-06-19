@@ -67,7 +67,7 @@ import cats.effect._
 
 final case class MyId(id: String)
 object MyId {
-  implicit val myIdCodec: IDCodec[MyId] = codec.string.to[MyId]
+  implicit lazy val myIdCodec: IDCodec[MyId] = codec.string.to[MyId]
 }
 
 final case class MyData(id: MyId, name: String)
