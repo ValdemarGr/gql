@@ -64,7 +64,7 @@ const FeatureList: Feature[] = [
     description: (
       <>
         gql adopts a simple and predictable approach to GraphQL.
-        Every aspect has been crafted to minimize friction by employing the proper constructions.
+        Every aspect has been crafted to minimize friction by employing the proper structures.
       </>
     ),
     code: (

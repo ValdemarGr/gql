@@ -73,7 +73,7 @@ trait FieldDslFull {
 
   def lift[I] = new FieldDsl.PartiallyAppliedLift[I]
 
-  def build[F[_], I] = new FieldDsl.FieldBuilder[F, I]
+  def build[F[_], I] = new FieldBuilder[F, I]
 
   def builder[F[_], I] = new FieldDsl.PartiallyAppliedFieldBuilder[F, I]
 
@@ -140,30 +140,6 @@ object FieldDsl extends FieldDslFull {
     def apply[A](f: FieldBuilder[F, I] => A): A = f(build[F, I])
   }
 
-  final class FieldBuilder[F[_], I](private val dummy: Boolean = false) extends AnyVal {
-    def tpe(
-        name: String,
-        hd: (String, Field[F, I, ?]),
-        tl: (String, Field[F, I, ?])*
-    ): Type[F, I] = TypeDsl.tpe[F, I](name, hd, tl: _*)
-
-    def fields(
-        hd: (String, Field[F, I, ?]),
-        tl: (String, Field[F, I, ?])*
-    ): Fields[F, I] = FieldDsl.fields[F, I](hd, tl: _*)
-
-    def from[T](resolver: Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field[F, I, T](resolver, Eval.later(tpe))
-
-    def apply[T](f: Resolver[F, I, I] => Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field[F, I, T](f(Resolver.id[F, I]), Eval.later(tpe))
-
-    def lift = new PartiallyAppliedLift[I]
-
-    def eff[T](resolver: I => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field(Resolver.liftF(resolver), Eval.later(tpe))
-  }
-
   final class PartiallyAppliedLift[I](private val dummy: Boolean = false) extends AnyVal {
     def apply[F[_], T, A](arg: Arg[A])(resolver: (A, I) => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
       Field(Resolver.lift[F, (A, I)] { case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
@@ -171,4 +147,28 @@ object FieldDsl extends FieldDslFull {
     def apply[F[_], T](resolver: I => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
       Field(Resolver.lift[F, I](resolver), Eval.later(tpe))
   }
+}
+
+final class FieldBuilder[F[_], I](private val dummy: Boolean = false) extends AnyVal {
+  def tpe(
+      name: String,
+      hd: (String, Field[F, I, ?]),
+      tl: (String, Field[F, I, ?])*
+  ): Type[F, I] = TypeDsl.tpe[F, I](name, hd, tl: _*)
+
+  def fields(
+      hd: (String, Field[F, I, ?]),
+      tl: (String, Field[F, I, ?])*
+  ): Fields[F, I] = FieldDsl.fields[F, I](hd, tl: _*)
+
+  def from[T](resolver: Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
+    Field[F, I, T](resolver, Eval.later(tpe))
+
+  def apply[T](f: Resolver[F, I, I] => Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
+    Field[F, I, T](f(Resolver.id[F, I]), Eval.later(tpe))
+
+  def lift = new FieldDsl.PartiallyAppliedLift[I]
+
+  def eff[T](resolver: I => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
+    Field(Resolver.liftF(resolver), Eval.later(tpe))
 }

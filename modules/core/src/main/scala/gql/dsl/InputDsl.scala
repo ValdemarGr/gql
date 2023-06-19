@@ -38,8 +38,6 @@ trait InputDslFull {
 
   def arged[F[_], I, A](a: Arg[A]) = Resolver.argument[F, I, A](a)
 
-  def value = InputDsl.ValueDsl
-
   def input[A](
       name: String,
       fields: Arg[A]
@@ -47,26 +45,26 @@ trait InputDslFull {
 }
 
 object InputDsl extends InputDslFull {
-  object ValueDsl {
-    def scalar[A](value: A)(implicit tpe: => Scalar[A]) =
-      tpe.encoder(value)
-
-    def fromEnum[A](value: A)(implicit tpe: => Enum[A]) =
-      tpe.revm.get(value).map(enumValue)
-
-    def enumValue(value: String) = V.EnumValue(value)
-
-    def arr(xs: V[Const, Unit]*) = V.ListValue(xs.toList)
-
-    def obj(xs: (String, V[Const, Unit])*) = V.ObjectValue(xs.toList)
-
-    def nullValue = V.NullValue()
-  }
-
   final class PartiallyAppliedArgFull[A](private val dummy: Boolean = false) extends AnyVal {
     def apply[B](name: String, default: Option[V[Const, Unit]], description: Option[String])(
         f: ArgParam[A] => Either[String, B]
     )(implicit tpe: => In[A]): Arg[B] =
       Arg.makeFrom[A, B](ArgValue(name, Eval.later(tpe), default, description))(f)
   }
+}
+
+object value {
+  def scalar[A](value: A)(implicit tpe: => Scalar[A]) =
+    tpe.encoder(value)
+
+  def fromEnum[A](value: A)(implicit tpe: => Enum[A]) =
+    tpe.revm.get(value).map(enumValue)
+
+  def enumValue(value: String) = V.EnumValue(value)
+
+  def arr(xs: V[Const, Unit]*) = V.ListValue(xs.toList)
+
+  def obj(xs: (String, V[Const, Unit])*) = V.ObjectValue(xs.toList)
+
+  def nullValue = V.NullValue()
 }
