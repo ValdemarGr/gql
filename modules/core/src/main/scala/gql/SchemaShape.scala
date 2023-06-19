@@ -217,6 +217,7 @@ object SchemaShape {
       case VariableValue(v, _) => Doc.text(v)
     }
   }
+
   def render[F[_]](shape: SchemaShape[F, ?, ?, ?]) = {
     lazy val triple = Doc.text("\"\"\"")
 

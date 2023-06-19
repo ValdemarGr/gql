@@ -272,6 +272,30 @@ lazy val mdocExt = project
   .settings(sharedSettings)
   .enablePlugins(NoPublishPlugin)
 
+lazy val readme = project
+  .in(file("modules/readme"))
+  .settings(
+    moduleName := "gql-readme",
+    mdocIn := file("readme/README.md"),
+    mdocOut := file("./README.md"),
+    mdocVariables ++= Map(
+      "VERSION" -> tlLatestVersion.value.getOrElse(version.value)
+    ),
+    tlFatalWarnings := false
+  )
+  .dependsOn(server % "compile->compile;test->test;compile->test")
+  .dependsOn(core % "compile->compile;compile->test")
+  .dependsOn(serverHttp4s)
+  .dependsOn(serverGraphqlWs)
+  .dependsOn(serverNatchez)
+  .dependsOn(clientCodegen)
+  .dependsOn(clientCodegenCli)
+  .dependsOn(serverGoi)
+  .dependsOn(client)
+  .dependsOn(http4sClient)
+  .dependsOn(mdocExt)
+  .enablePlugins(MdocPlugin, NoPublishPlugin)
+
 lazy val docs = project
   .in(file("modules/docs"))
   .settings(
