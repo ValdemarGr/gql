@@ -71,12 +71,6 @@ jobs:
       - name: Test
         run: sbt '++ ${{ matrix.scala }}' test
 
-      - name: Compile the documentation scala code
-        run: sbt '++ ${{ matrix.scala }}' docs/mdoc
-
-      - name: Compile the readme scala code
-        run: sbt '++ ${{ matrix.scala }}' readme/mdoc
-
       - name: Make target directories
         if: github.event_name != 'pull_request' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
         run: mkdir -p modules/mdoc-ext/target modules/client-codegen-sbt/target modules/server-http4s/target modules/server-graphql-ws/target modules/server/target modules/graphql-ws/target modules/client-codegen-cli/target modules/parser/target modules/docs/target modules/server-natchez/target target modules/client-http4s/target modules/client/target modules/client-codegen/target modules/readme/target modules/core/target modules/client-codegen-test/target modules/server-goi/target project/target
@@ -180,8 +174,57 @@ jobs:
       - name: Publish
         run: sbt '++ ${{ matrix.scala }}' tlCiRelease
 
+  compile docs:
+    name: Verify that the docs compile
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        scala: [2.13.9]
+        java: [temurin@11]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout current branch (fast)
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Download Java (temurin@8)
+        id: download-java-temurin-8
+        if: matrix.java == 'temurin@8'
+        uses: typelevel/download-java@v2
+        with:
+          distribution: temurin
+          java-version: 8
+
+      - name: Setup Java (temurin@8)
+        if: matrix.java == 'temurin@8'
+        uses: actions/setup-java@v3
+        with:
+          distribution: jdkfile
+          java-version: 8
+          jdkFile: ${{ steps.download-java-temurin-8.outputs.jdkFile }}
+
+      - name: Cache sbt
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2/cache
+            ~/.coursier/cache/v1
+            ~/.cache/coursier/v1
+            ~/AppData/Local/Coursier/Cache/v1
+            ~/Library/Caches/Coursier/v1
+          key: ${{ runner.os }}-sbt-cache-v2-${{ hashFiles('**/*.sbt') }}-${{ hashFiles('project/build.properties') }}
+
+      - name: Compile the documentation scala code
+        run: sbt '++ ${{ matrix.scala }}' docs/mdoc
+
+      - name: Compile the readme scala code
+        run: sbt '++ ${{ matrix.scala }}' readme/mdoc
+
   docs:
     name: Run mdoc docs
+    needs: [compile docs]
     if: github.event_name != 'pull_request' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
     strategy:
       matrix:

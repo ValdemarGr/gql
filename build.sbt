@@ -25,51 +25,63 @@ ThisBuild / mimaFailOnProblem := false
 ThisBuild / mimaPreviousArtifacts := Set.empty
 //ThisBuild / tlFatalWarnings := true
 
-ThisBuild / githubWorkflowBuild ++= Seq(
-  WorkflowStep.Sbt(List("docs/mdoc"), name = Some("Compile the documentation scala code")),
-  WorkflowStep.Sbt(List("readme/mdoc"), name = Some("Compile the readme scala code"))
-)
-
-ThisBuild / githubWorkflowAddedJobs +=
+ThisBuild / githubWorkflowAddedJobs ++= Seq(
+  WorkflowJob(
+    id = "compile docs",
+    name = "Verify that the docs compile",
+    scalas = List(scala213Version),
+    steps = WorkflowStep.Use(
+      UseRef.Public("actions", "checkout", "v3"),
+      name = Some("Checkout current branch (fast)"),
+      params = Map("fetch-depth" -> "0")
+    ) ::
+      WorkflowStep.SetupJava(githubWorkflowJavaVersions.value.toList) ++
+      githubWorkflowGeneratedCacheSteps.value ++
+      List(
+        WorkflowStep.Sbt(List("docs/mdoc"), name = Some("Compile the documentation scala code")),
+        WorkflowStep.Sbt(List("readme/mdoc"), name = Some("Compile the readme scala code"))
+      )
+  ),
   WorkflowJob(
     id = "docs",
     name = "Run mdoc docs",
+    needs = List("compile docs"),
     scalas = List(scala213Version),
-    steps =
+    steps = WorkflowStep.Use(
+      UseRef.Public("actions", "checkout", "v3"),
+      name = Some("Checkout current branch (fast)"),
+      params = Map("fetch-depth" -> "0")
+    ) ::
+      WorkflowStep.SetupJava(githubWorkflowJavaVersions.value.toList) ++
+      githubWorkflowGeneratedCacheSteps.value ++
       // We need all commits to track down the tag for the VERSION variable
-      WorkflowStep.Use(
-        UseRef.Public("actions", "checkout", "v3"),
-        name = Some("Checkout current branch (fast)"),
-        params = Map("fetch-depth" -> "0")
-      ) ::
-        WorkflowStep.SetupJava(githubWorkflowJavaVersions.value.toList) ++
-        githubWorkflowGeneratedCacheSteps.value ++
-        List(
-          WorkflowStep.Run(
-            List(
-              "git fetch --all --tags --force"
-            )
-          ),
-          WorkflowStep.Sbt(List("docs/mdoc")),
-          WorkflowStep.Use(
-            UseRef.Public("actions", "setup-node", "v3"),
-            params = Map("node-version" -> "18")
-          ),
-          WorkflowStep.Run(List("cd website && yarn install")),
-          WorkflowStep.Run(
-            List(
-              "git config --global user.name ValdemarGr",
-              "git config --global user.email randomvald0069@gmail.com",
-              "cd website && yarn deploy"
-            ),
-            env = Map(
-              "GIT_USER" -> "valdemargr",
-              "GIT_PASS" -> "${{ secrets.GITHUB_TOKEN }}"
-            )
+      List(
+        WorkflowStep.Run(
+          List(
+            "git fetch --all --tags --force"
           )
         ),
+        WorkflowStep.Sbt(List("docs/mdoc")),
+        WorkflowStep.Use(
+          UseRef.Public("actions", "setup-node", "v3"),
+          params = Map("node-version" -> "18")
+        ),
+        WorkflowStep.Run(List("cd website && yarn install")),
+        WorkflowStep.Run(
+          List(
+            "git config --global user.name ValdemarGr",
+            "git config --global user.email randomvald0069@gmail.com",
+            "cd website && yarn deploy"
+          ),
+          env = Map(
+            "GIT_USER" -> "valdemargr",
+            "GIT_PASS" -> "${{ secrets.GITHUB_TOKEN }}"
+          )
+        )
+      ),
     cond = Some("""github.event_name != 'pull_request' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')""")
   )
+)
 
 lazy val sharedSettings = Seq(
   organization := "io.github.valdemargr",
@@ -177,7 +189,6 @@ lazy val testCodeGen = project
     tlFatalWarnings := false,
     tlFatalWarningsInCi := false,
     codeGenForTest := {
-      // Oh man I really loathe sbt, why do I have to do this?
       Def.taskDyn {
         val sp = file("./modules/client-codegen-test/src/main/resources/schema.graphql").absolutePath.replace("\\", "\\\\")
         val qp = file("./modules/client-codegen-test/src/main/resources/queries/query.graphql").absolutePath.replace("\\", "\\\\")
