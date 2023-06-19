@@ -1,12 +1,25 @@
+/*
+ * Copyright 2023 Valdemar Grange
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package gql.dsl
 
 import gql.resolver._
 import gql.ast._
-import gql.parser.{Value => V, Const, QueryAst => QA}
 import gql._
 import cats.data._
 import cats._
-import scala.reflect.ClassTag
 
 trait FieldDsl[F[_]] {
   def fields[A](hd: (String, Field[F, A, ?]), tl: (String, Field[F, A, ?])*): Fields[F, A] =
@@ -35,7 +48,7 @@ trait FieldDsl[F[_]] {
   def optType[A, B](resolver: Resolver[F, A, B])(implicit tpe: => Out[F, B]): Out[F, Option[A]] =
     FieldDsl.optType[F, A, B](resolver)(tpe)
 
-  def optType[A](implicit tpe: => In[A]): In[Option[A]] = 
+  def optType[A](implicit tpe: => In[A]): In[Option[A]] =
     FieldDsl.optType[A](tpe)
 
   def arrType[A, C, B](toSeq: C => Seq[A])(resolver: Resolver[F, A, B])(implicit
