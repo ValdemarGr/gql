@@ -17,6 +17,7 @@ package gql.resolver
 
 import cats.data._
 import cats._
+import cats.implicits._
 import gql._
 
 /** Resolver is one of the core abstractions of gql. The resolver class contains a collection of methods to aid comosition.
@@ -67,6 +68,8 @@ final class Resolver[+F[_], -I, +O](private[gql] val underlying: Step[F, I, O]) 
     this.map(f).embedSequentialStream
 
   def step: Step[F, I, O] = underlying
+
+  def covaryAll[F2[x] >: F[x], O2 >: O]: Resolver[F2, I, O2] = this
 }
 
 object Resolver extends ResolverInstances {
@@ -161,6 +164,62 @@ object Resolver extends ResolverInstances {
     def embedSequentialStream: Resolver[F, I, O] =
       self andThen new Resolver(Step.embedStreamFull(signal = false))
   }
+
+  implicit class ResolverBatchOps[F[_], K, V](private val r: Resolver[F, Set[K], Map[K, V]]) extends AnyVal {
+    def optionals[G[_]: Foldable: Functor]: Resolver[F, G[K], G[Option[V]]] =
+      r.contramap[G[K]](_.toList.toSet).tupleIn.map { case (m, g) => g.map(m.get) }
+
+    def values[G[_]: Foldable: FunctorFilter: Functor]: Resolver[F, G[K], G[V]] =
+      optionals[G].map(_.collect { case Some(v) => v })
+
+    def force[G[_]: Foldable: FunctorFilter: Functor](implicit
+        S: ShowMissingKeys[K]
+    ): Resolver[F, G[K], G[V]] =
+      r.contramap[G[K]](_.toList.toSet).tupleIn.map { case (m, g) => g.map(k => (k, m.get(k))) }.emap { gov =>
+        val errs = gov.collect { case (k, None) => k }
+        errs.toList.toNel match {
+          case None     => gov.collect { case (_, Some(v)) => v }.rightIor[String]
+          case Some(xs) => S.showMissingKeys(xs).leftIor[G[V]]
+        }
+      }
+
+    def optional: Resolver[F, K, Option[V]] =
+      optionals[Id]
+
+    def forceOne(implicit S: ShowMissingKeys[K]): Resolver[F, K, V] =
+      optional.tupleIn.emap {
+        case (Some(v), _) => v.rightIor[String]
+        case (None, k)    => S.showMissingKeys(NonEmptyList.one(k)).leftIor[V]
+      }
+
+    def forceNE[G[_]: NonEmptyTraverse](implicit S: ShowMissingKeys[K]): Resolver[F, G[K], G[V]] =
+      force[List]
+        .contramap[G[K]](_.toList)
+        .tupleIn
+        .emap { case (v, ks) =>
+          val varr = v.toVector
+          ks.mapWithIndex { case (_, i) => varr(i) }.rightIor
+        }
+  }
+}
+
+trait ShowMissingKeys[A] {
+  def showMissingKeys(xs: NonEmptyList[A]): String
+}
+
+object ShowMissingKeys {
+  def apply[A](implicit ev: ShowMissingKeys[A]): ShowMissingKeys[A] = ev
+
+  def showFull[A](show: NonEmptyList[A] => String): ShowMissingKeys[A] =
+    new ShowMissingKeys[A] {
+      def showMissingKeys(xs: NonEmptyList[A]): String = show(xs)
+    }
+
+  def showForKey[A: Show](prefix: String): ShowMissingKeys[A] =
+    showFull(xs => s"$prefix: ${xs.map(_.show).mkString_(", ")}")
+
+  def show[A](showKey: A => String, prefix: String): ShowMissingKeys[A] =
+    showForKey[A](prefix)(Show.show(showKey))
 }
 
 trait ResolverInstances {
