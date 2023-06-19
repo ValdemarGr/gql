@@ -85,7 +85,7 @@ enumType[UntypedEnum](
 ```
 :::caution
 Encoding a value that has not been defined in the enum will result in a GraphQL error.
-Therefore, it is recommended to enumerate the image of the enum; only use `sealed trait`s
+Therefore, it is recommended to enumerate the enum; only use `sealed trait`s
 :::
 
 ## Field
