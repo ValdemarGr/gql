@@ -174,7 +174,7 @@ jobs:
       - name: Publish
         run: sbt '++ ${{ matrix.scala }}' tlCiRelease
 
-  compile docs:
+  compile-docs:
     name: Verify that the docs compile
     strategy:
       matrix:
@@ -224,7 +224,7 @@ jobs:
 
   docs:
     name: Run mdoc docs
-    needs: [compile docs]
+    needs: [compile-docs]
     if: github.event_name != 'pull_request' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
     strategy:
       matrix:

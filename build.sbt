@@ -27,7 +27,7 @@ ThisBuild / mimaPreviousArtifacts := Set.empty
 
 ThisBuild / githubWorkflowAddedJobs ++= Seq(
   WorkflowJob(
-    id = "compile docs",
+    id = "compile-docs",
     name = "Verify that the docs compile",
     scalas = List(scala213Version),
     steps = WorkflowStep.Use(
@@ -45,7 +45,7 @@ ThisBuild / githubWorkflowAddedJobs ++= Seq(
   WorkflowJob(
     id = "docs",
     name = "Run mdoc docs",
-    needs = List("compile docs"),
+    needs = List("compile-docs"),
     scalas = List(scala213Version),
     steps = WorkflowStep.Use(
       UseRef.Public("actions", "checkout", "v3"),
