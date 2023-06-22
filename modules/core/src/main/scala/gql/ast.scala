@@ -122,7 +122,7 @@ object ast extends AstImplicits.Implicits {
   ) extends ObjectLike[F, A] {
     def document(description: String): Interface[F, A] = copy(description = Some(description))
 
-    lazy val abstractFieldsNel = fields.map{ case (k, v) => k -> v.asAbstract }
+    lazy val abstractFieldsNel = fields.map { case (k, v) => k -> v.asAbstract }
 
     lazy val abstractFields = abstractFieldsNel.toList
 

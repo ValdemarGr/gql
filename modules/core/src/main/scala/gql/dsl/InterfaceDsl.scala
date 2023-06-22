@@ -18,7 +18,6 @@ package gql.dsl
 import gql.ast._
 import cats.data._
 import cats._
-import scala.reflect.ClassTag
 
 trait InterfaceDsl[F[_]] {
   def interfaceNel[A](
@@ -59,7 +58,7 @@ object InterfaceDsl extends InterfaceDslFull {
     def implements[B](implicit interface: => Interface[F, B]): Interface[F, A] =
       tpe.copy(implementations = Eval.later(interface) :: tpe.implementations)
 
-    def subtypeImpl[B](implicit ev: A <:< B, tag: ClassTag[A], interface: => Interface[F, B]): Interface[F, A] = {
+    def subtypeImpl[B](implicit ev: A <:< B, interface: => Interface[F, B]): Interface[F, A] = {
       val existingConcretes = tpe.fields.collect { case (k, _: gql.ast.Field[F, A, ?]) => k }.toSet
       val existingAbstracts = tpe.fields.collect { case (k, _: gql.ast.AbstractField[F, ?]) => k }.toSet
       val news = interface.fields.collect {
