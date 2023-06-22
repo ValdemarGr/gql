@@ -116,15 +116,15 @@ object ast extends AstImplicits.Implicits {
 
   final case class Interface[+F[_], A](
       name: String,
-      fields: NonEmptyList[(String, AbstractField[F, ?])],
+      fields: NonEmptyList[(String, AnyField[F, A, ?])],
       implementations: List[Eval[Interface[F, ?]]],
       description: Option[String] = None
   ) extends ObjectLike[F, A] {
     def document(description: String): Interface[F, A] = copy(description = Some(description))
 
-    lazy val abstractFieldsNel = fields
+    lazy val abstractFieldsNel = fields.map{ case (k, v) => k -> v.asAbstract }
 
-    lazy val abstractFields = fields.toList
+    lazy val abstractFields = abstractFieldsNel.toList
 
     lazy val abstractFieldMap = abstractFields.toList.toMap
 
@@ -168,14 +168,20 @@ object ast extends AstImplicits.Implicits {
     lazy val revm = kv.map(_.swap).toList.toMap
   }
 
+  sealed trait AnyField[+F[_], -I, T] {
+    def output: Eval[Out[F, T]]
+
+    def asAbstract: AbstractField[F, T]
+  }
+
   final case class Field[+F[_], -I, T](
       resolve: Resolver[F, I, T],
       output: Eval[Out[F, T]],
       description: Option[String] = None
-  ) {
+  ) extends AnyField[F, I, T] {
     def document(description: String): Field[F, I, T] = copy(description = Some(description))
 
-    def asAbstract: AbstractField[F, T] =
+    lazy val asAbstract: AbstractField[F, T] =
       AbstractField(
         NonEmptyChain
           .fromChain {
@@ -206,8 +212,10 @@ object ast extends AstImplicits.Implicits {
       arg: Option[Arg[?]],
       output: Eval[Out[F, T]],
       description: Option[String] = None
-  ) {
+  ) extends AnyField[F, Any, T] {
     def document(description: String): AbstractField[F, T] = copy(description = Some(description))
+
+    def asAbstract = this
   }
 
   final case class OutOpt[+F[_], A, B](of: Out[F, B], resolver: Resolver[F, A, B]) extends Out[F, Option[A]]

@@ -162,10 +162,21 @@ interface[IO, OtherVehicle](
   vehicle.abstractFields: _*
 ).implements[Vehicle]
 ```
-### Interface pattern
+### Interface inheritance
 It can be a bit cumbersome to implement an interface's fields every time it is extended.
-An interface constructor has been provided that can convert field implementations into abstract fields:
-```scala mdoc:silent
+Interfaces accept any field type (abstract or concrete) as input.
+This is convinient since it allows a safe type of inheritance.
+When using the `subtypeImpl` function, all possible fields are added to the type.
+:::info
+gql's inheritance has some implications:
+* If you're working an a `Type`, only concrete fields can be inherited.
+* If you're working on an `Interface`, all fields, concrete and abstract can be inherited.
+
+gql picks the best field when you inherit from an interface.
+For two fields with the same name, gql will always pick the concrete field.
+If both are concrete, it will prioritize the field from the subtype (the type you're working on).
+:::
+```scala mdoc
 trait Pet {
   def name: String
   def age: Int
@@ -174,23 +185,47 @@ trait Pet {
 
 case class Dog(name: String, age: Int, weight: Double) extends Pet
 
-val petFields = fields[IO, Pet](
+implicit lazy val pet = interface[IO, Pet](
+  "Pet",
   "name" -> lift(_.name),
   "age" -> lift(_.age),
   "weight" -> lift(_.weight)
 )
 
-implicit val pet = interfaceFromNel[IO, Pet](
+lazy val overwirttenName = lift[Dog](_.name)
+
+implicit lazy val dog = tpe[IO, Dog](
+  "Dog",
+  "bark" -> lift(_ => "woof!"),
+  "name" -> overwirttenName
+).subtypeImpl[Pet]
+
+dog.fields.map{ case (k, _) => k}.mkString_(", ")
+
+// The Dog type has it's own implementation of the name field
+dog.fields.exists{ case (_, v) => v == overwirttenName }
+``` 
+
+To showcase the iheritance a bit further, consider the following invalid schema.
+```scala mdoc:nest
+implicit lazy val pet = interface[IO, Pet](
   "Pet",
-  petFields
+  "name" -> lift(_.name),
+  "age" -> lift(_.age),
+  // Notice that weight is abstract
+  "weight" -> abst[IO, Double]
 )
 
-implicit val dog = tpe[IO, Dog](
+implicit lazy val dog = tpe[IO, Dog](
   "Dog",
   "bark" -> lift(_ => "woof!")
-)
-  .subtypeImpl[Pet](petFields)
-``` 
+).subtypeImpl[Pet]
+
+dog.fields.map{ case (k, _) => k}.mkString_(", ")
+```
+:::tip
+[Schema validation](schema.md#validation) will catch such errors.
+:::
 
 ## Input types
 Review the [Input types](input_types.md) section for more information.

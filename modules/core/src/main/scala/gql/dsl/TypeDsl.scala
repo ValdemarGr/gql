@@ -56,9 +56,13 @@ object TypeDsl extends TypeDslFull {
     def addFieldsNel(xs: NonEmptyList[(String, Field[F, A, ?])]): Type[F, A] =
       addFields(xs.toList: _*)
 
-    def subtypeImpl[B](
-        xs: NonEmptyList[(String, Field[F, A, ?])]
-    )(implicit ev: A <:< B, tag: ClassTag[A], interface: => Interface[F, B]): Type[F, A] =
-      (new TypeOps(subtypeOf[B](ev, tag, interface))).addFieldsNel(xs)
+    def subtypeImpl[B](implicit ev: A <:< B, tag: ClassTag[A], interface: => Interface[F, B]): Type[F, A] = {
+      val existingConcretes = tpe.fields.map { case (k, _) => k }.toList.toSet
+      val concretes = interface.fields.collect {
+        case (k, f: gql.ast.Field[F, B, x]) if !existingConcretes.contains(k) =>
+          (k, f.contramap[F, A](ev(_)))
+      }
+      subtypeOf[B](ev, tag, interface).addFields(concretes: _*)
+    }
   }
 }

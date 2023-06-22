@@ -85,7 +85,7 @@ enumType[UntypedEnum](
 ```
 :::caution
 Encoding a value that has not been defined in the enum will result in a GraphQL error.
-Therefore, it is recommended to enumerate the enum; only use `sealed trait`s
+Therefore, it is recommended to enumerate the enum; only use `sealed trait`s (Scala 2) or `enum`s (Scala 3).
 :::
 
 ## Field
@@ -226,6 +226,8 @@ lazy val company = tpe[IO, Company](
   "id" -> lift(x => ID(x.id))
 ).subtypeOf[Node]
 ```
+
+To inherit an interface's fields, take a look at the [interface dsl](dsl.md#interface-inheritance).
 
 ## Unreachable types
 gql discovers types by traversing the schema types.

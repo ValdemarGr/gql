@@ -71,7 +71,7 @@ object Goi {
     )
 
   def addId[F[_], A](t: Interface[F, A]): Interface[F, A] =
-    t.addAbstractFields("id" -> abst[F, ID[String]])
+    t.addFields("id" -> abst[F, ID[String]])
 
   def decodeInput[A](codec: IDCodec[A], elems: Array[String]) = {
     val xs = codec.codecs

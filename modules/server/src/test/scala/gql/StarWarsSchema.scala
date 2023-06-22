@@ -113,32 +113,26 @@ object StarWarsSchema {
         "JEDI" -> enumVal(Episode.JEDI)
       )
 
-    lazy val characterFields = builder[IO, Character] { b =>
-      b.fields(
-        "id" -> lift(_.id),
-        "name" -> lift(_.name),
-        "friends" -> eff(getFriends),
-        "appearsIn" -> lift(_.appearsIn),
-        "secretBackstory" -> b(_.map(_ => "secretBackstory is secret.".leftIor[String]).rethrow)
-      )
-    }
-
-    implicit lazy val character: Interface[IO, Character] =
-      interfaceFromNel[IO, Character]("Character", characterFields)
+    implicit lazy val character: Interface[IO, Character] = interface[IO, Character](
+      "Character",
+      "id" -> lift(_.id),
+      "name" -> lift(_.name),
+      "friends" -> eff(getFriends),
+      "appearsIn" -> lift(_.appearsIn),
+      "secretBackstory" -> build[IO, Character](_.emap(_ => "secretBackstory is secret.".leftIor[String]))
+    )
 
     implicit lazy val human: Type[IO, Human] =
       tpe[IO, Human](
         "Human",
         "homePlanet" -> lift(_.homePlanet)
-      ).subtypeOf[Character]
-        .addFields(characterFields.toList: _*)
+      ).subtypeImpl[Character]
 
     implicit lazy val droid: Type[IO, Droid] =
       tpe[IO, Droid](
         "Droid",
         "primaryFunction" -> lift(_.primaryFunction)
-      ).subtypeOf[Character]
-        .addFields(characterFields.toList: _*)
+      ).subtypeImpl[Character]
 
     SchemaShape[IO, Unit, Unit, Unit](
       tpe[IO, Unit](

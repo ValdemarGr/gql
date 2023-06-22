@@ -19,9 +19,9 @@ We'll define the domain types for characters and episodes as follows.
 sealed trait Episode
 
 object Episode {
-  case object NEWHOPE extends Episode
-  case object EMPIRE extends Episode
-  case object JEDI extends Episode
+  case object NewHope extends Episode
+  case object Empire extends Episode
+  case object Jedi extends Episode
 }
 
 trait Character {
@@ -144,9 +144,9 @@ implicit val episode: Enum[Episode] = enumType[Episode](
   // Name as first parameter
   "Episode",
   // The rest of the parameters are the enum values
-  "NEWHOPE" -> enumVal(Episode.NEWHOPE),
-  "EMPIRE" -> enumVal(Episode.EMPIRE),
-  "JEDI" -> enumVal(Episode.JEDI)
+  "NEWHOPE" -> enumVal(Episode.NewHope),
+  "EMPIRE" -> enumVal(Episode.Empire),
+  "JEDI" -> enumVal(Episode.Jedi)
 )
 
 // Notice how episode is also an implicit (given in scala 3)
@@ -195,39 +195,33 @@ Let's define a schema for our whole Star Wars API:
 final class StarWarsSchema[F[_]](repo: Repository[F])(implicit F: Async[F]) {
   implicit lazy val episode: Enum[Episode] = enumType[Episode](
     "Episode",
-    "NEWHOPE" -> enumVal(Episode.NEWHOPE),
-    "EMPIRE" -> enumVal(Episode.EMPIRE),
-    "JEDI" -> enumVal(Episode.JEDI)
+    "NEWHOPE" -> enumVal(Episode.NewHope),
+    "EMPIRE" -> enumVal(Episode.Empire),
+    "JEDI" -> enumVal(Episode.Jedi)
   )
 
-  // we can define fields as values such that we can compose
-  // them together later on
-  // since gql doesn't feature resolvers on abstract types, we need to be explicit about inherited fields
-  val characterFields = fields[F, Character](
+  // We can define our Character interface from the shared field definitions
+  implicit lazy val character: Interface[F, Character] = interface[F, Character](
+    "Character",
     "id" -> lift(_.id),
     "name" -> lift(_.name),
     "friends" -> eff(_.friends.traverse(repo.getCharacter)),
     "appearsIn" -> lift(_.appearsIn),
-    "secretBackstory" -> build[F, Character](_.as("secretBackstory is secret.".leftIor[String]).rethrow)
-  )
-
-  // We can define our Character interface from the shared field definitions
-  implicit lazy val character: Interface[F, Character] = interfaceFromNel[F, Character](
-    "Character",
-    characterFields
+    "secretBackstory" -> 
+      build[F, Character](_.emap(_ => "secretBackstory is secret.".leftIor[String]))
   )
 
   // Human has the character fields along with its own unique "homePlanet" field
   implicit lazy val human: Type[F, Human] = tpe[F, Human](
     "Human",
     "homePlanet" -> lift(_.homePlanet)
-  ).subtypeImpl[Character](characterFields)
+  ).subtypeImpl[Character]
 
   // Droid has the character fields along with its own unique "primaryFunction" field
   implicit lazy val droid: Type[F, Droid] = tpe[F, Droid](
     "Droid",
     "primaryFunction" -> lift(_.primaryFunction)
-  ).subtypeImpl[Character](characterFields)
+  ).subtypeImpl[Character]
 
   // Arguments can be defined as values as well
   val episodeArg = arg[Option[Episode]]("episode")
@@ -250,7 +244,7 @@ val luke = Human(
   "1000",
   "Luke Skywalker".some,
   "1002" :: "1003" :: "2000" :: "2001" :: Nil,
-  Episode.NEWHOPE :: Episode.EMPIRE :: Episode.JEDI :: Nil,
+  Episode.NewHope :: Episode.Empire :: Episode.Jedi :: Nil,
   "Tatooine".some
 )
 
@@ -258,7 +252,7 @@ val vader = Human(
   "1001",
   "Darth Vader".some,
   "1004" :: Nil,
-  Episode.NEWHOPE :: Episode.EMPIRE :: Episode.JEDI :: Nil,
+  Episode.NewHope :: Episode.Empire :: Episode.Jedi :: Nil,
   "Tatooine".some
 )
 
@@ -266,7 +260,7 @@ val han = Human(
   "1002",
   "Han Solo".some,
   "1000" :: "1003" :: "2001" :: Nil,
-  Episode.NEWHOPE :: Episode.EMPIRE :: Episode.JEDI :: Nil,
+  Episode.NewHope :: Episode.Empire :: Episode.Jedi :: Nil,
   None
 )
 
@@ -274,7 +268,7 @@ val leia = Human(
   "1003",
   "Leia Organa".some,
   "1000" :: "1002" :: "2000" :: "2001" :: Nil,
-  Episode.NEWHOPE :: Episode.EMPIRE :: Episode.JEDI :: Nil,
+  Episode.NewHope :: Episode.Empire :: Episode.Jedi :: Nil,
   "Alderaan".some
 )
 
@@ -282,7 +276,7 @@ val tarkin = Human(
   "1004",
   "Wilhuff Tarkin".some,
   "1001" :: Nil,
-  Episode.NEWHOPE :: Nil,
+  Episode.NewHope :: Nil,
   None
 )
 
@@ -295,7 +289,7 @@ val threepio = Droid(
   "2000",
   "C-3PO".some,
   "1000" :: "1002" :: "1003" :: "2001" :: Nil,
-  Episode.NEWHOPE :: Episode.EMPIRE :: Episode.JEDI :: Nil,
+  Episode.NewHope :: Episode.Empire :: Episode.Jedi :: Nil,
   "Protocol"
 )
 
@@ -303,7 +297,7 @@ val artoo = Droid(
   "2001",
   "R2-D2".some,
   "1000" :: "1002" :: "1003" :: Nil,
-  Episode.NEWHOPE :: Episode.EMPIRE :: Episode.JEDI :: Nil,
+  Episode.NewHope :: Episode.Empire :: Episode.Jedi :: Nil,
   "Astromech"
 )
 
@@ -314,7 +308,7 @@ val droidData =
 
 def repo: Repository[IO] = new Repository[IO] {
   def getHero(episode: Option[Episode]): IO[Character] =
-    if (episode.contains(Episode.EMPIRE)) IO(luke)
+    if (episode.contains(Episode.Empire)) IO(luke)
     else IO(artoo)
     
   def getCharacter(id: String): IO[Option[Character]] =

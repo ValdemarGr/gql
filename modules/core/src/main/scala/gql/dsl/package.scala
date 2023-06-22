@@ -22,4 +22,6 @@ package object dsl extends GqlDslFull {
   type Fields[F[_], -A] = NonEmptyList[(String, Field[F, A, ?])]
 
   type AbstractFields[F[_]] = NonEmptyList[(String, AbstractField[F, ?])]
+
+  type AnyFields[F[_], -A] = NonEmptyList[(String, AnyField[F, A, ?])]
 }

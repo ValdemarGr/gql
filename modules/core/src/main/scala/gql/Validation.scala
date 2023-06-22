@@ -386,7 +386,7 @@ object Validation {
                     else G.unit
 
                   val actualArg: Chain[ArgValue[?]] = Chain.fromOption(f.arg).flatMap(_.entries.toChain)
-                  val expectedArg: Chain[ArgValue[?]] = Chain.fromOption(v.arg).flatMap(_.entries.toChain)
+                  val expectedArg: Chain[ArgValue[?]] = Chain.fromOption(v.asAbstract.arg).flatMap(_.entries.toChain)
                   val comb = actualArg.map(x => x.name -> x) align expectedArg.map(x => x.name -> x)
                   val verifyArgsF = comb.traverse_ {
                     // Only actual; shouldn't occur

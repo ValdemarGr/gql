@@ -135,7 +135,7 @@ object GenTest {
     "name" -> lift(_.name)
   )
 
-  implicit lazy val pet: Interface[IO, Pet] = interfaceFromNel[IO, Pet]("Pet", petFields)
+  implicit lazy val pet: Interface[IO, Pet] = interfaceNel[IO, Pet]("Pet", petFields)
 
   implicit lazy val dog: Type[IO, Dog] = tpe[IO, Dog](
     "Dog",
@@ -152,7 +152,7 @@ object GenTest {
   )
 
   implicit lazy val sentient: Interface[IO, Sentient] =
-    interfaceFromNel[IO, Sentient]("Sentient", sentientFields)
+    interfaceNel[IO, Sentient]("Sentient", sentientFields)
 
   implicit lazy val alient: Type[IO, Alien] = tpe[IO, Alien](
     "Alien",

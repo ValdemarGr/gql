@@ -79,7 +79,7 @@ For instance, if the whole graph was defined with `def`s, one could very easily 
 
 ## Schema
 A `Schema` is a collection of some components that are required to execute a query.
-The `Schema` contains a `SchemaShape`, a `Statistics` instance, a query `Planner` implementation and state regarding `BatchResolver` implementations.
+The `Schema` contains a `SchemaShape`, a `Statistics` instance, a query `Planner` implementation and state regarding `BatchResolver` implementations and `Directive`s.
 :::tip
 Check out the [statistics section](../execution/statistics.md) for more information on the `Statistics` object.
 

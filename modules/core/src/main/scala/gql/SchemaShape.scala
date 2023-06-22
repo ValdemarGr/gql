@@ -288,7 +288,7 @@ object SchemaShape {
               val fieldsDoc = Doc
                 .intercalate(
                   Doc.hardLine,
-                  fields.toList.map { case (name, field) => renderFieldDoc(name, field) }
+                  fields.toList.map { case (name, field) => renderFieldDoc(name, field.asAbstract) }
                 )
                 .indent(2)
 
@@ -468,7 +468,7 @@ object SchemaShape {
         case (_, oi: TypeInfo.OutInfo) =>
           oi.t match {
             case Type(_, fields, _, _)      => Some(fields.toList.map { case (k, v) => NamedField(k, v.asAbstract) })
-            case Interface(_, fields, _, _) => Some(fields.toList.map { case (k, v) => NamedField(k, v) })
+            case Interface(_, fields, _, _) => Some(fields.toList.map { case (k, v) => NamedField(k, v.asAbstract) })
             case _                          => None
           }
         case _ => None

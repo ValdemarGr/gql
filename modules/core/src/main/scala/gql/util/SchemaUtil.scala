@@ -100,7 +100,7 @@ object SchemaUtil {
           i.name,
           i.implementations.map(_.value.name),
           None,
-          i.fields.map { case (name, f) => convertField(name, f) }
+          i.fields.map { case (name, f) => convertField(name, f.asAbstract) }
         )
     }
 

@@ -39,7 +39,7 @@ class ValidationTest extends CatsEffectSuite {
   )
 
   implicit lazy val duplicateInterface: Interface[IO, MutRecInterface] =
-    interfaceFromNel[IO, MutRecInterface]("MutRecInterface", duplicateFields)
+    interfaceNel[IO, MutRecInterface]("MutRecInterface", duplicateFields)
 
   implicit def mr1: Type[IO, MutuallyRecursive1] =
     tpe[IO, MutuallyRecursive1](
@@ -89,7 +89,7 @@ class ValidationTest extends CatsEffectSuite {
   )
 
   trait Catch
-  implicit lazy val baseInterface: Interface[IO, Catch] = interfaceFromNel[IO, Catch](
+  implicit lazy val baseInterface: Interface[IO, Catch] = interfaceNel[IO, Catch](
     "BaseInterface",
     sharedFields
   )
