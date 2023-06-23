@@ -15,6 +15,7 @@
  */
 package gql.goi
 
+import cats.data._
 import cats._
 import gql.ast._
 import cats.effect._
@@ -34,6 +35,16 @@ object dsl {
       Goi.addId[F, A, K](gid.toId, gql.dsl.tpe[F, A](gid.typename, hd, tl: _*))
     }
   }
+
+  def gids[F[_], T, A](typename: String, toId: T => A, fromIds: NonEmptyList[A] => F[Map[A, T]])(implicit
+      codec: IDCodec[A]
+  ): GlobalID[F, T, A] =
+    GlobalID(typename, Resolver.lift(toId), fromIds)
+
+  def gidFroms[F[_], T, A](typename: String, toId: Resolver[F, T, A], fromIds: NonEmptyList[A] => F[Map[A, T]])(implicit
+      codec: IDCodec[A]
+  ): GlobalID[F, T, A] =
+    GlobalID(typename, toId, fromIds)
 
   def gid[F[_]: Applicative, T, A](typename: String, toId: T => A, fromId: A => F[Option[T]])(implicit
       codec: IDCodec[A]
