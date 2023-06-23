@@ -182,7 +182,7 @@ object FieldCollection {
 
       override def collectFieldInfo(qf: AbstractField[G, _], f: QueryAst.Field[C], caret: C): F[FieldInfo[G, C]] = {
         val fields = f.arguments.toList.flatMap(_.nel.toList).map(x => x.name -> x.value).toMap
-        val verifyArgsF = qf.arg.traverse_ { case a: Arg[a] =>
+        val verifyArgsF = qf.arg.parTraverse_ { case a: Arg[a] =>
           A.decodeArg[a](a, fields.fmap(_.map(List(_))), ambigiousEnum = false, context = List(caret)).void
         }
 
