@@ -15,6 +15,7 @@
  */
 package gql.goi
 
+import cats._
 import gql.ast._
 import cats.effect._
 import gql.resolver._
@@ -34,11 +35,13 @@ object dsl {
     }
   }
 
-  def gid[F[_], T, A](typename: String, toId: T => A, fromId: A => F[Option[T]])(implicit codec: IDCodec[A]): GlobalID[F, T, A] =
-    GlobalID(typename, Resolver.lift(toId), fromId)
-
-  def gidFrom[F[_], T, A](typename: String, toId: Resolver[F, T, A], fromId: A => F[Option[T]])(implicit
+  def gid[F[_]: Applicative, T, A](typename: String, toId: T => A, fromId: A => F[Option[T]])(implicit
       codec: IDCodec[A]
   ): GlobalID[F, T, A] =
-    GlobalID(typename, toId, fromId)
+    GlobalID.unary(typename, Resolver.lift(toId), fromId)
+
+  def gidFrom[F[_]: Applicative, T, A](typename: String, toId: Resolver[F, T, A], fromId: A => F[Option[T]])(implicit
+      codec: IDCodec[A]
+  ): GlobalID[F, T, A] =
+    GlobalID.unary(typename, toId, fromId)
 }

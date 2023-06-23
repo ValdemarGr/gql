@@ -21,15 +21,13 @@ import cats.implicits._
 import cats._
 
 trait GlobalID[F[_], T, K] {
-  type Key = K
-
   def typename: String
 
-  def codec: IDCodec[Key]
+  def codec: IDCodec[K]
 
-  def toId: Resolver[F, T, Key]
+  def toId: Resolver[F, T, K]
 
-  def fromIds: NonEmptyList[Key] => F[Map[Key, T]]
+  def fromIds: NonEmptyList[K] => F[Map[K, T]]
 }
 
 object GlobalID {

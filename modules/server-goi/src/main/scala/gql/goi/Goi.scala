@@ -83,59 +83,73 @@ object Goi {
 
   def encodeString[A](a: A)(implicit idCodec: IDCodec[A]): String = idCodec.encode(a).mkString_(":")
 
-  def decodeId[F[_]](
-      id: String,
-      lookup: Map[String, GlobalID[F, ?, ?]]
-  )(implicit F: Sync[F]) =
-    F.delay(new String(Base64.getDecoder().decode(id), StandardCharsets.UTF_8)).flatMap { fullId =>
+  def getId[F[_]](id: String)(implicit F: Sync[F]): IorT[F, String, (String, NonEmptyList[String])] = IorT {
+    F.delay(new String(Base64.getDecoder().decode(id), StandardCharsets.UTF_8)).map { fullId =>
       fullId.split(":").toList match {
-        case xs => F.pure(s"Invalid id parts ${xs.map(s => s"'$s'").mkString(", ")}".leftIor)
-        case typename :: xs if xs.nonEmpty =>
-          lookup.get(typename) match {
-            case None => F.pure(s"Typename `$typename` with id '$id' does not have a getter.".leftIor)
-            case Some(gid) =>
-              decodeInput(gid.codec, xs.toArray).toEither
-                .leftMap(_.mkString_("\n"))
-                .toIor
-                .traverse(gid.fromId)
-                .map(_.map(_.map(x => Node(x, typename))))
-          }
+        case typename :: y :: ys => (typename -> NonEmptyList(y, ys)).rightIor
+        case xs                  => s"Invalid id parts ${xs.map(s => s"'$s'").mkString(", ")}".leftIor
       }
     }
+  }
 
-  def node[F[_], Q, M, S](shape: SchemaShape[F, Q, M, S], xs: List[GlobalID[F, ?, ?]])(implicit
+  final case class DecodedIds[F[_], V, K](gid: GlobalID[F, V, K], keys: NonEmptyList[(String, K)])
+  def decodeIds[F[_]: Sync, G[_]: NonEmptyTraverse](
+      ids: G[String],
+      lookup: Map[String, GlobalID[F, ?, ?]]
+  ): IorT[F, String, List[DecodedIds[F, ?, ?]]] =
+    ids
+      .nonEmptyTraverse[IorT[F, String, *], (String, (String, NonEmptyList[String]))](id => getId(id) tupleLeft id)
+      .subflatMap { outs =>
+        val m = outs.toNonEmptyList.groupMap { case (_, (k, _)) => k } { case (id, (_, v)) => (id, v) }
+        m.toList.traverse { case (typename, keys) =>
+          lookup.get(typename) match {
+            case None => s"Typename `$typename` does not have a getter.".leftIor
+            case Some(gid: GlobalID[F, v, k]) =>
+              keys
+                .traverse[Ior[String, *], (String, k)] { case (id, key) =>
+                  decodeInput(gid.codec, key.toList.toArray).toEither
+                    .leftMap(_.mkString_("\n"))
+                    .toIor
+                    .map(id -> _)
+                }
+                .map(DecodedIds[F, v, k](gid, _))
+          }
+        }
+      }
+
+  def runIds[F[_]: Parallel, G[_]: NonEmptyTraverse](
+      ids: G[String],
+      lookup: Map[String, GlobalID[F, ?, ?]]
+  )(implicit F: Sync[F]): IorT[F, String, G[Option[Node]]] =
+    decodeIds[F, G](ids, lookup)
+      .semiflatMap(_.parFlatTraverse { case di: DecodedIds[F, v, k] =>
+        val reverseMapping: Map[k, String] = di.keys.map { case (id, key: k) => key -> id }.toList.toMap
+        val resultsF: F[Map[k, v]] = di.gid.fromIds(di.keys.map { case (_, key: k) => key })
+        resultsF.map(_.toList.mapFilter { case (k, v) => reverseMapping.get(k) tupleRight Node(v, di.gid.typename) })
+      })
+      .map(_.toMap)
+      .map(lookup => ids.map(lookup.get))
+
+  def node[F[_]: Parallel, Q, M, S](shape: SchemaShape[F, Q, M, S], xs: List[GlobalID[F, ?, ?]])(implicit
       F: Sync[F]
   ): SchemaShape[F, Q, M, S] = {
     val lookup = xs.map(x => x.typename -> x).toMap
-    shape.copy(query =
-      shape.query.copy(
-        fields = shape.query.fields.append[(String, Field[F, Q, ?])](
-          "node" -> build.from {
-            Resolver
-              .argument(arg[ID[String]]("id"))
-              .evalMap { id =>
-                F.delay(new String(Base64.getDecoder().decode(id.value), StandardCharsets.UTF_8))
-                  .flatMap[Ior[String, Option[Node]]] { fullId =>
-                    fullId.split(":").toList match {
-                      case typename :: xs if xs.nonEmpty =>
-                        lookup.get(typename) match {
-                          case None => F.pure(s"Typename `$typename` with id '$id' does not have a getter.".leftIor)
-                          case Some(gid) =>
-                            decodeInput(gid.codec, xs.toArray).toEither
-                              .leftMap(_.mkString_("\n"))
-                              .toIor
-                              .traverse(gid.fromId)
-                              .map(_.map(_.map(x => Node(x, typename))))
-                        }
-                      case xs => F.pure(s"Invalid id parts ${xs.map(s => s"'$s'").mkString(", ")}".leftIor)
-                    }
-                  }
-              }
-              .rethrow
-          }
+    builder[F, Q] { b =>
+      def nodeField[G[_]: NonEmptyTraverse](implicit a: In[G[ID[String]]]) = b.from(
+        arged(arg[G[ID[String]]]("id"))
+          .evalMap(id => runIds[F, G](id.map(_.value), lookup).value)
+          .rethrow
+      )
+
+      shape.copy(query =
+        shape.query.copy(
+          fields = shape.query.fields ::: fields[F, Q](
+            "node" -> nodeField[Id],
+            "nodes" -> nodeField[NonEmptyList]
+          )
         )
       )
-    )
+    }
   }
 
   def validate[F[_], Q, M, S](shape: SchemaShape[F, Q, M, S], instances: List[GlobalID[F, ?, ?]]): List[String] = {
