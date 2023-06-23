@@ -83,6 +83,26 @@ object Goi {
 
   def encodeString[A](a: A)(implicit idCodec: IDCodec[A]): String = idCodec.encode(a).mkString_(":")
 
+  def decodeId[F[_]](
+      id: String,
+      lookup: Map[String, GlobalID[F, ?, ?]]
+  )(implicit F: Sync[F]) =
+    F.delay(new String(Base64.getDecoder().decode(id), StandardCharsets.UTF_8)).flatMap { fullId =>
+      fullId.split(":").toList match {
+        case xs => F.pure(s"Invalid id parts ${xs.map(s => s"'$s'").mkString(", ")}".leftIor)
+        case typename :: xs if xs.nonEmpty =>
+          lookup.get(typename) match {
+            case None => F.pure(s"Typename `$typename` with id '$id' does not have a getter.".leftIor)
+            case Some(gid) =>
+              decodeInput(gid.codec, xs.toArray).toEither
+                .leftMap(_.mkString_("\n"))
+                .toIor
+                .traverse(gid.fromId)
+                .map(_.map(_.map(x => Node(x, typename))))
+          }
+      }
+    }
+
   def node[F[_], Q, M, S](shape: SchemaShape[F, Q, M, S], xs: List[GlobalID[F, ?, ?]])(implicit
       F: Sync[F]
   ): SchemaShape[F, Q, M, S] = {

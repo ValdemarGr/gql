@@ -16,6 +16,9 @@
 package gql.goi
 
 import gql.resolver.Resolver
+import cats.data._
+import cats.implicits._
+import cats._
 
 trait GlobalID[F[_], T, K] {
   type Key = K
@@ -26,16 +29,16 @@ trait GlobalID[F[_], T, K] {
 
   def toId: Resolver[F, T, Key]
 
-  def fromId: Key => F[Option[T]]
+  def fromIds: NonEmptyList[Key] => F[Map[Key, T]]
 }
 
 object GlobalID {
-  def apply[F[_], T, A](typename: String, toId: Resolver[F, T, A], fromId: A => F[Option[T]])(implicit
+  def apply[F[_], T, A](typename: String, toId: Resolver[F, T, A], fromIds: NonEmptyList[A] => F[Map[A, T]])(implicit
       codec: IDCodec[A]
   ): GlobalID[F, T, A] = {
     val typename0 = typename
     val toId0 = toId
-    val fromId0 = fromId(_)
+    val fromIds0 = fromIds(_)
     val codec0 = codec
     new GlobalID[F, T, A] {
       override def typename: String = typename0
@@ -44,7 +47,16 @@ object GlobalID {
 
       override def toId: Resolver[F, T, A] = toId0
 
-      override def fromId: A => F[Option[T]] = fromId0
+      override def fromIds: NonEmptyList[A] => F[Map[A, T]] = fromIds0
     }
   }
+
+  def unary[F[_]: Applicative, T, A](typename: String, toId: Resolver[F, T, A], fromId: A => F[Option[T]])(implicit
+      codec: IDCodec[A]
+  ): GlobalID[F, T, A] =
+    GlobalID(
+      typename,
+      toId,
+      _.toList.traverse(k => fromId(k) tupleLeft k).map(_.collect { case (k, Some(v)) => k -> v }.toMap)
+    )
 }
