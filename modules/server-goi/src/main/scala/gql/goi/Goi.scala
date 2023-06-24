@@ -104,15 +104,18 @@ object Goi {
         m.toList.traverse { case (typename, keys) =>
           lookup.get(typename) match {
             case None => s"Typename `$typename` does not have a getter.".leftIor
-            case Some(gid: GlobalID[F, v, k]) =>
-              keys
-                .traverse[Ior[String, *], (String, k)] { case (id, key) =>
-                  decodeInput(gid.codec, key.toList.toArray).toEither
-                    .leftMap(_.mkString_("\n"))
-                    .toIor
-                    .map(id -> _)
-                }
-                .map(DecodedIds[F, v, k](gid, _))
+            case Some(gid) =>
+              gid match {
+                case gid: GlobalID[F, v, k] =>
+                  keys
+                    .traverse[Ior[String, *], (String, k)] { case (id, key) =>
+                      decodeInput(gid.codec, key.toList.toArray).toEither
+                        .leftMap(_.mkString_("\n"))
+                        .toIor
+                        .map(id -> _)
+                    }
+                    .map(DecodedIds[F, v, k](gid, _))
+              }
           }
         }
       }
