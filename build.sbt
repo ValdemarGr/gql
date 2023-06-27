@@ -275,7 +275,7 @@ lazy val serverHttp4s = project
     name := "gql-server-http4s",
     libraryDependencies ++= Seq(
       "org.http4s" %% "http4s-server" % "1.0.0-M36",
-      "org.http4s" %% "http4s-blaze-server" % "1.0.0-M36",
+      "org.http4s" %% "http4s-blaze-server" % "1.0.0-M38",
       "org.http4s" %% "http4s-circe" % "1.0.0-M36",
       "org.http4s" %% "http4s-dsl" % "1.0.0-M36",
       "org.http4s" %% "http4s-client" % "1.0.0-M36" % Test
