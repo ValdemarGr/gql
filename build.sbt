@@ -321,7 +321,7 @@ lazy val docs = project
       "VERSION" -> tlLatestVersion.value.getOrElse(version.value)
     ),
     libraryDependencies ++= Seq(
-      "com.47deg" %% "fetch" % "3.1.0"
+      "com.47deg" %% "fetch" % "3.1.2"
     ),
     tlFatalWarnings := false
   )
