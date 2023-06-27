@@ -80,8 +80,14 @@ object WSHandler {
 }
 
 object Http4sRoutes {
-  implicit protected lazy val cd: Decoder[QueryParameters] =
-    io.circe.generic.semiauto.deriveDecoder[QueryParameters]
+  implicit protected lazy val cd: Decoder[QueryParameters] = Decoder.instance[QueryParameters] { c =>
+    for {
+      query <- c.downField("query").as[String]
+      variables <- c.downField("variables").as[Option[Map[String, Json]]]
+      operationName <- c.downField("operationName").as[Option[String]]
+    } yield QueryParameters(query, variables, operationName)
+  }
+
   implicit protected def ed[F[_]: Concurrent]: EntityDecoder[F, QueryParameters] =
     org.http4s.circe.jsonOf[F, QueryParameters]
 
