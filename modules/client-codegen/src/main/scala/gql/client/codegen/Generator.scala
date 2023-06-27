@@ -813,7 +813,7 @@ object Generator {
       doc: Doc
   )
 
-  def readInputData[F[_]](i: Input)(implicit
+  def readInputData[F[_]: Files](i: Input)(implicit
       E: Err[F],
       F: Async[F]
   ): F[(String, NonEmptyList[ExecutableDefinition[Caret]])] =
@@ -829,7 +829,7 @@ object Generator {
         fa tupleLeft x
       }
 
-  def generateForInput[F[_]: Async: Err](
+  def generateForInput[F[_]: Async: Err: Files](
       env: Env,
       i: Input
   ): F[(String, Set[UsedInput], Output, NonEmptyList[ExecutableDefinition[Caret]])] =
@@ -837,17 +837,17 @@ object Generator {
       .flatMap { case (q, eds) => generateFor(env, eds) tupleLeft ((q, eds)) }
       .map { case ((q, eds), (usedInputs, doc)) => (q, usedInputs, Output(i.output, doc), eds) }
 
-  def gatherFragInfo[F[_]: Async: Err](i: Input): F[List[FragmentInfo]] =
+  def gatherFragInfo[F[_]: Async: Err: Files](i: Input): F[List[FragmentInfo]] =
     readInputData[F](i).map { case (_, eds) => gatherFragmentInfos(eds) }
 
-  def writeStream[F[_]: Async](path: Path, doc: Doc) =
+  def writeStream[F[_]: Async: Files](path: Path, doc: Doc) =
     fs2.Stream
       .iterable(doc.renderStream(80))
       .lift[F]
       .through(fs2.text.utf8.encode)
       .through(Files[F].writeAll(path))
 
-  def readSchema[F[_]](schemaPath: Path)(implicit E: Err[F], F: Async[F]): F[Map[String, TypeDefinition]] =
+  def readSchema[F[_]: Files](schemaPath: Path)(implicit E: Err[F], F: Async[F]): F[Map[String, TypeDefinition]] =
     Files[F]
       .readAll(schemaPath)
       .through(fs2.text.utf8.decode[F])
@@ -855,7 +855,7 @@ object Generator {
       .foldMonoid
       .flatMap(s => getSchemaFrom(s).fold(s => E.raise(NonEmptyChain.one(s)), F.pure))
 
-  def readEnv[F[_]: Async: Err](schema: Path)(data: List[Input]): F[Env] =
+  def readEnv[F[_]: Async: Err: Files](schema: Path)(data: List[Input]): F[Env] =
     readSchema[F](schema).flatMap { m =>
       data
         .flatTraverse(gatherFragInfo[F])
@@ -868,7 +868,7 @@ object Generator {
       sourceQuery: String
   )
 
-  def readAndGenerate[F[_]](schemaPath: Path, sharedPath: Path, validate: Boolean)(
+  def readAndGenerate[F[_]: Files](schemaPath: Path, sharedPath: Path, validate: Boolean)(
       data: List[Input]
   )(implicit F: Async[F], E: Err[F]): F[Unit] =
     readEnv[F](schemaPath)(data).flatMap { e =>
@@ -919,6 +919,9 @@ object Generator {
         }
     }
 
-  def mainGenerate[F[_]: Async](schemaPath: Path, sharedPath: Path, validate: Boolean)(data: List[Input]): F[List[String]] =
-    readAndGenerate[EitherT[F, NonEmptyChain[String], *]](schemaPath, sharedPath, validate)(data).value.map(_.fold(_.toList, _ => Nil))
+  def mainGenerate[F[_]: Async](schemaPath: Path, sharedPath: Path, validate: Boolean)(data: List[Input]): F[List[String]] = {
+    type G[A] = EitherT[F, NonEmptyChain[String], A]
+    implicit val files: Files[G] = Files.forAsync[G]
+    readAndGenerate[G](schemaPath, sharedPath, validate)(data).value.map(_.fold(_.toList, _ => Nil))
+  }
 }

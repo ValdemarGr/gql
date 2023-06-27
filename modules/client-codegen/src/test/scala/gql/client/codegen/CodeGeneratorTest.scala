@@ -18,7 +18,7 @@ package gql.client.codegen
 import munit.CatsEffectSuite
 
 class CodeGeneratorTest extends CatsEffectSuite {
-  //import Generator._
+  // import Generator._
   test("test the code-gen") {
     /* val o = getSchemaFrom(testSchema).flatMap(generateWith(_, testQuery))
 
