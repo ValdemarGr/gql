@@ -77,7 +77,7 @@ object Goi {
     val xs = codec.codecs
     if (xs.size =!= elems.size.toLong)
       s"Invalid Global object identifier size expected size ${xs.size} but got ${elems.size}: ${xs
-        .mkString_(":")}.".invalidNec
+          .mkString_(":")}.".invalidNec
     else codec.decode(elems)
   }
 

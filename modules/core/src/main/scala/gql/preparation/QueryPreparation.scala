@@ -226,8 +226,8 @@ object QueryPreparation {
               else
                 raise(
                   s"Too many arguments provided for field `${fi.name}`. Provided: ${providedArgNames.toList
-                    .map(x => s"'$x'")
-                    .mkString(", ")}. Declared: ${declaredArgNames.toList.map(x => s"'$x'").mkString(", ")}",
+                      .map(x => s"'$x'")
+                      .mkString(", ")}. Declared: ${declaredArgNames.toList.map(x => s"'$x'").mkString(", ")}",
                   List(fi.caret)
                 )
 

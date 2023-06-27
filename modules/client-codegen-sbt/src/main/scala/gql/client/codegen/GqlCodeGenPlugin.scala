@@ -125,8 +125,8 @@ object GqlCodeGenPlugin extends AutoPlugin {
           }
 
           s"""{"schema":"${rg.schemaPath.absolutePath}","shared":"${(f / s"shared.scala").absolutePath}","queries":[${queries
-            .map(_._1)
-            .mkString(",")}]}""" -> (queries.map(_._2) ++ Seq(sh))
+              .map(_._1)
+              .mkString(",")}]}""" -> (queries.map(_._2) ++ Seq(sh))
         }
       },
       Gql.invokeCodeGen := {
