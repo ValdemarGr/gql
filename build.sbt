@@ -156,8 +156,8 @@ lazy val clientCodegenCli = project
   .settings(
     name := "gql-client-codegen-cli",
     libraryDependencies ++= Seq(
-      "com.monovore" %% "decline" % "2.4.0",
-      "com.monovore" %% "decline-effect" % "2.4.0"
+      "com.monovore" %% "decline" % "2.4.1",
+      "com.monovore" %% "decline-effect" % "2.4.1"
     )
   )
   .dependsOn(core)
