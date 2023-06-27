@@ -1,4 +1,4 @@
-val scala213Version = "2.13.9"
+val scala213Version = "2.13.11"
 
 ThisBuild / scalaVersion := scala213Version
 ThisBuild / crossScalaVersions := Seq(scala213Version, "3.2.2", "3.3.0")
@@ -102,8 +102,7 @@ lazy val sharedSettings = Seq(
     } else Seq.empty
   },
   libraryDependencies ++= Seq(
-    "org.typelevel" %% "cats-effect" % "3.3.14",
-    "org.typelevel" %% "cats-collections-core" % "0.9.4",
+    "org.typelevel" %% "cats-effect" % "3.5.1",
     "org.typelevel" %% "cats-mtl" % "1.3.1",
     "org.typelevel" %% "cats-core" % "2.9.0",
     "org.typelevel" %% "cats-free" % "2.9.0",
@@ -111,11 +110,10 @@ lazy val sharedSettings = Seq(
     "co.fs2" %% "fs2-io" % "3.2.14",
     "org.typelevel" %% "cats-parse" % "0.3.8",
     "io.circe" %% "circe-core" % "0.14.5",
-    "io.circe" %% "circe-generic" % "0.14.5",
     "io.circe" %% "circe-parser" % "0.14.5",
     "org.tpolecat" %% "sourcepos" % "1.1.0",
     "org.typelevel" %% "paiges-core" % "0.4.2",
-    "org.scalameta" %% "munit" % "1.0.0-M6" % Test,
+    "org.scalameta" %% "munit" % "1.0.0-M8" % Test,
     "org.typelevel" %% "munit-cats-effect" % "2.0.0-M3" % Test
   )
 )
@@ -170,7 +168,7 @@ lazy val clientCodegenSbt = project
   .enablePlugins(SbtPlugin)
   .settings(
     sbtPlugin := true,
-    scalaVersion := "2.12.17",
+    scalaVersion := "2.12.18",
     name := "gql-client-codegen-sbt"
   )
   .aggregate(clientCodegenCli)
@@ -275,7 +273,6 @@ lazy val serverHttp4s = project
     name := "gql-server-http4s",
     libraryDependencies ++= Seq(
       "org.http4s" %% "http4s-server" % "1.0.0-M36",
-      "org.http4s" %% "http4s-blaze-server" % "1.0.0-M36",
       "org.http4s" %% "http4s-circe" % "1.0.0-M36",
       "org.http4s" %% "http4s-dsl" % "1.0.0-M36",
       "org.http4s" %% "http4s-client" % "1.0.0-M36" % Test

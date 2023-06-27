@@ -156,7 +156,7 @@ object Query {
 
   object Dec {
     def decoderForSubQuery[A](sq: SubQuery[A]): Decoder[A] = sq match {
-      case Terminal(decoder)     => decoder //.adaptError(e => e.withMessage(s"${e.message} at ${sp.toString}"))
+      case Terminal(decoder)     => decoder // .adaptError(e => e.withMessage(s"${e.message} at ${sp.toString}"))
       case lm: ListModifier[a]   => Decoder.decodeList(decoderForSubQuery(lm.subQuery))
       case om: OptionModifier[a] => Decoder.decodeOption(decoderForSubQuery(om.subQuery))
       case ss: SelectionSet[A]   => decoderForSelectionSet(ss)
