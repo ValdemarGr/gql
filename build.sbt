@@ -170,7 +170,7 @@ lazy val clientCodegenSbt = project
   .enablePlugins(SbtPlugin)
   .settings(
     sbtPlugin := true,
-    scalaVersion := "2.12.17",
+    scalaVersion := "2.12.18",
     name := "gql-client-codegen-sbt"
   )
   .aggregate(clientCodegenCli)
