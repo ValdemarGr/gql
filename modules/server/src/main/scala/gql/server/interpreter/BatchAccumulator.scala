@@ -48,7 +48,7 @@ object BatchAccumulator {
     }
 
     // Now we allocate a deferred for each id in each batch
-    //type BatchPromise = Option[Map[BatchKey, BatchValue]] => F[Unit]
+    // type BatchPromise = Option[Map[BatchKey, BatchValue]] => F[Unit]
     final case class Batch[K, V](
         complete: Option[Map[K, V]] => F[Unit],
         keys: Chain[(Cursor, Set[K])]
