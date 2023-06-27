@@ -121,7 +121,7 @@ object FieldCollection {
                   raiseOpt(
                     u.types.toList.map(_.tpe.value).collectFirstSome(_.implementsMap.get(name)),
                     s"`$name` is not a member of the union `${u.name}` (or any of the union's types' implemented interfaces), possible members are ${u.instanceMap.keySet
-                      .mkString(", ")}.",
+                        .mkString(", ")}.",
                     List(caret)
                   ).map(_.value)
               }

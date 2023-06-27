@@ -64,8 +64,8 @@ object ArgParsing {
               case None =>
                 raise(
                   s"Variable '$$$vn' was not declared and provided as a possible variable for this operation. Hint add the variable to the variables list of the operation '(..., $$$vn: ${ModifierStack
-                    .fromIn(a)
-                    .show(_.name)})' and provide a value in the variables parameter.",
+                      .fromIn(a)
+                      .show(_.name)})' and provide a value in the variables parameter.",
                   cs
                 )
               case Some(v) =>
@@ -130,8 +130,8 @@ object ArgParsing {
                     case (Modifier.NonNull :: _, (Modifier.List :: _) | Nil) =>
                       raise(
                         s"${prefix}, because the argument expected a not-null (!) modifier, but was given ${showModifier(
-                          varShape.headOption
-                        )}${remaining(varShape, argShape)}",
+                            varShape.headOption
+                          )}${remaining(varShape, argShape)}",
                         cs
                       )
                     // ([a] | A) compat v! -> ok

@@ -80,8 +80,8 @@ object Validation {
     final case class TransitiveInterfacesNotImplemented(typename: String, interfaces: List[(String, String)]) extends Error {
       def message: String =
         s"$typename does not implement all interfaces: ${interfaces
-          .map { case (through, name) => s"`$name` through `$through`" }
-          .mkString(" and ")}."
+            .map { case (through, name) => s"`$name` through `$through`" }
+            .mkString(" and ")}."
     }
     final case class WrongInterfaceFieldType(
         typename: String,
