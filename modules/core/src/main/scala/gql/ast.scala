@@ -168,20 +168,22 @@ object ast extends AstImplicits.Implicits {
     lazy val revm = kv.map(_.swap).toList.toMap
   }
 
-  sealed trait AnyField[+F[_], -I, T] {
-    def output: Eval[Out[F, T]]
+  sealed trait AnyField[+F[_], -A, B] {
+    def output: Eval[Out[F, B]]
 
-    def asAbstract: AbstractField[F, T]
+    def asAbstract: AbstractField[F, B]
   }
 
-  final case class Field[+F[_], -I, T](
-      resolve: Resolver[F, I, T],
-      output: Eval[Out[F, T]],
-      description: Option[String] = None
-  ) extends AnyField[F, I, T] {
-    def document(description: String): Field[F, I, T] = copy(description = Some(description))
+  trait FieldAttribute[+F[_], -A, B]
+  final case class Field[+F[_], -A, B](
+      resolve: Resolver[F, A, B],
+      output: Eval[Out[F, B]],
+      description: Option[String] = None,
+      attributes: List[FieldAttribute[F, A, B]] = Nil
+  ) extends AnyField[F, A, B] {
+    def document(description: String): Field[F, A, B] = copy(description = Some(description))
 
-    lazy val asAbstract: AbstractField[F, T] =
+    lazy val asAbstract: AbstractField[F, B] =
       AbstractField(
         NonEmptyChain
           .fromChain {
@@ -200,11 +202,11 @@ object ast extends AstImplicits.Implicits {
         description
       )
 
-    def compose[F2[x] >: F[x], I2](r: Resolver[F2, I2, I]): Field[F2, I2, T] =
+    def compose[F2[x] >: F[x], A2](r: Resolver[F2, A2, A]): Field[F2, A2, B] =
       Field(r.andThen(resolve), output, description)
 
-    def contramap[F2[x] >: F[x], I2](f: I2 => I): Field[F2, I2, T] =
-      compose[F2, I2](Resolver.lift[F2, I2](f))
+    def contramap[F2[x] >: F[x], A2](f: A2 => A): Field[F2, A2, B] =
+      compose[F2, A2](Resolver.lift[F2, A2](f))
   }
 
   // Field, but without any implementation

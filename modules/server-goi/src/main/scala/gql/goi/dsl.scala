@@ -41,7 +41,7 @@ object dsl {
   ): GlobalID[F, T, A] =
     GlobalID(typename, Resolver.lift(toId), fromIds)
 
-  def gidFroms[F[_], T, A](typename: String, toId: Resolver[F, T, A], fromIds: NonEmptyList[A] => F[Map[A, T]])(implicit
+  def gidsFrom[F[_], T, A](typename: String, toId: Resolver[F, T, A], fromIds: NonEmptyList[A] => F[Map[A, T]])(implicit
       codec: IDCodec[A]
   ): GlobalID[F, T, A] =
     GlobalID(typename, toId, fromIds)
