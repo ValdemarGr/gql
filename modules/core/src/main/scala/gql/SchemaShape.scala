@@ -41,6 +41,10 @@ final case class SchemaShape[F[_], Q, M, S](
   def addInputTypes(t: InToplevel[?]*): SchemaShape[F, Q, M, S] =
     copy(inputTypes = t.toList ++ inputTypes)
 
+  def foldMapK[G[_]: Monad](inPf: PartialFunction[In[?], G[Unit]])(
+      outPf: PartialFunction[Out[F, ?], G[Unit]]
+  ): G[Unit] = SchemaShape.foldMapK[F, G](this)(inPf)(outPf)
+
   lazy val discover = SchemaShape.discover[F](this)
 
   lazy val validate = Validation.validate[F](this)
@@ -110,9 +114,125 @@ object SchemaShape {
     lazy val inputs: Map[String, InToplevel[?]] = toplevels.collect { case (k, v: InToplevel[?]) => k -> v }
 
     lazy val outputs: Map[String, OutToplevel[F, ?]] = toplevels.collect { case (k, v: OutToplevel[F, ?]) => k -> v }
+
+    def addToplevel(name: String, tl: Toplevel[F, ?]): DiscoveryState[F] =
+      copy(toplevels = toplevels + (name -> tl))
+
+    def addImplementation(name: String, impl: Map[String, InterfaceImpl[F, ?]]): DiscoveryState[F] =
+      copy(implementations = implementations + (name -> impl))
+  }
+
+  def foldMapK[F[_], G[_]: Monad](root: SchemaShape[F, ?, ?, ?])(inPf: PartialFunction[In[?], G[Unit]])(
+      outPf: PartialFunction[Out[F, ?], G[Unit]]
+  ): G[Unit] = {
+    type Alg[F[_]] = Stateful[F, Set[String]]
+    type Fk[H[_]] = MonadPartialOrder[G, H]
+
+    def nextIfNotSeen[H[_]](tl: Toplevel[F, ?])(ha: => H[Unit])(implicit H: Monad[H], A: Alg[H]): H[Unit] =
+      A.get.flatMap { seen =>
+        if (seen.contains(tl.name)) H.unit
+        else A.modify(_ + tl.name) >> ha
+      }
+
+    def goOutput[H[_]](out: Out[F, ?])(implicit H: Monad[H], A: Alg[H], fk: Fk[H]): H[Unit] = {
+      lazy val lifted = fk(outPf.lift(out).sequence_)
+      out match {
+        case o: OutArr[?, ?, ?, ?] => lifted >> goOutput[H](o.of)
+        case o: OutOpt[?, ?, ?]    => lifted >> goOutput[H](o.of)
+        case t: OutToplevel[F, ?] =>
+          nextIfNotSeen[H](t) {
+            lazy val nextF = t match {
+              case ol: ObjectLike[F, ?] =>
+                ol.abstractFields.traverse_ { case (_, af) =>
+                  goOutput[H](af.output.value) >>
+                    af.arg.traverse_(_.entries.traverse_(x => goInput[H](x.input.value)))
+                } >> ol.implementsMap.values.toList.map(_.value).traverse_(goOutput[H])
+              case Union(_, instances, _) =>
+                instances.traverse_(inst => goOutput[H](inst.tpe.value))
+              case _ => H.unit
+            }
+
+            lifted >> nextF
+          }
+      }
+    }
+
+    def goInput[H[_]](in: In[?])(implicit H: Monad[H], A: Alg[H], fk: Fk[H]): H[Unit] = {
+      lazy val lifted = fk(inPf.lift(in).sequence_)
+      in match {
+        case InArr(of, _) => lifted >> goInput[H](of)
+        case InOpt(of)    => lifted >> goInput[H](of)
+        case t: InToplevel[?] =>
+          nextIfNotSeen[H](t) {
+            val nextF = t match {
+              case Input(_, fields, _) =>
+                fields.entries.traverse_(x => goInput[H](x.input.value))
+              case _ => H.unit
+            }
+
+            lifted >> nextF
+          }
+      }
+    }
+
+    val outs = root.query :: root.mutation.toList ++ root.subscription.toList ++ root.outputTypes
+
+    type Effect[A] = StateT[G, Set[String], A]
+    val outsF = outs.traverse_(goOutput[Effect])
+
+    val insF = root.inputTypes.traverse_(goInput[Effect])
+
+    (outsF >> insF).runA(Set.empty)
   }
 
   def discover[F[_]](shape: SchemaShape[F, ?, ?, ?]): DiscoveryState[F] = {
+    type Effect[A] = State[DiscoveryState[F], A]
+    def modify(f: DiscoveryState[F] => DiscoveryState[F]): Effect[Unit] =
+      State.modify[DiscoveryState[F]](f)
+
+    type InterfaceName = String
+    def addValues(values: List[(InterfaceName, InterfaceImpl[F, ?])]): Effect[Unit] = {
+      modify { s =>
+        val withNew = values.foldLeft(s.implementations) { case (accum, (interfaceName, next)) =>
+          val name = next match {
+            case InterfaceImpl.OtherInterface(i) => i.name
+            case InterfaceImpl.TypeImpl(t, _)    => t.name
+          }
+          val entry = name -> next
+          accum.get(interfaceName) match {
+            case None    => accum + (interfaceName -> Map(entry))
+            case Some(m) => accum + (interfaceName -> (m + entry))
+          }
+        }
+
+        s.copy(implementations = withNew)
+      }
+    }
+
+    val program = shape.foldMapK[Effect] { case t: InToplevel[?] =>
+      modify(_.addToplevel(t.name, t))
+    } { case t: OutToplevel[F, ?] =>
+      val modF = modify(_.addToplevel(t.name, t))
+      val fa = t match {
+        case ol: ObjectLike[F, ?] =>
+          val values: List[(Interface[F, ?], InterfaceImpl[F, ?])] = ol match {
+            case t: Type[F, a] =>
+              t.implementations.map(x => (x.implementation.value -> InterfaceImpl.TypeImpl(t, x.specify)))
+            case i: Interface[F, ?] =>
+              i.implementations.map(x => (x.value -> InterfaceImpl.OtherInterface(i)))
+          }
+          addValues(values.map { case (i, ii) => i.name -> ii })
+        case _ => modify(identity)
+      }
+      modF >> fa
+    }
+
+    val positionGroups = shape.positions.groupBy(_.directive.name)
+
+    program.runS(DiscoveryState[F](Map.empty, Map.empty, positionGroups)).value
+  }
+
+  def discover2[F[_]](shape: SchemaShape[F, ?, ?, ?]): DiscoveryState[F] = {
     def toplevelNotSeen[G[_], A](
         tl: Toplevel[F, ?]
     )(ga: => G[A])(implicit G: Monad[G], S: Stateful[G, DiscoveryState[F]], M: Monoid[A]): G[A] =
