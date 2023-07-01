@@ -217,9 +217,9 @@ object SchemaShape {
         case ol: ObjectLike[F, ?] =>
           val values: List[(Interface[F, ?], InterfaceImpl[F, ?])] = ol match {
             case t: Type[F, a] =>
-              t.implementations.map(x => (x.implementation.value -> InterfaceImpl.TypeImpl(t, x.specify)))
+              t.implementations.map(x => x.implementation.value -> InterfaceImpl.TypeImpl(t, x.specify))
             case i: Interface[F, ?] =>
-              i.implementations.map(x => (x.value -> InterfaceImpl.OtherInterface(i)))
+              i.implementations.map(x => x.value -> InterfaceImpl.OtherInterface(i))
           }
           addValues(values.map { case (i, ii) => i.name -> ii })
         case _ => modify(identity)
