@@ -154,6 +154,27 @@ object Goi {
       )
     }
   }
+/*
+  def collectAttributes[F[_]](shape: SchemaShape[F, ?, ?, ?]) = {
+    shape.foldMapK(){
+      case t: Type[F, a] => 
+        val n = t.name
+        t.fields.collect{ case (_, f: Field[F, a, b]) => 
+          val gois = f.attributes.collect{ case g: GoiAttribute[F, a, b, id] => g }
+          gois match {
+            case Nil => ()
+            case (x: GoiAttribute[F, a, b, id]) :: xs => 
+              if (xs.nonEmpty) ???
+              else {
+                GlobalID[F, id, b](n, x.toId, x.fromIds)(x.codec)
+                ???
+              }
+          }
+          f
+        }
+        Option.empty[Unit]
+    }
+  }*/
 
   def validate[F[_], Q, M, S](shape: SchemaShape[F, Q, M, S], instances: List[GlobalID[F, ?, ?]]): List[String] = {
     val instanceSet = instances.map(_.typename).toSet
@@ -185,4 +206,6 @@ object Goi {
         s"Type `$n` was declared $size times as a GlobalID instance. Hint: Ensure that the GlobalID instance for `$n` is only added once."
       }
   }
+
+
 }

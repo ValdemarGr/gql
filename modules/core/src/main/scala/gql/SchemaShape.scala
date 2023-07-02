@@ -41,8 +41,10 @@ final case class SchemaShape[F[_], Q, M, S](
   def addInputTypes(t: InToplevel[?]*): SchemaShape[F, Q, M, S] =
     copy(inputTypes = t.toList ++ inputTypes)
 
-  def foldMapK[G[_]: Monad](inPf: PartialFunction[In[?], G[Unit]])(
-      outPf: PartialFunction[Out[F, ?], G[Unit]]
+  def foldMapK[G[_]: Monad](
+      inPf: PartialFunction[In[?], G[Unit]] = PartialFunction.empty
+  )(
+      outPf: PartialFunction[Out[F, ?], G[Unit]] = PartialFunction.empty
   ): G[Unit] = SchemaShape.foldMapK[F, G](this)(inPf)(outPf)
 
   lazy val discover = SchemaShape.discover[F](this)

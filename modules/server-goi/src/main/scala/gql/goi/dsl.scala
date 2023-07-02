@@ -32,14 +32,14 @@ object dsl {
         tl: (String, Field[F, A, ?])*
     )(implicit F: Sync[F]) = {
       implicit val codec = gid.codec
-      Goi.addId[F, A, K](gid.toId, gql.dsl.tpe[F, A](gid.typename, hd, tl: _*))
+      Goi.addId[F, A, K](null, gql.dsl.tpe[F, A](gid.typename, hd, tl: _*))
     }
   }
 
-  def gids[F[_], T, A](typename: String, toId: T => A, fromIds: NonEmptyList[A] => F[Map[A, T]])(implicit
+  def gids[F[_], T, A](typename: String, fromIds: NonEmptyList[A] => F[Map[A, T]])(implicit
       codec: IDCodec[A]
   ): GlobalID[F, T, A] =
-    GlobalID(typename, Resolver.lift(toId), fromIds)
+    GlobalID(typename, fromIds)
 
   def gidsFrom[F[_], T, A](typename: String, toId: Resolver[F, T, A], fromIds: NonEmptyList[A] => F[Map[A, T]])(implicit
       codec: IDCodec[A]
