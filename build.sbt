@@ -230,7 +230,7 @@ lazy val serverNatchez = project
   .settings(
     name := "gql-natchez",
     libraryDependencies ++= Seq(
-      "org.tpolecat" %% "natchez-core" % "0.3.2"
+      "org.tpolecat" %% "natchez-core" % "0.3.3"
     )
   )
   .dependsOn(core)
