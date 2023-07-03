@@ -55,13 +55,18 @@ object ast extends AstImplicits.Implicits {
       val specify: B => Option[A]
   )
 
+  trait TypeAttribute[+F[_], A]
   final case class Type[+F[_], A](
       name: String,
       fields: NonEmptyList[(String, Field[F, A, ?])],
       implementations: List[Implementation[F, A, ?]],
-      description: Option[String] = None
+      description: Option[String] = None,
+      attributes: List[TypeAttribute[F, A]] = Nil
   ) extends ObjectLike[F, A] {
     def document(description: String): Type[F, A] = copy(description = Some(description))
+
+    def addAttributes[F2[x] >: F[x]](attrs: TypeAttribute[F2, A]*): Type[F2, A] =
+      copy[F2, A](attributes = attributes ++ attrs.toList)
 
     lazy val fieldsList: List[(String, Field[F, A, ?])] = fields.toList
 
@@ -207,6 +212,9 @@ object ast extends AstImplicits.Implicits {
 
     def contramap[F2[x] >: F[x], A2](f: A2 => A): Field[F2, A2, B] =
       compose[F2, A2](Resolver.lift[F2, A2](f))
+
+    def addAttributes[F2[x] >: F[x], A2 <: A](attrs: FieldAttribute[F2, A2, B]*): Field[F2, A2, B] =
+      copy(attributes = attributes ++ attrs.toList)
   }
 
   // Field, but without any implementation

@@ -25,6 +25,7 @@ import cats._
 import gql.SchemaShape
 import gql.resolver.Resolver
 import gql.dsl._
+import cats.mtl._
 
 trait Node {
   def value: Any = this
@@ -51,20 +52,31 @@ object Goi {
   def makeImpl[A](specify: Node => Option[A]) =
     gql.ast.Implementation(Eval.now(Node.nodeInterface))(specify)
 
-  def addIdWith[F[_], A](resolver: Resolver[F, A, String], t: Type[F, A], specify: Node => Option[A])(implicit
-      F: Sync[F]
-  ): Type[F, A] =
+  def addIdWith[F[_], A, B](
+      t: Type[F, A],
+      resolver: Resolver[F, A, B],
+      fromIds: NonEmptyList[B] => F[Map[B, A]],
+      specify: Node => Option[A]
+  )(implicit F: Sync[F], idCodec: IDCodec[B]): Type[F, A] =
     t
       .copy(implementations = makeImpl[A](specify) :: t.implementations)
-      .addFields("id" -> build.from(resolver.evalMap(s => makeId[F](t.name, s).map(ID(_)))))
+      .addFields(
+        "id" -> build.from(resolver.evalMap(b => makeId[F](t.name, encodeString[B](b)).map(ID(_))))
+      )
+      .addAttributes(GoiAttribute(idCodec, fromIds))
 
-  def addId[F[_], A, B](resolver: Resolver[F, A, B], t: Type[F, A])(implicit
+  def addId[F[_], A, B](
+      t: Type[F, A],
+      resolver: Resolver[F, A, B],
+      fromIds: NonEmptyList[B] => F[Map[B, A]]
+  )(implicit
       F: Sync[F],
       idCodec: IDCodec[B]
   ): Type[F, A] =
-    addIdWith[F, A](
-      resolver.map(encodeString[B]),
+    addIdWith[F, A, B](
       t,
+      resolver,
+      fromIds,
       x =>
         if (x.typename === t.name) Some(x.value.asInstanceOf[A])
         else None
@@ -92,10 +104,10 @@ object Goi {
     }
   }
 
-  final case class DecodedIds[F[_], V, K](gid: GlobalID[F, V, K], keys: NonEmptyList[(String, K)])
+  final case class DecodedIds[F[_], V, K](gid: CollectedAttribute[F, V, K], keys: NonEmptyList[(String, K)])
   def decodeIds[F[_]: Sync, G[_]: NonEmptyTraverse](
       ids: G[String],
-      lookup: Map[String, GlobalID[F, ?, ?]]
+      lookup: Map[String, CollectedAttribute[F, ?, ?]]
   ): IorT[F, String, List[DecodedIds[F, ?, ?]]] =
     ids
       .nonEmptyTraverse[IorT[F, String, *], (String, (String, NonEmptyList[String]))](id => getId(id) tupleLeft id)
@@ -106,10 +118,10 @@ object Goi {
             case None => s"Typename `$typename` does not have a getter.".leftIor
             case Some(gid) =>
               gid match {
-                case gid: GlobalID[F, v, k] =>
+                case gid: CollectedAttribute[F, v, k] =>
                   keys
                     .traverse[Ior[String, *], (String, k)] { case (id, key) =>
-                      decodeInput(gid.codec, key.toList.toArray).toEither
+                      decodeInput(gid.attribute.codec, key.toList.toArray).toEither
                         .leftMap(_.mkString_("\n"))
                         .toIor
                         .map(id -> _)
@@ -122,18 +134,18 @@ object Goi {
 
   def runIds[F[_]: Parallel, G[_]: NonEmptyTraverse](
       ids: G[String],
-      lookup: Map[String, GlobalID[F, ?, ?]]
+      lookup: Map[String, CollectedAttribute[F, ?, ?]]
   )(implicit F: Sync[F]): IorT[F, String, G[Option[Node]]] =
     decodeIds[F, G](ids, lookup)
       .semiflatMap(_.parFlatTraverse { case di: DecodedIds[F, v, k] =>
         val reverseMapping: Map[k, String] = di.keys.map { case (id, key: k) => key -> id }.toList.toMap
-        val resultsF: F[Map[k, v]] = di.gid.fromIds(di.keys.map { case (_, key: k) => key })
+        val resultsF: F[Map[k, v]] = di.gid.attribute.fromIds(di.keys.map { case (_, key: k) => key })
         resultsF.map(_.toList.mapFilter { case (k, v) => reverseMapping.get(k) tupleRight Node(v, di.gid.typename) })
       })
       .map(_.toMap)
       .map(lookup => ids.map(lookup.get))
 
-  def node[F[_]: Parallel, Q, M, S](shape: SchemaShape[F, Q, M, S], xs: List[GlobalID[F, ?, ?]])(implicit
+  def node[F[_]: Parallel, Q, M, S](shape: SchemaShape[F, Q, M, S], xs: List[CollectedAttribute[F, ?, ?]])(implicit
       F: Sync[F]
   ): SchemaShape[F, Q, M, S] = {
     val lookup = xs.map(x => x.typename -> x).toMap
@@ -154,29 +166,30 @@ object Goi {
       )
     }
   }
-/*
-  def collectAttributes[F[_]](shape: SchemaShape[F, ?, ?, ?]) = {
-    shape.foldMapK(){
-      case t: Type[F, a] => 
-        val n = t.name
-        t.fields.collect{ case (_, f: Field[F, a, b]) => 
-          val gois = f.attributes.collect{ case g: GoiAttribute[F, a, b, id] => g }
-          gois match {
-            case Nil => ()
-            case (x: GoiAttribute[F, a, b, id]) :: xs => 
-              if (xs.nonEmpty) ???
-              else {
-                GlobalID[F, id, b](n, x.toId, x.fromIds)(x.codec)
-                ???
-              }
-          }
-          f
-        }
-        Option.empty[Unit]
-    }
-  }*/
 
-  def validate[F[_], Q, M, S](shape: SchemaShape[F, Q, M, S], instances: List[GlobalID[F, ?, ?]]): List[String] = {
+  final case class CollectedAttribute[F[_], A, B](
+      typename: String,
+      attribute: GoiAttribute[F, A, B]
+  )
+  def collectAttributes[F[_]](shape: SchemaShape[F, ?, ?, ?]): List[CollectedAttribute[F, ?, ?]] = {
+    type Effect[A] = EitherT[Writer[List[CollectedAttribute[F, ?, ?]], *], NonEmptyChain[String], A]
+    def go[H[_]](implicit H: Monad[H], R: Raise[H, NonEmptyChain[String]], T: Tell[H, List[CollectedAttribute[F, ?, ?]]]): H[Unit] =
+      shape.foldMapK[H]() { case t: Type[F, a] =>
+        val fas = t.attributes.collect { case g: GoiAttribute[F, a, ?] => g }
+        val n = t.name
+
+        fas match {
+          case Nil => H.unit
+          case (x: GoiAttribute[F, a, id]) :: xs =>
+            if (xs.nonEmpty) R.raise(NonEmptyChain.one(s"More than one goi attribute found on `$n`"))
+            else T.tell(List(CollectedAttribute[F, a, id](n, x)))
+        }
+      }
+
+    go[Effect].value.written
+  }
+
+  def validate[F[_], Q, M, S](shape: SchemaShape[F, Q, M, S], instances: List[CollectedAttribute[F, ?, ?]]): List[String] = {
     val instanceSet = instances.map(_.typename).toSet
     val all = shape.discover.outputs.keySet
     // Parameters that have typenames do not occur in the schema
@@ -206,6 +219,5 @@ object Goi {
         s"Type `$n` was declared $size times as a GlobalID instance. Hint: Ensure that the GlobalID instance for `$n` is only added once."
       }
   }
-
 
 }

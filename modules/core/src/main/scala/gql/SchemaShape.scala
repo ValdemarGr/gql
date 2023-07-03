@@ -338,7 +338,7 @@ object SchemaShape {
                 (Doc.text(s"interface $name") + interfaces + Doc.text(" {") + Doc.hardLine +
                   fieldsDoc +
                   Doc.hardLine + Doc.text("}"))
-            case ol @ Type(name, fields, _, desc) =>
+            case ol @ Type(name, fields, _, desc, _) =>
               val fieldsDoc = Doc
                 .intercalate(
                   Doc.hardLine,
@@ -505,7 +505,7 @@ object SchemaShape {
       "fields" -> lift(inclDeprecated) {
         case (_, oi: TypeInfo.OutInfo) =>
           oi.t match {
-            case Type(_, fields, _, _)      => Some(fields.toList.map { case (k, v) => NamedField(k, v.asAbstract) })
+            case Type(_, fields, _, _, _)   => Some(fields.toList.map { case (k, v) => NamedField(k, v.asAbstract) })
             case Interface(_, fields, _, _) => Some(fields.toList.map { case (k, v) => NamedField(k, v.asAbstract) })
             case _                          => None
           }
@@ -514,7 +514,7 @@ object SchemaShape {
       "interfaces" -> lift {
         case oi: TypeInfo.OutInfo =>
           oi.t match {
-            case Type(_, _, impls, _)      => impls.map[TypeInfo](impl => TypeInfo.OutInfo(impl.implementation.value)).some
+            case Type(_, _, impls, _, _)   => impls.map[TypeInfo](impl => TypeInfo.OutInfo(impl.implementation.value)).some
             case Interface(_, _, impls, _) => impls.map[TypeInfo](impl => TypeInfo.OutInfo(impl.value)).some
             case _                         => None
           }

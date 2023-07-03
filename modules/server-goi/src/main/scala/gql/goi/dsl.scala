@@ -15,44 +15,22 @@
  */
 package gql.goi
 
-import cats.data._
-import cats._
 import gql.ast._
 import cats.effect._
 import gql.resolver._
+import cats.data._
 
 object dsl {
-  implicit class InterfaceGOIOps[F[_], A](val i: Interface[F, A]) {
-    def goi: Interface[F, A] = Goi.addId[F, A](i)
-  }
+  def goiFull[F[_]: Sync, A, B](tpe: Type[F, A])(resolver: Resolver[F, A, B])(
+      fromIds: NonEmptyList[B] => F[Map[B, A]]
+  )(implicit codec: IDCodec[B]): Type[F, A] =
+    Goi.addId[F, A, B](tpe, resolver, fromIds)
 
-  implicit class GlobalIDOps[F[_], A, K](val gid: GlobalID[F, A, K]) extends AnyVal {
-    def tpe(
-        hd: (String, Field[F, A, ?]),
-        tl: (String, Field[F, A, ?])*
-    )(implicit F: Sync[F]) = {
-      implicit val codec = gid.codec
-      Goi.addId[F, A, K](null, gql.dsl.tpe[F, A](gid.typename, hd, tl: _*))
-    }
-  }
+  def goi[F[_]: Sync, A, B](tpe: Type[F, A])(f: A => B)(
+      fromIds: NonEmptyList[B] => F[Map[B, A]]
+  )(implicit codec: IDCodec[B]): Type[F, A] =
+    goiFull[F, A, B](tpe)(Resolver.lift[F, A](f))(fromIds)
 
-  def gids[F[_], T, A](typename: String, fromIds: NonEmptyList[A] => F[Map[A, T]])(implicit
-      codec: IDCodec[A]
-  ): GlobalID[F, T, A] =
-    GlobalID(typename, fromIds)
-
-  def gidsFrom[F[_], T, A](typename: String, toId: Resolver[F, T, A], fromIds: NonEmptyList[A] => F[Map[A, T]])(implicit
-      codec: IDCodec[A]
-  ): GlobalID[F, T, A] =
-    GlobalID(typename, toId, fromIds)
-
-  def gid[F[_]: Applicative, T, A](typename: String, toId: T => A, fromId: A => F[Option[T]])(implicit
-      codec: IDCodec[A]
-  ): GlobalID[F, T, A] =
-    GlobalID.unary(typename, Resolver.lift(toId), fromId)
-
-  def gidFrom[F[_]: Applicative, T, A](typename: String, toId: Resolver[F, T, A], fromId: A => F[Option[T]])(implicit
-      codec: IDCodec[A]
-  ): GlobalID[F, T, A] =
-    GlobalID.unary(typename, toId, fromId)
+  def goi[F[_], A](interface: Interface[F, A]): Interface[F, A] =
+    Goi.addId[F, A](interface)
 }
