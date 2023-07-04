@@ -41,8 +41,9 @@ gql provides descriptive messages in case of query errors.
 ```
 And also when the schema has been defined incorrectly.
 ```scala mdoc:passthrough
-val c = gql.Cursor.empty.field("Query").field("myField")
-val p1 = gql.Validation.Problem(gql.Validation.Error.ArgumentNotDefinedInInterface("MyType", "MyInterface", "myField", "myArg"), c)
-val p2 = gql.Validation.Problem(gql.Validation.Error.InvalidFieldName("0hey"), c)
+val c1 = gql.Cursor.empty.field("Query").field("myField")
+val p1 = gql.Validation.Problem(gql.Validation.Error.ArgumentNotDefinedInInterface("MyType", "MyInterface", "myField", "myArg"), c1)
+val c2 = gql.Cursor.empty.field("Query").field("0hey")
+val p2 = gql.Validation.Problem(gql.Validation.Error.InvalidFieldName("0hey"), c2)
 println(s"""```\n// $p1\n// $p2\n```""")
 ```

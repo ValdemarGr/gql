@@ -42,5 +42,5 @@ gql provides descriptive messages in case of query errors.
 And also when the schema has been defined incorrectly.
 ```
 // Argument 'myArg' was defined in field 'myField' in type `MyType` but was not defined in interface `MyInterface`. at root.Query.myField
-// Invalid field name '0hey', the field name must match /[_A-Za-z][_0-9A-Za-z]*/ at root.Query.myField
+// Invalid field name '0hey', the field name must match /[_A-Za-z][_0-9A-Za-z]*/ at root.Query.0hey
 ```
