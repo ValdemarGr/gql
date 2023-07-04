@@ -21,16 +21,24 @@ import gql.resolver._
 import cats.data._
 
 object dsl {
-  def goiFull[F[_]: Sync, A, B](tpe: Type[F, A])(resolver: Resolver[F, A, B])(
-      fromIds: NonEmptyList[B] => F[Map[B, A]]
-  )(implicit codec: IDCodec[B]): Type[F, A] =
-    Goi.addId[F, A, B](tpe, resolver, fromIds)
+  final class TypeGoiOps[F[_], A](private val tpe: Type[F, A]) extends AnyVal {
+    def goiFull[B](resolver: Resolver[F, A, B])(fromIds: NonEmptyList[B] => F[Map[B, A]])(implicit
+        codec: IDCodec[B],
+        F: Sync[F]
+    ): Type[F, A] =
+      Goi.addId[F, A, B](tpe, resolver, fromIds)
 
-  def goi[F[_]: Sync, A, B](tpe: Type[F, A])(f: A => B)(
-      fromIds: NonEmptyList[B] => F[Map[B, A]]
-  )(implicit codec: IDCodec[B]): Type[F, A] =
-    goiFull[F, A, B](tpe)(Resolver.lift[F, A](f))(fromIds)
+    def goi[B](f: A => B)(fromIds: NonEmptyList[B] => F[Map[B, A]])(implicit
+        codec: IDCodec[B],
+        F: Sync[F]
+    ): Type[F, A] =
+      goiFull[B](Resolver.lift[F, A](f))(fromIds)
+  }
 
-  def goi[F[_], A](interface: Interface[F, A]): Interface[F, A] =
-    Goi.addId[F, A](interface)
+  implicit def typeGoiOps[F[_], A](tpe: Type[F, A]): TypeGoiOps[F, A] =
+    new TypeGoiOps[F, A](tpe)
+
+  final class InterfaceGoiOps[F[_], A](private val interface: Interface[F, A]) extends AnyVal {
+    def goi: Interface[F, A] = Goi.addId[F, A](interface)
+  }
 }

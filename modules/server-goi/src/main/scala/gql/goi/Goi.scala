@@ -85,43 +85,49 @@ object Goi {
   def addId[F[_], A](t: Interface[F, A]): Interface[F, A] =
     t.addFields("id" -> abst[F, ID[String]])
 
-  def decodeInput[A](codec: IDCodec[A], elems: Array[String]) = {
+  def decodeInput[A](typename: String, codec: IDCodec[A], elems: Array[String]) = {
     val xs = codec.codecs
     if (xs.size =!= elems.size.toLong)
-      s"Invalid Global object identifier size expected size ${xs.size} but got ${elems.size}: ${xs
-          .mkString_(":")}.".invalidNec
+      s"Invalid Global object identifier size. Expected ${xs.size + 1} id parts seperated by :, but got ${elems.size + 1} parts. The types must be ${xs
+          .prepend("typename(string)")
+          .mkString_(":")}. The provided id parts were ${(typename :: elems.toList).mkString(":")}.".invalidNec
     else codec.decode(elems)
   }
 
   def encodeString[A](a: A)(implicit idCodec: IDCodec[A]): String = idCodec.encode(a).mkString_(":")
 
-  def getId[F[_]](id: String)(implicit F: Sync[F]): IorT[F, String, (String, NonEmptyList[String])] = IorT {
+  def getId[F[_]](id: String)(implicit F: Sync[F]): IorT[F, String, (String, List[String])] = IorT {
     F.delay(new String(Base64.getDecoder().decode(id), StandardCharsets.UTF_8)).map { fullId =>
-      fullId.split(":").toList match {
-        case typename :: y :: ys => (typename -> NonEmptyList(y, ys)).rightIor
-        case xs                  => s"Invalid id parts ${xs.map(s => s"'$s'").mkString(", ")}".leftIor
-      }
+      if (fullId.isEmpty) s"Empty id".leftIor
+      else
+        fullId.split(":").toList match {
+          case Nil            => s"Empty id".leftIor
+          case typename :: ys => (typename -> ys).rightIor
+        }
     }
   }
 
   final case class DecodedIds[F[_], V, K](gid: CollectedAttribute[F, V, K], keys: NonEmptyList[(String, K)])
   def decodeIds[F[_]: Sync, G[_]: NonEmptyTraverse](
       ids: G[String],
-      lookup: Map[String, CollectedAttribute[F, ?, ?]]
+      lookup: Map[String, CollectedAttribute[F, ?, ?]],
+      schemaTypes: Set[String]
   ): IorT[F, String, List[DecodedIds[F, ?, ?]]] =
     ids
-      .nonEmptyTraverse[IorT[F, String, *], (String, (String, NonEmptyList[String]))](id => getId(id) tupleLeft id)
+      .nonEmptyTraverse[IorT[F, String, *], (String, (String, List[String]))](id => getId(id) tupleLeft id)
       .subflatMap { outs =>
         val m = outs.toNonEmptyList.groupMap { case (_, (k, _)) => k } { case (id, (_, v)) => (id, v) }
         m.toList.traverse { case (typename, keys) =>
           lookup.get(typename) match {
-            case None => s"Typename `$typename` does not have a getter.".leftIor
+            case None if schemaTypes.contains(typename) =>
+              s"Typename `$typename` does not have a global object identitifaction defined for it.".leftIor
+            case None => s"Typename `$typename` does not exist in this schema.".leftIor
             case Some(gid) =>
               gid match {
                 case gid: CollectedAttribute[F, v, k] =>
                   keys
                     .traverse[Ior[String, *], (String, k)] { case (id, key) =>
-                      decodeInput(gid.attribute.codec, key.toList.toArray).toEither
+                      decodeInput(typename, gid.attribute.codec, key.toArray).toEither
                         .leftMap(_.mkString_("\n"))
                         .toIor
                         .map(id -> _)
@@ -134,9 +140,10 @@ object Goi {
 
   def runIds[F[_]: Parallel, G[_]: NonEmptyTraverse](
       ids: G[String],
-      lookup: Map[String, CollectedAttribute[F, ?, ?]]
+      lookup: Map[String, CollectedAttribute[F, ?, ?]],
+      schemaTypes: Set[String]
   )(implicit F: Sync[F]): IorT[F, String, G[Option[Node]]] =
-    decodeIds[F, G](ids, lookup)
+    decodeIds[F, G](ids, lookup, schemaTypes)
       .semiflatMap(_.parFlatTraverse { case di: DecodedIds[F, v, k] =>
         val reverseMapping: Map[k, String] = di.keys.map { case (id, key: k) => key -> id }.toList.toMap
         val resultsF: F[Map[k, v]] = di.gid.attribute.fromIds(di.keys.map { case (_, key: k) => key })
@@ -149,10 +156,11 @@ object Goi {
       F: Sync[F]
   ): SchemaShape[F, Q, M, S] = {
     val lookup = xs.map(x => x.typename -> x).toMap
+    val sts = shape.discover.toplevels.keySet
     builder[F, Q] { b =>
       def nodeField[G[_]: NonEmptyTraverse](implicit a: In[G[ID[String]]]) = b.from(
         arged(arg[G[ID[String]]]("id"))
-          .evalMap(id => runIds[F, G](id.map(_.value), lookup).value)
+          .evalMap(id => runIds[F, G](id.map(_.value), lookup, sts).value)
           .rethrow
       )
 
@@ -171,7 +179,9 @@ object Goi {
       typename: String,
       attribute: GoiAttribute[F, A, B]
   )
-  def collectAttributes[F[_]](shape: SchemaShape[F, ?, ?, ?]): List[CollectedAttribute[F, ?, ?]] = {
+  def collectAttributes[F[_]](
+      shape: SchemaShape[F, ?, ?, ?]
+  ): Either[NonEmptyChain[String], List[CollectedAttribute[F, _, _]]] = {
     type Effect[A] = EitherT[Writer[List[CollectedAttribute[F, ?, ?]], *], NonEmptyChain[String], A]
     def go[H[_]](implicit H: Monad[H], R: Raise[H, NonEmptyChain[String]], T: Tell[H, List[CollectedAttribute[F, ?, ?]]]): H[Unit] =
       shape.foldMapK[H]() { case t: Type[F, a] =>
@@ -186,10 +196,14 @@ object Goi {
         }
       }
 
-    go[Effect].value.written
+    val (accum, errs) = go[Effect].value.run
+    errs as accum
   }
 
-  def validate[F[_], Q, M, S](shape: SchemaShape[F, Q, M, S], instances: List[CollectedAttribute[F, ?, ?]]): List[String] = {
+  def addSchemaGoi[F[_]: Parallel: Sync, Q, M, S](schema: SchemaShape[F, Q, M, S]): SchemaShape[F, Q, M, S] =
+    node(schema, collectAttributes(schema).getOrElse(Nil))
+
+  def validateFor[F[_], Q, M, S](shape: SchemaShape[F, Q, M, S], instances: List[CollectedAttribute[F, ?, ?]]): List[String] = {
     val instanceSet = instances.map(_.typename).toSet
     val all = shape.discover.outputs.keySet
     // Parameters that have typenames do not occur in the schema
