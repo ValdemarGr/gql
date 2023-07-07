@@ -6,7 +6,7 @@ It enables succintly exposing and consuming GraphQL APIs in a purely functional 
 
 * **Statically typed.** Statically typed through and trough.
 * **Purely functional.** Uses the simplest and most precise abstractions.
-* **Extensible.** Ability to add features on top of gql rangin from lightweight utility to spec-compliant schema transformations.
+* **Extensible.** Ability to add features on top of gql ranging from lightweight utility to spec-compliant schema transformations.
 * **And so much more!**
 
 To learn more, check out the [docs.](https://valdemargr.github.io/gql/)
