@@ -30,7 +30,7 @@ implicit val human: Type[IO, Human] = tpe[IO, Human](
 ```
 
 # Developing and using gql
-It is the mission of gql to provide the best developer experience possible, which in practice often means providing decriptive and precise error messages.
+gql features decriptive and precise error messages, to aid the developer in writing a correct implementation.
 
 gql provides descriptive messages in case of query errors.
 ```graphql
