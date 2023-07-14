@@ -39,7 +39,11 @@ object Testttt {
   def resolveJoin[F[_]](table: String, originColumn: String, targetColumn: String): Resolver[F, Joins, Joins] =
     Resolver.lift[F, Joins](xs => xs ++ startJoin(table, originColumn, targetColumn))
 
-  def join[F[_]](table: String, originColumn: String, targetColumn: String)(impl: => Out[F, Joins]): Field[F, Joins, Joins] =
+  def join[F[_]](
+      table: String,
+      originColumn: String,
+      targetColumn: String
+  )(impl: => Out[F, Joins]): Field[F, Joins, Joins] =
     build.from(resolveJoin[F](table, originColumn, targetColumn))(impl)
 
   trait RelationalDsl[F[_], G[_]] {
@@ -60,6 +64,10 @@ object Testttt {
   // skunk
   def queryRunner[F[_], A] = Resolver
     .batch[F, Query[Decoder, A], A] { queries =>
+      // val m = queries.groupMap(_.joins)(_.projection).toList
+      def runRound(queries: List[Query[Decoder, A]]) = {
+        val (here, deeper) = queries.partitionMap(q => q.joins.uncons.toRight(q.projection))
+      }
       ???
     }
     .runA(null)
@@ -85,6 +93,13 @@ object Testttt {
     "Contract",
     "id" -> sel("id", uuid),
     "name" -> sel("name", varchar),
-    "users" -> join("user", "id", "contract_id")(user)
+    "users" -> join("user", "id", "contract_id")(user),
+    "manyJoinsOnSameType" -> build.from {
+      select("myValue", text).resolve.contramap[Joins] { xs =>
+        xs ++
+          startJoin("table1", "id", "contract_id") ++
+          startJoin("table2", "table1_id", "parent_id")
+      }
+    }
   )
 }
