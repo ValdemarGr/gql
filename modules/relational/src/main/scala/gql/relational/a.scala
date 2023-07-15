@@ -12,6 +12,173 @@ import gql.resolver.Step
 import gql.std.FreeApply
 import cats.data._
 
+object Test3 {
+  // lib
+  final case class Rel[F[_], +Representation, A](index: Representation, effect: F[A])
+
+  object Rel {
+    implicit def applicativeForRel[F[_]: Applicative, Representation: Monoid]: Applicative[Rel[F, Representation, *]] =
+      new Applicative[Rel[F, Representation, *]] {
+        override def ap[A, B](ff: Rel[F, Representation, A => B])(fa: Rel[F, Representation, A]): Rel[F, Representation, B] =
+          Rel(ff.index |+| fa.index, ff.effect <*> fa.effect)
+
+        override def pure[A](x: A): Rel[F, Representation, A] =
+          Rel(Monoid[Representation].empty, Applicative[F].pure(x))
+      }
+  }
+
+  sealed trait RelFields[F[_], +Representation, A]
+  final case class One[F[_], +Representation, A](
+      rel: Rel[F, Representation, A]
+  ) extends RelFields[F, Representation, Option[A]]
+  final case class Cons[F[_], +Representation, A, B](
+      one: One[F, Representation, A],
+      cons: RelFields[F, Representation, B]
+  ) extends RelFields[F, Representation, (A, B)]
+
+  type MapResolver[F[_], A, B, C] = Resolver[F, A, B] => Resolver[F, A, C]
+
+  final case class ResolverFun[F[_], G[_], Representation, A, B, C](
+      construct: MapResolver[F, A, B, C],
+      rel: Rel[G, Representation, B]
+  )
+  def resolve[F[_], G[_], Representation, A, B](rel: Rel[G, Representation, B]): ResolverFun[F, G, Representation, ?, B, B] =
+    ResolverFun[F, G, Representation, Any, B, B](fa => fa, rel)
+
+  def resolve[F[_], G[_], Representation, A, B, C](rel: Rel[G, Representation, B])(
+      map: MapResolver[F, ?, B, C]
+  ): ResolverFun[F, G, Representation, ?, B, C] =
+    map match {
+      case r: MapResolver[F, a, B, C] =>
+        ResolverFun[F, G, Representation, a, B, C](r, rel)
+    }
+
+  /*
+
+  relTpe(
+    "User",
+    "user",
+    "name" -> select("name", text),
+    "age" -> select("age", int4)
+  )
+
+   */
+
+  // skunk
+  import skunk.codec.all._
+  import skunk._
+  type SkunkRel[A] = Rel[Decoder, List[String], A]
+
+  def sel[F[_], A](column: String, dec: Decoder[A]): ResolverFun[F, Decoder, List[String], ?, A, A] =
+    resolve(Rel(List(column), dec))
+
+  sealed trait LL[F[_], A]
+  final case class One2[F[_], A](fun: ResolverFun[F, Decoder, List[String], ?, A, ?]) extends LL[F, Option[A]]
+  final case class Cons2[F[_], A, B](
+      one: One2[F, A],
+      tail: LL[F, B]
+  ) extends LL[F, (Option[A], B)]
+
+  final case class IndexedRF[F[_], A, B](
+      rf: ResolverFun[F, Decoder, List[String], ?, B, ?],
+      index: A => B
+  )
+
+  def fields2[F[_]](name: String, table: String, fields: (String, ResolverFun[F, Decoder, List[String], ?, ?, ?])*) = {
+    def make(xs: NonEmptyList[ResolverFun[F, Decoder, List[String], ?, ?, ?]]): LL[F, ?] = xs match {
+      case NonEmptyList(head, xs) =>
+        val here = One2(head)
+        xs.toNel match {
+          case None     => here
+          case Some(xs) => Cons2(here, make(xs))
+        }
+    }
+
+    val ll = make(fields.toList.toNel.get.map(_._2))
+    ll match {
+      case ll: LL[F, a] =>
+        def reassocLL[A](ll: LL[F, A], accum: a => A): List[IndexedRF[F, a, ?]] = ll match {
+          case o: One2[F, b] => List(IndexedRF[F, a, A](null, a => accum(a)))
+          case cons: Cons2[F, a2, b] =>
+            reassocLL[Option[a2]](
+              cons.one,
+              a =>
+                accum(a) match {
+                  case (a2, _) => a2
+                }
+            ) ++ reassocLL[b](
+              cons.tail,
+              a =>
+                accum(a) match {
+                  case (_, b: b) => b
+                }
+            )
+        }
+
+        val reassoced = reassocLL(ll, identity)
+        val hd = reassoced.head
+        hd.rf.construct(Resolver.lift[F, a](hd.index))
+    }
+    ???
+  }
+
+  sel("name", text)
+  sel("age", int4)
+
+  // def select[A](column: String, dec: Decoder[A]): SkunkRel[A] =
+  //   Rel(List(column), dec)
+
+  // (select("name", text), select("age", int4)).tupled
+}
+
+object Test2 {
+  trait Rel[F[_], Representation, A] {
+    def index: Representation
+
+    def effect: F[A]
+  }
+
+  trait SkunkRel[A] extends Rel[Decoder, List[String], A]
+
+  implicit val applicativeForSkunkRel: Applicative[SkunkRel] = new Applicative[SkunkRel] {
+    override def ap[A, B](ff: SkunkRel[A => B])(fa: SkunkRel[A]): SkunkRel[B] = new SkunkRel[B] {
+      def index = ff.index ++ fa.index
+      def effect = ff.effect <*> fa.effect
+    }
+
+    override def pure[A](x: A): SkunkRel[A] = new SkunkRel[A] {
+      def index: List[String] = Nil
+      def effect: Decoder[A] = Applicative[Decoder].pure(x)
+    }
+  }
+
+  // def select[A](column: String, dec: Decoder[A]): SkunkRel[A] = new SkunkRel[A] {
+  //   def index = List(column)
+  //   def alg = dec
+  // }
+
+  // import skunk.codec.all._
+  // val o: SkunkRel[(Int, String)] = (select("id", int4), select("name", text)).tupled
+
+  sealed trait Realized[A] {
+    def fieldNames: List[String]
+    def columns: List[String]
+  }
+  final case class Leaf[A](fieldName: String, rel: SkunkRel[A]) extends Realized[A] {
+    def fieldNames: List[String] = List(fieldName)
+    def columns: List[String] = rel.index
+  }
+  final case class Branch[A, B](fa: Realized[A], fb: Realized[B]) extends Realized[(A, B)] {
+    def fieldNames: List[String] = fa.fieldNames ++ fb.fieldNames
+    def columns: List[String] = fa.columns ++ fb.columns
+  }
+
+  // def collapse(real: (String, SkunkRel[?])*): Realized[?] =
+  //   real.toList
+  //     .map { case (fn, rel) => Leaf(fn, rel) }
+  //     .reduceLeft[Realized[?]] { case (r1: Realized[a], r2: Realized[b]) => Branch(r1, r2) }
+}
+
 object Testttt {
   // lib
   final case class Projections[F[_], A](columns: NonEmptyChain[String], fa: F[A]) {
