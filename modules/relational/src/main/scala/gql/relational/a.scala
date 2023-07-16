@@ -11,6 +11,72 @@ import gql.resolver.Resolver
 import gql.resolver.Step
 import gql.std.FreeApply
 import cats.data._
+import scala.reflect.ClassTag
+
+object Test4 {
+  // lib
+  final case class Rel[F[_], +Representation, A](index: Representation, effect: F[A])
+
+  object Rel {
+    implicit def applicativeForRel[F[_]: Applicative, Representation: Monoid]: Applicative[Rel[F, Representation, *]] =
+      new Applicative[Rel[F, Representation, *]] {
+        override def ap[A, B](ff: Rel[F, Representation, A => B])(fa: Rel[F, Representation, A]): Rel[F, Representation, B] =
+          Rel(ff.index |+| fa.index, ff.effect <*> fa.effect)
+
+        override def pure[A](x: A): Rel[F, Representation, A] =
+          Rel(Monoid[Representation].empty, Applicative[F].pure(x))
+      }
+  }
+
+  sealed trait ResultLevel
+  object ResultLevel {
+    final case class Join(result: ResultLevel) extends ResultLevel
+    final case class Select[A](a: A) extends ResultLevel
+  }
+  type QueryResult = Map[String, ResultLevel]
+
+  abstract class RelFieldAttribute[F[_], G[_], Representation, A, B](
+      val rel: Rel[G, Representation, A]
+  ) extends FieldAttribute[F, QueryResult, B]
+
+  // skunk
+  type SkunkRel[A] = Rel[Decoder, List[String], A]
+
+  final case class SkunkFieldAttribute[F[_], A, B](override val rel: SkunkRel[A])
+      extends RelFieldAttribute[F, Decoder, List[String], A, B](rel)
+
+  def select[A](column: String, decoder: Decoder[A]): SkunkRel[A] =
+    Rel(List(column), decoder)
+
+  def resolveWith[F[_], A: ClassTag, B](fieldName: String, rel: SkunkRel[A])(
+      f: Resolver[F, QueryResult, A] => Resolver[F, QueryResult, B]
+  )(implicit out: => Out[F, B]): Field[F, QueryResult, B] =
+    gql.dsl
+      .build[F, QueryResult](res =>
+        f(res.emap { m =>
+          m.get(fieldName) match {
+            case None                           => s"$fieldName was not present in result".leftIor
+            case Some(ResultLevel.Join(_))      => s"join".leftIor
+            case Some(ResultLevel.Select(a: A)) => a.rightIor
+            case Some(ResultLevel.Select(_))    => "not of type A".leftIor
+          }
+        })
+      )(out)
+      .addAttributes(SkunkFieldAttribute(rel))
+
+  def resolve[F[_], A: ClassTag](fieldName: String, rel: SkunkRel[A])(implicit out: => Out[F, A]) =
+    resolveWith[F, A, A](fieldName, rel)(identity)(implicitly, out)
+
+  resolve("stuff", select("name", skunk.codec.all.text))
+
+  resolveWith[cats.effect.IO, (String, Int), String](
+    "stuff2",
+    (
+      select("name", skunk.codec.all.text),
+      select[Int]("age", skunk.codec.all.int4)
+    ).tupled
+  )(_.map{ case (s, _) => s })
+}
 
 object Test3 {
   // lib
@@ -117,7 +183,8 @@ object Test3 {
 
         val reassoced = reassocLL(ll, identity)
         val hd = reassoced.head
-        hd.rf.construct(Resolver.lift[F, a](hd.index))
+        ???
+      // hd.rf.construct(Resolver.lift[F, a](hd.index))
     }
     ???
   }
