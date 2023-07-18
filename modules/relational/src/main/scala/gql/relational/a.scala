@@ -12,6 +12,226 @@ import gql.resolver.Step
 import gql.std.FreeApply
 import cats.data._
 import scala.reflect.ClassTag
+import gql.QueryResult
+
+object Test6 {
+  sealed trait Query[A]
+  case class Select[A](col: String, decoder: Decoder[A]) extends Query[A]
+  case class JoinQ[G[_], A](j: Join[G, Query[A]]) extends Query[A]
+
+  sealed trait Join[G[_], A]
+  case class Cont[A](fa: Eval[A]) extends Join[Id, A]
+  case class JoinOne[G[_], A](tbl: String, pred: Fragment[Void] => AppliedFragment, next: Join[G, A]) extends Join[G, A]
+  case class JoinList[G[_], A](tbl: String, pred: Fragment[Void] => AppliedFragment, next: Join[G, A]) extends Join[Lambda[B => List[G[B]]], A]
+  case class JoinOpt[G[_], A](tbl: String, pred: Fragment[Void] => AppliedFragment, next: Join[G, A]) extends Join[Lambda[B => Option[G[B]]], A]
+
+  /*
+
+  val x = 
+    joinOne("table_a")(a => sql"$a.id = 'hey'".apply(Void)).andThen{ a =>
+      joinList("table_b")(b => sql"$b.a_id = $a.id".apply(Void)).andThen { b =>
+        joinOpt("table_c")(c => sql"$c.b_id = $b.id".apply(Void)).andThen { c =>
+          select(sql"$c.name", text)
+        }
+      }
+    }: Query[List[Option[String]]]
+
+  x.toField(implicitly[Out[IO, List[Option[String]]]])
+
+  val otherType: Type[IO, QueryResult] = ???
+
+  val y = parent { p =>
+    joinOne("table_a")(a => sql"$a.id = 'hey' and $a.parent_id = $p.id".apply(Void)).andThen{ a =>
+      joinList("table_b")(b => sql"$b.a_id = $a.id".apply(Void)).andThen { b =>
+        joinOne("table_c")(c => sql"$c.b_id = $b.id".apply(Void)).andThen { _ =>
+          continue(b) // assume that c was just used as a filter
+        }
+      }
+    }
+  }: Query[List[List[QueryResult]]]
+
+  y.toField(lst(lst(otherType)))
+
+  sel(a, b) ~= parent(select(_, b)).toField
+
+  val z = sel("my_col", text): Field[Int, QueryResult, String]
+
+   */
+
+  // sealed trait
+}
+
+object Test5 {
+  /*
+   // v1
+   relTpe[IO](
+     "Contract",
+     "id" -> sel("id", uuid),
+     "entities" -> joined(entityIdsArg) { case (parent, entityIds) =>
+       for {
+         ceg <- innerJoin("contract_entity_group") { t =>
+           Equals(parent.col("id"), t.col("contract_id"))
+         }
+         e <- leftJoin("entity") { t =>
+           And(
+             Equals(ceg.col("entity_id"), t.col("id")),
+             In(e.col("id"), Const(entityIds, uuid.list(entityIds)))
+           )
+         }
+       } yield e
+     }
+   )
+
+   // v2
+   def relType[F[_]](
+     name: String,
+     columns: (String, Field[F,  QueryResult, ?])*
+   ): Type[F, QueryResult] = ???
+
+   def joinOne(str: String)(predFromTableAlias: Fragment[Void] => AppliedFragment): State[Int, Fragment[Void]] = ???
+
+   def joinList(str: String)(predFromTableAlias: Fragment[Void] => AppliedFragment): State[Int, Fragment[Void]] = ???
+
+   def sel[F[_], A](col: String, dec: Decoder[A]): Field[F, QueryResult, A] = ???
+
+   def select[A](col: String, dec: Decoder[A]): Query[A] = ???
+
+   def materialize[F[_]]: Query ~> Field[F, QueryResult, *] = ???
+
+   val entity = relType[IO](
+     "Entity",
+     "id" -> sel("id", uuid),
+     "name" -> sel("name", text),
+     "friendlyText" -> (select("name", text), select("age", int4))
+       .mapN(_ + " is " + _.toString())
+       .toField[F]
+   )
+
+   sealed trait Join[G[_]]
+   case class Done() extends Join[Id]
+   case class One[G[_]](blah: String, next: Join[A]) extends Join[A]
+   case class Lst[G[_]](blah: String, next: Join[A]) extends Join[Lambda[A => List[G[A]]]]
+   case class Opt[G[_]](blah: String, next: Join[A]) extends Join[Lambda[A => Option[G[A]]]]
+
+   relTpe[IO](
+     "Contract",
+     "id" -> sel("id", uuid),
+     "entities" -> entity.join(entityIdsArg) { entityIds =>
+        joinOne("contract_entity_group")(t => sql"$t.id = $c.id").join { ceg =>
+          joinList("entity"){ t =>
+            sql"$t.id = $ceg.entity_id and $t.id in (${uuid.list(entityIds)})".apply(entityIds)
+          }
+        }
+     }
+   )
+
+   // v3
+   -||- much utility
+
+   // maybe we can opt for an applicative approach
+   // the only problem is the graphql argument
+   // maybe we can summon all the join structure first, then construct the predicates later
+
+   relType[IO](
+     "Contract",
+     "id" -> sel("id", uuid),
+     "entities" -> join { parent =>
+       joinOne() { ceg =>
+         joinLst { e =>
+
+         }
+       }
+       entity
+     }
+   )
+
+   */
+  object olo {
+    sealed trait Join[G[_]]
+    case class Done() extends Join[Id]
+    case class One[G[_]](next: Join[G]) extends Join[G]
+    case class Lst[G[_]](next: Join[G]) extends Join[Lambda[A => List[G[A]]]]
+    case class Opt[G[_]](next: Join[G]) extends Join[Lambda[A => Option[G[A]]]]
+
+    def summonFor[F[_], G[_]](f: Unit => Join[G])(implicit summonned: Out[F, G[String]]) = summonned
+
+    val y: Out[Pure, List[Option[Id[String]]]] = summonFor { _ =>
+      Lst(One(Opt(Done())))
+    }
+  }
+
+  sealed trait SkunkRel[A]
+  object SkunkRel {
+    case class Select[A](column: String, decoder: Decoder[A]) extends SkunkRel[A]
+
+    case class JoinRel[A](j: Join[SkunkRel, A]) extends SkunkRel[A]
+
+    final case class Ap[A, B](fa: SkunkRel[A], ff: SkunkRel[A => B]) extends SkunkRel[B]
+
+    implicit val applyInstance: Apply[SkunkRel] = ???
+  }
+
+  case class JoinDeps(column: String, table: String, childColumn: String)
+  sealed trait Join[F[_], A]
+  object Join {
+    case class Cont[F[_], A](fa: Eval[F[A]]) extends Join[F, A]
+    case class Inner[F[_], A](deps: JoinDeps, ij: Join[F, A]) extends Join[F, A]
+    case class Lst[F[_], A, B](deps: JoinDeps, joinColDecoder: Decoder[B], ij: Join[F, A]) extends Join[F, List[A]]
+    case class Opt[F[_], A](deps: JoinDeps, ij: Join[F, A]) extends Join[F, Option[A]]
+  }
+
+  // type GlobalJoin[F[_]] = Join[Out[F, *], A]
+
+  def select[A](column: String, dec: Decoder[A]): SkunkRel[A] =
+    SkunkRel.Select(column, dec)
+
+  def relJoin[A](col: String, table: String, childCol: String)(inner: SkunkRel[A]): SkunkRel[A] =
+    SkunkRel.JoinRel(Join.Inner(JoinDeps(col, table, childCol), Join.Cont(Eval.later(inner))))
+
+  def embed[F[_]](o: => Out[F, QueryResult]): Join[Id, Out[F, QueryResult]] =
+    Join.Cont[Id, Out[F, QueryResult]](Eval.later(o))
+
+  def join[F[_]](col: String, table: String, childCol: String)(j: Join[Id, Out[F, QueryResult]]) =
+    Join.Inner(JoinDeps(col, table, childCol), j)
+
+  def relJoinList[A, B](col: String, table: String, childCol: String, columnDec: Decoder[B])(inner: SkunkRel[A]): SkunkRel[List[A]] =
+    SkunkRel.JoinRel(Join.Lst(JoinDeps(col, table, childCol), columnDec, Join.Cont(Eval.later(inner))))
+
+  type QueryResult = Map[SkunkRel[?], Any]
+
+  final case class SkunkRelFieldAttribute[F[_], A, B](rel: SkunkRel[A]) extends FieldAttribute[F, QueryResult, B]
+
+  final case class SkunkJoinFieldAttribute[F[_], A, B](join: Join[Id, A]) extends FieldAttribute[F, QueryResult, B]
+
+  def resolveWith[F[_], A: ClassTag, B, C](
+      sr: SkunkRel[A]
+  )(f: Resolver[F, QueryResult, A] => Resolver[F, QueryResult, B])(implicit out: => Out[F, B]): Field[F, QueryResult, B] =
+    build
+      .from {
+        f {
+          Resolver.id[F, QueryResult].emap { qr =>
+            qr.get(sr) match {
+              case Some(a: A) => a.rightIor
+              case _          => s"internal query error".leftIor
+            }
+          }
+        }
+      }(out)
+      .addAttributes(SkunkRelFieldAttribute(sr))
+
+  // def query(j: Join[Id, A])
+
+  import cats.effect._
+
+  relJoinList("id", "contract_user_rel", "contract_id", skunk.codec.all.uuid) {
+    relJoin("user_id", "user", "id") {
+      (
+        select("name", skunk.codec.all.text),
+        select("age", skunk.codec.all.int4)
+      ).tupled
+    }
+  }
+}
 
 object Test4 {
   // lib
@@ -40,6 +260,12 @@ object Test4 {
   ) extends FieldAttribute[F, QueryResult, B]
 
   // skunk
+  sealed trait SkunkRepresentation
+  object SkunkRepresentation {
+    final case class Select(column: String) extends SkunkRepresentation
+    // final case class Join(column: String, )
+  }
+
   type SkunkRel[A] = Rel[Decoder, List[String], A]
 
   final case class SkunkFieldAttribute[F[_], A, B](override val rel: SkunkRel[A])
@@ -75,7 +301,7 @@ object Test4 {
       select("name", skunk.codec.all.text),
       select[Int]("age", skunk.codec.all.int4)
     ).tupled
-  )(_.map{ case (s, _) => s })
+  )(_.map { case (s, _) => s })
 }
 
 object Test3 {
