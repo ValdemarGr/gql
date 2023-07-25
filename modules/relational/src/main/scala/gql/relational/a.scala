@@ -17,13 +17,23 @@ import gql.QueryResult
 object Test6 {
   sealed trait Query[A]
   case class Select[A](col: String, decoder: Decoder[A]) extends Query[A]
-  case class JoinQ[G[_], A](j: Join[G, Query[A]]) extends Query[A]
 
-  sealed trait Join[G[_], A]
-  case class Cont[A](fa: Eval[A]) extends Join[Id, A]
-  case class JoinOne[G[_], A](tbl: String, pred: Fragment[Void] => AppliedFragment, next: Join[G, A]) extends Join[G, A]
-  case class JoinList[G[_], A](tbl: String, pred: Fragment[Void] => AppliedFragment, next: Join[G, A]) extends Join[Lambda[B => List[G[B]]], A]
-  case class JoinOpt[G[_], A](tbl: String, pred: Fragment[Void] => AppliedFragment, next: Join[G, A]) extends Join[Lambda[B => Option[G[B]]], A]
+  sealed trait JoinType[G[_]]
+  object JoinType {
+    case object One extends JoinType[Id]
+    case object Opt extends JoinType[Option]
+    case object Lst extends JoinType[List]
+  }
+
+  case class Join[G[_], A](
+    tbl: String,
+    pred: Fragment[Void] => AppliedFragment,
+    jt: JoinType[G],
+    sq: Fragment[Void] => Query[A]
+  ) extends Query[G[A]]
+
+  case class ReadUp[A](sq: Fragment[Void] => Query[A], n: Int = 1) extends Query[A]
+
 
   /*
 
