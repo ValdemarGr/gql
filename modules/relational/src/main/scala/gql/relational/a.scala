@@ -15,8 +15,17 @@ import scala.reflect.ClassTag
 import gql.QueryResult
 
 object Test6 {
-  sealed trait Query[A]
-  case class Select[A](col: String, decoder: Decoder[A]) extends Query[A]
+  trait Table {
+    def table: AppliedFragment
+    def primaryKey: String
+    def primaryKeyCodec: Codec[?]
+  }
+
+  type QueryResult[+A]
+
+  sealed trait Query[-Parent <: Table, +A]
+  case class Continue[Parent <: Table]() extends Query[Parent, QueryResult[Parent]]
+  case class Select[Parent <: Table, A](col: String, decoder: Decoder[A]) extends Query[Parent, A]
 
   sealed trait JoinType[G[_]]
   object JoinType {
@@ -25,19 +34,62 @@ object Test6 {
     case object Lst extends JoinType[List]
   }
 
-  case class Join[G[_], A](
-    tbl: String,
-    pred: Fragment[Void] => AppliedFragment,
-    jt: JoinType[G],
-    sq: Fragment[Void] => Query[A]
-  ) extends Query[G[A]]
+  case class Join[G[_], A, T <: Table, Parent <: Table](
+      tbl: T,
+      // tbl: Parent,
+      // primaryKey: String,
+      // primaryKeyCodec: Codec[PK],
+      joinPred: Fragment[Void] => AppliedFragment,
+      jt: JoinType[G],
+      sq: Fragment[Void] => Query[T, A]
+  ) extends Query[Parent, G[A]]
 
-  case class ReadUp[A](sq: Fragment[Void] => Query[A], n: Int = 1) extends Query[A]
+  case class ReadParents[Parent <: Table, A](
+    sq: List[Parent] => Query[Parent, A],
+    offset: Int,
+    limit: Int
+  ) extends Query[Parent, A]
 
+  trait Toplevel extends Table
+  trait Contract extends Table
+  trait VerySpecificContract extends Contract
+  trait Entity extends Table
+
+  val Contract: Contract = ???
+  val Entity: Entity = ???
+
+  def join[G[_], A, T <: Table, Parent <: Table](tbl: T, pred: Fragment[Void] => AppliedFragment, jt: JoinType[G])(
+      f: Fragment[Void] => Query[T, A]
+  ): Query[Parent, G[A]] =
+    Join(tbl, pred, jt, f)
+
+  class Partial[Parent <: Table] {
+    def apply[A](x: Query[Parent, A]): Query[Parent, A] = x
+  }
+  def stuff[Parent <: Table] = new Partial[Parent]
+
+  import skunk.implicits._
+  val o2 = stuff[Contract] {
+    join(
+      Contract,
+      alias => sql"".apply(Void),
+      JoinType.One
+    ) { alias =>
+      join(
+        Entity,
+        alias => sql"".apply(Void),
+        JoinType.Opt
+      )(_ => Continue())
+    }
+  }
+
+  o2: Query[VerySpecificContract, Id[Option[QueryResult[Entity]]]]
+  // def specify[P <: Table, A](q: Query[P, A]): Query[P, A] = q
+  // val o3 = specify(o2)
 
   /*
 
-  val x = 
+  val x =
     joinOne("table_a")(a => sql"$a.id = 'hey'".apply(Void)).andThen{ a =>
       joinList("table_b")(b => sql"$b.a_id = $a.id".apply(Void)).andThen { b =>
         joinOpt("table_c")(c => sql"$c.b_id = $b.id".apply(Void)).andThen { c =>
