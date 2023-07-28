@@ -1,5 +1,6 @@
 package gql.relational
 
+import cats.effect._
 import skunk.implicits._
 import gql.ast._
 import gql.dsl._
@@ -56,6 +57,8 @@ object Test6 {
   sealed trait Query[A]
   case class Continue[A](passthrough: A) extends Query[QueryResult[A]]
   case class Select[A](col: AppliedFragment, decoder: Decoder[A]) extends Query[A]
+  case class Ap[A, B](f: Query[A => B], a: Query[A]) extends Query[B]
+  implicit val applyForQuery: Apply[Query] = ???
 
   sealed trait JoinType[G[_]]
   object JoinType extends LowPrioJoinTypeImplicits1 {
@@ -159,15 +162,38 @@ object Test6 {
       path: NonEmptyList[(Table[?], Fragment[Void])]
   )
 
+  final case class PartialJoinAnd[G[_]](private val dummy: Boolean = false) {
+    def apply[A, T <: Table[?]](f: Fragment[Void] => T)(pred: T => AppliedFragment)(g: T => Query[A])(implicit
+        jt: JoinType[G]
+    ): Query[G[A]] =
+      Join[G, A, T](f, pred, jt, g)
+  }
+
   final case class PartialJoin[G[_]](private val dummy: Boolean = false) {
-    def apply[A, T <: Table[?]](f: Fragment[Void] => T, passthrough: A)(pred: T => AppliedFragment)(implicit jt: JoinType[G]) =
+    def apply[A, T <: Table[?]](f: Fragment[Void] => T, passthrough: A)(pred: T => AppliedFragment)(implicit
+        jt: JoinType[G]
+    ): Query[G[QueryResult[A]]] =
       Join[G, QueryResult[A], T](f, pred, jt, _ => Continue[A](passthrough))
 
-    def apply[T <: Table[?]](f: Fragment[Void] => T)(pred: T => AppliedFragment)(implicit jt: JoinType[G]) =
+    def apply[T <: Table[?]](f: Fragment[Void] => T)(pred: T => AppliedFragment)(implicit jt: JoinType[G]): Query[G[QueryResult[T]]] =
       Join[G, QueryResult[T], T](f, pred, jt, t => Continue[T](t))
   }
 
   def join[G[_]]: PartialJoin[G] = PartialJoin()
+
+  def joinAnd[G[_]]: PartialJoinAnd[G] = PartialJoinAnd()
+
+  def query[F[_], A, B](f: A => Query[B])(implicit tpe: => Out[F, B]): Field[F, QueryResult[A], B] = ???
+
+  trait TableFieldAttribute[F[_], A, B] extends FieldAttribute[F, QueryResult[A], B] {
+    def query: A => Query[B]
+  }
+
+  def relTpe[F[_], A](
+      name: String,
+      hd: (String, Field[F, QueryResult[A], ?]),
+      tl: (String, Field[F, QueryResult[A], ?])*
+  ): Type[F, QueryResult[A]] = ???
 
   import skunk.implicits._
   import skunk.codec.all._
@@ -176,6 +202,7 @@ object Test6 {
     def pk = void"id"
     def pkCodec = uuid
 
+    val (id, selId) = sel("id", uuid)
     val (name, selName) = sel("name", text)
     val (age, selAge) = sel("age", int4)
     val (height, selHeight) = sel("height", float8)
@@ -201,11 +228,29 @@ object Test6 {
 
   def unify[A](q: Query[A]): Query[A] = q
 
-  val o = unify {
-    join(ContractTable(_))(c => sql"${c.id} = 'olo'".apply(Void)).andThen { c =>
+  val o =
+    joinAnd(ContractTable(_))(c => sql"${c.id} = 'olo'".apply(Void)) { c =>
       join[List](ContractEntityTable(_))(cet => sql"${cet.contractId} = ${c.id}".apply(Void))
     }
-  }
+
+  implicit val entity: Type[IO, QueryResult[EntityTable]] =
+    relTpe[IO, EntityTable](
+      "Entity",
+      "id" -> query(_.selId),
+      "name" -> query(_.selName)
+    )
+
+  implicit val contract: Type[IO, QueryResult[ContractTable]] =
+    relTpe[IO, ContractTable](
+      "Contract",
+      "id" -> query(_.selId),
+      "name" -> query(_.selName),
+      "entities" -> query { c =>
+        joinAnd[List](ContractEntityTable(_))(cet => sql"${cet.contractId} = ${c.id}".apply(Void)) { cet =>
+          join(EntityTable(_))(e => sql"${e.id} = ${cet.entityId}".apply(Void))
+        }
+      }
+    )
 
   // val o: Query[Id[Seq[QueryResult[Unit]]]] =
   //   join(ContractTable)(c => sql"$c.id = 'ololo'".apply(Void)).andThen { c =>
