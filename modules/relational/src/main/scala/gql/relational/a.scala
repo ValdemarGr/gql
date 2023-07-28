@@ -1,5 +1,6 @@
 package gql.relational
 
+import skunk.implicits._
 import gql.ast._
 import gql.dsl._
 import cats.implicits._
@@ -8,84 +9,208 @@ import skunk.codec._
 import skunk._
 import cats._
 import gql.resolver.Resolver
-import gql.resolver.Step
-import gql.std.FreeApply
 import cats.data._
 import scala.reflect.ClassTag
-import gql.QueryResult
+import java.util.UUID
 
 object Test6 {
-  trait Table {
+  trait TableDef[A] {
     def table: AppliedFragment
-    def primaryKey: String
-    def primaryKeyCodec: Codec[?]
+    def pk: AppliedFragment
+    def pkCodec: Codec[A]
   }
 
-  type QueryResult[+A]
+  trait Table[A] extends TableDef[A] {
+    def alias: Fragment[Void]
 
-  sealed trait Query[-Parent <: Table, +A]
-  case class Continue[Parent <: Table]() extends Query[Parent, QueryResult[Parent]]
-  case class Select[Parent <: Table, A](col: String, decoder: Decoder[A]) extends Query[Parent, A]
+    def aliased[A](x: Fragment[A]): Fragment[A] =
+      sql"${alias}.$x"
+
+    def aliased(x: AppliedFragment): AppliedFragment =
+      aliased[x.A](x.fragment).apply(x.argument)
+
+    def select[A](name: AppliedFragment, codec: Codec[A]): Select[A] =
+      Select(aliased(name), codec)
+
+    def col(name: String): Fragment[Void] =
+      aliased(sql"#$name")
+
+    def sel[A](name: String, codec: Codec[A]): (Fragment[Void], Select[A]) = {
+      val c = col(name)
+      c -> Select(c.apply(Void), codec)
+    }
+
+    def selPk: Select[A] = select(pk, pkCodec)
+  }
+
+  abstract class TableRef[A](val td: TableDef[A]) extends Table[A] {
+    def table = td.table
+    def pk = td.pk
+    def pkCodec = td.pkCodec
+  }
+
+  type ReadQueryResult[A] = Query[A] => Option[A]
+
+  case class QueryResult[B](queryResult: ReadQueryResult[?])
+
+  sealed trait Query[A]
+  case class Continue[A](passthrough: A) extends Query[QueryResult[A]]
+  case class Select[A](col: AppliedFragment, decoder: Decoder[A]) extends Query[A]
 
   sealed trait JoinType[G[_]]
-  object JoinType {
-    case object One extends JoinType[Id]
+  object JoinType extends LowPrioJoinTypeImplicits1 {
+    // A => A instead of Id since scala doesn't want reduce Id to A => A, and Id is noisy
+    case object One extends JoinType[Lambda[A => A]]
     case object Opt extends JoinType[Option]
-    case object Lst extends JoinType[List]
+    case class Traversable[G[_]](val G: Traverse[G]) extends JoinType[G]
+
+    implicit val joinTypeOne: JoinType[Lambda[A => A]] = JoinType.One
+  }
+  trait LowPrioJoinTypeImplicits1 extends LowPrioJoinTypeImplicits2 {
+    implicit val joinTypeOpt: JoinType[Option] = JoinType.Opt
+  }
+  trait LowPrioJoinTypeImplicits2 {
+    implicit def joinTypeTraversable[G[_]](implicit G: Traverse[G]): JoinType[G] = JoinType.Traversable(G)
   }
 
-  case class Join[G[_], A, T <: Table, Parent <: Table](
-      tbl: T,
-      // tbl: Parent,
-      // primaryKey: String,
-      // primaryKeyCodec: Codec[PK],
-      joinPred: Fragment[Void] => AppliedFragment,
+  case class Join[G[_], A, T <: Table[?]](
+      tbl: Fragment[Void] => T,
+      joinPred: T => AppliedFragment,
       jt: JoinType[G],
-      sq: Fragment[Void] => Query[T, A]
-  ) extends Query[Parent, G[A]]
-
-  case class ReadParents[Parent <: Table, A](
-    sq: List[Parent] => Query[Parent, A],
-    offset: Int,
-    limit: Int
-  ) extends Query[Parent, A]
-
-  trait Toplevel extends Table
-  trait Contract extends Table
-  trait VerySpecificContract extends Contract
-  trait Entity extends Table
-
-  val Contract: Contract = ???
-  val Entity: Entity = ???
-
-  def join[G[_], A, T <: Table, Parent <: Table](tbl: T, pred: Fragment[Void] => AppliedFragment, jt: JoinType[G])(
-      f: Fragment[Void] => Query[T, A]
-  ): Query[Parent, G[A]] =
-    Join(tbl, pred, jt, f)
-
-  class Partial[Parent <: Table] {
-    def apply[A](x: Query[Parent, A]): Query[Parent, A] = x
+      sq: T => Query[A]
+  ) extends Query[G[A]] {
+    def andThen[B](f: T => Query[B]): Join[G, B, T] =
+      copy[G, B, T](sq = f)
   }
-  def stuff[Parent <: Table] = new Partial[Parent]
+
+  /*
+    trait TableDef {
+      def table: AppliedFragment
+      def primaryKey: AppliedFragment
+      def primaryKeyCodec: Codec[?]
+    }
+
+    trait Table extends TableDef {
+      def alias: String = table
+      def col[A](name: String, codec: Codec[A]): Select[A] = {
+        val prefix = alias.foldMap(_ + ".")
+        Select(s"$prefix$name", codec)
+      }
+    }
+
+    abstract class TableRef(td: TableDef) extends Table {
+      def table = td.table
+      def primaryKey = td.primaryKey
+      def primaryKeyCodec = td.primaryKeyCodec
+    }
+
+    // style 1
+    case class EntityTable(alias: String) extends TableDef {
+      def table = void"entity"
+      def primaryKey = void"id"
+      def primaryKeyCodec = uuid
+
+      def name = col(void"name", text)
+      def age = col(void"age", int4)
+      def height = col(void"height", float8)
+    }
+
+    // style 2
+    objcet ContractEntityTable extends TableDef {
+      def table = void"contract_entity"
+      def primaryKey = void"contract_id"
+      def primaryKeyCodec = uuid
+    }
+    case class ContractEntityTable(alias: String) extends TableRef(ContractEntityTable) {
+      def entityId = col(void"entity_id", uuid)
+      def contractId = col(void"contract_id", uuid)
+    }
+
+    // style 1
+    case class ContractTable(alias: String) extends Table {
+      def table = void"contract"
+      def primaryKey = void"id"
+      def primaryKeyCodec = uuid
+
+      def name = col(void"name", text)
+    }
+
+    val entity = tpe[IO, QueryResult[EntityTable]](
+      "Entity",
+      "id" -> selRaw("id", uuid),
+      "name" -> sel(_.name)
+    )
+
+    val contract = tpe[IO, QueryResult[ContractTable]](
+      "Contract",
+      "id" -> sel(_.primaryKey),
+      "debtor" -> entity.readFrom(entityIdsArg) { case (c: ContractTable, entityIds) =>
+        join[List](ContractEntityTable(_))(ce => sql"${ce.contractId} = ${c.primaryKey}").andThen { ce =>
+          join(EntityTable(_)) { e =>
+            sql"${e.primaryKey} = ${ce.entityId} and ${e.primaryKey} in (${uuid.nel(entityIds)})".apply(entityIds)
+          }
+        }
+      }
+    )
+
+   */
+
+  case class ParentData(
+      path: NonEmptyList[(Table[?], Fragment[Void])]
+  )
+
+  final case class PartialJoin[G[_]](private val dummy: Boolean = false) {
+    def apply[A, T <: Table[?]](f: Fragment[Void] => T, passthrough: A)(pred: T => AppliedFragment)(implicit jt: JoinType[G]) =
+      Join[G, QueryResult[A], T](f, pred, jt, _ => Continue[A](passthrough))
+
+    def apply[T <: Table[?]](f: Fragment[Void] => T)(pred: T => AppliedFragment)(implicit jt: JoinType[G]) =
+      Join[G, QueryResult[T], T](f, pred, jt, t => Continue[T](t))
+  }
+
+  def join[G[_]]: PartialJoin[G] = PartialJoin()
 
   import skunk.implicits._
-  val o2 = stuff[Contract] {
-    join(
-      Contract,
-      alias => sql"".apply(Void),
-      JoinType.One
-    ) { alias =>
-      join(
-        Entity,
-        alias => sql"".apply(Void),
-        JoinType.Opt
-      )(_ => Continue())
+  import skunk.codec.all._
+  case class EntityTable(alias: Fragment[Void]) extends Table[UUID] {
+    def table = void"entity"
+    def pk = void"id"
+    def pkCodec = uuid
+
+    val (name, selName) = sel("name", text)
+    val (age, selAge) = sel("age", int4)
+    val (height, selHeight) = sel("height", float8)
+  }
+
+  case class ContractTable(alias: Fragment[Void]) extends Table[UUID] {
+    def table = void"contract"
+    def pk = void"id"
+    def pkCodec = uuid
+
+    val (id, selId) = sel("id", uuid)
+    val (name, selName) = sel("name", text)
+  }
+
+  case class ContractEntityTable(alias: Fragment[Void]) extends Table[UUID] {
+    def table = void"contract_entity"
+    def pk = void"contract_id"
+    def pkCodec = uuid
+
+    val (contractId, selContractId) = sel("contract_id", uuid)
+    val (entityId, selEntityId) = sel("entity_id", uuid)
+  }
+
+  def unify[A](q: Query[A]): Query[A] = q
+
+  val o = unify {
+    join(ContractTable(_))(c => sql"${c.id} = 'olo'".apply(Void)).andThen { c =>
+      join[List](ContractEntityTable(_))(cet => sql"${cet.contractId} = ${c.id}".apply(Void))
     }
   }
 
-  o2: Query[VerySpecificContract, Id[Option[QueryResult[Entity]]]]
-  // def specify[P <: Table, A](q: Query[P, A]): Query[P, A] = q
-  // val o3 = specify(o2)
+  // val o: Query[Id[Seq[QueryResult[Unit]]]] =
+  //   join(ContractTable)(c => sql"$c.id = 'ololo'".apply(Void)).andThen { c =>
+  //     join[Seq](EntityTable)(e => sql"$e.contract_id = $c.id".apply(Void))
+  //   }
 
   /*
 
