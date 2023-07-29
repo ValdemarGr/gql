@@ -86,78 +86,6 @@ object Test6 {
       copy[G, B, T](sq = f)
   }
 
-  /*
-    trait TableDef {
-      def table: AppliedFragment
-      def primaryKey: AppliedFragment
-      def primaryKeyCodec: Codec[?]
-    }
-
-    trait Table extends TableDef {
-      def alias: String = table
-      def col[A](name: String, codec: Codec[A]): Select[A] = {
-        val prefix = alias.foldMap(_ + ".")
-        Select(s"$prefix$name", codec)
-      }
-    }
-
-    abstract class TableRef(td: TableDef) extends Table {
-      def table = td.table
-      def primaryKey = td.primaryKey
-      def primaryKeyCodec = td.primaryKeyCodec
-    }
-
-    // style 1
-    case class EntityTable(alias: String) extends TableDef {
-      def table = void"entity"
-      def primaryKey = void"id"
-      def primaryKeyCodec = uuid
-
-      def name = col(void"name", text)
-      def age = col(void"age", int4)
-      def height = col(void"height", float8)
-    }
-
-    // style 2
-    objcet ContractEntityTable extends TableDef {
-      def table = void"contract_entity"
-      def primaryKey = void"contract_id"
-      def primaryKeyCodec = uuid
-    }
-    case class ContractEntityTable(alias: String) extends TableRef(ContractEntityTable) {
-      def entityId = col(void"entity_id", uuid)
-      def contractId = col(void"contract_id", uuid)
-    }
-
-    // style 1
-    case class ContractTable(alias: String) extends Table {
-      def table = void"contract"
-      def primaryKey = void"id"
-      def primaryKeyCodec = uuid
-
-      def name = col(void"name", text)
-    }
-
-    val entity = tpe[IO, QueryResult[EntityTable]](
-      "Entity",
-      "id" -> selRaw("id", uuid),
-      "name" -> sel(_.name)
-    )
-
-    val contract = tpe[IO, QueryResult[ContractTable]](
-      "Contract",
-      "id" -> sel(_.primaryKey),
-      "debtor" -> entity.readFrom(entityIdsArg) { case (c: ContractTable, entityIds) =>
-        join[List](ContractEntityTable(_))(ce => sql"${ce.contractId} = ${c.primaryKey}").andThen { ce =>
-          join(EntityTable(_)) { e =>
-            sql"${e.primaryKey} = ${ce.entityId} and ${e.primaryKey} in (${uuid.nel(entityIds)})".apply(entityIds)
-          }
-        }
-      }
-    )
-
-   */
-
   case class ParentData(
       path: NonEmptyList[(Table[?], Fragment[Void])]
   )
@@ -225,13 +153,6 @@ object Test6 {
     val (contractId, selContractId) = sel("contract_id", uuid)
     val (entityId, selEntityId) = sel("entity_id", uuid)
   }
-
-  def unify[A](q: Query[A]): Query[A] = q
-
-  val o =
-    joinAnd(ContractTable(_))(c => sql"${c.id} = 'olo'".apply(Void)) { c =>
-      join[List](ContractEntityTable(_))(cet => sql"${cet.contractId} = ${c.id}".apply(Void))
-    }
 
   implicit val entity: Type[IO, QueryResult[EntityTable]] =
     relTpe[IO, EntityTable](
