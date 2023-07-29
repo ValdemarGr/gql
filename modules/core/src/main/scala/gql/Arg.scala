@@ -93,3 +93,9 @@ object Arg {
       Arg((fa.impl, ff.impl).mapN(_ ap _))
   }
 }
+
+sealed trait EmptyableArg[A]
+object EmptyableArg {
+  case object Empty extends EmptyableArg[Unit]
+  final case class Lift[A](a: Arg[A]) extends EmptyableArg[A]
+}

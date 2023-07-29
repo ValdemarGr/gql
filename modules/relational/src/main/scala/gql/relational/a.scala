@@ -13,6 +13,8 @@ import gql.resolver.Resolver
 import cats.data._
 import scala.reflect.ClassTag
 import java.util.UUID
+import gql.Arg
+import gql.EmptyableArg
 
 object Test6 {
   trait TableDef[A] {
@@ -50,9 +52,13 @@ object Test6 {
     def pkCodec = td.pkCodec
   }
 
-  type ReadQueryResult[A] = Query[A] => Option[A]
+  // type ReadQueryResult[A] = TableFieldAttribute[?, ?, ?, ?, A] => Option[A]
 
-  case class QueryResult[B](queryResult: ReadQueryResult[?])
+  // case class QueryResult[B](readQueryResult: ReadQueryResult[?])
+
+  trait QueryResult[A] {
+    def read[F[_], A0, B, ArgType, Q](tfa: TableFieldAttribute[F, A0, B, ArgType, Q]): Option[Q]
+  }
 
   sealed trait Query[A]
   case class Continue[A](passthrough: A) extends Query[QueryResult[A]]
@@ -111,11 +117,94 @@ object Test6 {
 
   def joinAnd[G[_]]: PartialJoinAnd[G] = PartialJoinAnd()
 
-  def query[F[_], A, B](f: A => Query[B])(implicit tpe: => Out[F, B]): Field[F, QueryResult[A], B] = ???
+  def queryResolveFull[F[_], A, B, C, D](a: EmptyableArg[C])(f: (A, C) => Query[B])(
+      resolver: Resolver[F, B, B] => Resolver[F, B, D]
+  )(implicit tpe: => Out[F, D]): Field[F, QueryResult[A], D] = {
+    val tfa = new TableFieldAttribute[F, A, D, C, B] {
+      def arg = a
+      def query(value: A, argument: C): Query[B] = f(value, argument)
+    }
 
-  trait TableFieldAttribute[F[_], A, B] extends FieldAttribute[F, QueryResult[A], B] {
-    def query: A => Query[B]
+    val r = Resolver.id[F, QueryResult[A]]
+    val r2 = a match {
+      case EmptyableArg.Empty   => r
+      case EmptyableArg.Lift(a) => r.arg(a).map { case (_, qr) => qr }
+    }
+
+    val field = build[F, QueryResult[A]](
+      _.andThen(r2)
+        .emap { qr =>
+          val b: Option[B] = qr.read(tfa)
+          b.toRightIor("internal query association error, could not read result from query result")
+        }
+        .andThen(resolver(Resolver.id[F, B]))
+    )(tpe)
+
+    field.addAttributes(tfa)
   }
+
+  final class QueryBuilder[F[_], A] {
+    def relTpe(
+        name: String,
+        hd: (String, Field[F, QueryResult[A], ?]),
+        tl: (String, Field[F, QueryResult[A], ?])*
+    ): Type[F, QueryResult[A]] =
+      tpe[F, QueryResult[A]](name, hd, tl: _*)
+
+    def apply[B](f: A => Query[B])(implicit tpe: => Out[F, B]): Field[F, QueryResult[A], B] =
+      queryResolveFull[F, A, B, Unit, B](EmptyableArg.Empty) { case (a, _) => f(a) }(identity)(tpe)
+
+    def apply[B, C](a: Arg[C])(f: (A, C) => Query[B])(implicit tpe: => Out[F, B]): Field[F, QueryResult[A], B] =
+      queryResolveFull[F, A, B, C, B](EmptyableArg.Lift(a)) { case (a, c) => f(a, c) }(identity)(tpe)
+
+    def resolve[B, C](f: A => Query[B])(resolver: Resolver[F, B, B] => Resolver[F, B, C])(implicit
+        tpe: => Out[F, C]
+    ): Field[F, QueryResult[A], C] =
+      queryResolveFull[F, A, B, Unit, C](EmptyableArg.Empty) { case (a, _) => f(a) }(resolver)(tpe)
+
+    def resolve[B, C, D](a: Arg[C])(f: (A, C) => Query[B])(resolver: Resolver[F, B, B] => Resolver[F, B, D])(implicit
+        tpe: => Out[F, D]
+    ): Field[F, QueryResult[A], D] =
+      queryResolveFull[F, A, B, C, D](EmptyableArg.Lift(a)) { case (a, c) => f(a, c) }(resolver)(tpe)
+  }
+  def buildQuery[F[_], A]: QueryBuilder[F, A] = new QueryBuilder[F, A]
+
+  def queryBuilder[F[_], A]: PartiallyAppliedQueryBuilder[F, A] = new PartiallyAppliedQueryBuilder[F, A]
+
+  final class PartiallyAppliedQueryBuilder[F[_], A](private val dummy: Boolean = false) {
+    def apply[B](f: QueryBuilder[F, A] => B): B = f(buildQuery[F, A])
+  }
+
+  def query[F[_], A, B](f: A => Query[B])(implicit tpe: => Out[F, B]): Field[F, QueryResult[A], B] = 
+    queryResolveFull[F, A, B, Unit, B](EmptyableArg.Empty) { case (a, _) => f(a) }(identity)(tpe)
+
+  def query[F[_], A, B, C](a: Arg[C])(f: (A, C) => Query[B])(implicit tpe: => Out[F, B]): Field[F, QueryResult[A], B] = 
+    queryResolveFull[F, A, B, C, B](EmptyableArg.Lift(a)) { case (a, c) => f(a, c) }(identity)(tpe)
+
+  /*
+   Two run strategies:
+    1. Explicitly mark fields as "query boundaries", e.g can produce QueryResult from nothing.
+    2. Every query can kick-start the query process; every query node can become the root if no active parent query tree is in process.
+
+   Considerations:
+    If we break the "join chain" then we should probably see that as a query boundary.
+    Unforseen multiplicity can occur if we midlessly join values.
+
+    We define query boundary to be when a query is not associated with any parent query.
+    We must stop the "search for query fields" process if we encounter a query boundary.
+
+    Furthermore, seperating queries like this allows query boundaries to be monadic.
+    I think being explicit about query boundaries is the way to go.
+   */
+
+  def runQuery[F[_], A, B](pool: Resource[F, Session[F]])(f: A => Query[B])(implicit tpe: => Out[F, B]): Field[F, A, B] = ???
+
+  trait TableFieldAttribute[F[_], A, B, ArgType, Q] extends FieldAttribute[F, QueryResult[A], B] {
+    def arg: EmptyableArg[ArgType]
+    def query(value: A, argument: ArgType): Query[Q]
+  }
+
+  trait TableFieldQueryBoundary[F[_], A, B] extends FieldAttribute[F, A, B]
 
   def relTpe[F[_], A](
       name: String,
@@ -142,6 +231,7 @@ object Test6 {
     def pkCodec = uuid
 
     val (id, selId) = sel("id", uuid)
+    val (portfolioId, selPortfolioId) = sel("portfolio_id", uuid)
     val (name, selName) = sel("name", text)
   }
 
@@ -161,17 +251,29 @@ object Test6 {
       "name" -> query(_.selName)
     )
 
-  implicit val contract: Type[IO, QueryResult[ContractTable]] =
-    relTpe[IO, ContractTable](
+  implicit val contract: Type[IO, QueryResult[ContractTable]] = queryBuilder[IO, ContractTable] { qb =>
+    qb.relTpe(
       "Contract",
       "id" -> query(_.selId),
       "name" -> query(_.selName),
+      "builderName" -> qb(_.selName),
+      "doubleName" -> qb.resolve(_.selName)(_.evalMap(x => IO(x + x))),
       "entities" -> query { c =>
         joinAnd[List](ContractEntityTable(_))(cet => sql"${cet.contractId} = ${c.id}".apply(Void)) { cet =>
           join(EntityTable(_))(e => sql"${e.id} = ${cet.entityId}".apply(Void))
         }
       }
     )
+  }
+
+  case class Portfolio(id: String)
+  implicit val portfolio = tpe[IO, Portfolio](
+    "Portfolio",
+    "id" -> lift(_.id),
+    "contracts" -> runQuery(null) { p =>
+      join(ContractTable(_))(c => sql"${c.portfolioId} = $text".apply(p.id))
+    }
+  )
 
   // val o: Query[Id[Seq[QueryResult[Unit]]]] =
   //   join(ContractTable)(c => sql"$c.id = 'ololo'".apply(Void)).andThen { c =>
