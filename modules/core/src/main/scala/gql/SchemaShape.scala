@@ -669,8 +669,8 @@ object SchemaShape {
       },
       "args" -> lift(inclDeprecated) { (_, dir) =>
         dir.arg match {
-          case DirectiveArg.Empty      => Nil
-          case DirectiveArg.WithArg(a) => a.entries.toList
+          case EmptyableArg.Empty   => Nil
+          case EmptyableArg.Lift(a) => a.entries.toList
         }
       },
       "isRepeatable" -> lift(_ => false)
