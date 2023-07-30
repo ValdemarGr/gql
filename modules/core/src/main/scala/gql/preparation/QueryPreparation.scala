@@ -29,17 +29,23 @@ import gql.Arg
 import gql.SchemaShape
 import gql.parser.AnyValue
 import gql.Position
+import gql.preparation
+import scala.collection.immutable
+import scala.collection.immutable
 
 trait QueryPreparation[F[_], G[_], C] {
   import QueryPreparation._
 
-  def prepareStep[I, O](step: Step[G, I, O], fieldMeta: PartialFieldMeta[C]): H[F, PreparedStep[G, I, O]]
+  def prepareStep[I, O](
+      step: Step[G, I, O],
+      fieldMeta: PartialFieldMeta[C]
+  ): H[F, Map[Arg[?], Any] => PreparedStep[G, I, O]]
 
   def prepare[A](
       fi: MergedFieldInfo[G, C],
       t: Out[G, A],
       fieldMeta: PartialFieldMeta[C]
-  ): H[F, Prepared[G, A]]
+  ): H[F, Map[Arg[?], Any] => Prepared[G, A]]
 
   def prepareField[I, O](
       fi: MergedFieldInfo[G, C],
@@ -59,7 +65,9 @@ trait QueryPreparation[F[_], G[_], C] {
 }
 
 object QueryPreparation {
-  type H[F[_], A] = Kleisli[F, UniqueEdgeCursor, A]
+  type HBase[F[_], A] = Kleisli[WriterT[F, List[(Arg[?], Any)], *], UniqueEdgeCursor, A]
+  type K[F[_], A] = HBase[F, Map[Arg[?], Any] => A]
+  type H[F[_], A] = Kleisli[WriterT[F, List[(Arg[?], Any)], *], UniqueEdgeCursor, A]
 
   def apply[F[_]: Parallel, G[_], C](
       variables: VariableMap[C],
@@ -97,11 +105,16 @@ object QueryPreparation {
           .collect { case ti: SchemaShape.InterfaceImpl.TypeImpl[G, A, b] => FoundImplementation(ti.t, ti.specify) }
     }
 
-    def lift[A](fa: F[A]): H[F, A] = Kleisli.liftF(fa)
+    def lift[A](fa: F[A]): H[F, A] = Kleisli.liftF(WriterT.liftF(fa))
+    def lift2[A](fa: F[A]): K[F, A] = Kleisli.liftF(WriterT.liftF(fa.map(x => _ => x)))
 
     def pure[A](a: A): H[F, A] = lift(F.pure(a))
+    def pure2[A](a: A): K[F, A] = lift2(F.pure(a))
+
 
     val L = Local[H[F, *], UniqueEdgeCursor]
+
+    val W = Tell[H[F, *], List[(Arg[?], Any)]]
 
     def in[A](p: String)(fa: H[F, A]): H[F, A] = L.local(fa)(_ append p)
 
@@ -113,51 +126,54 @@ object QueryPreparation {
       override def prepareStep[I, O](
           step: Step[G, I, O],
           fieldMeta: PartialFieldMeta[C]
-      ): H[F, PreparedStep[G, I, O]] = {
+      ): H[F, Map[Arg[?], Any] => PreparedStep[G, I, O]] = {
 
         def rec[I2, O2](
             step: Step[G, I2, O2],
             edge: String
-        ): H[F, PreparedStep[G, I2, O2]] = in(edge) {
+        ): H[F, Map[Arg[?], Any] => PreparedStep[G, I2, O2]] = in(edge) {
           prepareStep[I2, O2](step, fieldMeta)
         }
 
+        def pureF[A](a: A): H[F, Map[Arg[?], Any] => A] = pure(_ => a)
+
         step match {
-          case Step.Alg.Lift(f)      => pure(PreparedStep.Lift(f))
-          case Step.Alg.EmbedError() => pure(PreparedStep.EmbedError[G, O]())
+          case Step.Alg.Lift(f)      => pureF(PreparedStep.Lift(f))
+          case Step.Alg.EmbedError() => pureF(PreparedStep.EmbedError[G, O]())
           case alg: Step.Alg.Compose[?, i, a, o] =>
             val left = rec[i, a](alg.left, "compose-left")
             val right = rec[a, o](alg.right, "compose-right")
-            (left, right).parMapN((l, r) => PreparedStep.Compose[G, i, a, o](l, r))
-          case _: Step.Alg.EmbedEffect[?, i]   => ask.map(PreparedStep.EmbedEffect[G, i](_))
-          case alg: Step.Alg.EmbedStream[?, i] => ask.map(PreparedStep.EmbedStream[G, i](alg.signal, _))
+            (left, right).parMapN((l, r) => m => PreparedStep.Compose[G, i, a, o](l(m), r(m)))
+          case _: Step.Alg.EmbedEffect[?, i] => ask.flatMap(u => pureF(PreparedStep.EmbedEffect[G, i](u)))
+          case alg: Step.Alg.EmbedStream[?, i] =>
+            ask.flatMap(u => pureF(PreparedStep.EmbedStream[G, i](alg.signal, u)))
           case alg: Step.Alg.Choose[?, a, b, c, d] =>
             val left = rec[a, c](alg.fac, "choice-left")
             val right = rec[b, d](alg.fab, "choice-right")
-            (left, right).parMapN((l, r) => PreparedStep.Choose[G, a, b, c, d](l, r))
+            (left, right).parMapN((l, r) => m => PreparedStep.Choose[G, a, b, c, d](l(m), r(m)))
           case Step.Alg.GetMeta() =>
-            pure(
+            pure { m =>
               PreparedStep.GetMeta(
                 PreparedMeta(
-                  variables.map { case (k, v) =>
-                    k -> v.copy(value = v.value.map(_.void))
-                  },
+                  variables.map { case (k, v) => k -> v.copy(value = v.value.map(_.void)) },
                   fieldMeta.alias,
-                  fieldMeta.args.map(_.map(_ => ()))
+                  fieldMeta.args.map(_.map(_ => ())),
+                  m
                 )
               )
-            )
+            }
           case alg: Step.Alg.Batch[?, k, v] =>
             lift(nextId.map(i => PreparedStep.Batch[G, k, v](alg.id, UniqueBatchInstance(i))))
+              .map(x => _ => x)
           case alg: Step.Alg.First[?, i, o, c] =>
-            rec[i, o](alg.step, "first").map(s => PreparedStep.First[G, i, o, c](s))
+            rec[i, o](alg.step, "first").map(f => m => PreparedStep.First[G, i, o, c](f(m)))
           case alg: Step.Alg.Argument[?, a] =>
             val expected = alg.arg.entries.toList.map(_.name).toSet
             val fields = fieldMeta.fields.filter { case (k, _) => expected.contains(k) }
             lift {
               AP.decodeArg(alg.arg, fields.fmap(_.map(List(_))), ambigiousEnum = false, context = Nil)
-                .map[PreparedStep[G, I, O]](o => PreparedStep.Lift[G, I, O](_ => o))
-            }
+            }.flatTap(a => W.tell(List(alg.arg -> a)))
+              .map(o => _ => PreparedStep.Lift[G, I, O](_ => o))
         }
       }
 
@@ -165,27 +181,27 @@ object QueryPreparation {
           fi: MergedFieldInfo[G, C],
           t: Out[G, A],
           fieldMeta: PartialFieldMeta[C]
-      ): H[F, Prepared[G, A]] =
+      ): H[F, Map[Arg[?], Any] => Prepared[G, A]] =
         (t, fi.selections.toNel) match {
           case (out: gql.ast.OutArr[g, a, c, b], _) =>
             val innerStep: Step[G, a, b] = out.resolver.underlying
             val compiledStep = prepareStep[a, b](innerStep, fieldMeta)
             val compiledCont = prepare[b](fi, out.of, fieldMeta)
             (compiledStep, compiledCont)
-              .parMapN((s, c) => PreparedList(PreparedCont(s, c), out.toSeq))
+              .parMapN((s, c) => m => PreparedList(PreparedCont(s(m), c(m)), out.toSeq))
           case (out: gql.ast.OutOpt[g, a, b], _) =>
             val innerStep: Step[G, a, b] = out.resolver.underlying
             val compiledStep = prepareStep[a, b](innerStep, fieldMeta)
             val compiledCont = prepare[b](fi, out.of, fieldMeta)
             (compiledStep, compiledCont)
-              .parMapN((s, c) => PreparedOption(PreparedCont(s, c)))
+              .parMapN((s, c) => m => PreparedOption(PreparedCont(s(m), c(m))))
           case (s: Selectable[G, a], Some(ss)) =>
-            lift(prepareSelectable[a](s, ss).map(xs => Selection(xs.toList)))
+            lift(prepareSelectable[a](s, ss).map(xs => _ => Selection(xs.toList)))
           case (e: Enum[a], None) =>
-            pure(PreparedLeaf(e.name, x => Json.fromString(e.revm(x))))
+            pure(_ => PreparedLeaf(e.name, x => Json.fromString(e.revm(x))))
           case (s: Scalar[a], None) =>
             import io.circe.syntax._
-            pure(PreparedLeaf(s.name, x => s.encoder(x).asJson))
+            pure(_ => PreparedLeaf(s.name, x => s.encoder(x).asJson))
           case (o, Some(_)) =>
             lift(raise(s"Type `${ModifierStack.fromOut(o).show(_.name)}` cannot have selections.", List(fi.caret)))
           case (o, None) =>
@@ -234,9 +250,9 @@ object QueryPreparation {
             val preparedF = (
               prepareStep(field.resolve.underlying, meta),
               prepare(fi, field.output.value, meta)
-            ).parMapN(PreparedCont(_, _)).map(PreparedDataField(fi.name, fi.alias, _))
+            ).parMapN((f, g) => (m: Map[Arg[?], Any]) => PreparedDataField(fi.name, fi.alias, PreparedCont(f(m), g(m))))
 
-            verifyTooManyF &> preparedF.run(rootUniqueName)
+            verifyTooManyF &> preparedF.run(rootUniqueName).run.map { case (w, f) => f(w.toMap) }
           })
       }
 
