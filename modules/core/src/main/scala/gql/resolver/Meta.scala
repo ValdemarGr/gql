@@ -19,6 +19,7 @@ import gql.parser.{QueryAst => P}
 import gql.preparation.VariableMap
 import gql.parser.AnyValue
 import gql._
+import gql.preparation.PreparedDataField
 
 /** Meta information about the current query.
   */
@@ -29,13 +30,15 @@ final case class QueryMeta(
 
 /** A more specialized version of [[QueryMeta]] that also carries field specific information.
   */
-final case class FieldMeta(
+final case class FieldMeta[+F[_]](
     queryMeta: QueryMeta,
     args: Option[P.Arguments[Unit, AnyValue]],
-    alias: Option[String],
+    astNode: PreparedDataField[F, ?],
     parsedArgs: Map[Arg[?], Any]
 ) {
   // :(
   def arg[A](a: Arg[A]): Option[A] =
     parsedArgs.get(a).asInstanceOf[Option[A]]
+
+  def alias: Option[String] = astNode.alias
 }
