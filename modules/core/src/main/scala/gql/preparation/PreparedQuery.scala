@@ -22,10 +22,11 @@ import io.circe._
 import gql.parser.{QueryAst => QA}
 import gql.parser.AnyValue
 import gql.Arg
+import cats.Eval
 
-sealed trait PreparedField[F[_], A] extends Product with Serializable
+sealed trait PreparedField[+F[_], A] extends Product with Serializable
 
-sealed trait PreparedStep[F[_], -I, +O] extends Product with Serializable
+sealed trait PreparedStep[+F[_], -I, +O] extends Product with Serializable
 object PreparedStep {
   final case class Lift[F[_], I, O](f: I => O) extends AnyRef with PreparedStep[F, I, O]
   final case class EmbedEffect[F[_], I](stableUniqueEdgeName: UniqueEdgeCursor) extends AnyRef with PreparedStep[F, F[I], I]
@@ -36,7 +37,7 @@ object PreparedStep {
   final case class Compose[F[_], I, A, O](left: PreparedStep[F, I, A], right: PreparedStep[F, A, O])
       extends AnyRef
       with PreparedStep[F, I, O]
-  final case class GetMeta[F[_], I](meta: PreparedMeta) extends AnyRef with PreparedStep[F, I, FieldMeta]
+  final case class GetMeta[F[_], I](meta: Eval[PreparedMeta[F]]) extends AnyRef with PreparedStep[Nothing, I, FieldMeta[F]]
   final case class First[F[_], I, O, C](step: PreparedStep[F, I, O]) extends AnyRef with PreparedStep[F, (I, C), (O, C)]
   final case class Batch[F[_], K, V](id: Step.BatchKey[K, V], globalEdgeId: UniqueBatchInstance[K, V])
       extends AnyRef
@@ -47,9 +48,9 @@ object PreparedStep {
   ) extends PreparedStep[F, Either[A, B], Either[C, D]]
 }
 
-sealed trait Prepared[F[_], I]
+sealed trait Prepared[+F[_], I]
 
-final case class PreparedCont[F[_], I, A](
+final case class PreparedCont[+F[_], I, A](
     edges: PreparedStep[F, I, A],
     cont: Prepared[F, A]
 )
@@ -62,7 +63,7 @@ final case class PreparedOption[F[_], I, O](of: PreparedCont[F, I, O]) extends P
 
 final case class PreparedLeaf[F[_], I](name: String, encode: I => Json) extends Prepared[F, I]
 
-final case class PreparedDataField[F[_], A](
+final case class PreparedDataField[+F[_], A](
     name: String,
     alias: Option[String],
     cont: PreparedCont[F, A, ?]
@@ -76,10 +77,10 @@ final case class PreparedSpecification[F[_], I, A](
     selection: List[PreparedDataField[F, A]]
 ) extends PreparedField[F, I]
 
-final case class PreparedMeta(
+final case class PreparedMeta[+F[_]](
     variables: VariableMap[Unit],
-    alias: Option[String],
     args: Option[QA.Arguments[Unit, AnyValue]],
+    pdf: PreparedDataField[F, ?],
     parsedArgs: Map[Arg[?], Any]
 )
 
