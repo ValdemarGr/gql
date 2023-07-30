@@ -16,9 +16,9 @@
 package gql.resolver
 
 import gql.parser.{QueryAst => P}
-import gql.Cursor
 import gql.preparation.VariableMap
 import gql.parser.AnyValue
+import gql._
 
 /** Meta information about the current query.
   */
@@ -32,5 +32,10 @@ final case class QueryMeta(
 final case class FieldMeta(
     queryMeta: QueryMeta,
     args: Option[P.Arguments[Unit, AnyValue]],
-    alias: Option[String]
-)
+    alias: Option[String],
+    parsedArgs: Map[Arg[?], Any]
+) {
+  // :(
+  def arg[A](a: Arg[A]): Option[A] =
+    parsedArgs.get(a).asInstanceOf[Option[A]]
+}

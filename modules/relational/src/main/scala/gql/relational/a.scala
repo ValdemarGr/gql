@@ -52,10 +52,6 @@ object Test6 {
     def pkCodec = td.pkCodec
   }
 
-  // type ReadQueryResult[A] = TableFieldAttribute[?, ?, ?, ?, A] => Option[A]
-
-  // case class QueryResult[B](readQueryResult: ReadQueryResult[?])
-
   trait QueryResult[A] {
     def read[F[_], A0, B, ArgType, Q](tfa: TableFieldAttribute[F, A0, B, ArgType, Q]): Option[Q]
   }
@@ -197,7 +193,9 @@ object Test6 {
     I think being explicit about query boundaries is the way to go.
    */
 
-  def runQuery[F[_], A, B](pool: Resource[F, Session[F]])(f: A => Query[B])(implicit tpe: => Out[F, B]): Field[F, A, B] = ???
+  def runQuery[F[_], A, B](pool: Resource[F, Session[F]])(f: A => Query[B])(implicit tpe: => Out[F, B]): Field[F, A, B] = {
+    ???
+  }
 
   trait TableFieldAttribute[F[_], A, B, ArgType, Q] extends FieldAttribute[F, QueryResult[A], B] {
     def arg: EmptyableArg[ArgType]

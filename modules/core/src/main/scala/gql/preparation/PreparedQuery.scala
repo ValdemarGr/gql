@@ -21,6 +21,7 @@ import gql.resolver._
 import io.circe._
 import gql.parser.{QueryAst => QA}
 import gql.parser.AnyValue
+import gql.Arg
 
 sealed trait PreparedField[F[_], A] extends Product with Serializable
 
@@ -78,7 +79,8 @@ final case class PreparedSpecification[F[_], I, A](
 final case class PreparedMeta(
     variables: VariableMap[Unit],
     alias: Option[String],
-    args: Option[QA.Arguments[Unit, AnyValue]]
+    args: Option[QA.Arguments[Unit, AnyValue]],
+    parsedArgs: Map[Arg[?], Any]
 )
 
 final case class UniqueBatchInstance[K, V](id: Int) extends AnyVal
