@@ -15,20 +15,15 @@
  */
 package gql.preparation
 
+import gql._
 import gql.ast._
 import gql.resolver._
-import cats.data._
-import gql.parser.{QueryAst => QA}
-import gql.Cursor
+import gql.parser.{QueryAst => QA, AnyValue}
 import cats._
 import cats.mtl._
+import cats.data._
 import cats.implicits._
 import io.circe._
-import gql.ModifierStack
-import gql.Arg
-import gql.SchemaShape
-import gql.parser.AnyValue
-import gql.Position
 
 trait QueryPreparation[F[_], G[_], C] {
   import QueryPreparation._
@@ -137,7 +132,6 @@ object QueryPreparation {
           step: Step[G, I, O],
           fieldMeta: PartialFieldMeta[C]
       ): L[PreparedStep[G, I, O]] = {
-
         def rec[I2, O2](
             step: Step[G, I2, O2],
             edge: String
@@ -214,7 +208,9 @@ object QueryPreparation {
           .foldDirectives[Position.Field[G, *]][List, (Field[G, I, ?], MergedFieldInfo[G, C])](fi.directives, List(fi.caret))(
             (field, fi)
           ) { case ((f: Field[G, I, ?], fi), p: Position.Field[G, a], d) =>
-            DA.parseArg(p, d.arguments, List(fi.caret)).map(p.handler(_, f, fi)).flatMap(raiseEither(_, List(fi.caret)))
+            DA.parseArg(p, d.arguments, List(fi.caret))
+              .map(p.handler(_, f, fi))
+              .flatMap(raiseEither(_, List(fi.caret)))
           }
           .flatMap(_.parTraverse { case (field: Field[G, I, o2], fi) =>
             val rootUniqueName = UniqueEdgeCursor(s"${currentTypename}_${fi.name}")
@@ -247,7 +243,7 @@ object QueryPreparation {
             val preparedF = (
               prepareStep(field.resolve.underlying, meta),
               prepare(fi, field.output.value, meta)
-            ).mapN((f, g) => PreparedDataField(fi.name, fi.alias, PreparedCont(f, g)))
+            ).mapN((f, g) => PreparedDataField(fi.name, fi.alias, PreparedCont(f, g), field))
 
             verifyTooManyF &> preparedF.value.run(rootUniqueName).run.map { case (w, f) =>
               val m = w.toMap

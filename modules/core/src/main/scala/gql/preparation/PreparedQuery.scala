@@ -23,6 +23,7 @@ import gql.parser.{QueryAst => QA}
 import gql.parser.AnyValue
 import gql.Arg
 import cats.Eval
+import gql.ast
 
 sealed trait PreparedField[+F[_], A] extends Product with Serializable
 
@@ -66,7 +67,8 @@ final case class PreparedLeaf[F[_], I](name: String, encode: I => Json) extends 
 final case class PreparedDataField[+F[_], A](
     name: String,
     alias: Option[String],
-    cont: PreparedCont[F, A, ?]
+    cont: PreparedCont[F, A, ?],
+    source: ast.Field[F, A, ?]
 ) extends PreparedField[F, A] {
   lazy val outputName = alias.getOrElse(name)
 }
