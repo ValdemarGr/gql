@@ -196,6 +196,7 @@ object Test6 {
 
   def runQuery[F[_], A, B](pool: Resource[F, Session[F]])(f: A => Query[B])(implicit tpe: => Out[F, B]): Field[F, A, B] = {
     def findQueryNodes[ArgType](m: FieldMeta[F], hd: TableFieldAttribute[F, ?, ?, ArgType, ?], tl: List[TableFieldAttribute[F, ?, ?, ArgType, ?]]) = {
+      hd
       val an = m.astNode
       // an.source.attributes.collect {
       //   case tfa: TableFieldAttribute[F, ?, ?, Arg, ?] => 
