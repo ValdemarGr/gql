@@ -15,11 +15,9 @@
  */
 package gql.resolver
 
-import gql.parser.{QueryAst => P}
-import gql.preparation.VariableMap
-import gql.parser.AnyValue
+import gql.parser.{QueryAst => P, AnyValue}
+import gql.preparation._
 import gql._
-import gql.preparation.PreparedDataField
 
 /** Meta information about the current query.
   */
