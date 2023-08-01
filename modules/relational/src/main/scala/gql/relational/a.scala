@@ -57,8 +57,74 @@ object Test6 {
     def read[F[_], A0, B, ArgType, Q](tfa: TableFieldAttribute[F, A0, B, ArgType, Q]): Option[Q]
   }
 
-  sealed trait Query[A]
+  sealed trait Query2[G[_], Now, Later] {
+    def flatMap[H[_], Now2](f: Now => Query2[H, Now2, Later]): Query2[Lambda[X => G[H[X]]], Now2, Later] =
+      Query2.FlatMap(this, f)
+
+    def map[Now2](f: Now => Now2): Query2[G, Now2, Later] =
+      flatMap(n => Query2.Pure(f(n)))
+  }
+  object Query2 {
+    case class Pure[Now, Later](a: Now) extends Query2[Lambda[X => X], Now, Later]
+    case class Select[Later](col: AppliedFragment, decoder: Decoder[Later]) extends Query2[Lambda[X => X], Unit, Later]
+    implicit val applyForSelect: Apply[Select] = ???
+    case class Join[G[_], Later, T <: Table[?]](
+        tbl: Fragment[Void] => T,
+        joinPred: T => AppliedFragment,
+        jt: JoinType[G]
+    ) extends Query2[G, T, Later]
+    case class FlatMap[G[_], H[_], Now, Now2, Later](
+        fa: Query2[G, Now, Later],
+        f: Now => Query2[H, Now2, Later]
+    ) extends Query2[Lambda[X => G[H[X]]], Now2, Later]
+
+    val q2 = Join(
+      ContractTable(_),
+      (t: ContractTable) => sql"${t.id} = 42".apply(Void),
+      JoinType.One
+    )
+
+    val q3 = q2.flatMap { c =>
+      Join(
+        EntityTable(_),
+        (e: EntityTable) => sql"${e.id} = ${c.alias}.entity_id".apply(Void),
+        JoinType.Traversable[List](implicitly)
+      )
+    }
+
+    /*val q4 = q3.flatMap{ e =>
+      Select(void"data", skunk.codec.all.text)
+    }*/
+    val out = for {
+      c <- Join(
+        ContractTable(_),
+        (t: ContractTable) => sql"${t.id} = 42".apply(Void),
+        JoinType.One
+      )
+      e <- Join(
+        EntityTable(_),
+        (e: EntityTable) => sql"${e.id} = ${c.alias}.entity_id".apply(Void),
+        JoinType.Traversable[List](implicitly)
+      )
+      _ <- (
+        Select(sql"${e.alias}.data".apply(Void), skunk.codec.all.text),
+        Select(sql"${e.alias}.data".apply(Void), skunk.codec.all.int4)
+      ).tupled
+    } yield ()
+  }
+
+  /*
+  joinAnd(ContractTable(_))(c => sql"${c.contractId} = 42"-apply(Void)) { c =>
+    join(EntityTable(_))(e => sql"${e.id} = ${c.entityId}".apply(Void))
+  }
+   */
+
+  sealed trait QueryBase[A]
+  // case class Continue[A](q: Query[A]) extends QueryBase[QueryResult[A]]
+
+  sealed trait Query[A] extends QueryBase[A]
   case class Continue[A](passthrough: A) extends Query[QueryResult[A]]
+  case class Pure[A](a: A) extends Query[A]
   case class Select[A](col: AppliedFragment, decoder: Decoder[A]) extends Query[A]
   case class Ap[A, B](f: Query[A => B], a: Query[A]) extends Query[B]
   implicit val applyForQuery: Apply[Query] = ???
@@ -210,12 +276,12 @@ object Test6 {
               )
         }
 
-        input.map{ i => 
+        input.map { i =>
           def evalQuery[Q](q: Query[Q]): Decoder[Q] = q match {
             // run next
-            case cont: Continue[q] => 
+            case cont: Continue[q] =>
               ???
-            case Select(col, dec) => 
+            case Select(col, dec) =>
               write(col)
               dec
             case ap: Ap[a, b] => evalQuery(ap.f).ap(evalQuery(ap.a))
