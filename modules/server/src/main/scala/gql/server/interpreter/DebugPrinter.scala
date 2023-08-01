@@ -65,7 +65,7 @@ object DebugPrinter {
               )
             )
           )
-        case PreparedDataField(name, alias, cont) =>
+        case PreparedDataField(name, alias, cont, _) =>
           record(
             "PreparedDataField",
             kvs(

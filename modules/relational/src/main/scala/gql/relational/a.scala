@@ -172,10 +172,10 @@ object Test6 {
     def apply[B](f: QueryBuilder[F, A] => B): B = f(buildQuery[F, A])
   }
 
-  def query[F[_], A, B](f: A => Query[B])(implicit tpe: => Out[F, B]): Field[F, QueryResult[A], B] = 
+  def query[F[_], A, B](f: A => Query[B])(implicit tpe: => Out[F, B]): Field[F, QueryResult[A], B] =
     queryResolveFull[F, A, B, Unit, B](EmptyableArg.Empty) { case (a, _) => f(a) }(identity)(tpe)
 
-  def query[F[_], A, B, C](a: Arg[C])(f: (A, C) => Query[B])(implicit tpe: => Out[F, B]): Field[F, QueryResult[A], B] = 
+  def query[F[_], A, B, C](a: Arg[C])(f: (A, C) => Query[B])(implicit tpe: => Out[F, B]): Field[F, QueryResult[A], B] =
     queryResolveFull[F, A, B, C, B](EmptyableArg.Lift(a)) { case (a, c) => f(a, c) }(identity)(tpe)
 
   /*
@@ -195,15 +195,39 @@ object Test6 {
    */
 
   def runQuery[F[_], A, B](pool: Resource[F, Session[F]])(f: A => Query[B])(implicit tpe: => Out[F, B]): Field[F, A, B] = {
-    def findQueryNodes[ArgType](m: FieldMeta[F], hd: TableFieldAttribute[F, ?, ?, ArgType, ?], tl: List[TableFieldAttribute[F, ?, ?, ArgType, ?]]) = {
-      hd
-      val an = m.astNode
-      // an.source.attributes.collect {
-      //   case tfa: TableFieldAttribute[F, ?, ?, Arg, ?] => 
-      //     tfa
-      // }
+    var name = 0
+    def nextName: String = {
+      name += 1
+      s"t$name"
+    }
+    def findField[C](passthrough: C, m: FieldMeta[F]) = {
+      def findQueryNodes[ArgType, Q](hd: TableFieldAttribute[F, C, ?, ArgType, Q], tl: List[TableFieldAttribute[F, ?, ?, ?, ?]]) = {
+        val input: Either[String, ArgType] = hd.arg match {
+          case EmptyableArg.Empty => Right(())
+          case EmptyableArg.Lift(a) =>
+            m
+              .arg(a)
+              .toRight(
+                s"query error, coudln't find argument while querying field ${m.astNode.alias.getOrElse(m.astNode.name)}"
+              )
+        }
 
-      ???
+        input.map{ i => 
+          def evalQuery[Q](q: Query[Q]): Q = q match {
+            case cont: Continue[q] => ???
+          }
+
+          val q = hd.query(passthrough, i)
+        }
+
+        val an = m.astNode
+        // an.source.attributes.collect {
+        //   case tfa: TableFieldAttribute[F, ?, ?, Arg, ?] =>
+        //     tfa
+        // }
+
+        ???
+      }
     }
 
     ???
