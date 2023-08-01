@@ -84,10 +84,7 @@ object Test6 {
       joinPred: T => AppliedFragment,
       jt: JoinType[G],
       sq: T => Query[A]
-  ) extends Query[G[A]] {
-    def andThen[B](f: T => Query[B]): Join[G, B, T] =
-      copy[G, B, T](sq = f)
-  }
+  ) extends Query[G[A]]
 
   case class ParentData(
       path: NonEmptyList[(Table[?], Fragment[Void])]
@@ -196,6 +193,7 @@ object Test6 {
 
   def runQuery[F[_], A, B](pool: Resource[F, Session[F]])(f: A => Query[B])(implicit tpe: => Out[F, B]): Field[F, A, B] = {
     var name = 0
+    def write[A](a: A): Unit = ()
     def nextName: String = {
       name += 1
       s"t$name"
@@ -213,8 +211,21 @@ object Test6 {
         }
 
         input.map{ i => 
-          def evalQuery[Q](q: Query[Q]): Q = q match {
-            case cont: Continue[q] => ???
+          def evalQuery[Q](q: Query[Q]): Decoder[Q] = q match {
+            // run next
+            case cont: Continue[q] => 
+              ???
+            case Select(col, dec) => 
+              write(col)
+              dec
+            case ap: Ap[a, b] => evalQuery(ap.f).ap(evalQuery(ap.a))
+            case j: Join[g, a, t] =>
+              val n = sql"#$nextName"
+              val t = j.tbl(n)
+              val jp = j.joinPred(t)
+              val q2 = j.sq(t)
+              evalQuery(q2)
+              null
           }
 
           val q = hd.query(passthrough, i)
