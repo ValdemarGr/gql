@@ -17,6 +17,53 @@ import gql.Arg
 import gql.EmptyableArg
 import gql.resolver.FieldMeta
 
+object Test7 {
+  trait Node[A]
+
+  case class Type[A](
+      name: String,
+      fields: List[(String, Field[A, ?])]
+  ) extends Node[A]
+  case class Leaf[A](serialize: A => String) extends Node[A]
+
+  trait FieldAttribute[A, B]
+  case class Field[A, B](f: (A, Node[?]) => B, cont: Node[B], attributes: List[FieldAttribute[A, B]] = Nil)
+
+  type SQL = String
+  case class QueryFieldAttribute[A, B](sqlFragment: SQL, decoder: Decoder[B]) extends FieldAttribute[A, B]
+
+  type QueryResult = Map[String, Any]
+
+  val contract = Type[QueryResult](
+    "Contract",
+    List(
+      "name" -> Field[QueryResult, String](
+        (m, _) => m.get("name").asInstanceOf[String],
+        Leaf[String](x => x),
+        List(QueryFieldAttribute("name", skunk.codec.all.text))
+      )
+    )
+  )
+
+  val root = Type[Unit](
+    "Root",
+    List(
+      "contract" -> Field[Unit, QueryResult](
+        { (_, ast) =>
+          val child = ast.asInstanceOf[Type[QueryResult]]
+          val (nameFieldName, nameField) = child.fields.head
+          val (frag: String, dec) = nameField.attributes.collectFirst { case QueryFieldAttribute(frag, dec) => frag -> dec }.get
+          // run sql with frag and use dec to get a value
+          def runQuery[A](frag: String, dec: Decoder[A]): A = ???
+          val result = runQuery(frag, dec)
+          Map(nameFieldName -> result)
+        },
+        contract
+      )
+    )
+  )
+}
+
 object Test6 {
   trait TableDef[A] {
     def table: AppliedFragment
@@ -51,6 +98,118 @@ object Test6 {
     def table = td.table
     def pk = td.pk
     def pkCodec = td.pkCodec
+  }
+
+  object Oi {
+    sealed trait Query2[F[_], A]
+    case object End extends Query2[Lambda[X => X], Unit]
+    final case class J[F[_], G[_], A](jt: JoinType[F], j: Query2[G, A]) extends Query2[Lambda[X => F[G[X]]], String]
+    def unify[F[_], A](q: Query2[F, A]) = q
+    val o = unify {
+      J(
+        JoinType.Traversable[List](implicitly),
+        J(
+          JoinType.Traversable[List](implicitly),
+          J(
+            JoinType.Opt,
+            End
+          )
+        )
+      )
+    }
+  }
+
+  object Hmmm {
+    sealed trait Query2[F[_], A]
+    case class Join2[F[_], G[_], A, T <: Table[?]](
+        tbl: Fragment[Void] => T,
+        joinPred: T => AppliedFragment,
+        jt: JoinType[G],
+        f: T => Either[Query2[F, A], F[A]]
+    ) extends Query2[F, G[A]] {
+      def flatMap[H[_], B](f: T => Query2[H, B]): Query2[H, G[B]] =
+        Join2(tbl, joinPred, jt, (t: T) => Left(f(t)))
+
+      def map[H[_], B](f: T => H[B])(implicit dummy: DummyImplicit): Query2[H, G[B]] =
+        Join2(tbl, joinPred, jt, (t: T) => Right(f(t)))
+    }
+
+    sealed trait Cont[A]
+    protected case class ContImpl[A](a: A) extends Cont[QueryResult[A]]
+
+    case class Select[A](col: AppliedFragment, decoder: Decoder[A])
+    implicit val applyForSelect: Apply[Select] = ???
+
+    def cont[A](a: A): Cont[QueryResult[A]] = ContImpl(a)
+
+    def join[G[_]: JoinType, T <: Table[?]](
+        f: Fragment[Void] => T
+    )(pred: T => AppliedFragment) =
+      Join2[Cont, G, QueryResult[T], T](f, pred, implicitly[JoinType[G]], (t: T) => ContImpl(t).asRight)
+
+    def query[F[_], A, B](f: A => Cont[B])(implicit tpe: => Out[F, B]): Field[F, QueryResult[A], B] =
+      ???
+
+    def query[F[_], A, B](
+        f: A => Query2[Cont, B]
+    )(implicit tpe: => Out[F, B], dummy: DummyImplicit, dummy1: DummyImplicit, dummy2: DummyImplicit): Field[F, QueryResult[A], B] =
+      ???
+
+    def query[F[_], A, B](f: A => Query2[Select, B])(implicit tpe: => Out[F, B], dummy: DummyImplicit): Field[F, QueryResult[A], B] =
+      ???
+
+    def query[F[_], A, B](
+        f: A => Select[B]
+    )(implicit tpe: => Out[F, B], dummy: DummyImplicit, dummy1: DummyImplicit): Field[F, QueryResult[A], B] =
+      ???
+
+    // implicit def et[F[_]]: Out[F, QueryResult[(EntityTable, String)]] = ???
+
+    // val entitiesField = query { (a: String) =>
+    //   for {
+    //     c <- join(ContractTable(_))(c => void"")
+    //     e <- join[Option, EntityTable](EntityTable(_))(e => void"")
+    //   } yield cont((e, a))
+    // }
+
+    import skunk.codec.all._
+    implicit lazy val et: Out[IO, QueryResult[EntityTable]] = tpe[IO, QueryResult[EntityTable]](
+      "Entity",
+      "id" -> query { (t: EntityTable) => Select(sql"${t.id}".apply(Void), text) },
+      "name" -> query { (t: EntityTable) => Select(sql"${t.name}".apply(Void), text) }
+    )
+
+    tpe[IO, QueryResult[ContractTable]](
+      "Contract",
+      "id" -> query { (t: ContractTable) => Select(sql"${t.id}".apply(Void), text) },
+      "name" -> query { (t: ContractTable) => Select(sql"${t.name}".apply(Void), text) },
+      "entities" -> query { (t: ContractTable) =>
+        for {
+          e <- join[List, EntityTable](EntityTable(_))(e => sql"${e.contractId} = ${t.id}".apply(Void))
+        } yield cont(e)
+      }
+    )
+    val q2: Field[Pure, QueryResult[String], Option[(String, String, String, String)]] =
+      query { (contractId: String) =>
+        import skunk.codec.all._
+        for {
+          c <- join(ContractTable(_))(c => sql"${c.id} = ${text}".apply(contractId))
+          e <- join[Option, EntityTable](EntityTable(_))(e => sql"${e.contractId} = ${c.id}".apply(Void))
+        } yield (
+          Select(sql"${c.id}".apply(Void), text),
+          Select(sql"${c.name}".apply(Void), text),
+          Select(sql"${e.id}".apply(Void), text),
+          Select(sql"${e.name}".apply(Void), text)
+        ).tupled
+      }
+
+    sealed trait Query[G[_], A]
+    case class Join[G[_], T <: Table[?]](
+        tbl: Fragment[Void] => T,
+        joinPred: T => AppliedFragment,
+        jt: JoinType[G]
+    ) extends Query[G, T]
+    // case class Pure[A]()
   }
 
   trait QueryResult[A] {
@@ -331,6 +490,7 @@ object Test6 {
     def pkCodec = uuid
 
     val (id, selId) = sel("id", uuid)
+    val (contractId, selContractId) = sel("contractId", text)
     val (name, selName) = sel("name", text)
     val (age, selAge) = sel("age", int4)
     val (height, selHeight) = sel("height", float8)
@@ -623,7 +783,7 @@ object Test4 {
 
   abstract class RelFieldAttribute[F[_], G[_], Representation, A, B](
       val rel: Rel[G, Representation, A]
-  ) extends FieldAttribute[F, QueryResult, B]
+    ) extends FieldAttribute[F, QueryResult, B]
 
   // skunk
   sealed trait SkunkRepresentation
