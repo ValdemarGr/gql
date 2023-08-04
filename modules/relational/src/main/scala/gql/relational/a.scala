@@ -18,50 +18,92 @@ import gql.EmptyableArg
 import gql.resolver.FieldMeta
 
 object Test7 {
-  trait Node[A]
+  trait TableFieldAttribute[F[_], A, B, ArgType, Q] extends FieldAttribute[F, QueryResult[A], B] {
+    def arg: EmptyableArg[ArgType]
+    //def query(value: A, argument: ArgType): Query[Q]
+  }
 
-  case class Type[A](
-      name: String,
-      fields: List[(String, Field[A, ?])]
-  ) extends Node[A]
-  case class Leaf[A](serialize: A => String) extends Node[A]
+  trait QueryResult[A] {
+    def read[F[_], A0, B, ArgType, Q](tfa: TableFieldAttribute[F, A0, B, ArgType, Q]): Option[Q]
+  }
 
-  trait FieldAttribute[A, B]
-  case class Field[A, B](f: (A, Node[?]) => B, cont: Node[B], attributes: List[FieldAttribute[A, B]] = Nil)
+  sealed trait JoinType[G[_]]
+  trait TableDef[A] {
+    def table: AppliedFragment
+    def pk: AppliedFragment
+    def pkCodec: Codec[A]
+  }
 
-  type SQL = String
-  case class QueryFieldAttribute[A, B](sqlFragment: SQL, decoder: Decoder[B]) extends FieldAttribute[A, B]
+  trait Table[A] extends TableDef[A] {
+    def alias: Fragment[Void]
 
-  type QueryResult = Map[String, Any]
+    def aliased[A](x: Fragment[A]): Fragment[A] =
+      sql"${alias}.$x"
 
-  val contract = Type[QueryResult](
-    "Contract",
-    List(
-      "name" -> Field[QueryResult, String](
-        (m, _) => m.get("name").asInstanceOf[String],
-        Leaf[String](x => x),
-        List(QueryFieldAttribute("name", skunk.codec.all.text))
-      )
-    )
-  )
+    def aliased(x: AppliedFragment): AppliedFragment =
+      aliased[x.A](x.fragment).apply(x.argument)
 
-  val root = Type[Unit](
-    "Root",
-    List(
-      "contract" -> Field[Unit, QueryResult](
-        { (_, ast) =>
-          val child = ast.asInstanceOf[Type[QueryResult]]
-          val (nameFieldName, nameField) = child.fields.head
-          val (frag: String, dec) = nameField.attributes.collectFirst { case QueryFieldAttribute(frag, dec) => frag -> dec }.get
-          // run sql with frag and use dec to get a value
-          def runQuery[A](frag: String, dec: Decoder[A]): A = ???
-          val result = runQuery(frag, dec)
-          Map(nameFieldName -> result)
-        },
-        contract
-      )
-    )
-  )
+    def select[A](name: AppliedFragment, codec: Codec[A]): Select[A] =
+      Select(aliased(name), codec)
+
+    def col(name: String): Fragment[Void] =
+      aliased(sql"#$name")
+
+    def sel[A](name: String, codec: Codec[A]): (Fragment[Void], Select[A]) = {
+      val c = col(name)
+      c -> Select(c.apply(Void), codec)
+    }
+
+    def selPk: Select[A] = select(pk, pkCodec)
+  }
+
+  abstract class TableRef[A](val td: TableDef[A]) extends Table[A] {
+    def table = td.table
+    def pk = td.pk
+    def pkCodec = td.pkCodec
+  }
+
+  object JoinType extends LowPrioJoinTypeImplicits1 {
+    // A => A instead of Id since scala doesn't want reduce Id to A => A, and Id is noisy
+    case object One extends JoinType[Lambda[A => A]]
+    case object Opt extends JoinType[Option]
+    case class Traversable[G[_]](val G: Traverse[G]) extends JoinType[G]
+
+    implicit val joinTypeOne: JoinType[Lambda[A => A]] = JoinType.One
+  }
+  trait LowPrioJoinTypeImplicits1 extends LowPrioJoinTypeImplicits2 {
+    implicit val joinTypeOpt: JoinType[Option] = JoinType.Opt
+  }
+  trait LowPrioJoinTypeImplicits2 {
+    implicit def joinTypeTraversable[G[_]](implicit G: Traverse[G]): JoinType[G] = JoinType.Traversable(G)
+  }
+
+  sealed trait Query[G[_], A]
+  case class Join[G[_], T <: Table[?]](
+      tbl: Fragment[Void] => T,
+      joinPred: T => AppliedFragment,
+      jt: JoinType[G],
+      //f: T => Query[H, B]
+  ) extends Query[G, T]
+  case class Pure[A](a: A) extends Query[Lambda[X => X], A]
+  case class FlatMap[G[_], H[_], A, B, C](
+    fa: Query[G, A], 
+    f: A => Query[H, B]
+  ) extends Query[Lambda[X => G[H[X]]], B]
+
+  case class Select[A](col: AppliedFragment, decoder: Decoder[A])
+  implicit val applyForSelect: Apply[Select] = ???
+
+  def query[F[_], G[_], A, B](f: A => Query[G, Select[B]])(
+    implicit tpe: => Out[F, G[B]]
+  ): Field[F, QueryResult[A], G[B]] = ???
+
+  def cont[F[_], G[_], A, B](f: A => Query[G, B])(
+    implicit tpe: => Out[F, G[QueryResult[B]]]
+  ): Field[F, QueryResult[A], G[QueryResult[B]]] = ???
+
+  val x = query((a: String) => Pure(Select(void"hey", skunk.codec.all.text)))
+  //val y = cont((a: String) => )
 }
 
 object Test6 {
