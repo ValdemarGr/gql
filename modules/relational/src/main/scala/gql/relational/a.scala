@@ -18,19 +18,20 @@ import gql.EmptyableArg
 import gql.resolver.FieldMeta
 
 object Test7 {
-  sealed trait FieldIndicator[A]
-  object FieldIndicator {
-    case class Selection[A]() extends FieldIndicator[Select[A]]
-    case class SubSelection[A]() extends FieldIndicator[QueryResult[A]]
+  sealed trait FieldVariant[Q, A]
+  object FieldVariant {
+    case class Selection[A]() extends FieldVariant[Select[A], A]
+    case class SubSelection[A]() extends FieldVariant[A, QueryResult[A]]
   }
 
-  trait TableFieldAttribute[F[_], A, B, ArgType, Q] extends FieldAttribute[F, QueryResult[A], B] {
+  trait TableFieldAttribute[F[_], G[_], A, B, ArgType, Q] extends FieldAttribute[F, QueryResult[A], B] {
     def arg: EmptyableArg[ArgType]
-    def query(value: A, argument: ArgType): Query[F, Q]
+    def query(value: A, argument: ArgType): Query[G, Q]
+    def fieldVariant: FieldVariant[Q, B]
   }
 
   trait QueryResult[A] {
-    def read[F[_], A0, B, ArgType, Q](tfa: TableFieldAttribute[F, A0, B, ArgType, Q]): Option[Q]
+    def read[F[_], G[_], A0, B, ArgType, Q](tfa: TableFieldAttribute[F, G, A0, B, ArgType, Q]): Option[B]
   }
 
   sealed trait JoinType[G[_]]
@@ -84,14 +85,20 @@ object Test7 {
     implicit def joinTypeTraversable[G[_]](implicit G: Traverse[G]): JoinType[G] = JoinType.Traversable(G)
   }
 
-  sealed trait Query[G[_], A]
+  sealed trait Query[G[_], A] {
+    def flatMap[H[_], B](f: A => Query[H, B]): Query[Lambda[X => G[H[X]]], B] =
+      FlatMap(this, f)
+
+    def map[B](f: A => B): Query[G, B] = flatMap[Lambda[X => X], B](a => Pure(f(a)))
+  }
   case class Join[G[_], T <: Table[?]](
       tbl: Fragment[Void] => T,
       joinPred: T => AppliedFragment,
       jt: JoinType[G]
+      // f: T => Query[H, B]
   ) extends Query[G, T]
   case class Pure[A](a: A) extends Query[Lambda[X => X], A]
-  case class FlatMap[G[_], H[_], A, B, C](
+  case class FlatMap[G[_], H[_], A, B](
       fa: Query[G, A],
       f: A => Query[H, B]
   ) extends Query[Lambda[X => G[H[X]]], B]
@@ -115,8 +122,86 @@ object Test7 {
       tpe: => Out[F, G[QueryResult[B]]]
   ): Field[F, QueryResult[A], G[QueryResult[B]]] = ???
 
-  // val x = query((a: String) => Pure(Select(void"hey", skunk.codec.all.text)))
-  // val y = cont((a: String) => )
+  final class PartiallyAppliedJoin[G[_]](private val dummy: Boolean = false) extends AnyVal {
+    def apply[T <: Table[?]](tbl: Fragment[Void] => T)(joinPred: T => AppliedFragment)(implicit jt: JoinType[G]): Query[G, T] =
+      Join(tbl, joinPred, jt)
+  }
+
+  def join[G[_]]: PartiallyAppliedJoin[G] = new PartiallyAppliedJoin[G]
+
+  def queryFull[F[_], G[_], A, B, C](a: Arg[C])(f: (A, C) => Query[G, Either[B, Select[B]]])(implicit
+    tpe: => Out[F, G[B]]
+  ) = ???
+
+/*
+  def queryResolveFull[F[_], G[_], A, B, C](a: EmptyableArg[C])(f: (A, C) => Query[G, B])(
+      resolver: Resolver[F, B, B] => Resolver[F, B, D]
+  )(implicit tpe: => Out[F, D]): Field[F, QueryResult[A], D] = {
+    val tfa = new TableFieldAttribute[F, A, D, C, B] {
+      def arg = a
+      def query(value: A, argument: C): Query[B] = f(value, argument)
+    }
+
+    val r = Resolver.id[F, QueryResult[A]]
+    val r2 = a match {
+      case EmptyableArg.Empty   => r
+      case EmptyableArg.Lift(a) => r.arg(a).map { case (_, qr) => qr }
+    }
+
+    val field = build[F, QueryResult[A]](
+      _.andThen(r2)
+        .emap { qr =>
+          val b: Option[B] = qr.read(tfa)
+          b.toRightIor("internal query association error, could not read result from query result")
+        }
+        .andThen(resolver(Resolver.id[F, B]))
+    )(tpe)
+
+    field.addAttributes(tfa)
+  }
+*/
+  import skunk.implicits._
+  import skunk.codec.all._
+  val x = query(arg[Int]("name"))((a: String, c) => Pure(Select(void"hey", skunk.codec.all.text)))
+  val y = query((a: String) => Select(void"hey", skunk.codec.all.text))
+  implicit lazy val et: Out[cats.effect.IO, QueryResult[EntityTable]] = ???
+  val z = cont { (t: ContractTable) =>
+    for {
+      cet <- join[List](ContractEntityTable(_))(cet => sql"${cet.contractId} = ${t.id}".apply(Void))
+      e <- join(EntityTable(_))(e => sql"${e.id} = ${cet.entityId}".apply(Void))
+    } yield e
+  }
+
+  case class EntityTable(alias: Fragment[Void]) extends Table[UUID] {
+    def table = void"entity"
+    def pk = void"id"
+    def pkCodec = uuid
+
+    val (id, selId) = sel("id", uuid)
+    val (contractId, selContractId) = sel("contractId", text)
+    val (name, selName) = sel("name", text)
+    val (age, selAge) = sel("age", int4)
+    val (height, selHeight) = sel("height", float8)
+  }
+
+  case class ContractTable(alias: Fragment[Void]) extends Table[UUID] {
+    def table = void"contract"
+    def pk = void"id"
+    def pkCodec = uuid
+
+    val (id, selId) = sel("id", uuid)
+    val (portfolioId, selPortfolioId) = sel("portfolio_id", uuid)
+    val (name, selName) = sel("name", text)
+  }
+
+  case class ContractEntityTable(alias: Fragment[Void]) extends Table[UUID] {
+    def table = void"contract_entity"
+    def pk = void"contract_id"
+    def pkCodec = uuid
+
+    val (contractId, selContractId) = sel("contract_id", uuid)
+    val (entityId, selEntityId) = sel("entity_id", uuid)
+  }
 }
 
 object Test6 {
