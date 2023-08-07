@@ -24,7 +24,7 @@ object Test7 {
     case class SubSelection[A]() extends FieldVariant[A, QueryResult[A]]
   }
 
-  trait TableFieldAttribute[F[_], G[_], A, B, ArgType, Q] extends FieldAttribute[F, QueryResult[A], B] {
+  trait TableFieldAttribute[F[_], G[_], A, B, ArgType, Q] extends FieldAttribute[F, QueryResult[A], G[B]] {
     def arg: EmptyableArg[ArgType]
     def query(value: A, argument: ArgType): Query[G, Q]
     def fieldVariant: FieldVariant[Q, B]
@@ -64,6 +64,19 @@ object Test7 {
     def selPk: Select[A] = select(pk, pkCodec)
   }
 
+  trait TableAlg[T <: Table[?]] {
+    def make: Fragment[Void] => T
+
+    def join[G[_]: JoinType](joinPred: T => AppliedFragment): Join[G, T] =
+      Join(make, joinPred, implicitly[JoinType[G]])
+
+    def join[G[_]: JoinType](joinPred: T => Fragment[Void])(implicit dummy: DummyImplicit): Join[G, T] =
+      Join(make, joinPred.andThen(_.apply(Void)), implicitly[JoinType[G]])
+  }
+  def table[T <: Table[?]](f: Fragment[Void] => T): TableAlg[T] = new TableAlg[T] {
+    def make: Fragment[Void] => T = f
+  }
+
   abstract class TableRef[A](val td: TableDef[A]) extends Table[A] {
     def table = td.table
     def pk = td.pk
@@ -95,7 +108,6 @@ object Test7 {
       tbl: Fragment[Void] => T,
       joinPred: T => AppliedFragment,
       jt: JoinType[G]
-      // f: T => Query[H, B]
   ) extends Query[G, T]
   case class Pure[A](a: A) extends Query[Lambda[X => X], A]
   case class FlatMap[G[_], H[_], A, B](
@@ -129,46 +141,29 @@ object Test7 {
 
   def join[G[_]]: PartiallyAppliedJoin[G] = new PartiallyAppliedJoin[G]
 
-  def queryFull[F[_], G[_], A, B, C](a: Arg[C])(f: (A, C) => Query[G, Either[B, Select[B]]])(implicit
-    tpe: => Out[F, G[B]]
-  ) = ???
-
-/*
-  def queryResolveFull[F[_], G[_], A, B, C](a: EmptyableArg[C])(f: (A, C) => Query[G, B])(
-      resolver: Resolver[F, B, B] => Resolver[F, B, D]
-  )(implicit tpe: => Out[F, D]): Field[F, QueryResult[A], D] = {
-    val tfa = new TableFieldAttribute[F, A, D, C, B] {
-      def arg = a
-      def query(value: A, argument: C): Query[B] = f(value, argument)
+  def queryFull[F[_], G[_], A, B, C](a: Arg[C])(f: (A, C) => Query[G, Select[B]])(implicit
+      tpe: => Out[F, G[B]]
+  ) = {
+    val tfa: TableFieldAttribute[F, G, A, B, C, Select[B]] = new TableFieldAttribute[F, G, A, B, C, Select[B]] {
+      def arg = EmptyableArg.Lift(a)
+      def query(value: A, argument: C): Query[G,Select[B]] = f(value, argument)
+      def fieldVariant = FieldVariant.Selection()
     }
 
-    val r = Resolver.id[F, QueryResult[A]]
-    val r2 = a match {
-      case EmptyableArg.Empty   => r
-      case EmptyableArg.Lift(a) => r.arg(a).map { case (_, qr) => qr }
-    }
-
-    val field = build[F, QueryResult[A]](
-      _.andThen(r2)
-        .emap { qr =>
-          val b: Option[B] = qr.read(tfa)
-          b.toRightIor("internal query association error, could not read result from query result")
-        }
-        .andThen(resolver(Resolver.id[F, B]))
-    )(tpe)
-
-    field.addAttributes(tfa)
+    
+    ???
   }
-*/
+
   import skunk.implicits._
   import skunk.codec.all._
-  val x = query(arg[Int]("name"))((a: String, c) => Pure(Select(void"hey", skunk.codec.all.text)))
+  val x = query(arg[Int]("name"))((a: String, c) => Select(void"hey", skunk.codec.all.text))
   val y = query((a: String) => Select(void"hey", skunk.codec.all.text))
-  implicit lazy val et: Out[cats.effect.IO, QueryResult[EntityTable]] = ???
-  val z = cont { (t: ContractTable) =>
+  implicit val et: Out[IO, QueryResult[EntityTable]] = ???
+  val z = cont { (a: String) =>
     for {
-      cet <- join[List](ContractEntityTable(_))(cet => sql"${cet.contractId} = ${t.id}".apply(Void))
-      e <- join(EntityTable(_))(e => sql"${e.id} = ${cet.entityId}".apply(Void))
+      c <- contractTable.join(c => sql"${c.id} = 42")
+      cet <- contractEntityTable.join[List](cet => sql"${cet.contractId} = ${c.id}")
+      e <- entityTable.join(e => sql"${e.id} = ${cet.entityId}")
     } yield e
   }
 
@@ -183,6 +178,7 @@ object Test7 {
     val (age, selAge) = sel("age", int4)
     val (height, selHeight) = sel("height", float8)
   }
+  val entityTable = table(EntityTable)
 
   case class ContractTable(alias: Fragment[Void]) extends Table[UUID] {
     def table = void"contract"
@@ -193,6 +189,7 @@ object Test7 {
     val (portfolioId, selPortfolioId) = sel("portfolio_id", uuid)
     val (name, selName) = sel("name", text)
   }
+  val contractTable = table(ContractTable)
 
   case class ContractEntityTable(alias: Fragment[Void]) extends Table[UUID] {
     def table = void"contract_entity"
@@ -202,6 +199,7 @@ object Test7 {
     val (contractId, selContractId) = sel("contract_id", uuid)
     val (entityId, selEntityId) = sel("entity_id", uuid)
   }
+  val contractEntityTable = table(ContractEntityTable)
 }
 
 object Test6 {
