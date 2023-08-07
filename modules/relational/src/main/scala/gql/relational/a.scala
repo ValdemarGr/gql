@@ -18,9 +18,15 @@ import gql.EmptyableArg
 import gql.resolver.FieldMeta
 
 object Test7 {
+  sealed trait FieldIndicator[A]
+  object FieldIndicator {
+    case class Selection[A]() extends FieldIndicator[Select[A]]
+    case class SubSelection[A]() extends FieldIndicator[QueryResult[A]]
+  }
+
   trait TableFieldAttribute[F[_], A, B, ArgType, Q] extends FieldAttribute[F, QueryResult[A], B] {
     def arg: EmptyableArg[ArgType]
-    //def query(value: A, argument: ArgType): Query[Q]
+    def query(value: A, argument: ArgType): Query[F, Q]
   }
 
   trait QueryResult[A] {
@@ -82,28 +88,35 @@ object Test7 {
   case class Join[G[_], T <: Table[?]](
       tbl: Fragment[Void] => T,
       joinPred: T => AppliedFragment,
-      jt: JoinType[G],
-      //f: T => Query[H, B]
+      jt: JoinType[G]
   ) extends Query[G, T]
   case class Pure[A](a: A) extends Query[Lambda[X => X], A]
   case class FlatMap[G[_], H[_], A, B, C](
-    fa: Query[G, A], 
-    f: A => Query[H, B]
+      fa: Query[G, A],
+      f: A => Query[H, B]
   ) extends Query[Lambda[X => G[H[X]]], B]
 
-  case class Select[A](col: AppliedFragment, decoder: Decoder[A])
+  case class Select[A](col: AppliedFragment, decoder: Decoder[A]) extends Query[Lambda[X => X], Select[A]]
   implicit val applyForSelect: Apply[Select] = ???
 
-  def query[F[_], G[_], A, B](f: A => Query[G, Select[B]])(
-    implicit tpe: => Out[F, G[B]]
+  def query[F[_], G[_], A, B](f: A => Query[G, Select[B]])(implicit
+      tpe: => Out[F, G[B]]
   ): Field[F, QueryResult[A], G[B]] = ???
 
-  def cont[F[_], G[_], A, B](f: A => Query[G, B])(
-    implicit tpe: => Out[F, G[QueryResult[B]]]
+  def query[F[_], G[_], A, B, C](a: Arg[C])(f: (A, C) => Query[G, Select[B]])(implicit
+      tpe: => Out[F, G[B]]
+  ): Field[F, QueryResult[A], G[B]] = ???
+
+  def cont[F[_], G[_], A, B](f: A => Query[G, B])(implicit
+      tpe: => Out[F, G[QueryResult[B]]]
   ): Field[F, QueryResult[A], G[QueryResult[B]]] = ???
 
-  val x = query((a: String) => Pure(Select(void"hey", skunk.codec.all.text)))
-  //val y = cont((a: String) => )
+  def cont[F[_], G[_], A, B, C](a: Arg[C])(f: (A, C) => Query[G, B])(implicit
+      tpe: => Out[F, G[QueryResult[B]]]
+  ): Field[F, QueryResult[A], G[QueryResult[B]]] = ???
+
+  // val x = query((a: String) => Pure(Select(void"hey", skunk.codec.all.text)))
+  // val y = cont((a: String) => )
 }
 
 object Test6 {
@@ -825,7 +838,7 @@ object Test4 {
 
   abstract class RelFieldAttribute[F[_], G[_], Representation, A, B](
       val rel: Rel[G, Representation, A]
-    ) extends FieldAttribute[F, QueryResult, B]
+  ) extends FieldAttribute[F, QueryResult, B]
 
   // skunk
   sealed trait SkunkRepresentation
