@@ -31,7 +31,7 @@ object Test7 {
   }
 
   trait QueryResult[A] {
-    def read[F[_], G[_], A0, B, ArgType, Q](tfa: TableFieldAttribute[F, G, A0, B, ArgType, Q]): Option[B]
+    def read[F[_], G[_], A0, B, ArgType, Q](tfa: TableFieldAttribute[F, G, A0, B, ArgType, Q]): Option[G[B]]
   }
 
   sealed trait JoinType[G[_]]
@@ -141,17 +141,36 @@ object Test7 {
 
   def join[G[_]]: PartiallyAppliedJoin[G] = new PartiallyAppliedJoin[G]
 
-  def queryFull[F[_], G[_], A, B, C](a: Arg[C])(f: (A, C) => Query[G, Select[B]])(implicit
+  def queryFull[F[_], G[_], A, B, C](a: EmptyableArg[C])(f: (A, C) => Query[G, Select[B]])(implicit
       tpe: => Out[F, G[B]]
-  ) = {
+  ): Field[F, QueryResult[A], G[B]] = {
     val tfa: TableFieldAttribute[F, G, A, B, C, Select[B]] = new TableFieldAttribute[F, G, A, B, C, Select[B]] {
-      def arg = EmptyableArg.Lift(a)
-      def query(value: A, argument: C): Query[G,Select[B]] = f(value, argument)
+      def arg = a
+      def query(value: A, argument: C): Query[G, Select[B]] = f(value, argument)
       def fieldVariant = FieldVariant.Selection()
     }
 
-    
-    ???
+    build
+      .from(Resolver.id[F, QueryResult[A]].emap { qa =>
+        qa.read(tfa).toRightIor("internal query association error, could not read result from query result")
+      })(tpe)
+      .addAttributes(tfa)
+  }
+
+  def contFull[F[_], G[_], A, B, C](a: EmptyableArg[C])(f: (A, C) => Query[G, B])(implicit
+      tpe: => Out[F, G[QueryResult[B]]]
+  ): Field[F, QueryResult[A], G[QueryResult[B]]] = {
+    val tfa: TableFieldAttribute[F, G, A, QueryResult[B], C, B] = new TableFieldAttribute[F, G, A, QueryResult[B], C, B] {
+      def arg = a
+      def query(value: A, argument: C): Query[G, B] = f(value, argument)
+      def fieldVariant = FieldVariant.SubSelection()
+    }
+
+    build
+      .from(Resolver.id[F, QueryResult[A]].emap { qa =>
+        qa.read(tfa).toRightIor("internal query association error, could not read result from query result")
+      })(tpe)
+      .addAttributes(tfa)
   }
 
   import skunk.implicits._
