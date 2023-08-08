@@ -173,6 +173,10 @@ object Test7 {
       .addAttributes(tfa)
   }
 
+  def run[F[_], G[_], B](q: Query[G, B])(implicit tpe: => Out[F, G[QueryResult[B]]]) = {
+
+  }
+
   import skunk.implicits._
   import skunk.codec.all._
   val x = query(arg[Int]("name"))((a: String, c) => Select(void"hey", skunk.codec.all.text))
