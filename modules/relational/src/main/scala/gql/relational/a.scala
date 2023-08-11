@@ -33,7 +33,7 @@ object Test7 {
   }
 
   trait QueryResult[A] {
-    def read[F[_], G[_], A0, B, ArgType, Q](tfa: TableFieldAttribute[F, G, A0, B, ArgType, Q]): Option[G[B]]
+    def read[F[_], G[_], A0, B, ArgType, Q](tfa: TableFieldAttribute[F, G, A0, B, ArgType, Q]): Option[Either[String, G[B]]]
   }
 
   trait TableDef[A] {
@@ -205,7 +205,7 @@ object Test7 {
 
     build
       .from(Resolver.id[F, QueryResult[A]].emap { qa =>
-        qa.read(tfa).toRightIor("internal query association error, could not read result from query result")
+        qa.read(tfa).toRight("internal query association error, could not read result from query result").flatten.toIor
       })(tpe)
       .addAttributes(tfa)
   }
@@ -221,12 +221,12 @@ object Test7 {
 
     build
       .from(Resolver.id[F, QueryResult[A]].emap { qa =>
-        qa.read(tfa).toRightIor("internal query association error, could not read result from query result")
+        qa.read(tfa).toRight("internal query association error, could not read result from query result").flatten.toIor
       })(tpe)
       .addAttributes(tfa)
   }
 
-  def run[F[_], G[_], B](q: Query[G, B])(implicit tpe: => Out[F, G[QueryResult[B]]]) = {
+  object Internal {
     case class QueryContent(
         selections: Chain[AppliedFragment],
         joins: Chain[AppliedFragment]
@@ -246,14 +246,49 @@ object Test7 {
         decoder: Decoder[Key],
         value: C
     )
-    object QueryState {
-      def pure[A](x: A): QueryState[Lambda[X => X], Unit, A] = QueryState(
-        JoinType.One.reassoc[Unit],
-        ().pure[Decoder],
-        x
+
+    def mergeFlatMap[G[_], H[_], A, B, AK, BK](
+        qsa: QueryState[G, AK, A],
+        qsb: QueryState[H, BK, B]
+    ): QueryState[Lambda[X => G[H[X]]], (AK, BK), B] = {
+      type N[A] = G[H[A]]
+      val reassoc: Reassoc[N, (AK, BK)] = new Reassoc[N, (AK, BK)] {
+        def nestedTraverse = Nested.catsDataTraverseForNested[G, H](qsa.reassoc.traverse, qsb.reassoc.traverse)
+        def traverse = new Traverse[N] {
+          override def foldLeft[A, B](fa: N[A], b: B)(f: (B, A) => B): B = 
+            nestedTraverse.foldLeft(Nested(fa), b)(f)
+          override def foldRight[A, B](fa: N[A], lb: Eval[B])(f: (A, Eval[B]) => Eval[B]): Eval[B] = 
+            nestedTraverse.foldRight(Nested(fa), lb)(f)
+          override def traverse[G[_]: Applicative, A, B](fa: N[A])(f: A => G[B]): G[N[B]] = 
+            nestedTraverse.traverse(Nested(fa))(f).map(_.value)
+        }
+
+        override def apply[A](fa: List[((AK, BK), A)]): Either[String, N[List[A]]] = {
+          val ys = fa.map { case ((ak, bk), a) => (ak, (bk, a)) }
+          val zs = qsa.reassoc(ys).flatMap { gs =>
+            qsa.reassoc.traverse.traverse(gs) { bs =>
+              qsb.reassoc(bs)
+            }
+          }
+          zs
+        }
+      }
+
+      QueryState(
+        reassoc,
+        qsa.decoder ~ qsb.decoder,
+        qsb.value
       )
     }
-    def go[H[_], C](q: Query[G, C]): Effect[QueryState[G, ?, C]] = q match {
+
+    def handleFlatMap[G[_], H[_], A, B](fm: FlatMap[G, H, A, B]): Effect[QueryState[Lambda[X => G[H[X]]], ?, B]] = {
+      for {
+        qsa <- go(fm.fa)
+        qsb <- go(fm.f(qsa.value))
+      } yield mergeFlatMap(qsa, qsb)
+    }
+
+    def go[G[_], C](q: Query[G, C]): Effect[QueryState[G, ?, C]] = q match {
       case p: Pure[a]   => Effect.pure(QueryState(JoinType.One.reassoc[Unit], ().pure[Decoder], p.a))
       case s: Select[a] => Effect.pure(QueryState(JoinType.One.reassoc[Unit], ().pure[Decoder], s))
       case j: Join[g, t] =>
@@ -268,30 +303,12 @@ object Test7 {
             case d: Decoder[a] => QueryState(j.jt.reassoc, d, t.asInstanceOf[C]) // TODO figure out why this is necessary
           }
         }
-      case fm: FlatMap[g, h, a, b] =>
-        for {
-          qsa <- go(fm.fa)
-          qsb <- go(fm.f(qsa.value))
-        } yield {
-          qsa match {
-            case qs: QueryState[G, ak, a] =>
-              qs.reassoc
-          }
-          // val fl = new FromList[Lambda[X => G[H[X]]]] {
-          //   def traverse = ???
-          //   override def apply[A](fa: List[A]): Either[String, G[H[A]]] = {
-          //     val fla: Either[String, G[A]] = qsa.fl(fa)
-          //     /*fla.flatMap(ga => qsa.fl.traverse.traverse(ga){ a =>
-          //       ???
-          //     })*/
-          //     ???
-          //   }
-          // }
-          ()
-        }
-        // go(fm.fa)
-        ???
+      case fm: FlatMap[g, h, a, b] => handleFlatMap(fm)
     }
+  }
+
+  def run[F[_], G[_], B](q: Query[G, B])(implicit tpe: => Out[F, G[QueryResult[B]]]) = {
+
     ???
   }
 
