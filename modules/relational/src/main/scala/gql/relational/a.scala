@@ -16,6 +16,8 @@ import java.util.UUID
 import gql.Arg
 import gql.EmptyableArg
 import gql.resolver.FieldMeta
+import cats.mtl.Stateful
+import cats.mtl.Tell
 
 object Test7 {
   sealed trait FieldVariant[Q, A]
@@ -34,7 +36,6 @@ object Test7 {
     def read[F[_], G[_], A0, B, ArgType, Q](tfa: TableFieldAttribute[F, G, A0, B, ArgType, Q]): Option[G[B]]
   }
 
-  sealed trait JoinType[G[_]]
   trait TableDef[A] {
     def table: AppliedFragment
     def pk: AppliedFragment
@@ -83,11 +84,34 @@ object Test7 {
     def pkCodec = td.pkCodec
   }
 
+  trait FromList[G[_]] extends (List ~> Lambda[X => Either[String, G[X]]]) {
+    def traverse: Traverse[G]
+  }
+  sealed trait JoinType[G[_]] extends FromList[G]
   object JoinType extends LowPrioJoinTypeImplicits1 {
     // A => A instead of Id since scala doesn't want reduce Id to A => A, and Id is noisy
-    case object One extends JoinType[Lambda[A => A]]
-    case object Opt extends JoinType[Option]
-    case class Traversable[G[_]](val G: Traverse[G]) extends JoinType[G]
+    case object One extends JoinType[Lambda[A => A]] {
+      def traverse: Traverse[Lambda[A => A]] = Traverse[Lambda[A => A]]
+      def apply[A](fa: List[A]): Either[String, A] = fa match {
+        case a :: Nil => Right(a)
+        case Nil      => Left("Expected one row, got none")
+        case _        => Left("Expected one row, got many")
+      }
+    }
+    case object Opt extends JoinType[Option] {
+      def traverse = Traverse[Option]
+      def apply[A](fa: List[A]): Either[String, Option[A]] = fa match {
+        case a :: Nil => Right(Some(a))
+        case Nil      => Right(None)
+        case _        => Left("Expected one row, got many")
+      }
+    }
+    case class Many[G[_]](
+      fromListFK: List ~> Lambda[X => Either[String, G[X]]],
+      traverse: Traverse[G]
+    ) extends JoinType[G] {
+      def apply[A](fa: List[A]): Either[String, G[A]] = fromListFK(fa)
+    }
 
     implicit val joinTypeOne: JoinType[Lambda[A => A]] = JoinType.One
   }
@@ -95,7 +119,13 @@ object Test7 {
     implicit val joinTypeOpt: JoinType[Option] = JoinType.Opt
   }
   trait LowPrioJoinTypeImplicits2 {
-    implicit def joinTypeTraversable[G[_]](implicit G: Traverse[G]): JoinType[G] = JoinType.Traversable(G)
+    def make[G[_]](fromList: List ~> Lambda[X => Either[String, G[X]]])(implicit G: Traverse[G]): JoinType[G] = 
+      JoinType.Many(fromList, G)
+    implicit val joinTypeList: JoinType[List] = make {
+      new (List ~> Lambda[X => Either[String, List[X]]]) {
+        override def apply[A](fa: List[A]): Either[String, List[A]] = Right(fa)
+      }
+    }
   }
 
   sealed trait Query[G[_], A] {
@@ -174,7 +204,56 @@ object Test7 {
   }
 
   def run[F[_], G[_], B](q: Query[G, B])(implicit tpe: => Out[F, G[QueryResult[B]]]) = {
+    case class QueryContent(
+        selections: Chain[AppliedFragment],
+        joins: Chain[AppliedFragment]
+    )
+    implicit val monoidForQueryContent: Monoid[QueryContent] = ???
 
+    type Effect[A] = StateT[Writer[QueryContent, *], Int, A]
+    val S = Stateful[Effect, Int]
+    val T = Tell[Effect, QueryContent]
+    val nextId = S.get.map(i => sql"t#${i.toString()}") <* S.modify(_ + 1)
+    def addJoin(f: AppliedFragment): Effect[Unit] = T.tell(QueryContent(Chain.empty, Chain(f)))
+    def addSelection(f: AppliedFragment): Effect[Unit] = T.tell(QueryContent(Chain(f), Chain.empty))
+
+    final case class QueryState[G[_], C](
+        fl: FromList[G],
+        decoder: Decoder[?],
+        value: C
+    )
+    def go[H[_], C](q: Query[G, C]): Effect[QueryState[G, C]] = q match {
+      case p: Pure[a]   => QueryState(JoinType.One: FromList[Lambda[X => X]], ().pure[Decoder], p.a).pure[Effect]
+      case s: Select[a] => QueryState(JoinType.One: FromList[Lambda[X => X]], ().pure[Decoder], s).pure[Effect]
+      case j: Join[g, t] =>
+        for {
+          n <- nextId
+          t = j.tbl(n)
+          jp = j.joinPred(t)
+          _ <- addJoin(jp)
+          _ <- addSelection(t.pk)
+        } yield QueryState(j.jt: FromList[g], t.pkCodec, t.asInstanceOf[C]) // TODO figure out why this is necessary
+      case fm: FlatMap[g, h, a, b] =>
+        for {
+          qsa <- go(fm.fa)
+          qsb <- go(fm.f(qsa.value))
+        } yield {
+          val fl = new FromList[Lambda[X => G[H[X]]]] {
+            def traverse = ???
+            override def apply[A](fa: List[A]): Either[String, G[H[A]]] = {
+              val fla: Either[String, G[A]] = qsa.fl(fa)
+              /*fla.flatMap(ga => qsa.fl.traverse.traverse(ga){ a =>
+                ???
+              })*/
+              ???
+            }
+          }
+          ()
+        }
+        // go(fm.fa)
+        ???
+    }
+    ???
   }
 
   import skunk.implicits._
