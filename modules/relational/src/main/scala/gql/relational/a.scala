@@ -84,33 +84,56 @@ object Test7 {
     def pkCodec = td.pkCodec
   }
 
-  trait FromList[G[_]] extends (List ~> Lambda[X => Either[String, G[X]]]) {
+  trait Reassoc[G[_], Key] {
     def traverse: Traverse[G]
+
+    def apply[A](fa: List[(Key, A)]): Either[String, G[List[A]]]
   }
-  sealed trait JoinType[G[_]] extends FromList[G]
+  trait ReassocGroup[G[_], Key] extends Reassoc[G, Key] {
+    def groups[A](fa: List[List[A]]): Either[String, G[List[A]]]
+
+    def apply[A](fa: List[(Key, A)]): Either[String, G[List[A]]] = {
+      val m = fa.groupMap { case (k, _) => k } { case (_, v) => v }
+      groups(fa.map { case (k, _) => k }.distinct.map(k => m(k)))
+    }
+  }
+
+  sealed trait JoinType[G[_]] {
+    def reassoc[Key]: Reassoc[G, Key]
+  }
   object JoinType extends LowPrioJoinTypeImplicits1 {
     // A => A instead of Id since scala doesn't want reduce Id to A => A, and Id is noisy
     case object One extends JoinType[Lambda[A => A]] {
-      def traverse: Traverse[Lambda[A => A]] = Traverse[Lambda[A => A]]
-      def apply[A](fa: List[A]): Either[String, A] = fa match {
-        case a :: Nil => Right(a)
-        case Nil      => Left("Expected one row, got none")
-        case _        => Left("Expected one row, got many")
+      def reassoc[Key]: Reassoc[Lambda[A => A], Key] = new ReassocGroup[Lambda[X => X], Key] {
+        def traverse = Traverse[Lambda[X => X]]
+        override def groups[A](fa: List[List[A]]): Either[String, List[A]] =
+          fa match {
+            case x :: Nil => Right(x)
+            case _        => Left("Expected 1 element")
+          }
       }
     }
     case object Opt extends JoinType[Option] {
-      def traverse = Traverse[Option]
-      def apply[A](fa: List[A]): Either[String, Option[A]] = fa match {
-        case a :: Nil => Right(Some(a))
-        case Nil      => Right(None)
-        case _        => Left("Expected one row, got many")
+      def reassoc[Key]: Reassoc[Option, Key] = new ReassocGroup[Option, Key] {
+        def traverse = Traverse[Option]
+        override def groups[A](fa: List[List[A]]): Either[String, Option[List[A]]] =
+          fa match {
+            case x :: Nil => Right(Some(x))
+            case Nil      => Right(None)
+            case _        => Left("Expected 0 or 1 element, but found more")
+          }
       }
     }
     case class Many[G[_]](
-      fromListFK: List ~> Lambda[X => Either[String, G[X]]],
-      traverse: Traverse[G]
+        fromListFK: List ~> Lambda[X => Either[String, G[X]]],
+        traverse: Traverse[G]
     ) extends JoinType[G] {
-      def apply[A](fa: List[A]): Either[String, G[A]] = fromListFK(fa)
+      def traverse0 = traverse
+      def reassoc[Key]: Reassoc[G, Key] = new ReassocGroup[G, Key] {
+        def traverse = traverse0
+        def groups[A](fa: List[List[A]]): Either[String, G[List[A]]] =
+          fromListFK(fa)
+      }
     }
 
     implicit val joinTypeOne: JoinType[Lambda[A => A]] = JoinType.One
@@ -119,7 +142,7 @@ object Test7 {
     implicit val joinTypeOpt: JoinType[Option] = JoinType.Opt
   }
   trait LowPrioJoinTypeImplicits2 {
-    def make[G[_]](fromList: List ~> Lambda[X => Either[String, G[X]]])(implicit G: Traverse[G]): JoinType[G] = 
+    def make[G[_]](fromList: List ~> Lambda[X => Either[String, G[X]]])(implicit G: Traverse[G]): JoinType[G] =
       JoinType.Many(fromList, G)
     implicit val joinTypeList: JoinType[List] = make {
       new (List ~> Lambda[X => Either[String, List[X]]]) {
@@ -211,20 +234,28 @@ object Test7 {
     implicit val monoidForQueryContent: Monoid[QueryContent] = ???
 
     type Effect[A] = StateT[Writer[QueryContent, *], Int, A]
+    val Effect = Monad[Effect]
     val S = Stateful[Effect, Int]
     val T = Tell[Effect, QueryContent]
     val nextId = S.get.map(i => sql"t#${i.toString()}") <* S.modify(_ + 1)
     def addJoin(f: AppliedFragment): Effect[Unit] = T.tell(QueryContent(Chain.empty, Chain(f)))
     def addSelection(f: AppliedFragment): Effect[Unit] = T.tell(QueryContent(Chain(f), Chain.empty))
 
-    final case class QueryState[G[_], C](
-        fl: FromList[G],
-        decoder: Decoder[?],
+    final case class QueryState[G[_], Key, C](
+        reassoc: Reassoc[G, Key],
+        decoder: Decoder[Key],
         value: C
     )
-    def go[H[_], C](q: Query[G, C]): Effect[QueryState[G, C]] = q match {
-      case p: Pure[a]   => QueryState(JoinType.One: FromList[Lambda[X => X]], ().pure[Decoder], p.a).pure[Effect]
-      case s: Select[a] => QueryState(JoinType.One: FromList[Lambda[X => X]], ().pure[Decoder], s).pure[Effect]
+    object QueryState {
+      def pure[A](x: A): QueryState[Lambda[X => X], Unit, A] = QueryState(
+        JoinType.One.reassoc[Unit],
+        ().pure[Decoder],
+        x
+      )
+    }
+    def go[H[_], C](q: Query[G, C]): Effect[QueryState[G, ?, C]] = q match {
+      case p: Pure[a]   => Effect.pure(QueryState(JoinType.One.reassoc[Unit], ().pure[Decoder], p.a))
+      case s: Select[a] => Effect.pure(QueryState(JoinType.One.reassoc[Unit], ().pure[Decoder], s))
       case j: Join[g, t] =>
         for {
           n <- nextId
@@ -232,22 +263,30 @@ object Test7 {
           jp = j.joinPred(t)
           _ <- addJoin(jp)
           _ <- addSelection(t.pk)
-        } yield QueryState(j.jt: FromList[g], t.pkCodec, t.asInstanceOf[C]) // TODO figure out why this is necessary
+        } yield {
+          t.pkCodec match {
+            case d: Decoder[a] => QueryState(j.jt.reassoc, d, t.asInstanceOf[C]) // TODO figure out why this is necessary
+          }
+        }
       case fm: FlatMap[g, h, a, b] =>
         for {
           qsa <- go(fm.fa)
           qsb <- go(fm.f(qsa.value))
         } yield {
-          val fl = new FromList[Lambda[X => G[H[X]]]] {
-            def traverse = ???
-            override def apply[A](fa: List[A]): Either[String, G[H[A]]] = {
-              val fla: Either[String, G[A]] = qsa.fl(fa)
-              /*fla.flatMap(ga => qsa.fl.traverse.traverse(ga){ a =>
-                ???
-              })*/
-              ???
-            }
+          qsa match {
+            case qs: QueryState[G, ak, a] =>
+              qs.reassoc
           }
+          // val fl = new FromList[Lambda[X => G[H[X]]]] {
+          //   def traverse = ???
+          //   override def apply[A](fa: List[A]): Either[String, G[H[A]]] = {
+          //     val fla: Either[String, G[A]] = qsa.fl(fa)
+          //     /*fla.flatMap(ga => qsa.fl.traverse.traverse(ga){ a =>
+          //       ???
+          //     })*/
+          //     ???
+          //   }
+          // }
           ()
         }
         // go(fm.fa)
