@@ -308,6 +308,10 @@ object Test7 {
     }
   }
 
+  case class Done[G[_], A, B](
+    dec: Decoder[A],
+    reassoc: List[A] => Either[String, G[B]]
+  )
   def run[F[_], G[_], I, B](q: I => Query[G, B])(implicit tpe: => Out[F, G[QueryResult[B]]]) = {
     Resolver.meta[F, I].tupleIn.map{ case (fm, i) =>
       def findSel[A](p: prep.Prepared[F, A]): Option[prep.Selection[F, ?]] = p match {
@@ -317,10 +321,36 @@ object Test7 {
         case prep.PreparedLeaf(_, _) => None
       }
 
-      def goTba[G[_], A, B, ArgType, Q](a: A, tfa: TableFieldAttribute[F, G, A, B, ArgType, Q]) = {
-        tfa.arg match {
-          case EmptyableArg.Empty => tfa.query(a, ())
-          case EmptyableArg.Lift(a) => a
+      def goTba[G[_], A, B, ArgType, Q](pdf: prep.PreparedDataField[F, ?], a: A, tfa: TableFieldAttribute[F, G, A, B, ArgType, Q]) = {
+        val o = tfa.arg match {
+          case EmptyableArg.Empty => Some(tfa.query(a, ()))
+          case EmptyableArg.Lift(y) => pdf.arg(y).map(tfa.query(a, _))
+        }
+        o.toRight(s"could not find argument for ${pdf.outputName}").map{ q =>
+          import Internal._
+          val outEffect: Effect[QueryState[G, ?, Q]] = go(q)
+          outEffect.map{ case (qs: QueryState[G, k, Q]) => 
+            tfa.fieldVariant match {
+              case _: FieldVariant.Selection[a] => 
+                //implicitly[Select[B] =:= Q]
+                val sel: Select[B] = qs.value
+                Done[G, (k, B), B](
+                  qs.decoder ~ sel.decoder,
+                  { xs =>
+                    qs.reassoc(xs).flatMap{ gs =>
+                      qs.reassoc.traverse.traverse(gs) { 
+                        case x :: Nil => Right(x)
+                        case _ => Left("Expected 1 element")
+                      }
+                    }
+                  }
+                )
+              case _: FieldVariant.SubSelection[a] => 
+                //implicitly[QueryResult[Q] =:= B]
+                val passthrough: Q = qs.value
+            }
+          }
+          q
         }
       }
 
