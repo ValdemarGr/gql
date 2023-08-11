@@ -348,22 +348,23 @@ object Test7 {
               case _: FieldVariant.SubSelection[a] => 
                 //implicitly[QueryResult[Q] =:= B]
                 val passthrough: Q = qs.value
+                val attrs = getNextAttributes(pdf)
+                /*attrs.traverse{ case (pdf, tfa) =>
+                  
+                }*/
+                ???
             }
           }
           q
         }
       }
 
-      def goNext(pdf: prep.PreparedDataField[F, ?]) = {
+      def getNextAttributes(pdf: prep.PreparedDataField[F, ?]) = {
         val selFields: List[prep.PreparedField[F, ?]] = findSel(pdf.cont.cont).toList.flatMap(_.fields)
-        val relevant = selFields
+        selFields
           .collect { case x: prep.PreparedDataField[F, ?] => x }
           .map(x => (x, x.source.attributes.collectFirst{ case a: TableFieldAttribute[F, g, ?, ?, ?, ?] => a }))
           .collect{ case (x, Some(attr)) => x -> attr }
-        relevant.map{ case (pdf, attr: TableFieldAttribute[F, g, a, b, argType, q]) =>
-          attr
-          attr
-        }
       }
       ???
     }
