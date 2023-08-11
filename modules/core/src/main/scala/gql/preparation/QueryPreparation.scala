@@ -243,22 +243,25 @@ object QueryPreparation {
             val preparedF = (
               prepareStep(field.resolve.underlying, meta),
               prepare(fi, field.output.value, meta)
-            ).mapN((f, g) => PreparedDataField(fi.name, fi.alias, PreparedCont(f, g), field))
+            ).tupled
 
-            verifyTooManyF &> preparedF.value.run(rootUniqueName).run.map { case (w, f) =>
-              val m = w.toMap
-              lazy val pdf: PreparedDataField[G, I] = f {
+            val out = preparedF.value.run(rootUniqueName).run.map { case (w, f) =>
+              val g = f.andThen { case (x, y) =>
+                PreparedDataField(fi.name, fi.alias, PreparedCont(x, y), field, w.toMap)
+              }
+              lazy val pdf: PreparedDataField[G, I] = g {
                 Eval.later {
                   PreparedMeta(
                     variables.map { case (k, v) => k -> v.copy(value = v.value.map(_.void)) },
                     meta.args.map(_.map(_ => ())),
-                    pdf,
-                    m
+                    pdf
                   )
                 }
               }
               pdf
             }
+
+            verifyTooManyF &> out
           })
       }
 

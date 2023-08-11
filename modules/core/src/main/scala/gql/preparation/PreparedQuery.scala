@@ -68,9 +68,13 @@ final case class PreparedDataField[+F[_], A](
     name: String,
     alias: Option[String],
     cont: PreparedCont[F, A, ?],
-    source: ast.Field[F, A, ?]
+    source: ast.Field[F, A, ?],
+    parsedArgs: Map[Arg[?], Any]
 ) extends PreparedField[F, A] {
   lazy val outputName = alias.getOrElse(name)
+
+  def arg[A](a: Arg[A]): Option[A] =
+    parsedArgs.get(a).asInstanceOf[Option[A]]
 }
 
 final case class PreparedSpecification[F[_], I, A](
@@ -82,8 +86,7 @@ final case class PreparedSpecification[F[_], I, A](
 final case class PreparedMeta[+F[_]](
     variables: VariableMap[Unit],
     args: Option[QA.Arguments[Unit, AnyValue]],
-    pdf: PreparedDataField[F, ?],
-    parsedArgs: Map[Arg[?], Any]
+    pdf: PreparedDataField[F, ?]
 )
 
 final case class UniqueBatchInstance[K, V](id: Int) extends AnyVal
