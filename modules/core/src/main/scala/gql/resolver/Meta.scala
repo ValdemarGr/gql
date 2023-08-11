@@ -31,12 +31,7 @@ final case class QueryMeta(
 final case class FieldMeta[+F[_]](
     queryMeta: QueryMeta,
     args: Option[P.Arguments[Unit, AnyValue]],
-    astNode: PreparedDataField[F, ?],
-    parsedArgs: Map[Arg[?], Any]
+    astNode: PreparedDataField[F, ?]
 ) {
-  // :(
-  def arg[A](a: Arg[A]): Option[A] =
-    parsedArgs.get(a).asInstanceOf[Option[A]]
-
   def alias: Option[String] = astNode.alias
 }

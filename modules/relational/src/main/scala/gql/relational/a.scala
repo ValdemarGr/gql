@@ -18,6 +18,7 @@ import gql.EmptyableArg
 import gql.resolver.FieldMeta
 import cats.mtl.Stateful
 import cats.mtl.Tell
+import gql.{preparation => prep}
 
 object Test7 {
   sealed trait FieldVariant[Q, A]
@@ -307,8 +308,35 @@ object Test7 {
     }
   }
 
-  def run[F[_], G[_], B](q: Query[G, B])(implicit tpe: => Out[F, G[QueryResult[B]]]) = {
+  def run[F[_], G[_], I, B](q: I => Query[G, B])(implicit tpe: => Out[F, G[QueryResult[B]]]) = {
+    Resolver.meta[F, I].tupleIn.map{ case (fm, i) =>
+      def findSel[A](p: prep.Prepared[F, A]): Option[prep.Selection[F, ?]] = p match {
+        case sel: prep.Selection[F, A] => Some(sel)
+        case prep.PreparedList(of, _) => findSel(of.cont)
+        case po: prep.PreparedOption[F, ?, ?] => findSel(po.of.cont)
+        case prep.PreparedLeaf(_, _) => None
+      }
 
+      def goTba[G[_], A, B, ArgType, Q](a: A, tfa: TableFieldAttribute[F, G, A, B, ArgType, Q]) = {
+        tfa.arg match {
+          case EmptyableArg.Empty => tfa.query(a, ())
+          case EmptyableArg.Lift(a) => a
+        }
+      }
+
+      def goNext(pdf: prep.PreparedDataField[F, ?]) = {
+        val selFields: List[prep.PreparedField[F, ?]] = findSel(pdf.cont.cont).toList.flatMap(_.fields)
+        val relevant = selFields
+          .collect { case x: prep.PreparedDataField[F, ?] => x }
+          .map(x => (x, x.source.attributes.collectFirst{ case a: TableFieldAttribute[F, g, ?, ?, ?, ?] => a }))
+          .collect{ case (x, Some(attr)) => x -> attr }
+        relevant.map{ case (pdf, attr: TableFieldAttribute[F, g, a, b, argType, q]) =>
+          attr
+          attr
+        }
+      }
+      ???
+    }
     ???
   }
 
@@ -711,7 +739,7 @@ object Test6 {
     Furthermore, seperating queries like this allows query boundaries to be monadic.
     I think being explicit about query boundaries is the way to go.
    */
-
+/*
   def runQuery[F[_], A, B](pool: Resource[F, Session[F]])(f: A => Query[B])(implicit tpe: => Out[F, B]): Field[F, A, B] = {
     var name = 0
     def write[A](a: A): Unit = ()
@@ -764,7 +792,7 @@ object Test6 {
 
     ???
   }
-
+*/
   trait TableFieldAttribute[F[_], A, B, ArgType, Q] extends FieldAttribute[F, QueryResult[A], B] {
     def arg: EmptyableArg[ArgType]
     def query(value: A, argument: ArgType): Query[Q]
@@ -832,7 +860,7 @@ object Test6 {
       }
     )
   }
-
+/*
   case class Portfolio(id: String)
   implicit val portfolio = tpe[IO, Portfolio](
     "Portfolio",
@@ -840,7 +868,7 @@ object Test6 {
     "contracts" -> runQuery(null) { p =>
       join(ContractTable(_))(c => sql"${c.portfolioId} = $text".apply(p.id))
     }
-  )
+  )*/
 
   // val o: Query[Id[Seq[QueryResult[Unit]]]] =
   //   join(ContractTable)(c => sql"$c.id = 'ololo'".apply(Void)).andThen { c =>
