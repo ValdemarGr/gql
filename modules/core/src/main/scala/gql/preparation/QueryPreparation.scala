@@ -43,7 +43,7 @@ trait QueryPreparation[F[_], G[_], C] {
       fi: MergedFieldInfo[G, C],
       field: Field[G, I, O],
       currentTypename: String
-  ): F[List[PreparedDataField[G, I]]]
+  ): F[List[PreparedDataField[G, I, ?]]]
 
   def mergeImplementations[A](
       base: Selectable[G, A],
@@ -203,7 +203,7 @@ object QueryPreparation {
           fi: MergedFieldInfo[G, C],
           field: Field[G, I, O],
           currentTypename: String
-      ): F[List[PreparedDataField[G, I]]] = {
+      ): F[List[PreparedDataField[G, I, ?]]] = {
         DA
           .foldDirectives[Position.Field[G, *]][List, (Field[G, I, ?], MergedFieldInfo[G, C])](fi.directives, List(fi.caret))(
             (field, fi)
@@ -249,7 +249,7 @@ object QueryPreparation {
               val g = f.andThen { case (x, y) =>
                 PreparedDataField(fi.name, fi.alias, PreparedCont(x, y), field, w.toMap)
               }
-              lazy val pdf: PreparedDataField[G, I] = g {
+              lazy val pdf: PreparedDataField[G, I, ?] = g {
                 Eval.later {
                   PreparedMeta(
                     variables.map { case (k, v) => k -> v.copy(value = v.value.map(_.void)) },

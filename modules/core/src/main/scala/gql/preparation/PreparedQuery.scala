@@ -64,11 +64,11 @@ final case class PreparedOption[F[_], I, O](of: PreparedCont[F, I, O]) extends P
 
 final case class PreparedLeaf[F[_], I](name: String, encode: I => Json) extends Prepared[F, I]
 
-final case class PreparedDataField[+F[_], A](
+final case class PreparedDataField[+F[_], A, B](
     name: String,
     alias: Option[String],
-    cont: PreparedCont[F, A, ?],
-    source: ast.Field[F, A, ?],
+    cont: PreparedCont[F, A, B],
+    source: ast.Field[F, A, B],
     parsedArgs: Map[Arg[?], Any]
 ) extends PreparedField[F, A] {
   lazy val outputName = alias.getOrElse(name)
@@ -80,13 +80,13 @@ final case class PreparedDataField[+F[_], A](
 final case class PreparedSpecification[F[_], I, A](
     typename: String,
     specify: I => Option[A],
-    selection: List[PreparedDataField[F, A]]
+    selection: List[PreparedDataField[F, A, ?]]
 ) extends PreparedField[F, I]
 
 final case class PreparedMeta[+F[_]](
     variables: VariableMap[Unit],
     args: Option[QA.Arguments[Unit, AnyValue]],
-    pdf: PreparedDataField[F, ?]
+    pdf: PreparedDataField[F, ?, ?]
 )
 
 final case class UniqueBatchInstance[K, V](id: Int) extends AnyVal

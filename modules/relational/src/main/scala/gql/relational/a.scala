@@ -19,6 +19,7 @@ import gql.resolver.FieldMeta
 import cats.mtl.Stateful
 import cats.mtl.Tell
 import gql.{preparation => prep}
+import cats.mtl.Raise
 
 object Test7 {
   sealed trait FieldVariant[Q, A]
@@ -125,6 +126,7 @@ object Test7 {
           }
       }
     }
+
     case class Many[G[_]](
         fromListFK: List ~> Lambda[X => Either[String, G[X]]],
         traverse: Traverse[G]
@@ -234,10 +236,11 @@ object Test7 {
     )
     implicit val monoidForQueryContent: Monoid[QueryContent] = ???
 
-    type Effect[A] = StateT[Writer[QueryContent, *], Int, A]
+    type Effect[A] = EitherT[StateT[Writer[QueryContent, *], Int, *], String, A]
     val Effect = Monad[Effect]
     val S = Stateful[Effect, Int]
     val T = Tell[Effect, QueryContent]
+    val R = Raise[Effect, String]
     val nextId = S.get.map(i => sql"t#${i.toString()}") <* S.modify(_ + 1)
     def addJoin(f: AppliedFragment): Effect[Unit] = T.tell(QueryContent(Chain.empty, Chain(f)))
     def addSelection(f: AppliedFragment): Effect[Unit] = T.tell(QueryContent(Chain(f), Chain.empty))
@@ -256,11 +259,11 @@ object Test7 {
       val reassoc: Reassoc[N, (AK, BK)] = new Reassoc[N, (AK, BK)] {
         def nestedTraverse = Nested.catsDataTraverseForNested[G, H](qsa.reassoc.traverse, qsb.reassoc.traverse)
         def traverse = new Traverse[N] {
-          override def foldLeft[A, B](fa: N[A], b: B)(f: (B, A) => B): B = 
+          override def foldLeft[A, B](fa: N[A], b: B)(f: (B, A) => B): B =
             nestedTraverse.foldLeft(Nested(fa), b)(f)
-          override def foldRight[A, B](fa: N[A], lb: Eval[B])(f: (A, Eval[B]) => Eval[B]): Eval[B] = 
+          override def foldRight[A, B](fa: N[A], lb: Eval[B])(f: (A, Eval[B]) => Eval[B]): Eval[B] =
             nestedTraverse.foldRight(Nested(fa), lb)(f)
-          override def traverse[G[_]: Applicative, A, B](fa: N[A])(f: A => G[B]): G[N[B]] = 
+          override def traverse[G[_]: Applicative, A, B](fa: N[A])(f: A => G[B]): G[N[B]] =
             nestedTraverse.traverse(Nested(fa))(f).map(_.value)
         }
 
@@ -309,62 +312,125 @@ object Test7 {
   }
 
   case class Done[G[_], A, B](
-    dec: Decoder[A],
-    reassoc: List[A] => Either[String, G[B]]
+      dec: Decoder[A],
+      reassoc: List[A] => Either[String, G[B]]
   )
+  object Done {
+    implicit def applyForDone[G[_], B]: Apply[Done[G, *, B]] = ???
+  }
   def run[F[_], G[_], I, B](q: I => Query[G, B])(implicit tpe: => Out[F, G[QueryResult[B]]]) = {
-    Resolver.meta[F, I].tupleIn.map{ case (fm, i) =>
+    Resolver.meta[F, I].tupleIn.map { case (fm, i) =>
       def findSel[A](p: prep.Prepared[F, A]): Option[prep.Selection[F, ?]] = p match {
-        case sel: prep.Selection[F, A] => Some(sel)
-        case prep.PreparedList(of, _) => findSel(of.cont)
+        case sel: prep.Selection[F, A]        => Some(sel)
+        case prep.PreparedList(of, _)         => findSel(of.cont)
         case po: prep.PreparedOption[F, ?, ?] => findSel(po.of.cont)
-        case prep.PreparedLeaf(_, _) => None
+        case prep.PreparedLeaf(_, _)          => None
       }
 
-      def goTba[G[_], A, B, ArgType, Q](pdf: prep.PreparedDataField[F, ?], a: A, tfa: TableFieldAttribute[F, G, A, B, ArgType, Q]) = {
+      def goTba[G[_], A, B, ArgType, Q, O](
+          pdf: prep.PreparedDataField[F, QueryResult[A], O],
+          a: A,
+          tfa: TableFieldAttribute[F, G, A, B, ArgType, Q]
+      ): Internal.Effect[Done[G, ?, ?]] = {
         val o = tfa.arg match {
-          case EmptyableArg.Empty => Some(tfa.query(a, ()))
+          case EmptyableArg.Empty   => Some(tfa.query(a, ()))
           case EmptyableArg.Lift(y) => pdf.arg(y).map(tfa.query(a, _))
         }
-        o.toRight(s"could not find argument for ${pdf.outputName}").map{ q =>
-          import Internal._
-          val outEffect: Effect[QueryState[G, ?, Q]] = go(q)
-          outEffect.map{ case (qs: QueryState[G, k, Q]) => 
-            tfa.fieldVariant match {
-              case _: FieldVariant.Selection[a] => 
-                //implicitly[Select[B] =:= Q]
-                val sel: Select[B] = qs.value
-                Done[G, (k, B), B](
-                  qs.decoder ~ sel.decoder,
-                  { xs =>
-                    qs.reassoc(xs).flatMap{ gs =>
-                      qs.reassoc.traverse.traverse(gs) { 
-                        case x :: Nil => Right(x)
-                        case _ => Left("Expected 1 element")
+        import Internal._
+        o match {
+          case None => R.raise(s"could not find argument for ${pdf.outputName}")
+          case Some(q) =>
+            val outEffect: Effect[QueryState[G, ?, Q]] = go(q)
+            outEffect.flatMap { case (qs: QueryState[G, k, Q]) =>
+              tfa.fieldVariant match {
+                case _: FieldVariant.Selection[a] =>
+                  // implicitly[Select[B] =:= Q]
+                  val sel: Select[B] = qs.value
+                  Effect.pure {
+                    Done[G, (k, B), B](
+                      qs.decoder ~ sel.decoder,
+                      { xs =>
+                        qs.reassoc(xs).flatMap { gs =>
+                          qs.reassoc.traverse.traverse(gs) {
+                            case x :: Nil => Right(x)
+                            case _        => Left("Expected 1 element")
+                          }
+                        }
+                      }
+                    )
+                  }
+                case _: FieldVariant.SubSelection[a] =>
+                  // implicitly[QueryResult[Q] =:= B]
+                  val passthrough: Q = qs.value
+                  val attrs = getNextAttributes(pdf)
+                  val ys = attrs.traverse { case attr: FieldWithAttr[F, g, aa] =>
+                    val tbaRes = goTba(attr.field, passthrough.asInstanceOf[aa], attr.attr).asInstanceOf[Effect[Done[g, ?, ?]]]
+
+                    val out: Effect[(Done[g, ?, ?], FieldWithAttr[F, Any, ?])] = tbaRes.map(done => (done, attr))
+                    out
+                  }
+
+                  ys.map { dones =>
+                    type K = TableFieldAttribute[F, Any, ?, ?, ?, ?]
+                    val decs = dones
+                      .flatTraverse { case (done, attr) =>
+                        done.dec.map { x => List[(K, Any)](attr.attr -> x) }
+                      }
+                      .map(_.toMap)
+
+                    val doneMap = dones.map { case (v, k) => k.attr -> v }.toMap
+
+                    val reassocNext = { (xs: List[Map[K, Any]]) =>
+                      {
+                        val keys = xs.flatMap(_.keySet).toSet
+                        val grouped = keys.toList.map(k => k -> xs.flatMap(_.get(k))).toMap
+                        new QueryResult[Q] {
+                          def read[F[_], G[_], A0, B, ArgType, Q](
+                              tfa: TableFieldAttribute[F, G, A0, B, ArgType, Q]
+                          ): Option[Either[String, G[B]]] =
+                            doneMap.asInstanceOf[Map[TableFieldAttribute[F, G, A0, B, ArgType, Q], Done[G, ?, ?]]].get(tfa).flatMap {
+                              case (done: Done[G, a, ?]) =>
+                                grouped.asInstanceOf[Map[TableFieldAttribute[F, G, A0, B, ArgType, Q], List[Any]]].get(tfa).map { ys =>
+                                  done.reassoc(ys.asInstanceOf[List[a]]).map(_.asInstanceOf[G[B]])
+                                }
+                            }
+                        }
                       }
                     }
+
+                    Done(
+                      qs.decoder ~ decs,
+                      { (xs: List[(k, Map[K, Any])]) =>
+                        val o: Either[String, G[List[Map[K, Any]]]] = qs.reassoc(xs)
+                        o.map(gs =>
+                          qs.reassoc.traverse.map(gs) { (xs: List[Map[K, Any]]) =>
+                            reassocNext(xs)
+                          }
+                        )
+                      }
+                    )
                   }
-                )
-              case _: FieldVariant.SubSelection[a] => 
-                //implicitly[QueryResult[Q] =:= B]
-                val passthrough: Q = qs.value
-                val attrs = getNextAttributes(pdf)
-                /*attrs.traverse{ case (pdf, tfa) =>
-                  
-                }*/
-                ???
+              }
             }
-          }
-          q
         }
       }
 
-      def getNextAttributes(pdf: prep.PreparedDataField[F, ?]) = {
+      case class FieldWithAttr[F[_], G[_], A](
+          field: prep.PreparedDataField[F, QueryResult[A], ?],
+          attr: TableFieldAttribute[F, G, A, ?, ?, ?]
+      )
+
+      def getNextAttributes[A, B](pdf: prep.PreparedDataField[F, A, B]) = {
         val selFields: List[prep.PreparedField[F, ?]] = findSel(pdf.cont.cont).toList.flatMap(_.fields)
         selFields
-          .collect { case x: prep.PreparedDataField[F, ?] => x }
-          .map(x => (x, x.source.attributes.collectFirst{ case a: TableFieldAttribute[F, g, ?, ?, ?, ?] => a }))
-          .collect{ case (x, Some(attr)) => x -> attr }
+          .collect { case x: prep.PreparedDataField[F, ?, ?] => x }
+          .map { x =>
+            x.source.attributes.collectFirst { case a: TableFieldAttribute[F, g, a, ?, ?, ?] @unchecked => a }.map {
+              case tfa: TableFieldAttribute[F, g, a, ?, ?, ?] =>
+                FieldWithAttr(x.asInstanceOf[prep.PreparedDataField[F, QueryResult[a], ?]], tfa)
+            }
+          }
+          .collect { case Some(x) => x }
       }
       ???
     }
@@ -770,7 +836,7 @@ object Test6 {
     Furthermore, seperating queries like this allows query boundaries to be monadic.
     I think being explicit about query boundaries is the way to go.
    */
-/*
+  /*
   def runQuery[F[_], A, B](pool: Resource[F, Session[F]])(f: A => Query[B])(implicit tpe: => Out[F, B]): Field[F, A, B] = {
     var name = 0
     def write[A](a: A): Unit = ()
@@ -823,7 +889,7 @@ object Test6 {
 
     ???
   }
-*/
+   */
   trait TableFieldAttribute[F[_], A, B, ArgType, Q] extends FieldAttribute[F, QueryResult[A], B] {
     def arg: EmptyableArg[ArgType]
     def query(value: A, argument: ArgType): Query[Q]
@@ -891,7 +957,7 @@ object Test6 {
       }
     )
   }
-/*
+  /*
   case class Portfolio(id: String)
   implicit val portfolio = tpe[IO, Portfolio](
     "Portfolio",
