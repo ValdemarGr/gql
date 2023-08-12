@@ -29,6 +29,11 @@ import natchez.Span
 import java.net.URI
 import cats.arrow.FunctionK
 
+object Main extends IOApp.Simple {
+  override def run: IO[Unit] =
+    Test7.testMe
+}
+
 object Test7 {
   sealed trait FieldVariant[Q, A]
   object FieldVariant {
@@ -119,19 +124,20 @@ object Test7 {
         override def groups[A](fa: List[List[A]]): Either[String, List[A]] =
           fa match {
             case x :: Nil => Right(x)
-            case _        => Left("Expected 1 element")
+            case _        => Left(s"Expected 1 element, but found ${fa.size}")
           }
       }
     }
     case object Opt extends JoinType[Option] {
       def reassoc[Key]: Reassoc[Option, Key] = new ReassocGroup[Option, Key] {
         def traverse = Traverse[Option]
-        override def groups[A](fa: List[List[A]]): Either[String, Option[List[A]]] =
+        override def groups[A](fa: List[List[A]]): Either[String, Option[List[A]]] = {
           fa match {
             case x :: Nil => Right(Some(x))
             case Nil      => Right(None)
             case _        => Left("Expected 0 or 1 element, but found more")
           }
+        }
       }
     }
 
@@ -180,23 +186,33 @@ object Test7 {
   ) extends Query[Lambda[X => G[H[X]]], B]
 
   case class Select[A](col: AppliedFragment, decoder: Decoder[A]) extends Query[Lambda[X => X], Select[A]]
-  implicit val applyForSelect: Apply[Select] = ???
+  implicit val applyForSelect: Apply[Select] = new Apply[Select] {
+    override def map[A, B](fa: Select[A])(f: A => B): Select[B] = 
+      fa.copy(decoder = fa.decoder.map(f))
+
+    override def ap[A, B](ff: Select[A => B])(fa: Select[A]): Select[B] = 
+      Select(sql"${ff.col.fragment}, ${fa.col.fragment}".apply(ff.col.argument, fa.col.argument), ff.decoder.ap(fa.decoder))
+  }
 
   def query[F[_], G[_], A, B](f: A => Query[G, Select[B]])(implicit
       tpe: => Out[F, G[B]]
-  ): Field[F, QueryResult[A], G[B]] = ???
+  ): Field[F, QueryResult[A], G[B]] = 
+    queryFull(EmptyableArg.Empty)((a, _) => f(a))(tpe)
 
   def query[F[_], G[_], A, B, C](a: Arg[C])(f: (A, C) => Query[G, Select[B]])(implicit
       tpe: => Out[F, G[B]]
-  ): Field[F, QueryResult[A], G[B]] = ???
+  ): Field[F, QueryResult[A], G[B]] = 
+    queryFull(EmptyableArg.Lift(a))((a, c) => f(a, c))(tpe)
 
   def cont[F[_], G[_], A, B](f: A => Query[G, B])(implicit
       tpe: => Out[F, G[QueryResult[B]]]
-  ): Field[F, QueryResult[A], G[QueryResult[B]]] = ???
+  ): Field[F, QueryResult[A], G[QueryResult[B]]] = 
+    contFull(EmptyableArg.Empty)((a, _) => f(a))(tpe)
 
   def cont[F[_], G[_], A, B, C](a: Arg[C])(f: (A, C) => Query[G, B])(implicit
       tpe: => Out[F, G[QueryResult[B]]]
-  ): Field[F, QueryResult[A], G[QueryResult[B]]] = ???
+  ): Field[F, QueryResult[A], G[QueryResult[B]]] = 
+    contFull(EmptyableArg.Lift(a))((a, c) => f(a, c))(tpe)
 
   final class PartiallyAppliedJoin[G[_]](private val dummy: Boolean = false) extends AnyVal {
     def apply[T <: Table[?]](tbl: Fragment[Void] => T)(joinPred: T => AppliedFragment)(implicit jt: JoinType[G]): Query[G, T] =
@@ -224,6 +240,11 @@ object Test7 {
   def contFull[F[_], G[_], A, B, C](a: EmptyableArg[C])(f: (A, C) => Query[G, B])(implicit
       tpe: => Out[F, G[QueryResult[B]]]
   ): Field[F, QueryResult[A], G[QueryResult[B]]] = {
+    def addArg[I2] = a match {
+      case EmptyableArg.Empty   => Resolver.id[F, I2]
+      case EmptyableArg.Lift(y) => Resolver.id[F, I2].arg(y).map{ case (_, i2) => i2 }
+    }
+
     val tfa: TableFieldAttribute[F, G, A, QueryResult[B], C, B] = new TableFieldAttribute[F, G, A, QueryResult[B], C, B] {
       def arg = a
       def query(value: A, argument: C): Query[G, B] = f(value, argument)
@@ -231,18 +252,27 @@ object Test7 {
     }
 
     build
-      .from(Resolver.id[F, QueryResult[A]].emap { qa =>
+      .from(Resolver.id[F, QueryResult[A]].andThen(addArg).emap { qa =>
         qa.read(tfa).toRight("internal query association error, could not read result from query result").flatten.toIor
       })(tpe)
       .addAttributes(tfa)
   }
 
   object Internal {
+    case class QueryJoin(
+      tbl: AppliedFragment,
+      pred: AppliedFragment
+    )
     case class QueryContent(
         selections: Chain[AppliedFragment],
-        joins: Chain[AppliedFragment]
+        joins: Chain[QueryJoin]
     )
-    implicit val monoidForQueryContent: Monoid[QueryContent] = ???
+    implicit val monoidForQueryContent: Monoid[QueryContent] = new Monoid[QueryContent] {
+      override def combine(x: QueryContent, y: QueryContent): QueryContent = 
+        QueryContent(x.selections ++ y.selections, x.joins ++ y.joins)
+
+      override def empty: QueryContent = QueryContent(Chain.empty, Chain.empty)
+    }
 
     type Effect[A] = EitherT[StateT[Writer[QueryContent, *], Int, *], String, A]
     val Effect = Monad[Effect]
@@ -250,7 +280,7 @@ object Test7 {
     val T = Tell[Effect, QueryContent]
     val R = Raise[Effect, String]
     val nextId = S.get.map(i => sql"t#${i.toString()}") <* S.modify(_ + 1)
-    def addJoin(f: AppliedFragment): Effect[Unit] = T.tell(QueryContent(Chain.empty, Chain(f)))
+    def addJoin(tbl: AppliedFragment, pred: AppliedFragment): Effect[Unit] = T.tell(QueryContent(Chain.empty, Chain(QueryJoin(tbl, pred))))
     def addSelection(f: AppliedFragment): Effect[Unit] = T.tell(QueryContent(Chain(f), Chain.empty))
 
     final case class QueryState[G[_], Key, C](
@@ -308,9 +338,11 @@ object Test7 {
           n <- nextId
           t = j.tbl(n)
           jp = j.joinPred(t)
-          _ <- addJoin(jp)
-          _ <- addSelection(t.pk)
+          tbl = t.table
+          _ <- addJoin(sql"${tbl.fragment} as ${n}".apply(tbl.argument), jp)
+          _ <- addSelection(t.selPk.col)
         } yield {
+          println(j)
           t.pkCodec match {
             case d: Decoder[a] => QueryState(j.jt.reassoc, d, t.asInstanceOf[C]) // TODO figure out why this is necessary
           }
@@ -329,10 +361,21 @@ object Test7 {
   def runFull[F[_]: Monad, G[_], I, B, ArgType](ses: Session[F], toplevelArg: EmptyableArg[ArgType], q: (I, ArgType) => Query[G, B])(
       implicit tpe: => Out[F, G[QueryResult[B]]]
   ) = {
+    def addArg[I2] = toplevelArg match {
+      case EmptyableArg.Empty   => Resolver.id[F, I2]
+      case EmptyableArg.Lift(y) => Resolver.id[F, I2].arg(y).map{ case (_, i2) => i2 }
+    }
+
     val resolver = Resolver
       .meta[F, I]
+      .andThen(addArg)
       .tupleIn
       .emap { case (fm, i) =>
+        def fiendPField[A](p: prep.PreparedField[F, A]): List[prep.PreparedDataField[F, ?, ?]] = p match {
+          case prep.PreparedSpecification(_, _, xs) => xs
+          case pdf: prep.PreparedDataField[F, A, ?] => List(pdf)
+        }
+
         def findSel[A](p: prep.Prepared[F, A]): Option[prep.Selection[F, ?]] = p match {
           case sel: prep.Selection[F, A]        => Some(sel)
           case prep.PreparedList(of, _)         => findSel(of.cont)
@@ -359,14 +402,14 @@ object Test7 {
                   case _: FieldVariant.Selection[a] =>
                     // implicitly[Select[B] =:= Q]
                     val sel: Select[B] = qs.value
-                    Effect.pure {
+                    addSelection(sel.col).as {
                       Done[G, (k, B), B](
                         qs.decoder ~ sel.decoder,
                         { xs =>
                           qs.reassoc(xs).flatMap { gs =>
                             qs.reassoc.traverse.traverse(gs) {
-                              case x :: Nil => Right(x)
-                              case _        => Left("Expected 1 element")
+                              case x :: _ => Right(x)
+                              case xs        => Left(s"Expected 1 element, but got ${xs.size}")
                             }
                           }
                         }
@@ -434,6 +477,7 @@ object Test7 {
         def getNextAttributes[A, B](pdf: prep.PreparedDataField[F, A, B]) = {
           val selFields: List[prep.PreparedField[F, ?]] = findSel(pdf.cont.cont).toList.flatMap(_.fields)
           selFields
+            .flatMap(pf => fiendPField(pf))
             .collect { case x: prep.PreparedDataField[F, ?, ?] => x }
             .map { x =>
               x.source.attributes.collectFirst { case a: TableFieldAttribute[F, g, a, ?, ?, ?] @unchecked => a }.map {
@@ -459,15 +503,19 @@ object Test7 {
       .evalMap { case (qc, d: Done[G, a, QueryResult[B]]) =>
         val selections = qc.selections.intercalate(void", ")
         val base = qc.joins.headOption.get
-        val tl = qc.joins.toList.tail.foldMap(af => sql"\n${af.fragment}".apply(af.argument))
+        val nl = sql"#${"\n"}"
+        val tl = qc.joins.toList.tail.foldMap(qj => sql"${nl}left join ${qj.tbl.fragment} on ${qj.pred.fragment}".apply(qj.tbl.argument, qj.pred.argument))
         val fullQuery =
           sql"""
         select ${selections.fragment}
-        from ${base.fragment}
+        from ${base.tbl.fragment}
         ${tl.fragment}
+        where ${base.pred.fragment}
         """.query(d.dec)
 
-        val out: F[List[a]] = ses.execute(fullQuery)(selections.argument, base.argument, tl.argument)
+        println(fullQuery.sql)
+
+        val out: F[List[a]] = ses.execute(fullQuery)(selections.argument, base.tbl.argument, tl.argument, base.pred.argument)
 
         out.map { xs => d.reassoc(xs).toIor }
       }
@@ -494,10 +542,13 @@ object Test7 {
     "Contract",
     "name" -> query(_.selName),
     "id" -> query(_.selId),
-    "entities" -> cont { c =>
+    "entities" -> cont(arg[Option[List[String]]]("entityNames")) { (c, ens) =>
       for {
-        cet <- contractEntityTable.join[List](cet => sql"${cet.contractId} = ${c.id}")
-        e <- entityTable.join(e => sql"${e.id} = ${cet.entityId}")
+        cet <- contractEntityTable.join(cet => sql"${cet.contractId} = ${c.id}")
+        e <- entityTable.join[List]{ e => 
+          val extra = ens.foldMap(xs => sql" and ${e.name} in (${text.list(xs)})".apply(xs))
+          sql"${e.id} = ${cet.entityId}${extra.fragment}".apply(extra.argument)
+        }
       } yield e
     }
   )
@@ -522,6 +573,7 @@ object Test7 {
         password = "1234".some
       )
       .use { ses =>
+        ses.transaction.surround{
         val ss = SchemaShape.unit[IO](
           fields[IO, Unit](
             "name" -> lift(_ => "edlav"),
@@ -543,25 +595,19 @@ object Test7 {
           contract(contractId: "1ff0ca77-c13f-4af8-9166-72373f309247") {
             name
             id
-            entities {
+            entities(entityNames: ["John"]) {
               name
               age
             }
           }
-          contract2: contract(contractId: "fd75809a-0e7d-4b2e-9dba-be806c039750") {
-            name
-            id
-          }
         }
         """
-            )
-            .toOption
-            .get match {
-            case Application.Query(run) => run.flatMap(IO.println)
-            case _                      => ???
+            ) match {
+            case Right(Application.Query(run)) => run.flatMap(IO.println)
+            case x => IO.println(x)
           }
         }
-      }
+      }}
   }
 
   case class EntityTable(alias: Fragment[Void]) extends Table[UUID] {
