@@ -20,6 +20,14 @@ import cats.mtl.Stateful
 import cats.mtl.Tell
 import gql.{preparation => prep}
 import cats.mtl.Raise
+import gql.Schema
+import gql.SchemaShape
+import gql.Application
+import natchez.TraceValue
+import natchez.Kernel
+import natchez.Span
+import java.net.URI
+import cats.arrow.FunctionK
 
 object Test7 {
   sealed trait FieldVariant[Q, A]
@@ -318,7 +326,9 @@ object Test7 {
   object Done {
     implicit def applyForDone[G[_], B]: Apply[Done[G, *, B]] = ???
   }
-  def run[F[_]: Monad, G[_], I, B](ses: Session[F])(q: I => Query[G, B])(implicit tpe: => Out[F, G[QueryResult[B]]]) = {
+  def runFull[F[_]: Monad, G[_], I, B, ArgType](ses: Session[F], toplevelArg: EmptyableArg[ArgType], q: (I, ArgType) => Query[G, B])(
+      implicit tpe: => Out[F, G[QueryResult[B]]]
+  ) = {
     val resolver = Resolver
       .meta[F, I]
       .tupleIn
@@ -434,9 +444,9 @@ object Test7 {
             .collect { case Some(x) => x }
         }
 
-        val tfa = new TableFieldAttribute[F, G, I, QueryResult[B], Unit, B] {
-          def arg = EmptyableArg.Empty
-          def query(value: I, argument: Unit): Query[G, B] = q(value)
+        val tfa = new TableFieldAttribute[F, G, I, QueryResult[B], ArgType, B] {
+          def arg = toplevelArg
+          def query(value: I, argument: ArgType): Query[G, B] = q(value, argument)
           def fieldVariant = FieldVariant.SubSelection()
         }
 
@@ -471,15 +481,87 @@ object Test7 {
 
   import skunk.implicits._
   import skunk.codec.all._
-  val x = query(arg[Int]("name"))((a: String, c) => Select(void"hey", skunk.codec.all.text))
-  val y = query((a: String) => Select(void"hey", skunk.codec.all.text))
-  implicit val et: Out[IO, QueryResult[EntityTable]] = ???
-  val z = cont { (a: String) =>
-    for {
-      c <- contractTable.join(c => sql"${c.id} = 42")
-      cet <- contractEntityTable.join[List](cet => sql"${cet.contractId} = ${c.id}")
-      e <- entityTable.join(e => sql"${e.id} = ${cet.entityId}")
-    } yield e
+
+  implicit lazy val entity: Type[IO, QueryResult[EntityTable]] = tpe[IO, QueryResult[EntityTable]](
+    "Entity",
+    "name" -> query(_.selName),
+    "id" -> query(_.selId),
+    "age" -> query(_.selAge),
+    "height" -> query(_.selHeight)
+  )
+
+  implicit lazy val contract: Type[IO, QueryResult[ContractTable]] = tpe[IO, QueryResult[ContractTable]](
+    "Contract",
+    "name" -> query(_.selName),
+    "id" -> query(_.selId),
+    "entities" -> cont { c =>
+      for {
+        cet <- contractEntityTable.join[List](cet => sql"${cet.contractId} = ${c.id}")
+        e <- entityTable.join(e => sql"${e.id} = ${cet.entityId}")
+      } yield e
+    }
+  )
+
+  def testMe = {
+    implicit val emptyIOTrace = new natchez.Trace[IO] {
+      override def put(fields: (String, TraceValue)*): IO[Unit] = IO.unit
+      override def log(fields: (String, TraceValue)*): IO[Unit] = IO.unit
+      override def log(event: String): IO[Unit] = IO.unit
+      override def attachError(err: Throwable, fields: (String, TraceValue)*): IO[Unit] = IO.unit
+      override def kernel: IO[Kernel] = IO.pure(Kernel(Map.empty))
+      override def spanR(name: String, options: Span.Options): Resource[IO,IO ~> IO] = Resource.pure(FunctionK.id[IO])
+      override def span[A](name: String, options: Span.Options)(k: IO[A]): IO[A] = k
+      override def traceId: IO[Option[String]] = IO.pure(None)
+      override def traceUri: IO[Option[URI]] = IO.pure(None)
+    }
+    Session
+      .single[IO](
+        host = "127.0.0.1",
+        user = "postgres",
+        database = "postgres",
+        password = "1234".some
+      )
+      .use { ses =>
+        val ss = SchemaShape.unit[IO](
+          fields[IO, Unit](
+            "name" -> lift(_ => "edlav"),
+            "contract" -> runFull(
+              ses,
+              EmptyableArg.Lift(arg[UUID]("contractId")),
+              (_: Unit, a: UUID) => contractTable.join[Option](c => sql"${c.id} = ${uuid}".apply(a))
+            )
+          )
+        )
+
+        Schema.simple(ss).flatMap { schema =>
+          gql
+            .Compiler[IO]
+            .compile(
+              schema,
+              """
+        query {
+          contract(contractId: "1ff0ca77-c13f-4af8-9166-72373f309247") {
+            name
+            id
+            entities {
+              name
+              age
+            }
+          }
+          contract2: contract(contractId: "fd75809a-0e7d-4b2e-9dba-be806c039750") {
+            name
+            id
+          }
+        }
+        """
+            )
+            .toOption
+            .get match {
+            case Application.Query(run) => run.flatMap(IO.println)
+            case _                      => ???
+          }
+        }
+      }
   }
 
   case class EntityTable(alias: Fragment[Void]) extends Table[UUID] {
@@ -488,10 +570,9 @@ object Test7 {
     def pkCodec = uuid
 
     val (id, selId) = sel("id", uuid)
-    val (contractId, selContractId) = sel("contractId", text)
     val (name, selName) = sel("name", text)
     val (age, selAge) = sel("age", int4)
-    val (height, selHeight) = sel("height", float8)
+    val (height, selHeight) = sel("height", int4)
   }
   val entityTable = table(EntityTable)
 
@@ -501,7 +582,6 @@ object Test7 {
     def pkCodec = uuid
 
     val (id, selId) = sel("id", uuid)
-    val (portfolioId, selPortfolioId) = sel("portfolio_id", uuid)
     val (name, selName) = sel("name", text)
   }
   val contractTable = table(ContractTable)
