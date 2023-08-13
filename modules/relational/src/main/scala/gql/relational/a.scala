@@ -180,6 +180,8 @@ object Test7 {
       FlatMap(this, f)
 
     def map[B](f: A => B): Query[G, B] = flatMap[Lambda[X => X], B](a => Pure(f(a)))
+
+    def mapK[H[_]](fk: G ~> H): Query[H, A] = MapK(this, fk)
   }
   case class Join[G[_], T <: Table[?]](
       tbl: Fragment[Void] => T,
@@ -220,8 +222,8 @@ object Test7 {
   ): Field[F, QueryResult[A], D] =
     queryFull(EmptyableArg.Empty)((a, _) => f(a), g(Resolver.id[F, G[B]]))(tpe)
 
-  def queryAndThen[F[_], G[_], A, B, C, D](a: Arg[C])(f: (A, C) => Query[G, Select[B]])(g: Resolver[F, G[B], G[B]] => Resolver[F, G[B], D])(implicit
-      tpe: => Out[F, D]
+  def queryAndThen[F[_], G[_], A, B, C, D](a: Arg[C])(f: (A, C) => Query[G, Select[B]])(g: Resolver[F, G[B], G[B]] => Resolver[F, G[B], D])(
+      implicit tpe: => Out[F, D]
   ): Field[F, QueryResult[A], D] =
     queryFull(EmptyableArg.Lift(a))((a, c) => f(a, c), g(Resolver.id[F, G[B]]))(tpe)
 
@@ -234,13 +236,6 @@ object Test7 {
       tpe: => Out[F, G[QueryResult[B]]]
   ): Field[F, QueryResult[A], G[QueryResult[B]]] =
     contFull(EmptyableArg.Lift(a))((a, c) => f(a, c))(tpe)
-
-  final class PartiallyAppliedJoin[G[_]](private val dummy: Boolean = false) extends AnyVal {
-    def apply[T <: Table[?]](tbl: Fragment[Void] => T)(joinPred: T => AppliedFragment)(implicit jt: JoinType[G]): Query[G, T] =
-      Join(tbl, joinPred, jt)
-  }
-
-  def join[G[_]]: PartiallyAppliedJoin[G] = new PartiallyAppliedJoin[G]
 
   def queryFull[F[_], G[_], A, B, C, D](a: EmptyableArg[C])(f: (A, C) => Query[G, Select[B]], resolverCont: Resolver[F, G[B], D])(implicit
       tpe: => Out[F, D]
@@ -373,8 +368,9 @@ object Test7 {
     }
 
     def go[G[_], C](q: Query[G, C]): Effect[QueryState[G, ?, C]] = q match {
-      case p: Pure[a]   => Effect.pure(QueryStateImpl(JoinType.One.reassoc[Unit], ().pure[Decoder], p.a, FunctionK.id[G]))
-      case s: Select[a] => Effect.pure(QueryStateImpl(JoinType.One.reassoc[Unit], ().pure[Decoder], s, FunctionK.id[G]))
+      case p: Pure[a]              => Effect.pure(QueryStateImpl(JoinType.One.reassoc[Unit], ().pure[Decoder], p.a, FunctionK.id[G]))
+      case s: Select[a]            => Effect.pure(QueryStateImpl(JoinType.One.reassoc[Unit], ().pure[Decoder], s, FunctionK.id[G]))
+      case fm: FlatMap[g, h, a, b] => handleFlatMap(fm)
       case j: Join[g, t] =>
         for {
           n <- nextId
@@ -394,7 +390,6 @@ object Test7 {
               ) // TODO figure out why this is necessary
           }
         }
-      case fm: FlatMap[g, h, a, b] => handleFlatMap(fm)
       case mapK: MapK[g, h, a] =>
         go(mapK.fa).map { case (qs: QueryState[g, k, a]) =>
           QueryStateImpl(
@@ -603,16 +598,15 @@ object Test7 {
     "name" -> query(_.selName),
     "id" -> query(_.selId),
     "entities" -> cont(arg[Option[List[String]]]("entityNames")) { (c, ens) =>
-      MapK(
-        for {
-          cet <- contractEntityTable.join[List](cet => sql"${cet.contractId} = ${c.id}")
-          e <- entityTable.join[Option] { e =>
-            val extra = ens.foldMap(xs => sql" and ${e.name} in (${text.list(xs)})".apply(xs))
-            sql"${e.id} = ${cet.entityId}${extra.fragment}".apply(extra.argument)
-          }
-        } yield e,
-        FunctionK.liftFunction[Lambda[X => List[Option[X]]], List](xs => xs.collect { case Some(x) => x })
-      )
+      val q = for {
+        cet <- contractEntityTable.join[List](cet => sql"${cet.contractId} = ${c.id}")
+        e <- entityTable.join[Option] { e =>
+          val extra = ens.foldMap(xs => sql" and ${e.name} in (${text.list(xs)})".apply(xs))
+          sql"${e.id} = ${cet.entityId}${extra.fragment}".apply(extra.argument)
+        }
+      } yield e
+
+      q.mapK(FunctionK.liftFunction[Lambda[X => List[Option[X]]], List](_.collect { case Some(x) => x }))
     }
   )
 
