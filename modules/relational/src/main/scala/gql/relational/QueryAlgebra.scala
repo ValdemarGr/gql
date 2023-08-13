@@ -125,15 +125,15 @@ trait QueryAlgebra {
       }
     }
 
-    implicit val joinTypeOne: JoinType[Lambda[A => A]] = JoinType.One
+    implicit lazy val joinTypeOne: JoinType[Lambda[A => A]] = JoinType.One
   }
   trait LowPrioJoinTypeImplicits1 extends LowPrioJoinTypeImplicits2 {
-    implicit val joinTypeOpt: JoinType[Option] = JoinType.Opt
+    implicit lazy val joinTypeOpt: JoinType[Option] = JoinType.Opt
   }
   trait LowPrioJoinTypeImplicits2 {
     def make[G[_]](fromList: List ~> Lambda[X => Either[String, G[X]]])(implicit G: Traverse[G]): JoinType[G] =
       JoinType.Many(fromList, G)
-    implicit val joinTypeList: JoinType[List] = make {
+    implicit lazy val joinTypeList: JoinType[List] = make {
       new (List ~> Lambda[X => Either[String, List[X]]]) {
         override def apply[A](fa: List[A]): Either[String, List[A]] = Right(fa)
       }
@@ -164,7 +164,7 @@ trait QueryAlgebra {
         f: G ~> H
     ) extends Query[H, A]
     case class Select[A](col: AppliedFragment, decoder: Decoder[A]) extends Query[Lambda[X => X], Select[A]]
-    implicit val applyForSelect: Apply[Select] = new Apply[Select] {
+    implicit lazy val applyForSelect: Apply[Select] = new Apply[Select] {
       override def map[A, B](fa: Select[A])(f: A => B): Select[B] =
         fa.copy(decoder = fa.decoder.map(f))
 
@@ -231,7 +231,7 @@ trait QueryAlgebra {
         selections: Chain[AppliedFragment],
         joins: Chain[QueryJoin]
     )
-    implicit val monoidForQueryContent: Monoid[QueryContent] = new Monoid[QueryContent] {
+    implicit lazy val monoidForQueryContent: Monoid[QueryContent] = new Monoid[QueryContent] {
       override def combine(x: QueryContent, y: QueryContent): QueryContent =
         QueryContent(x.selections ++ y.selections, x.joins ++ y.joins)
 
