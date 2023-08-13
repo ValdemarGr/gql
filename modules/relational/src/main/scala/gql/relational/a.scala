@@ -631,13 +631,15 @@ object Test7 {
       )
       .use { ses =>
         ses.transaction.surround {
+          import gql.relational.MySchema
+          import gql.relational.SkunkSchema
           val ss = SchemaShape.unit[IO](
             fields[IO, Unit](
               "name" -> lift(_ => "edlav"),
-              "contract" -> runFull(
+              "contract" -> SkunkSchema.runFull(
                 ses,
                 EmptyableArg.Lift(arg[UUID]("contractId")),
-                (_: Unit, a: UUID) => contractTable.join[Option](c => sql"${c.id} = ${uuid}".apply(a))
+                (_: Unit, a: UUID) => MySchema.contractTable.join[Option](c => sql"${c.id} = ${uuid}".apply(a))
               )
             )
           )
