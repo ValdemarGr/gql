@@ -636,9 +636,7 @@ object Test7 {
           val ss = SchemaShape.unit[IO](
             fields[IO, Unit](
               "name" -> lift(_ => "edlav"),
-              "contract" -> SkunkSchema.runFull(
-                ses,
-                EmptyableArg.Lift(arg[UUID]("contractId")),
+              "contract" -> SkunkSchema.runField(ses, arg[UUID]("contractId"))(
                 (_: Unit, a: UUID) => MySchema.contractTable.join[Option](c => sql"${c.id} = ${uuid}".apply(a))
               )
             )

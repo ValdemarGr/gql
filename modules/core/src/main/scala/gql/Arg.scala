@@ -22,6 +22,7 @@ import gql.ast._
 import gql.parser.Const
 import gql.parser.{Value => V}
 import gql.std.FreeApply
+import gql.resolver.Resolver
 
 /** A GraphQL argument declaration with an optional default value. The argument references an input type, which is suspended in Eval for
   * recursion.
@@ -94,8 +95,14 @@ object Arg {
   }
 }
 
-sealed trait EmptyableArg[A]
+sealed trait EmptyableArg[A] {
+  def addArg[F[_], B]: Resolver[F, B, B]
+}
 object EmptyableArg {
-  case object Empty extends EmptyableArg[Unit]
-  final case class Lift[A](a: Arg[A]) extends EmptyableArg[A]
+  case object Empty extends EmptyableArg[Unit] {
+    override def addArg[F[_], B]: Resolver[F, B, B] = Resolver.id[F, B]
+  }
+  final case class Lift[A](a: Arg[A]) extends EmptyableArg[A] {
+    override def addArg[F[_], B]: Resolver[F, B, B] = Resolver.id[F, B].arg(a).map{ case (_, x) => x }
+  }
 }
