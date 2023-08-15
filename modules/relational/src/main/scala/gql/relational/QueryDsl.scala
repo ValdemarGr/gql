@@ -30,7 +30,7 @@ import java.net.URI
 import cats.arrow.FunctionK
 
 trait QueryDsl extends QueryAlgebra {
-      def query[F[_], G[_], A, B](f: A => Query[G, Query.Select[B]])(implicit
+  def query[F[_], G[_], A, B](f: A => Query[G, Query.Select[B]])(implicit
       tpe: => Out[F, G[B]]
   ): Field[F, QueryResult[A], G[B]] =
     queryFull(EmptyableArg.Empty)((a, _) => f(a), Resolver.id[F, G[B]])(tpe)
@@ -45,8 +45,10 @@ trait QueryDsl extends QueryAlgebra {
   ): Field[F, QueryResult[A], D] =
     queryFull(EmptyableArg.Empty)((a, _) => f(a), g(Resolver.id[F, G[B]]))(tpe)
 
-  def queryAndThen[F[_], G[_], A, B, C, D](a: Arg[C])(f: (A, C) => Query[G, Query.Select[B]])(g: Resolver[F, G[B], G[B]] => Resolver[F, G[B], D])(
-      implicit tpe: => Out[F, D]
+  def queryAndThen[F[_], G[_], A, B, C, D](
+      a: Arg[C]
+  )(f: (A, C) => Query[G, Query.Select[B]])(g: Resolver[F, G[B], G[B]] => Resolver[F, G[B], D])(implicit
+      tpe: => Out[F, D]
   ): Field[F, QueryResult[A], D] =
     queryFull(EmptyableArg.Lift(a))((a, c) => f(a, c), g(Resolver.id[F, G[B]]))(tpe)
 
@@ -60,10 +62,9 @@ trait QueryDsl extends QueryAlgebra {
   ): Field[F, QueryResult[A], G[QueryResult[B]]] =
     contFull(EmptyableArg.Lift(a))((a, c) => f(a, c))(tpe)
 
-      def table[T <: Table[?]](f: Frag[Empty] => T): TableAlg[T] = new TableAlg[T] {
+  def table[T <: Table[?]](f: Frag[Empty] => T): TableAlg[T] = new TableAlg[T] {
     def make: Frag[Empty] => T = f
   }
-
 
   def queryFull[F[_], G[_], A, B, C, D](a: EmptyableArg[C])(f: (A, C) => Query[G, Query.Select[B]], resolverCont: Resolver[F, G[B], D])(
       implicit tpe: => Out[F, D]

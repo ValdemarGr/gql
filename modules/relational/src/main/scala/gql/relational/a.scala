@@ -652,7 +652,11 @@ object Test7 {
           contract(contractId: "1ff0ca77-c13f-4af8-9166-72373f309247") {
             name
             id
-            entities(entityNames: ["John"]) {
+            entities(entityNames: ["Jane"]) {
+              name
+              age
+            }
+            entities2: entities(entityNames: ["Jane"]) {
               name
               age
             }
