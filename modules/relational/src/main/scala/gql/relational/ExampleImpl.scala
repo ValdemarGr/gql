@@ -11,6 +11,7 @@ import java.util.UUID
 import gql.Arg
 import gql.EmptyableArg
 import skunk.codec.all._
+import cats.arrow.FunctionK
 
 object SkunkSchema extends QueryAlgebra with QueryDsl {
   type Empty = Void
@@ -39,6 +40,7 @@ object SkunkSchema extends QueryAlgebra with QueryDsl {
   def runQuery[F[_]: Monad, G[_], I, B, ArgType](ses: Session[F], toplevelArg: EmptyableArg[ArgType], q: (I, ArgType) => Query[G, B]) = {
     resolveQuery[F, G, I, B, ArgType](toplevelArg, q).evalMap { case (qc, d: Interpreter.Done[G, a, QueryResult[B]]) =>
       val af = Interpreter.renderQuery(qc)
+      println(af.fragment.sql)
       val out: F[List[a]] = ses.execute(af.fragment.query(d.dec))(af.argument)
 
       out.map(xs => d.reassoc(xs).toIor)
@@ -81,18 +83,32 @@ object MySchema {
   }
   val contractTable = table(ContractTable)
 
-  case class ContractEntityTable(alias: Frag[Void]) extends Table[UUID] {
+  case class ContractEntityTable(alias: Frag[Void]) extends Table[(UUID, UUID)] {
     def table = void"contract_entity"
-    def pk = void"entity_id"
-    def pkDecoder: Decoder[UUID] = uuid
-    def pkEncoder: Encoder[UUID] = uuid
+    def pk = void"contract_id, entity_id"
+    def pkDecoder: Decoder[(UUID, UUID)] = (uuid ~ uuid)
+    def pkEncoder: Encoder[(UUID, UUID)] = (uuid ~ uuid)
 
     val (contractId, selContractId) = sel("contract_id", uuid)
     val (entityId, selEntityId) = sel("entity_id", uuid)
   }
   val contractEntityTable = table(ContractEntityTable)
 
-  implicit lazy val entity: Type[IO, QueryResult[EntityTable]] = tpe[IO, QueryResult[EntityTable]](
+  case class EntityTable2(alias: Frag[Void]) extends Table[UUID] {
+    def table = void"(contract_entity join entity on contract_entity.entity_id = entity.id)"
+    def pk = void"contract_id"
+    def pkDecoder: Decoder[UUID] = uuid
+    def pkEncoder: Encoder[UUID] = uuid
+
+    val (id, selId) = sel("id", uuid)
+    val (contractId, selContractId) = sel("contract_id", uuid)
+    val (name, selName) = sel("name", text)
+    val (age, selAge) = sel("age", int4)
+    val (height, selHeight) = sel("height", int4)
+  }
+  val entityTable2 = table(EntityTable2)
+
+  implicit lazy val entity: Type[IO, QueryResult[EntityTable2]] = tpe[IO, QueryResult[EntityTable2]](
     "Entity",
     "name" -> query(_.selName),
     "id" -> query(_.selId),
@@ -100,20 +116,41 @@ object MySchema {
     "height" -> query(_.selHeight)
   )
 
+  // List[ResultSet] => G[A]
+  // 1:1 List[ResultSet] => (PrimaryKey, List[ResultSet])
+  // xs => xs.groupBy(_.id).require1Element: Either[String, (PrimaryKey, List[ResultSet])]
+  // 1:n List[ResultSet] => Map[PrimaryKey, List[ResultSet]]
+  // xs => xs.groupBy(_.id): Map[PrimaryKey, List[ResultSet]]
+  // 1:{0,1} List[ResultSet] => Option[(PrimaryKey, List[ResultSet])]
+  // xs => xs.groupBy(_.id).requireAtMost1Element: Either[String, Option[(PrimaryKey, List[ResultSet])]]
+  /*
+
+  val xs: List[(ContractName, ContractId, ContractEntityContractId, ContractEntityEntityId, EntityName, EntityId, EntityAge, EntityHeight)]
+  val ys = xs.groupBy(x => x.contractId): Map[ContractId, List[(ContractEntityContractId, ContractEntityEntityId, EntityName, EntityId, EntityAge, EntityHeight)]]
+  ...: Map[ContractId, Map[ContractEntityContractId, List[(EntityName, EntityId, EntityAge, EntityHeight)]]]
+  ...: Map[ContractId, Map[ContractEntityContractId, Map[EntityId, List[(EntityName, EntityAge, EntityHeight)]]]]
+
+   */
   implicit lazy val contract: Type[IO, QueryResult[ContractTable]] = tpe[IO, QueryResult[ContractTable]](
     "Contract",
     "name" -> query(_.selName),
     "id" -> query(_.selId),
-    "entities" -> cont[IO, Lambda[X => List[Option[X]]], ContractTable, EntityTable, Option[List[String]]](
+    "entities" -> cont(
       arg[Option[List[String]]]("entityNames")
     ) { (c, ens) =>
-      for {
-        cet <- contractEntityTable.join[List](cet => sql"${cet.contractId} = ${c.id}")
-        e <- entityTable.join[Option] { e =>
-          val extra = ens.foldMap(xs => sql" and ${e.name} in (${text.list(xs)})".apply(xs))
-          sql"${e.id} = ${cet.entityId}${extra.fragment}".apply(extra.argument)
-        }
-      } yield e
+      entityTable2.join[List] { e =>
+        val _ = ens.foldMap(xs => sql" and ${e.name} in (${text.list(xs)})".apply(xs))
+        val extra = void""
+        sql"${c.id} = ${e.contractId}${extra.fragment}".apply(extra.argument)
+      }
+      // for {
+      //   cet <- contractEntityTable.join[List](cet => sql"${cet.contractId} = ${c.id}")
+      //   e <- entityTable.join[List] { e =>
+      //     val _ = ens.foldMap(xs => sql" and ${e.name} in (${text.list(xs)})".apply(xs))
+      //     val extra = void""
+      //     sql"${e.id} = ${cet.entityId}${extra.fragment} and ${c.parent.parent.pk} is not null".apply(extra.argument)
+      //   }
+      // } yield e
     }
   )
 
