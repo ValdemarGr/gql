@@ -14,24 +14,15 @@ import skunk.codec.all._
 import cats.arrow.FunctionK
 
 object SkunkSchema extends QueryAlgebra with QueryDsl {
-  type Empty = Void
-  val Empty = Void
-  override implicit def contravariantSemigroupalForFrag: ContravariantSemigroupal[Frag] =
-    skunk.Fragment.FragmentContravariantSemigroupal
+  type Frag = skunk.AppliedFragment
 
-  type AppliedFragment = skunk.AppliedFragment
-  def extractFrag(af: AppliedFragment): ExtractedFrag[?] =
-    ExtractedFrag[af.A](af.fragment, af.argument)
+  def stringToFrag(s: String): Frag = sql"#${s}".apply(Void)
+  implicit def appliedFragmentMonoid: Monoid[Frag] = skunk.AppliedFragment.MonoidAppFragment
 
   import skunk.implicits._
-  override def stringToFrag(s: String): Frag[Void] = sql"#${s}"
-
-  def liftFrag[A0](frag: Frag[A0], arg: A0): AppliedFragment = frag.apply(arg)
 
   override implicit def applicativeForDecoder: Applicative[Decoder] =
     Decoder.ApplicativeDecoder
-
-  type Frag[A] = skunk.Fragment[A]
 
   type Encoder[A] = skunk.Encoder[A]
   type Decoder[A] = skunk.Decoder[A]
@@ -59,7 +50,7 @@ object SkunkSchema extends QueryAlgebra with QueryDsl {
 object MySchema {
   import SkunkSchema._
 
-  case class EntityTable(alias: Frag[Void]) extends Table[UUID] {
+  case class EntityTable(alias: Frag) extends Table[UUID] {
     def table = void"entity"
     def pk = void"id"
     def pkDecoder: Decoder[UUID] = uuid
@@ -72,7 +63,7 @@ object MySchema {
   }
   val entityTable = table(EntityTable)
 
-  case class ContractTable(alias: Frag[Void]) extends Table[UUID] {
+  case class ContractTable(alias: Frag) extends Table[UUID] {
     def table = void"contract"
     def pk = void"id"
     def pkDecoder: Decoder[UUID] = uuid
@@ -83,7 +74,7 @@ object MySchema {
   }
   val contractTable = table(ContractTable)
 
-  case class ContractEntityTable(alias: Frag[Void]) extends Table[(UUID, UUID)] {
+  case class ContractEntityTable(alias: Frag) extends Table[(UUID, UUID)] {
     def table = void"contract_entity"
     def pk = void"contract_id, entity_id"
     def pkDecoder: Decoder[(UUID, UUID)] = (uuid ~ uuid)
@@ -94,7 +85,7 @@ object MySchema {
   }
   val contractEntityTable = table(ContractEntityTable)
 
-  case class EntityTable2(alias: Frag[Void]) extends Table[UUID] {
+  case class EntityTable2(alias: Frag) extends Table[UUID] {
     def table = void"(contract_entity join entity on contract_entity.entity_id = entity.id)"
     def pk = void"contract_id"
     def pkDecoder: Decoder[UUID] = uuid
@@ -139,9 +130,9 @@ object MySchema {
       arg[Option[List[String]]]("entityNames")
     ) { (c, ens) =>
       entityTable2.join[List] { e =>
-        val _ = ens.foldMap(xs => sql" and ${e.name} in (${text.list(xs)})".apply(xs))
+        val _ = ens.foldMap(xs => sql" and ${e.name.fragment} in (${text.list(xs)})".apply((e.name.argument, xs): (e.name.A, xs.type)))
         val extra = void""
-        sql"${c.id} = ${e.contractId}${extra.fragment}".apply(extra.argument)
+        sql"${c.id.fragment} = ${e.contractId.fragment}${extra.fragment}".apply((c.id.argument, e.contractId.argument, extra.argument): (c.id.A, e.contractId.A, extra.A))
       }
       // for {
       //   cet <- contractEntityTable.join[List](cet => sql"${cet.contractId} = ${c.id}")
