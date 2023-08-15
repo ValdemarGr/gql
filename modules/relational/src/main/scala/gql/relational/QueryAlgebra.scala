@@ -15,33 +15,14 @@ trait QueryAlgebra {
   type QueryState[G[_], Key, C] = QueryAlgebra.QueryState[Decoder, G, Key, C]
   val QueryStateImpl = QueryAlgebra.QueryStateImpl
 
-  type Empty
-  def Empty: Empty
-
-  type Frag[A]
-  implicit def contravariantSemigroupalForFrag: ContravariantSemigroupal[Frag]
-  def stringToFrag(s: String): Frag[Empty]
-
   type Encoder[A]
   type Decoder[A]
   def optDecoder[A](d: Decoder[A]): Decoder[Option[A]]
   implicit def applicativeForDecoder: Applicative[Decoder]
 
-  type AppliedFragment
-  def liftFrag[A0](frag: Frag[A0], arg: A0): AppliedFragment
-  private implicit lazy val appliedFragmentMonoid: Monoid[AppliedFragment] = new Monoid[AppliedFragment] {
-    def empty: AppliedFragment = liftFrag(stringToFrag(""), Empty)
-
-    // Members declared in cats.kernel.Semigroup
-    def combine(x: AppliedFragment, y: AppliedFragment): AppliedFragment =
-      (extractFrag(x), extractFrag(y)) match {
-        case (efx: ExtractedFrag[a], efy: ExtractedFrag[b]) =>
-          liftFrag((efx.frag, efy.frag).tupled, (efx.arg, efy.arg))
-      }
-  }
-
-  case class ExtractedFrag[A](frag: Frag[A], arg: A)
-  def extractFrag(af: AppliedFragment): ExtractedFrag[?]
+  type Frag
+  def stringToFrag(s: String): Frag
+  implicit def appliedFragmentMonoid: Monoid[Frag]
 
   sealed trait FieldVariant[Q, A]
   object FieldVariant {
@@ -69,8 +50,8 @@ trait QueryAlgebra {
   }
   object Query {
     case class Join[G[_], T <: Table[?]](
-        tbl: Frag[Empty] => T,
-        joinPred: T => AppliedFragment,
+        tbl: Frag => T,
+        joinPred: T => Frag,
         jt: JoinType[G]
     ) extends Query[G, T]
     case class Pure[A](a: A) extends Query[Lambda[X => X], A]
@@ -82,63 +63,48 @@ trait QueryAlgebra {
         fa: Query[G, A],
         f: G ~> H
     ) extends Query[H, A]
-    case class Select[A](col: AppliedFragment, decoder: Decoder[A]) extends Query[Lambda[X => X], Select[A]]
+    case class Select[A](cols: NonEmptyChain[Frag], decoder: Decoder[A]) extends Query[Lambda[X => X], Select[A]]
     implicit lazy val applyForSelect: Apply[Select] = new Apply[Select] {
       override def map[A, B](fa: Select[A])(f: A => B): Select[B] =
         fa.copy(decoder = fa.decoder.map(f))
 
-      override def ap[A, B](ff: Select[A => B])(fa: Select[A]): Select[B] = {
-        (extractFrag(ff.col), extractFrag(fa.col)) match {
-          case (eff: ExtractedFrag[a], efa: ExtractedFrag[b]) =>
-            Select(
-              liftFrag((eff.frag, stringToFrag(", "), efa.frag).tupled, (eff.arg, Empty, efa.arg)),
-              ff.decoder ap fa.decoder
-            )
-        }
-      }
+      override def ap[A, B](ff: Select[A => B])(fa: Select[A]): Select[B] = 
+        Select(ff.cols ++ fa.cols, ff.decoder ap fa.decoder)
     }
   }
 
   trait TableDef[A] {
-    def table: AppliedFragment
-    def pk: AppliedFragment
+    def table: Frag
+    def pk: Frag
     def pkEncoder: Encoder[A]
     def pkDecoder: Decoder[A]
   }
 
   trait Table[A] extends TableDef[A] {
-    def alias: Frag[Empty]
+    def alias: Frag
 
-    def aliased[A](x: Frag[A]): Frag[A] =
-      (alias, stringToFrag("."), x).tupled.contramap { x => (Empty, Empty, x) }
+    def aliased(x: Frag): Frag = 
+      alias |+| stringToFrag(".") |+| x
 
-    def aliased(x: AppliedFragment)(implicit dummy: DummyImplicit): AppliedFragment =
-      extractFrag(x) match {
-        case ef: ExtractedFrag[a] => liftFrag(aliased[a](ef.frag), ef.arg)
-      }
+    def select[A](name: Frag, dec: Decoder[A]): Query.Select[A] =
+      Query.Select(NonEmptyChain.one(aliased(name)), dec)
 
-    def select[A](name: AppliedFragment, dec: Decoder[A]): Query.Select[A] =
-      Query.Select(aliased(name), dec)
-
-    def col(name: String): Frag[Empty] =
+    def col(name: String): Frag =
       aliased(stringToFrag(name))
 
-    def sel[A](name: String, dec: Decoder[A]): (Frag[Empty], Query.Select[A]) = {
+    def sel[A](name: String, dec: Decoder[A]): (Frag, Query.Select[A]) = {
       val c = col(name)
-      c -> Query.Select(liftFrag(c, Empty), dec)
+      c -> Query.Select(NonEmptyChain.one(c), dec)
     }
 
     def selPk: Query.Select[A] = select(pk, pkDecoder)
   }
 
   trait TableAlg[T <: Table[?]] {
-    def make: Frag[Empty] => T
+    def make: Frag => T
 
-    def join[G[_]: JoinType](joinPred: T => AppliedFragment): Query.Join[G, T] =
+    def join[G[_]: JoinType](joinPred: T => Frag): Query.Join[G, T] =
       Query.Join(make, joinPred, implicitly[JoinType[G]])
-
-    def join[G[_]: JoinType](joinPred: T => Frag[Empty])(implicit dummy: DummyImplicit): Query.Join[G, T] =
-      Query.Join(make, joinPred.andThen(x => liftFrag(x, Empty)), implicitly[JoinType[G]])
   }
 
   def resolveQuery[F[_], G[_], I, B, ArgType](
@@ -172,26 +138,26 @@ trait QueryAlgebra {
     val T = Tell[Effect, QueryContent]
     val R = Raise[Effect, String]
     val nextId = S.get.map(i => stringToFrag(s"t${i.toString()}")) <* S.modify(_ + 1)
-    def addJoin(tbl: AppliedFragment, pred: AppliedFragment): Effect[Unit] =
+    def addJoin(tbl: Frag, pred: Frag): Effect[Unit] =
       T.tell(QueryContent(Chain.empty, Chain(QueryJoin(tbl, pred))))
-    def addSelection(f: AppliedFragment): Effect[Unit] =
-      T.tell(QueryContent(Chain(f), Chain.empty))
+    def addSelection(f: NonEmptyChain[Frag]): Effect[Unit] =
+      T.tell(QueryContent(f.toChain, Chain.empty))
 
-    def renderQuery(qc: QueryContent): AppliedFragment = {
-      val selections = qc.selections.intercalate(liftFrag(stringToFrag(", "), Empty))
-      val nl = liftFrag(stringToFrag("\n"), Empty)
+    def renderQuery(qc: QueryContent): Frag = {
+      val selections = qc.selections.intercalate(stringToFrag(", "))
+      val nl = stringToFrag("\n")
       val suffix = NonEmptyChain.fromChain(qc.joins).foldMap { nec =>
         val (hd, tl) = nec.uncons
         val ys = tl.foldMap { x =>
           val p = x.pred
           val t = x.tbl
-          nl |+| liftFrag(stringToFrag("left join "), Empty) |+| t |+| liftFrag(stringToFrag(" on "), Empty) |+| p
+          nl |+| stringToFrag("left join ") |+| t |+| stringToFrag(" on ") |+| p
         }
-        nl |+| liftFrag(stringToFrag("from "), Empty) |+| hd.tbl |+|
-          ys |+| nl |+| liftFrag(stringToFrag("where "), Empty) |+| hd.pred
+        nl |+| stringToFrag("from ") |+| hd.tbl |+|
+          ys |+| nl |+| stringToFrag("where ") |+| hd.pred
       }
 
-      liftFrag(stringToFrag("select "), Empty) |+| selections |+| nl |+| suffix
+      stringToFrag("select ") |+| selections |+| nl |+| suffix
     }
 
     case class Done[G[_], A, B](
@@ -216,7 +182,7 @@ trait QueryAlgebra {
               case _: FieldVariant.Selection[a] =>
                 // implicitly[Select[B] =:= Q]
                 val sel: Query.Select[B] = qs.value
-                addSelection(sel.col).as {
+                addSelection(sel.cols).as {
                   Done[G, (k, Option[B]), B](
                     (qs.decoder, optDecoder(sel.decoder)).tupled,
                     { xs =>
@@ -317,11 +283,11 @@ trait QueryAlgebra {
     }
 
     case class QueryJoin(
-        tbl: AppliedFragment,
-        pred: AppliedFragment
+        tbl: Frag,
+        pred: Frag
     )
     case class QueryContent(
-        selections: Chain[AppliedFragment],
+        selections: Chain[Frag],
         joins: Chain[QueryJoin]
     )
     implicit lazy val monoidForQueryContent: Monoid[QueryContent] = new Monoid[QueryContent] {
@@ -387,16 +353,8 @@ trait QueryAlgebra {
           t = j.tbl(n)
           jp = j.joinPred(t)
           tbl = t.table
-          ef = extractFrag(tbl)
-          _ <- ef match {
-            case ef: ExtractedFrag[a] =>
-              addJoin(
-                liftFrag((ef.frag, stringToFrag(" as "), n).tupled, (ef.arg, Empty, Empty)),
-                jp
-              )
-          }
-          // sql"${ef.frag} as ${n}".apply(ef.arg), jp)
-          _ <- addSelection(t.selPk.col)
+          _ <- addJoin(tbl |+| stringToFrag(" as ") |+| n, jp)
+          _ <- addSelection(t.selPk.cols)
         } yield {
           t match {
             case t: Table[a] =>
@@ -424,15 +382,6 @@ trait QueryAlgebra {
 }
 
 object QueryAlgebra {
-  case class QueryJoin(
-      tbl: AppliedFragment,
-      pred: AppliedFragment
-  )
-  case class QueryContent(
-      selections: Chain[AppliedFragment],
-      joins: Chain[QueryJoin]
-  )
-
   trait QueryState[Decoder[_], G[_], Key, C] {
     type T[_]
     def reassoc: Reassoc[T, Key]
