@@ -12,14 +12,13 @@ import gql.Arg
 import gql.EmptyableArg
 import skunk.codec.all._
 import cats.arrow.FunctionK
+import cats.data._
 
 object SkunkSchema extends QueryAlgebra with QueryDsl {
   type Frag = skunk.AppliedFragment
 
   def stringToFrag(s: String): Frag = sql"#${s}".apply(Void)
   implicit def appliedFragmentMonoid: Monoid[Frag] = skunk.AppliedFragment.MonoidAppFragment
-
-  import skunk.implicits._
 
   override implicit def applicativeForDecoder: Applicative[Decoder] =
     Decoder.ApplicativeDecoder
@@ -34,7 +33,7 @@ object SkunkSchema extends QueryAlgebra with QueryDsl {
       println(af.fragment.sql)
       val out: F[List[a]] = ses.execute(af.fragment.query(d.dec))(af.argument)
 
-      out.map(xs => d.reassoc(xs).toIor)
+      out.map{ x => println(x.size);x}.map(xs => d.reassoc(xs).toIor)
     }.rethrow
   }
 
@@ -45,16 +44,25 @@ object SkunkSchema extends QueryAlgebra with QueryDsl {
   def runField[F[_]: Monad, G[_], I, B](ses: Session[F])(q: I => Query[G, B])(implicit
       tpe: => Out[F, G[QueryResult[B]]]
   ) = Field(runQuery[F, G, I, B, Unit](ses, EmptyableArg.Empty, (i, _) => q(i)), Eval.later(tpe))
+
+  trait SkunkTable[A] extends Table[A] {
+    def aliased(x: Fragment[Void]): Fragment[Void] =
+      sql"#${alias}.${x}"
+
+    def sel[A](x: String, d: Decoder[A]): (Fragment[Void], Query.Select[A]) = {
+      val col = aliased(sql"#${x}")
+      col -> Query.Select(NonEmptyChain.one(col.apply(Void)), d)
+    }
+  }
 }
 
 object MySchema {
   import SkunkSchema._
 
-  case class EntityTable(alias: Frag) extends Table[UUID] {
+  case class EntityTable(alias: String) extends SkunkTable[UUID] {
     def table = void"entity"
-    def pk = void"id"
-    def pkDecoder: Decoder[UUID] = uuid
-    def pkEncoder: Encoder[UUID] = uuid
+    def groupingKey = void"id"
+    def groupingKeyDecoder: Decoder[UUID] = uuid
 
     val (id, selId) = sel("id", uuid)
     val (name, selName) = sel("name", text)
@@ -63,33 +71,30 @@ object MySchema {
   }
   val entityTable = table(EntityTable)
 
-  case class ContractTable(alias: Frag) extends Table[UUID] {
+  case class ContractTable(alias: String) extends SkunkTable[UUID] {
     def table = void"contract"
-    def pk = void"id"
-    def pkDecoder: Decoder[UUID] = uuid
-    def pkEncoder: Encoder[UUID] = uuid
+    def groupingKey = void"id"
+    def groupingKeyDecoder: Decoder[UUID] = uuid
 
     val (id, selId) = sel("id", uuid)
     val (name, selName) = sel("name", text)
   }
   val contractTable = table(ContractTable)
 
-  case class ContractEntityTable(alias: Frag) extends Table[(UUID, UUID)] {
+  case class ContractEntityTable(alias: String) extends SkunkTable[(UUID, UUID)] {
     def table = void"contract_entity"
-    def pk = void"contract_id, entity_id"
-    def pkDecoder: Decoder[(UUID, UUID)] = (uuid ~ uuid)
-    def pkEncoder: Encoder[(UUID, UUID)] = (uuid ~ uuid)
+    def groupingKey = void"contract_id, entity_id"
+    def groupingKeyDecoder: Decoder[(UUID, UUID)] = (uuid ~ uuid)
 
     val (contractId, selContractId) = sel("contract_id", uuid)
     val (entityId, selEntityId) = sel("entity_id", uuid)
   }
   val contractEntityTable = table(ContractEntityTable)
 
-  case class EntityTable2(alias: Frag) extends Table[UUID] {
+  case class EntityTable2(alias: String) extends SkunkTable[UUID] {
     def table = void"(contract_entity join entity on contract_entity.entity_id = entity.id)"
-    def pk = void"contract_id"
-    def pkDecoder: Decoder[UUID] = uuid
-    def pkEncoder: Encoder[UUID] = uuid
+    def groupingKey = void"entity_id"
+    def groupingKeyDecoder: Decoder[UUID] = uuid
 
     val (id, selId) = sel("id", uuid)
     val (contractId, selContractId) = sel("contract_id", uuid)
@@ -130,9 +135,9 @@ object MySchema {
       arg[Option[List[String]]]("entityNames")
     ) { (c, ens) =>
       entityTable2.join[List] { e =>
-        val _ = ens.foldMap(xs => sql" and ${e.name.fragment} in (${text.list(xs)})".apply((e.name.argument, xs): (e.name.A, xs.type)))
+        val _ = ens.foldMap(xs => sql" and ${e.name} in (${text.list(xs)})".apply(xs))
         val extra = void""
-        sql"${c.id.fragment} = ${e.contractId.fragment}${extra.fragment}".apply((c.id.argument, e.contractId.argument, extra.argument): (c.id.A, e.contractId.A, extra.A))
+        sql"${c.id} = ${e.contractId}${extra.fragment}".apply(extra.argument)
       }
       // for {
       //   cet <- contractEntityTable.join[List](cet => sql"${cet.contractId} = ${c.id}")

@@ -660,6 +660,26 @@ object Test7 {
               name
               age
             }
+            entities3: entities(entityNames: ["Jane"]) {
+              name
+              age
+            }
+            entities4: entities(entityNames: ["Jane"]) {
+              name
+              age
+            }
+            entities5: entities(entityNames: ["Jane"]) {
+              name
+              age
+            }
+            entities6: entities(entityNames: ["Jane"]) {
+              name
+              age
+            }
+            entities7: entities(entityNames: ["Jane"]) {
+              name
+              age
+            }
           }
         }
         """

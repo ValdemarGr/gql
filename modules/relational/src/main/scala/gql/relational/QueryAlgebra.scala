@@ -50,7 +50,7 @@ trait QueryAlgebra {
   }
   object Query {
     case class Join[G[_], T <: Table[?]](
-        tbl: Frag => T,
+        tbl: String => T,
         joinPred: T => Frag,
         jt: JoinType[G]
     ) extends Query[G, T]
@@ -73,35 +73,25 @@ trait QueryAlgebra {
     }
   }
 
-  trait TableDef[A] {
+  trait Table[A] {
+    def alias: String
+
     def table: Frag
-    def pk: Frag
-    def pkEncoder: Encoder[A]
-    def pkDecoder: Decoder[A]
-  }
 
-  trait Table[A] extends TableDef[A] {
-    def alias: Frag
+    def groupingKey: Frag
+    def groupingKeyDecoder: Decoder[A]
 
-    def aliased(x: Frag): Frag = 
-      alias |+| stringToFrag(".") |+| x
+    def aliasedFrag(x: Frag): Frag = 
+      stringToFrag(alias) |+| stringToFrag(".") |+| x
 
     def select[A](name: Frag, dec: Decoder[A]): Query.Select[A] =
-      Query.Select(NonEmptyChain.one(aliased(name)), dec)
+      Query.Select(NonEmptyChain.one(aliasedFrag(name)), dec)
 
-    def col(name: String): Frag =
-      aliased(stringToFrag(name))
-
-    def sel[A](name: String, dec: Decoder[A]): (Frag, Query.Select[A]) = {
-      val c = col(name)
-      c -> Query.Select(NonEmptyChain.one(c), dec)
-    }
-
-    def selPk: Query.Select[A] = select(pk, pkDecoder)
+    def selGroupKey: Query.Select[A] = select(groupingKey, groupingKeyDecoder)
   }
 
   trait TableAlg[T <: Table[?]] {
-    def make: Frag => T
+    def make: String => T
 
     def join[G[_]: JoinType](joinPred: T => Frag): Query.Join[G, T] =
       Query.Join(make, joinPred, implicitly[JoinType[G]])
@@ -137,7 +127,7 @@ trait QueryAlgebra {
     val S = Stateful[Effect, Int]
     val T = Tell[Effect, QueryContent]
     val R = Raise[Effect, String]
-    val nextId = S.get.map(i => stringToFrag(s"t${i.toString()}")) <* S.modify(_ + 1)
+    val nextId = S.get.map(i => s"t${i.toString()}") <* S.modify(_ + 1)
     def addJoin(tbl: Frag, pred: Frag): Effect[Unit] =
       T.tell(QueryContent(Chain.empty, Chain(QueryJoin(tbl, pred))))
     def addSelection(f: NonEmptyChain[Frag]): Effect[Unit] =
@@ -353,14 +343,14 @@ trait QueryAlgebra {
           t = j.tbl(n)
           jp = j.joinPred(t)
           tbl = t.table
-          _ <- addJoin(tbl |+| stringToFrag(" as ") |+| n, jp)
-          _ <- addSelection(t.selPk.cols)
+          _ <- addJoin(tbl |+| stringToFrag(" as ") |+| stringToFrag(n), jp)
+          _ <- addSelection(t.selGroupKey.cols)
         } yield {
           t match {
             case t: Table[a] =>
               QueryStateImpl(
                 ReassocOpt[G, a](j.jt.reassoc),
-                optDecoder(t.pkDecoder),
+                optDecoder(t.groupingKeyDecoder),
                 t.asInstanceOf[C],
                 FunctionK.id[G]
               ) // TODO figure out why this is necessary
