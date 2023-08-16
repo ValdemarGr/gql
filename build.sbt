@@ -104,8 +104,8 @@ lazy val sharedSettings = Seq(
   libraryDependencies ++= Seq(
     "org.typelevel" %% "cats-effect" % "3.5.1",
     "org.typelevel" %% "cats-mtl" % "1.3.1",
-    "org.typelevel" %% "cats-core" % "2.9.0",
-    "org.typelevel" %% "cats-free" % "2.9.0",
+    "org.typelevel" %% "cats-core" % "2.10.0",
+    "org.typelevel" %% "cats-free" % "2.10.0",
     "co.fs2" %% "fs2-core" % "3.7.0",
     "co.fs2" %% "fs2-io" % "3.7.0",
     "org.typelevel" %% "cats-parse" % "0.3.8",
