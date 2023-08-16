@@ -62,8 +62,8 @@ trait QueryDsl extends QueryAlgebra {
   ): Field[F, QueryResult[A], G[QueryResult[B]]] =
     contFull(EmptyableArg.Lift(a))((a, c) => f(a, c))(tpe)
 
-  def table[T <: Table[?]](f: Frag[Empty] => T): TableAlg[T] = new TableAlg[T] {
-    def make: Frag[Empty] => T = f
+  def table[T <: Table[?]](f: String => T): TableAlg[T] = new TableAlg[T] {
+    def make: String => T = f
   }
 
   def queryFull[F[_], G[_], A, B, C, D](a: EmptyableArg[C])(f: (A, C) => Query[G, Query.Select[B]], resolverCont: Resolver[F, G[B], D])(
