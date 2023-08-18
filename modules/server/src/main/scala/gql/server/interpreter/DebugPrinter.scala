@@ -102,6 +102,7 @@ object DebugPrinter {
       pc match {
         case Lift(_)        => Doc.text("Lift(...)")
         case EmbedEffect(_) => Doc.text("EmbedEffect")
+        case InlineBatch(_, _) => Doc.text("InlineBatch")
         case EmbedStream(signal, _) =>
           record("EmbedStream", kvs("signal" -> Doc.text(signal.toString())))
         case EmbedError() => Doc.text("EmbedError")

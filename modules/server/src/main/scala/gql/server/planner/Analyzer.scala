@@ -96,11 +96,12 @@ object Analyzer {
           case Compose(l, r)                       => analyzeStep[G](l) *> analyzeStep[G](r)
           case alg: Choose[G, ?, ?, ?, ?]          => goParallel(alg.fac, alg.fbc)
           case alg: First[G, ?, ?, ?]              => analyzeStep[G](alg.step)
-          case Batch(_, _) | EmbedEffect(_) | EmbedStream(_, _) =>
+          case Batch(_, _) | EmbedEffect(_) | EmbedStream(_, _) | InlineBatch(_, _) =>
             val name = step match {
               case Batch(id, _)           => s"batch_${id.id}"
               case EmbedEffect(cursor)    => cursor.asString
               case EmbedStream(_, cursor) => cursor.asString
+              case InlineBatch(_, cursor) => cursor.asString
               case _                      => ???
             }
 
@@ -134,7 +135,7 @@ object Analyzer {
         prepared.traverse_ { p =>
           resetParents {
             p match {
-              case PreparedDataField(_, _, cont, _, _)       => analyzeCont[G](cont.edges, cont.cont)
+              case PreparedDataField(_, _, cont, _, _)    => analyzeCont[G](cont.edges, cont.cont)
               case PreparedSpecification(_, _, selection) => analyzeFields[G](selection)
             }
           }

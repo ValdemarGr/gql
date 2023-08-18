@@ -46,6 +46,8 @@ object Step {
     final case class First[F[_], A, B, C](step: Step[F, A, B]) extends Step[F, (A, C), (B, C)]
 
     final case class Batch[F[_], K, V](id: BatchKey[K, V]) extends Step[F, Set[K], Map[K, V]]
+
+    final case class InlineBatch[F[_], K, V](run: Set[K] => F[Map[K, V]]) extends Step[F, Set[K], Map[K, V]]
   }
 
   def lift[F[_], I, O](f: I => O): Step[F, I, O] =
@@ -86,6 +88,9 @@ object Step {
       val k = BatchKey[K, V](id)
       (s.copy(nextId = id + 1, batchFunctions = s.batchFunctions + (k -> SchemaState.BatchFunction(f))), Alg.Batch(k))
     }
+
+  def inlineBatch[F[_], K, V](f: Set[K] => F[Map[K, V]]): Step[F, Set[K], Map[K, V]] =
+    Alg.InlineBatch(f)
 
   import cats.arrow._
   implicit def arrowChoiceForStep[F[_]]: ArrowChoice[Step[F, *, *]] = new ArrowChoice[Step[F, *, *]] {

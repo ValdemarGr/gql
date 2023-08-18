@@ -11,7 +11,6 @@ import java.util.UUID
 import gql.Arg
 import gql.EmptyableArg
 import skunk.codec.all._
-import cats.arrow.FunctionK
 import cats.data._
 
 object SkunkSchema extends QueryAlgebra with QueryDsl {

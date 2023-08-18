@@ -112,6 +112,9 @@ object Resolver extends ResolverInstances {
   def batch[F[_], K, V](f: Set[K] => F[Map[K, V]]): State[gql.SchemaState[F], Resolver[F, Set[K], Map[K, V]]] =
     Step.batch[F, K, V](f).map(new Resolver(_))
 
+  def inlineBatch[F[_], K, V](f: Set[K] => F[Map[K, V]]): Resolver[F, Set[K], Map[K, V]] =
+    new Resolver(Step.inlineBatch(f))
+
   implicit class RethrowOps[F[_], I, O](private val self: Resolver[F, I, Ior[String, O]]) extends AnyVal {
     def rethrow: Resolver[F, I, O] =
       self andThen (new Resolver(Step.embedError))

@@ -127,6 +127,21 @@ object SubqueryInterpreter {
                 runF.map(Chain.fromOption(_))
               }
               .flatMap(runEdgeCont(_, cont))
+          case alg: InlineBatch[F, k, o] =>
+            val cursor = alg.stableUniqueEdgeName
+            val keys: Set[k] = inputs.toList.flatMap(_.node.value.toList).toSet
+
+            attemptTimed(cursor, e => EvalFailure.BatchResolution(inputs.map(_.node.cursor), e), keys.size) {
+              alg.run(keys).map{ m =>
+                inputs.map{ id =>
+                  id.map { keys =>
+                    Chain.fromIterableOnce[k](keys).mapFilter(k => m.get(k) tupleLeft k).iterator.toMap
+                  }
+                }
+              }
+            }
+            .map(xs => Chain.fromOption(xs).flatten)
+            .flatMap(runEdgeCont(_, cont))
           case EmbedError() =>
             (inputs: Chain[IndexedData[F, Ior[String, C]]])
               .flatTraverse { id =>
