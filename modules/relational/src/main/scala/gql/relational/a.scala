@@ -622,74 +622,76 @@ object Test7 {
       override def traceId: IO[Option[String]] = IO.pure(None)
       override def traceUri: IO[Option[URI]] = IO.pure(None)
     }
-    Session
-      .single[IO](
-        host = "127.0.0.1",
-        user = "postgres",
-        database = "postgres",
-        password = "1234".some
-      )
-      .use { ses =>
-        ses.transaction.surround {
-          import gql.relational.MySchema
-          import gql.relational.SkunkSchema
-          val ss = SchemaShape.unit[IO](
-            fields[IO, Unit](
-              "name" -> lift(_ => "edlav"),
-              "contract" -> SkunkSchema.runField(ses, arg[UUID]("contractId"))(
-                (_: Unit, a: UUID) => MySchema.contractTable.join[Option](c => sql"${c.id} = ${uuid}".apply(a))
-              )
-            )
-          )
+    val pool =
+      Session
+        .single[IO](
+          host = "127.0.0.1",
+          user = "postgres",
+          database = "postgres",
+          password = "1234".some
+        )
 
-          Schema.simple(ss).flatMap { schema =>
-            gql
-              .Compiler[IO]
-              .compile(
-                schema,
-                """
+    val xaPool = pool.flatMap(ses => ses.transaction as ses)
+
+    import gql.relational.MySchema
+    import gql.relational.SkunkSchema
+    val ms = new MySchema(xaPool)
+    import ms._
+    val ss = SchemaShape.unit[IO](
+      fields[IO, Unit](
+        "name" -> lift(_ => "edlav"),
+        "contract" -> SkunkSchema.runField(xaPool, arg[UUID]("contractId"))((_: Unit, a: UUID) =>
+          ms.contractTable.join[Option](c => sql"${c.id} = ${uuid}".apply(a))
+        )(implicitly, gql.ast.gqlOutForOption(ms.contract))
+      )
+    )
+
+    Schema.simple(ss).flatMap { schema =>
+      gql
+        .Compiler[IO]
+        .compile(
+          schema,
+          """
         query {
           contract(contractId: "1ff0ca77-c13f-4af8-9166-72373f309247") {
             name
             id
-            entities(entityNames: ["Jane"]) {
+            fastEntities {
               name
               age
             }
-            entities2: entities(entityNames: ["Jane"]) {
+            fe2: fastEntities {
               name
               age
             }
-            entities3: entities(entityNames: ["Jane"]) {
+            fe3: fastEntities {
               name
               age
             }
-            entities4: entities(entityNames: ["Jane"]) {
+            fe4: fastEntities {
               name
               age
             }
-            entities5: entities(entityNames: ["Jane"]) {
+            fe5: fastEntities {
               name
               age
             }
-            entities6: entities(entityNames: ["Jane"]) {
+            fe6: fastEntities {
               name
               age
             }
-            entities7: entities(entityNames: ["Jane"]) {
+            fe7: fastEntities {
               name
               age
             }
           }
         }
         """
-              ) match {
-              case Right(Application.Query(run)) => run.flatMap(IO.println)
-              case x                             => IO.println(x)
-            }
-          }
-        }
+        ) match {
+        case Right(Application.Query(run)) => run.flatMap(IO.println)
+        case x                             => IO.println(x)
       }
+    }
   }
 
   case class EntityTable(alias: Fragment[Void]) extends Table[UUID] {
