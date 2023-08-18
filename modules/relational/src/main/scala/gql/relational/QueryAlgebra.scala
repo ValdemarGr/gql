@@ -147,7 +147,7 @@ trait QueryAlgebra {
           ys |+| nl |+| stringToFrag("where ") |+| hd.pred
       }
 
-      stringToFrag("select ") |+| selections |+| nl |+| suffix
+      stringToFrag("select ") |+| selections |+| suffix
     }
 
     case class Done[G[_], A, B](

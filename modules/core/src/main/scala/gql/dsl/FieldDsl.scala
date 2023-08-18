@@ -73,7 +73,7 @@ trait FieldDslFull {
 
   def lift[I] = new FieldDsl.PartiallyAppliedLift[I]
 
-  def build[F[_], I] = new FieldBuilder[F, I]
+  def build[F[_], I] = new FieldBuilder[F, I] {}
 
   def builder[F[_], I] = new FieldDsl.PartiallyAppliedFieldBuilder[F, I]
 
@@ -149,7 +149,7 @@ object FieldDsl extends FieldDslFull {
   }
 }
 
-final class FieldBuilder[F[_], I](private val dummy: Boolean = false) extends AnyVal {
+trait FieldBuilder[F[_], I] {
   def tpe(
       name: String,
       hd: (String, Field[F, I, ?]),
