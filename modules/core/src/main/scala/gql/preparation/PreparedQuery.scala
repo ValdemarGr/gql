@@ -43,6 +43,9 @@ object PreparedStep {
   final case class Batch[F[_], K, V](id: Step.BatchKey[K, V], globalEdgeId: UniqueBatchInstance[K, V])
       extends AnyRef
       with PreparedStep[F, Set[K], Map[K, V]]
+  final case class InlineBatch[F[_], K, V](run: Set[K] => F[Map[K, V]], stableUniqueEdgeName: UniqueEdgeCursor)
+      extends AnyRef
+      with PreparedStep[F, Set[K], Map[K, V]]
   final case class Choose[F[_], A, B, C, D](
       fac: PreparedStep[F, A, C],
       fbc: PreparedStep[F, B, D]
