@@ -19,6 +19,8 @@ import sbt._
 import Keys._
 import buildinfo.BuildInfo
 
+import java.io.File
+
 object GqlCodeGenPlugin extends AutoPlugin {
   object autoImport {
     object Gql {
@@ -116,17 +118,18 @@ object GqlCodeGenPlugin extends AutoPlugin {
           val f = base / rg.name
           IO.createDirectory(f)
 
-          val sh = (f / s"shared.scala")
+          val sh = f / s"shared.scala"
 
-          val queries = rg.files.map { in =>
+          def escapeSlash(s: String) = s.replace("\\", "\\\\")
+
+          val (queries, outFiles) = rg.files.map { in =>
             val fn = in.name.replaceAll("\\.", "_")
             val outFile = f / s"${fn}.scala"
-            s"""{"query": "${in.absolutePath}", "output": "${outFile.absolutePath}"}""" -> outFile
-          }
+            s"""{"query": "${escapeSlash(in.absolutePath)}", "output": "${escapeSlash(outFile.absolutePath)}"}""" -> outFile
+          }.unzip
 
-          s"""{"schema":"${rg.schemaPath.absolutePath}","shared":"${(f / s"shared.scala").absolutePath}","queries":[${queries
-              .map(_._1)
-              .mkString(",")}]}""" -> (queries.map(_._2) ++ Seq(sh))
+          s"""{"schema":"${escapeSlash(rg.schemaPath.absolutePath)}","shared":"${escapeSlash(sh.absolutePath)}","queries":[${queries
+              .mkString(",")}]}""" -> (outFiles ++ Seq(sh))
         }
       },
       Gql.invokeCodeGen := {
@@ -139,14 +142,10 @@ object GqlCodeGenPlugin extends AutoPlugin {
         val args =
           List(
             "java",
-            "-cp"
-          ) ++ List(cp.map(_.data.toString()).mkString(":")) ++ List(
             "gql.client.codegen.GeneratorCli"
-          ) ++ List("--validate").filter(_ => Gql.validate.value) ++ List(
-            "--input"
-          ) ++ cmd.map(_._1)
+          ) ++ List("--validate").filter(_ => Gql.validate.value) ++ List("--input") ++ cmd.map(_._1)
 
-        scala.sys.process.Process(args, None).! match {
+        scala.sys.process.Process(args, None, "CLASSPATH" -> cp.map(_.data.toString).mkString(File.pathSeparator)).! match {
           case 0 => cmd.flatMap(_._2)
           case n => sys.error(s"Process exited with code $n")
         }
