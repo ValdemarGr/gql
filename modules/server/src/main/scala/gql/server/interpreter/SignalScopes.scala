@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package gql.interpreter
+package gql.server.interpreter
 
 import cats.effect.implicits._
 import cats.effect._
@@ -22,10 +22,9 @@ import fs2.{Chunk, Stream}
 import cats.data._
 import gql._
 import cats._
-
-import gql.interpreter.BackpressureSignal
 import org.typelevel.paiges.Doc
 import scala.concurrent.duration.FiniteDuration
+
 // Offers a flat representation of a scope tree of streams
 // It respects different consumption strategies such as "signal" and "sequential"
 trait SignalScopes[F[_], A] {

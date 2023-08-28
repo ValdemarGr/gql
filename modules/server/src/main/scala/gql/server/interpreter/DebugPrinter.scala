@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package gql.interpreter
+package gql.server.interpreter
 
 import cats._
 import cats.implicits._
@@ -133,7 +133,7 @@ object DebugPrinter {
         case StepCont.TupleWith(_, next) => record("StepCont.TupleWith", stepContDoced(next))
       }
 
-    def streamingDataDoced[F[_]]: Doced[Interpreter.StreamingData[F, ?, ?]] = sd =>
+    def streamingDataDoced[F[_]]: Doced[QueryRunner.StreamingData[F, ?, ?]] = sd =>
       record(
         "StreamingData",
         kvs(

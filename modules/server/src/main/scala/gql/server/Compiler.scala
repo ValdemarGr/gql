@@ -19,12 +19,13 @@ import cats._
 import cats.implicits._
 import io.circe._
 import cats.effect._
-import gql.interpreter.{Interpreter, DebugPrinter}
+import gql.server.interpreter.{QueryInterpreter, DebugPrinter}
 import cats.data._
 import scala.concurrent.duration._
 import io.circe.syntax._
 import gql.preparation._
 import cats.parse.Caret
+import gql.server.planner.Planner
 
 sealed trait CompilationError
 object CompilationError {
@@ -136,29 +137,44 @@ object Compiler {
       implicit val s = schema.statistics
       implicit val p = schema.planner
 
+      compileWithInterpreter(
+        ps,
+        new QueryInterpreter.DefaultImpl[F](schema.state, debug, accumulate),
+        queryInput,
+        mutationInput,
+        subscriptionInput
+      )
+    }
+
+    def compileWithInterpreter[Q, M, S](
+        ps: PreparedRoot[F, Q, M, S],
+        interpreter: QueryInterpreter[F],
+        queryInput: F[Q] = F.unit,
+        mutationInput: F[M] = F.unit,
+        subscriptionInput: F[S] = F.unit
+    )(implicit planner: Planner[F]): Application[F] =
       ps match {
         case PreparedRoot.Query(ps) =>
           Application.Query {
             queryInput.flatMap { qi =>
-              Interpreter.runSync(qi, ps, schema.state, debug).map { case (e, d) => QueryResult(d, e.flatMap(_.asResult)) }
+              interpreter.runSync(qi, ps).map { case (e, d) => QueryResult(d, e.flatMap(_.asResult)) }
             }
           }
         case PreparedRoot.Mutation(ps) =>
           Application.Mutation {
             mutationInput.flatMap { mi =>
-              Interpreter.runSync(mi, ps, schema.state, debug).map { case (e, d) => QueryResult(d, e.flatMap(_.asResult)) }
+              interpreter.runSync(mi, ps).map { case (e, d) => QueryResult(d, e.flatMap(_.asResult)) }
             }
           }
         case PreparedRoot.Subscription(ps) =>
           Application.Subscription {
             fs2.Stream.eval(subscriptionInput).flatMap { si =>
-              Interpreter.runStreamed(si, ps, schema.state, debug, accumulate).map { case (e, d) =>
+              interpreter.runStreamed(si, ps).map { case (e, d) =>
                 QueryResult(d, e.flatMap(_.asResult))
               }
             }
           }
       }
-    }
   }
 
   def apply[F[_]](implicit F: Async[F]): PartiallyAppliedCompiler[F] = new PartiallyAppliedCompiler[F](F)
