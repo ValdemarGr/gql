@@ -257,3 +257,49 @@ object QueryInterpreter {
 
   }
 }
+
+abstract class QueryInterpreterProxy[F[_]](private val delegate: QueryInterpreter[F]) {
+  def queryRunner(
+      ss: SignalScopes[F, QueryRunner.StreamingData[F, ?, ?]],
+      batchAccumulator: BatchAccumulator[F],
+      sup: Supervisor[F]
+  ): QueryRunner[F] = delegate.queryRunner(ss, batchAccumulator, sup)
+
+  def evalOne[A, B](
+      input: QueryInterpreter.RunInput[F, A, B],
+      background: Supervisor[F],
+      batchAccum: BatchAccumulator[F],
+      ss: SignalScopes[F, QueryRunner.StreamingData[F, ?, ?]]
+  ): F[(Chain[EvalFailure], EvalNode[F, Json])] =
+    delegate.evalOne(input, background, batchAccum, ss)
+
+  def analyzeCost(metas: NonEmptyList[QueryInterpreter.RunInput[F, ?, ?]]): F[NodeTree] =
+    delegate.analyzeCost(metas)
+
+  def evalAll(
+      metas: NonEmptyList[QueryInterpreter.RunInput[F, ?, ?]],
+      schemaState: SchemaState[F],
+      background: Supervisor[F],
+      ss: SignalScopes[F, QueryRunner.StreamingData[F, ?, ?]]
+  )(implicit planner: Planner[F]): F[(Chain[EvalFailure], NonEmptyList[EvalNode[F, Json]])] =
+    delegate.evalAll(metas, schemaState, background, ss)
+
+  def compileStream[A](
+      rootInput: A,
+      rootSel: List[PreparedField[F, A]],
+      openTails: Boolean
+  )(implicit planner: Planner[F]): Stream[F, (Chain[EvalFailure], JsonObject)] =
+    delegate.compileStream(rootInput, rootSel, openTails)
+
+  def runStreamed[A](
+      rootInput: A,
+      rootSel: List[PreparedField[F, A]]
+  )(implicit planner: Planner[F]): Stream[F, (Chain[EvalFailure], JsonObject)] =
+    delegate.runStreamed(rootInput, rootSel)
+
+  def runSync[A](
+      rootInput: A,
+      rootSel: List[PreparedField[F, A]]
+  )(implicit planner: Planner[F]): F[(Chain[EvalFailure], JsonObject)] =
+    delegate.runSync(rootInput, rootSel)
+}
