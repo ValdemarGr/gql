@@ -258,7 +258,7 @@ object QueryInterpreter {
   }
 }
 
-abstract class QueryInterpreterProxy[F[_]](private val delegate: QueryInterpreter[F]) {
+abstract class QueryInterpreterProxy[F[_]](private val delegate: QueryInterpreter[F]) extends QueryInterpreter[F] {
   def queryRunner(
       ss: SignalScopes[F, QueryRunner.StreamingData[F, ?, ?]],
       batchAccumulator: BatchAccumulator[F],
