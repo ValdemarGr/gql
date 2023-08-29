@@ -405,7 +405,7 @@ Schema.simple(schema).map(Compiler[IO].compile(_, query, accumulate=Some(10.mill
 furthermore, gql can also emit interpreter information if you want to look into what gql is doing:
 ```scala mdoc
 Schema.simple(schema)
-  .map(Compiler[IO].compile(_, query, debug=gql.interpreter.DebugPrinter[IO](s => IO(println(s)))))
+  .map(Compiler[IO].compile(_, query, debug=gql.server.interpreter.DebugPrinter[IO](s => IO(println(s)))))
   .flatMap { case Right(Application.Subscription(stream)) => stream.take(3).compile.drain }
   .unsafeRunSync()
 ```
