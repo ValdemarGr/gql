@@ -124,15 +124,21 @@ object SchemaShape {
       copy(implementations = implementations + (name -> impl))
   }
 
+  sealed trait VisitNode[+F[_]]
+  object VisitNode {
+    final case class InNode(value: In[?]) extends VisitNode[Nothing]
+    final case class OutNode[F[_]](value: Out[F, ?]) extends VisitNode[F]
+    final case class FieldNode[F[_], A](value: AnyField[F, ?, ?]) extends VisitNode[F]
+  }
   def visit[F[_], G[_]: Monad](
       root: SchemaShape[F, ?, ?, ?]
-  )(pf: PartialFunction[Either[In[?], Out[F, ?]], G[Unit] => G[Unit]])(implicit D0: Defer[G]): G[Unit] = {
+  )(pf: PartialFunction[VisitNode[F], G[Unit] => G[Unit]])(implicit D0: Defer[G]): G[Unit] = {
     type H[A] = Kleisli[G, Set[String], A]
     val H = Monad[H]
     val L = Local[H, Set[String]]
     val D = Defer[H]
 
-    def runPf(e: Either[In[?], Out[F, ?]]) = pf.lift(e).getOrElse[G[Unit] => G[Unit]](ga => ga)
+    def runPf(vn: VisitNode[F]) = pf.lift(vn).getOrElse[G[Unit] => G[Unit]](ga => ga)
 
     def nextIfNotSeen(tl: Toplevel[F, ?])(ha: => H[Unit]): H[Unit] =
       L.ask[Set[String]].flatMap { seen =>
@@ -141,7 +147,7 @@ object SchemaShape {
       }
 
     def goOutput(out: Out[F, ?]): H[Unit] = D.defer {
-      lazy val lifted = runPf(Right(out))
+      lazy val lifted = runPf(VisitNode.OutNode(out))
       out match {
         case o: OutArr[?, ?, ?, ?] => goOutput(o.of).mapF(lifted)
         case o: OutOpt[?, ?, ?]    => goOutput(o.of).mapF(lifted)
@@ -149,9 +155,10 @@ object SchemaShape {
           nextIfNotSeen(t) {
             lazy val nextF = t match {
               case ol: ObjectLike[F, ?] =>
-                ol.abstractFields.traverse_ { case (_, af) =>
-                  goOutput(af.output.value) >>
-                    af.arg.traverse_(_.entries.traverse_(x => goInput(x.input.value)))
+                ol.anyFields.traverse_ { case (_, af) =>
+                  (goOutput(af.output.value) >>
+                    af.asAbstract.arg.traverse_(_.entries.traverse_(x => goInput(x.input.value))))
+                    .mapF(runPf(VisitNode.FieldNode(af)))
                 } >> ol.implementsMap.values.toList.map(_.value).traverse_(goOutput)
               case Union(_, instances, _) =>
                 instances.traverse_(inst => goOutput(inst.tpe.value))
@@ -164,7 +171,7 @@ object SchemaShape {
     }
 
     def goInput(in: In[?]): H[Unit] = D.defer {
-      lazy val lifted = runPf(Left(in))
+      lazy val lifted = runPf(VisitNode.InNode(in))
       in match {
         case InArr(of, _) => goInput(of).mapF(lifted)
         case InOpt(of)    => goInput(of).mapF(lifted)
@@ -205,15 +212,15 @@ object SchemaShape {
 
     visit[F, H](root) { e =>
       lazy val cont = e match {
-        case Left(inPf(g1))   => (g2: H[Unit]) => StateT.liftF(g1).flatMap(_ => g2)
-        case Right(outPf(g1)) => (g2: H[Unit]) => StateT.liftF(g1).flatMap(_ => g2)
-        case _                => (g2: H[Unit]) => g2
+        case VisitNode.InNode(inPf(g1))   => (g2: H[Unit]) => StateT.liftF(g1).flatMap(_ => g2)
+        case VisitNode.OutNode(outPf(g1)) => (g2: H[Unit]) => StateT.liftF(g1).flatMap(_ => g2)
+        case _                            => (g2: H[Unit]) => g2
       }
 
       e match {
-        case Left(t: InToplevel[?])      => cont.andThen(nextIfNotSeen(t)(_))
-        case Right(t: OutToplevel[F, ?]) => cont.andThen(nextIfNotSeen(t)(_))
-        case _                           => cont
+        case VisitNode.InNode(t: InToplevel[?])      => cont.andThen(nextIfNotSeen(t)(_))
+        case VisitNode.OutNode(t: OutToplevel[F, ?]) => cont.andThen(nextIfNotSeen(t)(_))
+        case _                                       => cont
       }
     }.runA(Set.empty)
   }
