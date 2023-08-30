@@ -11,6 +11,9 @@ import gql._
 import gql.preparation._
 import cats.effect.std.Supervisor
 
+/** The [[QueryInterpreter]] will prepare a query for execution by inspecting the ast and planning the query accordingly.
+ *  Once all inputs have been prepared, the execution AST is passed to the [[SubqueryInterpreter]] for evaluation.
+  */
 trait QueryInterpreter[F[_]] {
   import QueryInterpreter._
 

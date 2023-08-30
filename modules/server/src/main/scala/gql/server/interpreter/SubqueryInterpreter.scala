@@ -29,6 +29,12 @@ import gql.resolver._
 import io.circe.syntax._
 import gql._
 
+/** The [[SubqueryInterpreter]] recursively runs through the AST and performs a multitude of tasks:
+ *    - Runs the [[Resolver]]/[[Step]]s defined in the query.
+ *    - Accumulates errors that occur during the evaluation of the query.
+ *    - Logs streams that have been subscribed to.
+ *    - Batches computations that have been marked as batchable.
+ */
 trait SubqueryInterpreter[F[_]] {
   type W[A] = WriterT[F, Chain[EvalFailure], A]
 
