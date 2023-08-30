@@ -128,9 +128,9 @@ object SchemaShape {
   object VisitNode {
     final case class InNode(value: In[?]) extends VisitNode[Nothing]
     final case class OutNode[F[_]](value: Out[F, ?]) extends VisitNode[F]
-    final case class FieldNode[F[_], A](value: AnyField[F, ?, ?]) extends VisitNode[F]
+    final case class FieldNode[F[_], A](name: String, value: AnyField[F, ?, ?]) extends VisitNode[F]
   }
-  def visit[F[_], G[_]: Monad](
+  def visit[F[_], G[_]: Monad: Parallel](
       root: SchemaShape[F, ?, ?, ?]
   )(pf: PartialFunction[VisitNode[F], G[Unit] => G[Unit]])(implicit D0: Defer[G]): G[Unit] = {
     type H[A] = Kleisli[G, Set[String], A]
@@ -155,13 +155,13 @@ object SchemaShape {
           nextIfNotSeen(t) {
             lazy val nextF = t match {
               case ol: ObjectLike[F, ?] =>
-                ol.anyFields.traverse_ { case (_, af) =>
+                ol.anyFields.parTraverse_ { case (name, af) =>
                   (goOutput(af.output.value) >>
-                    af.asAbstract.arg.traverse_(_.entries.traverse_(x => goInput(x.input.value))))
-                    .mapF(runPf(VisitNode.FieldNode(af)))
-                } >> ol.implementsMap.values.toList.map(_.value).traverse_(goOutput)
+                    af.asAbstract.arg.parTraverse_(_.entries.parTraverse_(x => goInput(x.input.value))))
+                    .mapF(runPf(VisitNode.FieldNode(name, af)))
+                } >> ol.implementsMap.values.toList.map(_.value).parTraverse_(goOutput)
               case Union(_, instances, _) =>
-                instances.traverse_(inst => goOutput(inst.tpe.value))
+                instances.parTraverse_(inst => goOutput(inst.tpe.value))
               case _ => H.unit
             }
 
@@ -179,7 +179,7 @@ object SchemaShape {
           nextIfNotSeen(t) {
             val nextF = t match {
               case Input(_, fields, _) =>
-                fields.entries.traverse_(x => goInput(x.input.value))
+                fields.entries.parTraverse_(x => goInput(x.input.value))
               case _ => H.unit
             }
 
@@ -190,9 +190,9 @@ object SchemaShape {
 
     val outs = root.query :: root.mutation.toList ++ root.subscription.toList ++ root.outputTypes
 
-    val outsF = outs.traverse_(goOutput)
+    val outsF = outs.parTraverse_(goOutput)
 
-    val insF = root.inputTypes.traverse_(goInput)
+    val insF = root.inputTypes.parTraverse_(goInput)
 
     (outsF >> insF).run(Set.empty)
   }
@@ -203,6 +203,7 @@ object SchemaShape {
     type H[A] = StateT[G, Set[String], A]
     val S = Stateful[H, Set[String]]
     val H = Monad[H]
+    implicit lazy val parForState = Parallel.identity[H]
 
     def nextIfNotSeen(tl: Toplevel[F, ?])(ha: => H[Unit]): H[Unit] =
       S.get.flatMap { seen =>
