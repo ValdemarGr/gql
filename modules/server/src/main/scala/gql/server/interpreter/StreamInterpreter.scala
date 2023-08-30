@@ -12,11 +12,11 @@ import fs2.Stream
 import scala.concurrent.duration.FiniteDuration
 
 /** The [[StreamInterpreter]] is resposible for:
- *   - Wireing together results for a query.
- *   - Handling incoming asynchronous events.
- *   - Handling resource lifetimes.
- *
- *  For actual query excution, take a look at [[QueryInterpreter]].
+  *   - Wireing together results for a query.
+  *   - Handling incoming asynchronous events.
+  *   - Handling resource lifetimes.
+  *
+  * For actual query excution, take a look at [[QueryInterpreter]].
   */
 trait StreamInterpreter[F[_]] {
   import StreamInterpreter._
