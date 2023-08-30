@@ -182,8 +182,8 @@ object Goi {
   def collectAttributes[F[_]](
       shape: SchemaShape[F, ?, ?, ?]
   ): Either[NonEmptyChain[String], List[CollectedAttribute[F, _, _]]] = {
-    type Effect[A] = EitherT[Writer[List[CollectedAttribute[F, ?, ?]], *], NonEmptyChain[String], A]
-    def go[H[_]](implicit H: Monad[H], R: Raise[H, NonEmptyChain[String]], T: Tell[H, List[CollectedAttribute[F, ?, ?]]]): H[Unit] =
+    type Effect[A] = EitherT[WriterT[Eval, List[CollectedAttribute[F, ?, ?]], *], NonEmptyChain[String], A]
+    def go[H[_]: Defer](implicit H: Monad[H], R: Raise[H, NonEmptyChain[String]], T: Tell[H, List[CollectedAttribute[F, ?, ?]]]): H[Unit] =
       shape.foldMapK[H]() { case t: Type[F, a] =>
         val fas = t.attributes.collect { case g: GoiAttribute[F, a, ?] => g }
         val n = t.name
@@ -196,7 +196,7 @@ object Goi {
         }
       }
 
-    val (accum, errs) = go[Effect].value.run
+    val (accum, errs) = go[Effect].value.run.value
     errs as accum
   }
 
