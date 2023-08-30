@@ -25,7 +25,6 @@ import scala.concurrent.duration._
 import io.circe.syntax._
 import gql.preparation._
 import cats.parse.Caret
-import gql.server.planner.Planner
 
 sealed trait CompilationError
 object CompilationError {

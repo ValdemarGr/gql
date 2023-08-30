@@ -30,7 +30,7 @@ import io.circe.syntax._
 import gql._
 
 /** The [[SubqueryInterpreter]] recursively runs through the AST and performs a multitude of tasks:
-  *   - Runs the [[Resolver]]/[[Step]]s defined in the query.
+  *   - Runs the [[gql.resolver.Resolver]]/[[gql.resolver.Step]]s defined in the query.
   *   - Accumulates errors that occur during the evaluation of the query.
   *   - Logs streams that have been subscribed to.
   *   - Batches computations that have been marked as batchable.
@@ -82,7 +82,7 @@ object SubqueryInterpreter {
               case None     => W.pure(Chain.empty)
               case Some(cs) => runEdgeCont(cs, next)
             }
-          case d: StepCont.Done[F, ?] =>
+          case d: StepCont.Done[f, ?] =>
             startNext(d.prep, cs.map(_.node))
               .map(_.zipWith(cs) { case (j, IndexedData(i, _)) => (i, j) })
         }
