@@ -19,7 +19,7 @@ import cats._
 import cats.implicits._
 import io.circe._
 import cats.effect._
-import gql.server.interpreter.{QueryInterpreter, DebugPrinter}
+import gql.server.interpreter.{StreamInterpreter, DebugPrinter}
 import cats.data._
 import scala.concurrent.duration._
 import io.circe.syntax._
@@ -139,7 +139,7 @@ object Compiler {
 
       compileWithInterpreter(
         ps,
-        new QueryInterpreter.DefaultImpl[F](schema.state, debug, accumulate),
+        StreamInterpreter[F](schema.state, debug, accumulate),
         queryInput,
         mutationInput,
         subscriptionInput
@@ -148,31 +148,23 @@ object Compiler {
 
     def compileWithInterpreter[Q, M, S](
         ps: PreparedRoot[F, Q, M, S],
-        interpreter: QueryInterpreter[F],
+        interpreter: StreamInterpreter[F],
         queryInput: F[Q] = F.unit,
         mutationInput: F[M] = F.unit,
         subscriptionInput: F[S] = F.unit
-    )(implicit planner: Planner[F]): Application[F] =
+    ): Application[F] =
       ps match {
         case PreparedRoot.Query(ps) =>
           Application.Query {
-            queryInput.flatMap { qi =>
-              interpreter.runSync(qi, ps).map { case (e, d) => QueryResult(d, e.flatMap(_.asResult)) }
-            }
+            queryInput.flatMap(interpreter.interpretSync(_, ps).map(_.asQueryResult))
           }
         case PreparedRoot.Mutation(ps) =>
           Application.Mutation {
-            mutationInput.flatMap { mi =>
-              interpreter.runSync(mi, ps).map { case (e, d) => QueryResult(d, e.flatMap(_.asResult)) }
-            }
+            mutationInput.flatMap(interpreter.interpretSync(_, ps).map(_.asQueryResult))
           }
         case PreparedRoot.Subscription(ps) =>
           Application.Subscription {
-            fs2.Stream.eval(subscriptionInput).flatMap { si =>
-              interpreter.runStreamed(si, ps).map { case (e, d) =>
-                QueryResult(d, e.flatMap(_.asResult))
-              }
-            }
+            fs2.Stream.eval(subscriptionInput).flatMap(interpreter.interpretStream(_, ps).map(_.asQueryResult))
           }
       }
   }

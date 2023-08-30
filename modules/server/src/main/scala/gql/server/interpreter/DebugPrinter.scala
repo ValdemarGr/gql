@@ -133,7 +133,7 @@ object DebugPrinter {
         case StepCont.TupleWith(_, next) => record("StepCont.TupleWith", stepContDoced(next))
       }
 
-    def streamingDataDoced[F[_]]: Doced[QueryRunner.StreamingData[F, ?, ?]] = sd =>
+    def streamingDataDoced[F[_]]: Doced[StreamingData[F, ?, ?]] = sd =>
       record(
         "StreamingData",
         kvs(
