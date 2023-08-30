@@ -13,6 +13,10 @@ import gql.EmptyableArg
 import skunk.codec.all._
 import cats.data._
 import gql.resolver.Resolver
+import cats.effect.std.AtomicCell
+import cats.effect.std.Supervisor
+import cats.effect.std.Hotswap
+import cats.effect.std.Mutex
 
 object SkunkSchema extends QueryAlgebra with QueryDsl {
   type Frag = skunk.AppliedFragment
@@ -27,17 +31,23 @@ object SkunkSchema extends QueryAlgebra with QueryDsl {
   type Decoder[A] = skunk.Decoder[A]
   def optDecoder[A](d: Decoder[A]): Decoder[Option[A]] = d.opt
 
-  def runQuery[F[_]: MonadCancelThrow, G[_], I, B, ArgType](pool: Resource[F, Session[F]], toplevelArg: EmptyableArg[ArgType], q: (I, ArgType) => Query[G, B]) = {
+  def runQuery[F[_]: MonadCancelThrow, G[_], I, B, ArgType](
+      pool: Resource[F, Session[F]],
+      toplevelArg: EmptyableArg[ArgType],
+      q: (I, ArgType) => Query[G, B]
+  ) = {
     resolveQuery[F, G, I, B, ArgType](toplevelArg, q).evalMap { case (qc, d: Interpreter.Done[G, a, QueryResult[B]]) =>
       val af = Interpreter.renderQuery(qc)
       println(af.fragment.sql)
       val out: F[List[a]] = pool.use(_.execute(af.fragment.query(d.dec))(af.argument))
 
-      out.map{ x => println(x.size);x}.map(xs => d.reassoc(xs).toIor)
+      out.map { x => println(x.size); x }.map(xs => d.reassoc(xs).toIor)
     }.rethrow
   }
 
-  def runField[F[_]: MonadCancelThrow, G[_], I, B, ArgType](pool: Resource[F, Session[F]], arg: Arg[ArgType])(q: (I, ArgType) => Query[G, B])(implicit
+  def runField[F[_]: MonadCancelThrow, G[_], I, B, ArgType](pool: Resource[F, Session[F]], arg: Arg[ArgType])(
+      q: (I, ArgType) => Query[G, B]
+  )(implicit
       tpe: => Out[F, G[QueryResult[B]]]
   ) = Field(runQuery(pool, EmptyableArg.Lift(arg), q), Eval.later(tpe))
 
@@ -53,6 +63,39 @@ object SkunkSchema extends QueryAlgebra with QueryDsl {
       val col = aliased(sql"#${x}")
       col -> Query.Select(NonEmptyChain.one(col.apply(Void)), d)
     }
+  }
+
+  trait Connection[F[_]] { self =>
+    def connection: Resource[F, Session[F]]
+
+    def forceClose: F[Unit]
+
+    def mapK[G[_]: MonadCancelThrow](fk: F ~> G)(implicit F: MonadCancelThrow[F]): Connection[G] =
+      new Connection[G] {
+        override def connection: Resource[G, Session[G]] =
+          self.connection.map(_.mapK(fk)).mapK(fk)
+
+        override def forceClose: G[Unit] = fk(self.forceClose)
+      }
+  }
+
+  object Connection {
+    def fromPool[F[_]](pool: Resource[F, Session[F]])(implicit F: Concurrent[F]): Resource[F, Connection[F]] =
+      Hotswap.create[F, Session[F]].evalMap { hs =>
+        Mutex[F].map { mtx =>
+          new Connection[F] {
+            def forceClose: F[Unit] = hs.clear
+
+            def connection: Resource[F, Session[F]] = 
+              mtx.lock >>
+                hs.get.evalMap {
+                  case None      => hs.swap(pool.flatTap(_.transaction))
+                  case Some(ses) => F.pure(ses)
+                }
+            
+          }
+        }
+      }
   }
 }
 
@@ -139,47 +182,57 @@ class MySchema(pool: Resource[IO, Session[IO]]) {
     "Contract",
     "name" -> query(c => (c.selName, c.selId).mapN(_ + _.toString())),
     "id" -> query(_.selId),
-    "fastEntities" -> queryAndThen[IO, Lambda[X => X], ContractTable, UUID, List[QueryResult[EntityTable2]]]{ c =>
-      //contractEntityTable.join[List](cet => sql"${c.id} = ${cet.contractId}".apply(Void)).map(_.selEntityId)
+    "fastEntities" -> queryAndThen[IO, Lambda[X => X], ContractTable, UUID, List[QueryResult[EntityTable2]]] { c =>
+      // contractEntityTable.join[List](cet => sql"${c.id} = ${cet.contractId}".apply(Void)).map(_.selEntityId)
       c.selId
     } { (xs: Resolver[IO, UUID, UUID]) =>
-      val res = resolveQuery[IO, List, UUID, EntityTable2, Unit](EmptyableArg.Empty, { (i, _) =>
-        entityTable2.join[List](e => sql"${e.contractId} = ${uuid}".apply(i))
-      })
+      val res = resolveQuery[IO, List, UUID, EntityTable2, Unit](
+        EmptyableArg.Empty,
+        { (i, _) =>
+          entityTable2.join[List](e => sql"${e.contractId} = ${uuid}".apply(i))
+        }
+      )
       type K = (UUID, Interpreter.QueryContent, Interpreter.Done[List, _, QueryResult[EntityTable2]])
       type V = List[QueryResult[EntityTable2]]
-      val ilb = Resolver.inlineBatch[IO, (UUID, Interpreter.QueryContent, Interpreter.Done[List, _, QueryResult[EntityTable2]]), V]{ (ys: Set[K]) =>
-        ys.toList.headOption.traverse{ case (_, qc, d: Interpreter.Done[List, a, QueryResult[EntityTable2]]) =>
-          val af = Interpreter.renderQuery(qc.copy(selections = Chain(void"t1.contract_id") ++ qc.selections))
+      val ilb = Resolver.inlineBatch[IO, (UUID, Interpreter.QueryContent, Interpreter.Done[List, _, QueryResult[EntityTable2]]), V] {
+        (ys: Set[K]) =>
+          ys.toList.headOption
+            .traverse { case (_, qc, d: Interpreter.Done[List, a, QueryResult[EntityTable2]]) =>
+              val af = Interpreter.renderQuery(qc.copy(selections = Chain(void"t1.contract_id") ++ qc.selections))
 
-          val done2 = Interpreter.Done[Lambda[X => Map[UUID, List[X]]], (UUID, a),  QueryResult[EntityTable2]](
-            uuid ~ d.dec,
-            xs => 
-              xs.groupMap{ case (k, _) => k }{ case (_, v) => v }.toList.traverse{ case (k, vs) =>
-                d.reassoc(vs) tupleLeft k
-              }.map(_.toMap)
-          )
+              val done2 = Interpreter.Done[Lambda[X => Map[UUID, List[X]]], (UUID, a), QueryResult[EntityTable2]](
+                uuid ~ d.dec,
+                xs =>
+                  xs.groupMap { case (k, _) => k } { case (_, v) => v }
+                    .toList
+                    .traverse { case (k, vs) =>
+                      d.reassoc(vs) tupleLeft k
+                    }
+                    .map(_.toMap)
+              )
 
-          println(af.fragment.sql)
-          val out = pool.use(_.execute(af.fragment.query(done2.dec))(af.argument))
+              println(af.fragment.sql)
+              val out = pool.use(_.execute(af.fragment.query(done2.dec))(af.argument))
 
-          out
-            .map{ x => println(x.size);x}.map(xs => done2.reassoc(xs).toIor)
-            .map{ x =>
-              x.toEither.toOption.get.map{ case (k, v) => (k, qc, d) -> v }
+              out
+                .map { x => println(x.size); x }
+                .map(xs => done2.reassoc(xs).toIor)
+                .map { x =>
+                  x.toEither.toOption.get.map { case (k, v) => (k, qc, d) -> v }
+                }
             }
-        }.map(_.get.asInstanceOf[Map[K, V]])
+            .map(_.get.asInstanceOf[Map[K, V]])
       }
 
-      val prepped = res.tupleIn.map{ case ((qc, d), id) => 
+      val prepped = res.tupleIn.map { case ((qc, d), id) =>
         Set((id, qc, d).asInstanceOf[K]): Set[K]
       }
 
-      val combined = prepped.andThen(ilb).map(_.map{ case ((k, _, _), vs) => k -> vs })
-        .tupleIn.map{ case (outs, id) => println(outs); outs(id) }
+      val combined =
+        prepped.andThen(ilb).map(_.map { case ((k, _, _), vs) => k -> vs }).tupleIn.map { case (outs, id) => println(outs); outs(id) }
 
       combined
-    },/*
+    } /*
     "fastEntities" -> cont(
       arg[Option[List[String]]]("entityNames")
     ) { (c, ens) =>
