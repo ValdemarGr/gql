@@ -41,7 +41,7 @@ final case class SchemaShape[F[_], Q, M, S](
   def addInputTypes(t: InToplevel[?]*): SchemaShape[F, Q, M, S] =
     copy(inputTypes = t.toList ++ inputTypes)
 
-  def foldMapK[G[_]: Monad](
+  def foldMapK[G[_]: Monad: Defer](
       inPf: PartialFunction[In[?], G[Unit]] = PartialFunction.empty
   )(
       outPf: PartialFunction[Out[F, ?], G[Unit]] = PartialFunction.empty
@@ -124,67 +124,98 @@ object SchemaShape {
       copy(implementations = implementations + (name -> impl))
   }
 
-  def foldMapK[F[_], G[_]: Monad](root: SchemaShape[F, ?, ?, ?])(inPf: PartialFunction[In[?], G[Unit]])(
-      outPf: PartialFunction[Out[F, ?], G[Unit]]
-  ): G[Unit] = {
-    type Alg[F[_]] = Stateful[F, Set[String]]
-    type Fk[H[_]] = MonadPartialOrder[G, H]
+  def visit[F[_], G[_]: Monad](
+      root: SchemaShape[F, ?, ?, ?]
+  )(pf: PartialFunction[Either[In[?], Out[F, ?]], G[Unit] => G[Unit]])(implicit D0: Defer[G]): G[Unit] = {
+    type H[A] = Kleisli[G, Set[String], A]
+    val H = Monad[H]
+    val L = Local[H, Set[String]]
+    val D = Defer[H]
 
-    def nextIfNotSeen[H[_]](tl: Toplevel[F, ?])(ha: => H[Unit])(implicit H: Monad[H], A: Alg[H]): H[Unit] =
-      A.get.flatMap { seen =>
+    def runPf(e: Either[In[?], Out[F, ?]]) = pf.lift(e).getOrElse[G[Unit] => G[Unit]](ga => ga)
+
+    def nextIfNotSeen(tl: Toplevel[F, ?])(ha: => H[Unit]): H[Unit] =
+      L.ask[Set[String]].flatMap { seen =>
         if (seen.contains(tl.name)) H.unit
-        else A.modify(_ + tl.name) >> ha
+        else L.local(ha)(_ + tl.name)
       }
 
-    def goOutput[H[_]](out: Out[F, ?])(implicit H: Monad[H], A: Alg[H], fk: Fk[H]): H[Unit] = {
-      lazy val lifted = fk(outPf.lift(out).sequence_)
+    def goOutput(out: Out[F, ?]): H[Unit] = D.defer {
+      lazy val lifted = runPf(Right(out))
       out match {
-        case o: OutArr[?, ?, ?, ?] => lifted >> goOutput[H](o.of)
-        case o: OutOpt[?, ?, ?]    => lifted >> goOutput[H](o.of)
+        case o: OutArr[?, ?, ?, ?] => goOutput(o.of).mapF(lifted)
+        case o: OutOpt[?, ?, ?]    => goOutput(o.of).mapF(lifted)
         case t: OutToplevel[F, ?] =>
-          nextIfNotSeen[H](t) {
+          nextIfNotSeen(t) {
             lazy val nextF = t match {
               case ol: ObjectLike[F, ?] =>
                 ol.abstractFields.traverse_ { case (_, af) =>
-                  goOutput[H](af.output.value) >>
-                    af.arg.traverse_(_.entries.traverse_(x => goInput[H](x.input.value)))
-                } >> ol.implementsMap.values.toList.map(_.value).traverse_(goOutput[H])
+                  goOutput(af.output.value) >>
+                    af.arg.traverse_(_.entries.traverse_(x => goInput(x.input.value)))
+                } >> ol.implementsMap.values.toList.map(_.value).traverse_(goOutput)
               case Union(_, instances, _) =>
-                instances.traverse_(inst => goOutput[H](inst.tpe.value))
+                instances.traverse_(inst => goOutput(inst.tpe.value))
               case _ => H.unit
             }
 
-            lifted >> nextF
+            nextF.mapF(lifted)
           }
       }
     }
 
-    def goInput[H[_]](in: In[?])(implicit H: Monad[H], A: Alg[H], fk: Fk[H]): H[Unit] = {
-      lazy val lifted = fk(inPf.lift(in).sequence_)
+    def goInput(in: In[?]): H[Unit] = D.defer {
+      lazy val lifted = runPf(Left(in))
       in match {
-        case InArr(of, _) => lifted >> goInput[H](of)
-        case InOpt(of)    => lifted >> goInput[H](of)
+        case InArr(of, _) => goInput(of).mapF(lifted)
+        case InOpt(of)    => goInput(of).mapF(lifted)
         case t: InToplevel[?] =>
-          nextIfNotSeen[H](t) {
+          nextIfNotSeen(t) {
             val nextF = t match {
               case Input(_, fields, _) =>
-                fields.entries.traverse_(x => goInput[H](x.input.value))
+                fields.entries.traverse_(x => goInput(x.input.value))
               case _ => H.unit
             }
 
-            lifted >> nextF
+            nextF.mapF(lifted)
           }
       }
     }
 
     val outs = root.query :: root.mutation.toList ++ root.subscription.toList ++ root.outputTypes
 
-    type Effect[A] = StateT[G, Set[String], A]
-    val outsF = outs.traverse_(goOutput[Effect])
+    val outsF = outs.traverse_(goOutput)
 
-    val insF = root.inputTypes.traverse_(goInput[Effect])
+    val insF = root.inputTypes.traverse_(goInput)
 
-    (outsF >> insF).runA(Set.empty)
+    (outsF >> insF).run(Set.empty)
+  }
+
+  def foldMapK[F[_], G[_]: Monad: Defer](root: SchemaShape[F, ?, ?, ?])(inPf: PartialFunction[In[?], G[Unit]])(
+      outPf: PartialFunction[Out[F, ?], G[Unit]]
+  ): G[Unit] = {
+    type H[A] = StateT[G, Set[String], A]
+    val S = Stateful[H, Set[String]]
+    val H = Monad[H]
+
+    def nextIfNotSeen(tl: Toplevel[F, ?])(ha: => H[Unit]): H[Unit] =
+      S.get.flatMap { seen =>
+        if (seen.contains(tl.name)) H.unit
+        else S.modify(_ + tl.name) >> ha
+      }
+
+    visit[F, H](root) { e =>
+      lazy val cont = e match {
+        case Left(inPf(g1))   => (g2: H[Unit]) => StateT.liftF(g1).flatMap(_ => g2)
+        case Right(outPf(g1)) => (g2: H[Unit]) => StateT.liftF(g1).flatMap(_ => g2)
+        case _                => (g2: H[Unit]) => g2
+      }
+
+      e match {
+        case Left(t: InToplevel[?])      => cont.andThen(nextIfNotSeen(t)(_))
+        case Right(t: OutToplevel[F, ?]) => cont.andThen(nextIfNotSeen(t)(_))
+        case _                           => cont
+      }
+    }.runA(Set.empty)
   }
 
   def discover[F[_]](shape: SchemaShape[F, ?, ?, ?]): DiscoveryState[F] = {
