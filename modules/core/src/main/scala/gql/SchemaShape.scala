@@ -41,11 +41,13 @@ final case class SchemaShape[F[_], Q, M, S](
   def addInputTypes(t: InToplevel[?]*): SchemaShape[F, Q, M, S] =
     copy(inputTypes = t.toList ++ inputTypes)
 
-  def foldMapK[G[_]: Monad: Defer](
-      inPf: PartialFunction[In[?], G[Unit]] = PartialFunction.empty
-  )(
-      outPf: PartialFunction[Out[F, ?], G[Unit]] = PartialFunction.empty
-  ): G[Unit] = SchemaShape.foldMapK[F, G](this)(inPf)(outPf)
+  def visit[G[_]: Monad: Parallel: Defer, A: Monoid](
+      pf: PartialFunction[SchemaShape.VisitNode[F], G[A] => G[A]]
+  ): G[A] = SchemaShape.visit[F, G, A](this)(pf)
+
+  def visitOnce[G[_]: Monad: Defer, A: Monoid](
+      pf: PartialFunction[SchemaShape.VisitNode[F], G[A]]
+  ): G[A] = SchemaShape.visitOnce[F, G, A](this)(pf)
 
   lazy val discover = SchemaShape.discover[F](this)
 
@@ -130,23 +132,50 @@ object SchemaShape {
     final case class OutNode[F[_]](value: Out[F, ?]) extends VisitNode[F]
     final case class FieldNode[F[_], A](name: String, value: AnyField[F, ?, ?]) extends VisitNode[F]
   }
-  def visit[F[_], G[_]: Monad: Parallel](
+
+  /** A powerful fold over the schema. This functions lets the caller choose how to handle recursion explicitly, which allows Kleisli
+    * algebras (Local) to be possible.
+    *
+    * For instance, counting the number of fields from parent to leaf:
+    * {{{
+    *    case class State(leaf: String, fields: Int)
+    *    type G[A] = Kleisli[WriterT[Eval, List[State], *], Int, A]
+    *    val G = Monad[G]
+    *    val L = Local[G, Int]
+    *    val T = Tell[G, List[State]]
+    *
+    *    object & {
+    *      def unapply[A](a: A): Option[(A, A)] = Some((a, a))
+    *    }
+    *
+    *    val states: List[State] = ScheamShape.visit[F, G](schema) {
+    *      case VisitNode.FieldNode(_, _) => (rec: G[Unit]) => L.local(rec)(_ + 1)
+    *      case VisitNode.OutNode((_: Scalar[?] | _: Enum[?]) & tl: Toplevel[F, ?]) => rec =>
+    *        L.ask[Int].flatMap(i => T.tell(List(State(tl.name, i)))) >> rec
+    *    }.run(0).run.written.value
+    * }}}
+    *
+    * Consider that if we used state without being explicit about the recursion, we wouldn't be able to "pop" the field count.
+    *
+    * An idiomatic combinator name may be `parRecFoldMapM`
+    */
+  def visit[F[_], G[_]: Monad: Parallel, A](
       root: SchemaShape[F, ?, ?, ?]
-  )(pf: PartialFunction[VisitNode[F], G[Unit] => G[Unit]])(implicit D0: Defer[G]): G[Unit] = {
+  )(pf: PartialFunction[VisitNode[F], G[A] => G[A]])(implicit D0: Defer[G], M: Monoid[A]): G[A] = {
     type H[A] = Kleisli[G, Set[String], A]
     val H = Monad[H]
     val L = Local[H, Set[String]]
     val D = Defer[H]
 
-    def runPf(vn: VisitNode[F]) = pf.lift(vn).getOrElse[G[Unit] => G[Unit]](ga => ga)
+    def runPf(vn: VisitNode[F]) = pf.lift(vn).getOrElse[G[A] => G[A]](ga => ga)
 
-    def nextIfNotSeen(tl: Toplevel[F, ?])(ha: => H[Unit]): H[Unit] =
+    def nextIfNotSeen(tl: Toplevel[F, ?])(ha: => H[A]): H[A] =
       L.ask[Set[String]].flatMap { seen =>
-        if (seen.contains(tl.name)) H.unit
+        if (seen.contains(tl.name)) H.pure(M.empty)
         else L.local(ha)(_ + tl.name)
       }
 
-    def goOutput(out: Out[F, ?]): H[Unit] = D.defer {
+    def goOutput(out: Out[F, ?]): H[A] = D.defer {
       lazy val lifted = runPf(VisitNode.OutNode(out))
       out match {
         case o: OutArr[?, ?, ?, ?] => goOutput(o.of).mapF(lifted)
@@ -155,14 +184,14 @@ object SchemaShape {
           nextIfNotSeen(t) {
             lazy val nextF = t match {
               case ol: ObjectLike[F, ?] =>
-                ol.anyFields.parTraverse_ { case (name, af) =>
+                ol.anyFields.parFoldMapA { case (name, af) =>
                   (goOutput(af.output.value) >>
-                    af.asAbstract.arg.parTraverse_(_.entries.parTraverse_(x => goInput(x.input.value))))
+                    af.asAbstract.arg.parFoldMapA(_.entries.parFoldMapA(x => goInput(x.input.value))))
                     .mapF(runPf(VisitNode.FieldNode(name, af)))
-                } >> ol.implementsMap.values.toList.map(_.value).parTraverse_(goOutput)
+                } >> ol.implementsMap.values.toList.map(_.value).parFoldMapA(goOutput)
               case Union(_, instances, _) =>
-                instances.parTraverse_(inst => goOutput(inst.tpe.value))
-              case _ => H.unit
+                instances.parFoldMapA(inst => goOutput(inst.tpe.value))
+              case _ => H.pure(M.empty)
             }
 
             nextF.mapF(lifted)
@@ -170,7 +199,7 @@ object SchemaShape {
       }
     }
 
-    def goInput(in: In[?]): H[Unit] = D.defer {
+    def goInput(in: In[?]): H[A] = D.defer {
       lazy val lifted = runPf(VisitNode.InNode(in))
       in match {
         case InArr(of, _) => goInput(of).mapF(lifted)
@@ -178,9 +207,8 @@ object SchemaShape {
         case t: InToplevel[?] =>
           nextIfNotSeen(t) {
             val nextF = t match {
-              case Input(_, fields, _) =>
-                fields.entries.parTraverse_(x => goInput(x.input.value))
-              case _ => H.unit
+              case Input(_, fields, _) => fields.entries.parFoldMapA(x => goInput(x.input.value))
+              case _                   => H.pure(M.empty)
             }
 
             nextF.mapF(lifted)
@@ -190,32 +218,31 @@ object SchemaShape {
 
     val outs = root.query :: root.mutation.toList ++ root.subscription.toList ++ root.outputTypes
 
-    val outsF = outs.parTraverse_(goOutput)
+    val outsF = outs.parFoldMapA(goOutput)
 
-    val insF = root.inputTypes.parTraverse_(goInput)
+    val insF = root.inputTypes.parFoldMapA(goInput)
 
-    (outsF >> insF).run(Set.empty)
+    List(outsF, insF).parFoldMapA(identity).run(Set.empty)
   }
 
-  def foldMapK[F[_], G[_]: Monad: Defer](root: SchemaShape[F, ?, ?, ?])(inPf: PartialFunction[In[?], G[Unit]])(
-      outPf: PartialFunction[Out[F, ?], G[Unit]]
-  ): G[Unit] = {
+  def visitOnce[F[_], G[_]: Monad: Defer, A](
+      root: SchemaShape[F, ?, ?, ?]
+  )(pf: PartialFunction[VisitNode[F], G[A]])(implicit A: Monoid[A]): G[A] = {
     type H[A] = StateT[G, Set[String], A]
     val S = Stateful[H, Set[String]]
     val H = Monad[H]
     implicit lazy val parForState = Parallel.identity[H]
 
-    def nextIfNotSeen(tl: Toplevel[F, ?])(ha: => H[Unit]): H[Unit] =
+    def nextIfNotSeen(tl: Toplevel[F, ?])(ha: => H[A]): H[A] =
       S.get.flatMap { seen =>
-        if (seen.contains(tl.name)) H.unit
+        if (seen.contains(tl.name)) H.pure(A.empty)
         else S.modify(_ + tl.name) >> ha
       }
 
-    visit[F, H](root) { e =>
+    visit[F, H, A](root) { e =>
       lazy val cont = e match {
-        case VisitNode.InNode(inPf(g1))   => (g2: H[Unit]) => StateT.liftF(g1).flatMap(_ => g2)
-        case VisitNode.OutNode(outPf(g1)) => (g2: H[Unit]) => StateT.liftF(g1).flatMap(_ => g2)
-        case _                            => (g2: H[Unit]) => g2
+        case pf(g1) => (g2: H[A]) => StateT.liftF(g1).flatMap(a1 => g2.map(a2 => a1 |+| a2))
+        case _      => (g2: H[A]) => g2
       }
 
       e match {
@@ -250,22 +277,22 @@ object SchemaShape {
       }
     }
 
-    val program = shape.foldMapK[Effect] { case t: InToplevel[?] =>
-      modify(_.addToplevel(t.name, t))
-    } { case t: OutToplevel[F, ?] =>
-      val modF = modify(_.addToplevel(t.name, t))
-      val fa = t match {
-        case ol: ObjectLike[F, ?] =>
-          val values: List[(Interface[F, ?], InterfaceImpl[F, ?])] = ol match {
-            case t: Type[F, a] =>
-              t.implementations.map(x => x.implementation.value -> InterfaceImpl.TypeImpl(t, x.specify))
-            case i: Interface[F, ?] =>
-              i.implementations.map(x => x.value -> InterfaceImpl.OtherInterface(i))
-          }
-          addValues(values.map { case (i, ii) => i.name -> ii })
-        case _ => modify(identity)
-      }
-      modF >> fa
+    val program = shape.visitOnce[Effect, Unit] {
+      case VisitNode.InNode(t: InToplevel[?]) => modify(_.addToplevel(t.name, t))
+      case VisitNode.OutNode(t: OutToplevel[F, ?]) =>
+        val modF = modify(_.addToplevel(t.name, t))
+        val fa = t match {
+          case ol: ObjectLike[F, ?] =>
+            val values: List[(Interface[F, ?], InterfaceImpl[F, ?])] = ol match {
+              case t: Type[F, a] =>
+                t.implementations.map(x => x.implementation.value -> InterfaceImpl.TypeImpl(t, x.specify))
+              case i: Interface[F, ?] =>
+                i.implementations.map(x => x.value -> InterfaceImpl.OtherInterface(i))
+            }
+            addValues(values.map { case (i, ii) => i.name -> ii })
+          case _ => modify(identity)
+        }
+        modF >> fa
     }
 
     val positionGroups = shape.positions.groupBy(_.directive.name)

@@ -182,22 +182,22 @@ object Goi {
   def collectAttributes[F[_]](
       shape: SchemaShape[F, ?, ?, ?]
   ): Either[NonEmptyChain[String], List[CollectedAttribute[F, _, _]]] = {
-    type Effect[A] = EitherT[WriterT[Eval, List[CollectedAttribute[F, ?, ?]], *], NonEmptyChain[String], A]
-    def go[H[_]: Defer](implicit H: Monad[H], R: Raise[H, NonEmptyChain[String]], T: Tell[H, List[CollectedAttribute[F, ?, ?]]]): H[Unit] =
-      shape.foldMapK[H]() { case t: Type[F, a] =>
+    type State = List[CollectedAttribute[F, ?, ?]]
+    type Effect[A] = EitherT[Eval, NonEmptyChain[String], A]
+    def go[H[_]: Defer](implicit H: Monad[H], R: Raise[H, NonEmptyChain[String]]): H[State] =
+      shape.visitOnce[H, State] { case SchemaShape.VisitNode.OutNode(t: Type[F, a]) =>
         val fas = t.attributes.collect { case g: GoiAttribute[F, a, ?] => g }
         val n = t.name
 
         fas match {
-          case Nil => H.unit
+          case Nil => H.pure(Nil)
           case (x: GoiAttribute[F, a, id]) :: xs =>
             if (xs.nonEmpty) R.raise(NonEmptyChain.one(s"More than one goi attribute found on `$n`"))
-            else T.tell(List(CollectedAttribute[F, a, id](n, x)))
+            else H.pure(List(CollectedAttribute[F, a, id](n, x)))
         }
       }
 
-    val (accum, errs) = go[Effect].value.run.value
-    errs as accum
+    go[Effect].value.value
   }
 
   def addSchemaGoi[F[_]: Parallel: Sync, Q, M, S](schema: SchemaShape[F, Q, M, S]): SchemaShape[F, Q, M, S] =

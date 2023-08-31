@@ -56,7 +56,7 @@ object SignalScopes {
    * Uncons all (unblock all blocked pushers)
    */
   def apply[F[_], A: Doced](takeOne: Boolean, debug: DebugPrinter[F], accumulate: Option[FiniteDuration], root: Scope[F])(implicit
-      F: Async[F]
+      F: Temporal[F]
   ): F[SignalScopes[F, A]] = {
 
     // Debugging state

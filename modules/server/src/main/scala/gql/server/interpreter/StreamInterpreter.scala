@@ -53,6 +53,12 @@ object StreamInterpreter {
       schemaState: SchemaState[F],
       debug: DebugPrinter[F],
       accumulate: Option[FiniteDuration]
+  ): StreamInterpreter[F] = fromMakeInterpreter[F](ss => QueryInterpreter[F](schemaState, ss), debug, accumulate)
+
+  def fromMakeInterpreter[F[_]: Temporal](
+      makeInterpreter: SignalScopes[F, StreamingData[F, ?, ?]] => QueryInterpreter[F],
+      debug: DebugPrinter[F],
+      accumulate: Option[FiniteDuration]
   ): StreamInterpreter[F] = new StreamInterpreter[F] {
     override def interpretSync[A](root: A, selections: List[PreparedField[F, A]]): F[Result] =
       interpretStream(root, selections, takeOne = true).take(1).compile.lastOrError
@@ -62,7 +68,7 @@ object StreamInterpreter {
         Stream
           .eval(SignalScopes[F, StreamingData[F, ?, ?]](takeOne = takeOne, debug, accumulate, rootScope))
           .flatMap { ss =>
-            val interpreter = QueryInterpreter[F](schemaState, ss)
+            val interpreter = makeInterpreter(ss)
 
             val changeStream = Stream.repeatEval(ss.unconsRelevantEvents)
 

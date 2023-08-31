@@ -62,7 +62,7 @@ object Scope {
     ) extends State[F]
   }
 
-  def apply[F[_]](parent: Option[Scope[F]])(implicit F: Async[F]): Resource[F, Scope[F]] = {
+  def apply[F[_]](parent: Option[Scope[F]])(implicit F: Concurrent[F]): Resource[F, Scope[F]] = {
     val parent0 = parent
     val stateF =
       Resource.make(F.ref[State[F]](State.Open(Nil, Nil)))(_.getAndSet(State.Closed()).flatMap {
