@@ -108,6 +108,12 @@ object GenTest {
     case class AlienType(alien: Alien) extends HumanOrAlien
   }
 
+  sealed trait OutputOnly extends Product with Serializable
+  object OutputOnly {
+    case object Ok extends OutputOnly
+    case object NotOk extends OutputOnly
+  }
+
   final case class FindDogInput(
       name: Option[String] = None,
       owner: Option[String] = None
@@ -129,6 +135,12 @@ object GenTest {
     "SIT" -> enumVal(DogCommand.Sit),
     "DOWN" -> enumVal(DogCommand.Down),
     "HEEL" -> enumVal(DogCommand.Heel)
+  )
+
+  implicit lazy val outputOnly: Enum[OutputOnly] = enumType[OutputOnly](
+    "OutputOnly",
+    "OK" -> enumVal(OutputOnly.Ok),
+    "NOT_OK" -> enumVal(OutputOnly.NotOk)
   )
 
   lazy val petFields: Fields[IO, Pet] = fields[IO, Pet](
@@ -203,6 +215,7 @@ object GenTest {
     SchemaShape
       .unit[IO](
         fields(
+          "outputOnly" -> lift(_ => OutputOnly.Ok: OutputOnly),
           "dog" -> lift(_ => dogDatabase("Colt")),
           "findDog" -> lift(arg[Option[FindDogInput]]("searchBy")) { case (x, _) =>
             x.flatMap(y => dogDatabase.get(y.name.getOrElse("Colt")))

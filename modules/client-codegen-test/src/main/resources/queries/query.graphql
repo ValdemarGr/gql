@@ -1,4 +1,5 @@
 query AlienQuery($name: String!, $struct: FindDogInput, $dogCommand: DogCommand! = DOWN) {
+  outputOnly
   dog {
     ... DogFragment
     ... on Dog {
