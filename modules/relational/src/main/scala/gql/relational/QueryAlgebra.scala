@@ -9,6 +9,7 @@ import cats.mtl._
 import cats.arrow.FunctionK
 import gql.ast._
 import gql.EmptyableArg
+import gql.resolver.FieldMeta
 
 trait QueryAlgebra {
   import QueryAlgebra.{QueryState => _, QueryStateImpl => _, _}
@@ -68,7 +69,7 @@ trait QueryAlgebra {
       override def map[A, B](fa: Select[A])(f: A => B): Select[B] =
         fa.copy(decoder = fa.decoder.map(f))
 
-      override def ap[A, B](ff: Select[A => B])(fa: Select[A]): Select[B] = 
+      override def ap[A, B](ff: Select[A => B])(fa: Select[A]): Select[B] =
         Select(ff.cols ++ fa.cols, ff.decoder ap fa.decoder)
     }
   }
@@ -81,7 +82,7 @@ trait QueryAlgebra {
     def groupingKey: Frag
     def groupingKeyDecoder: Decoder[A]
 
-    def aliasedFrag(x: Frag): Frag = 
+    def aliasedFrag(x: Frag): Frag =
       stringToFrag(alias) |+| stringToFrag(".") |+| x
 
     def select[A](name: Frag, dec: Decoder[A]): Query.Select[A] =
@@ -99,26 +100,42 @@ trait QueryAlgebra {
 
   def resolveQuery[F[_], G[_], I, B, ArgType](
       toplevelArg: EmptyableArg[ArgType],
-      q: (I, ArgType) => Query[G, B]
-  ): Resolver[F, I, (Interpreter.QueryContent, Interpreter.Done[G, _, QueryResult[B]])] = 
+      q: (NonEmptyList[I], ArgType) => Query[Lambda[X => List[G[X]]], B]
+  )(implicit
+      F: Applicative[F]
+  ): Resolver[F, I, (Interpreter.QueryContent, Interpreter.Done[Lambda[X => List[G[X]]], _, QueryResult[B]])] = {
+    type H[A] = List[G[A]]
     Resolver
       .meta[F, I]
       .andThen(toplevelArg.addArg)
       .tupleIn
-      .emap { case (fm, i) =>
-        val tfa = new TableFieldAttribute[F, G, I, QueryResult[B], ArgType, B, G[QueryResult[B]]] {
-          def arg = toplevelArg
-          def query(value: I, argument: ArgType): Query[G, B] = q(value, argument)
-          def fieldVariant = FieldVariant.SubSelection()
-        }
+      .map(Set(_))
+      .andThen(Resolver.inlineBatch[F, (FieldMeta[F], I), Ior[String, (Interpreter.QueryContent, Interpreter.Done[H, _, QueryResult[B]])]] {
+        xs =>
+          F.pure {
+            xs.toList.toNel
+              .map { nel =>
+                val (fm, _) = nel.head
+                val inputs = nel.map { case (_, i) => i }
 
-        val eff = Interpreter.collapseField(fm.astNode, i, tfa)
+                val tfa = new TableFieldAttribute[F, H, NonEmptyList[I], QueryResult[B], ArgType, B, H[QueryResult[B]]] {
+                  def arg = toplevelArg
+                  def query(value: NonEmptyList[I], argument: ArgType): Query[H, B] = q(value, argument)
+                  def fieldVariant = FieldVariant.SubSelection()
+                }
 
-        val (qc, e) = eff.value.runA(1).run
+                val eff = Interpreter.collapseField(fm.astNode, inputs, tfa)
 
-        e.toIor.tupleLeft(qc)
-      }
-  
+                val (qc, e) = eff.value.runA(1).run
+
+                xs.map(k => k -> e.toIor.tupleLeft(qc)).toMap
+              }
+              .getOrElse(Map.empty)
+          }
+      })
+      .map(_.values.head)
+  }.rethrow
+
   object Interpreter {
     import gql.{preparation => prep}
 
