@@ -65,38 +65,8 @@ object SkunkSchema extends QueryAlgebra with QueryDsl {
     }
   }
 
-  trait Connection[F[_]] { self =>
-    def connection: Resource[F, Session[F]]
-
-    def forceClose: F[Unit]
-
-    def mapK[G[_]: MonadCancelThrow](fk: F ~> G)(implicit F: MonadCancelThrow[F]): Connection[G] =
-      new Connection[G] {
-        override def connection: Resource[G, Session[G]] =
-          self.connection.map(_.mapK(fk)).mapK(fk)
-
-        override def forceClose: G[Unit] = fk(self.forceClose)
-      }
-  }
-
-  object Connection {
-    def fromPool[F[_]](pool: Resource[F, Session[F]])(implicit F: Concurrent[F]): Resource[F, Connection[F]] =
-      Hotswap.create[F, Session[F]].evalMap { hs =>
-        Mutex[F].map { mtx =>
-          new Connection[F] {
-            def forceClose: F[Unit] = hs.clear
-
-            def connection: Resource[F, Session[F]] = 
-              mtx.lock >>
-                hs.get.evalMap {
-                  case None      => hs.swap(pool.flatTap(_.transaction))
-                  case Some(ses) => F.pure(ses)
-                }
-            
-          }
-        }
-      }
-  }
+  def lazyPool[F[_]: Concurrent](pool: Resource[F, Session[F]]): Resource[F, LazyResource[F, Session[F]]] =
+    LazyResource.fromResource(pool)
 }
 
 class MySchema(pool: Resource[IO, Session[IO]]) {
