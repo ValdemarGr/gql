@@ -59,8 +59,8 @@ final case class SchemaShape[F[_], Q, M, S](
 
   lazy val ast = SchemaUtil.toAst[F](this)
 
-  // This is safe by construction
-  lazy val stub = SchemaUtil.stubSchema(ast).toOption.get
+  // This is safe by construction if your schema is valid
+  lazy val stub = SchemaUtil.stubSchema(ast).fold(xs => throw new RuntimeException(xs.toList.mkString("\n")), identity)
 
   lazy val stubInputs = SchemaShape.discover(stub).inputs
 }

@@ -43,7 +43,7 @@ object ast extends AstImplicits.Implicits {
     def anyFields: List[(String, AnyField[F, ?, ?])]
 
     lazy val abstractFields: List[(String, AbstractField[F, ?])] =
-      anyFields.map{ case (k, v) => (k, v.asAbstract) }
+      anyFields.map { case (k, v) => (k, v.asAbstract) }
 
     lazy val abstractFieldMap: Map[String, AbstractField[F, ?]] =
       abstractFields.toMap

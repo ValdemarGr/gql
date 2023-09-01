@@ -31,6 +31,10 @@ object Validation {
     def message: String
   }
   object Error {
+    final case class DuplicateTypenameInInputAndOutput(typename: String) extends Error {
+      def message: String =
+        s"Typename `$typename` appears both as input and output type. You must rename one of them such as `Input$typename`."
+    }
     final case class DivergingTypeReference(typename: String) extends Error {
       def message: String =
         s"`$typename` is not reference equal. Use lazy val or `cats.Eval` to declare this type."
@@ -205,6 +209,9 @@ object Validation {
         S.modify(_.copy(currentPath = s.currentPath))
     }
 
+  def getDiscovery[F[_]](name: String, discovery: SchemaShape.DiscoveryState[F]) =
+    (discovery.inputs.get(name), discovery.outputs.get(name))
+
   def useOutputEdge[F[_], G[_]](sel: Selectable[F, ?], discovery: SchemaShape.DiscoveryState[F])(
       fa: G[Unit]
   )(implicit G: Monad[G], S: Stateful[G, ValidationState[F]]): G[Unit] =
@@ -213,12 +220,13 @@ object Validation {
         case Some(o) if o eq sel => G.unit
         case Some(_)             => raise(CyclicDivergingTypeReference(sel.name))
         case None =>
-          discovery.outputs
-            .get(sel.name)
-            .traverse_ {
-              case o if o eq sel => G.unit
-              case _             => raise(DivergingTypeReference(sel.name))
-            } >>
+          val checkF = getDiscovery(sel.name, discovery) match {
+            case (Some(_), _)                   => raise(DuplicateTypenameInInputAndOutput(sel.name))
+            case (None, Some(o)) if !(o eq sel) => raise(DivergingTypeReference(sel.name))
+            case _                              => G.unit
+          }
+
+          checkF >>
             S.modify(s => s.copy(seenOutputs = s.seenOutputs + (sel.name -> sel))) *>
             fa <*
             S.modify(s => s.copy(seenOutputs = s.seenOutputs - sel.name))
@@ -233,12 +241,13 @@ object Validation {
         case Some(i) if i eq it => G.unit
         case Some(_)            => raise(CyclicDivergingTypeReference(it.name))
         case None =>
-          discovery.inputs
-            .get(it.name)
-            .traverse_ {
-              case i if i eq it => G.unit
-              case _            => raise(DivergingTypeReference(it.name))
-            } >>
+          val checkF = getDiscovery(it.name, discovery) match {
+            case (_, Some(_))                  => raise(DuplicateTypenameInInputAndOutput(it.name))
+            case (Some(i), None) if !(i eq it) => raise(DivergingTypeReference(it.name))
+            case _                             => G.unit
+          }
+
+          checkF >>
             S.modify(s => s.copy(seenInputs = s.seenInputs + (it.name -> it))) *>
             fa <*
             S.modify(s => s.copy(seenInputs = s.seenInputs - it.name))

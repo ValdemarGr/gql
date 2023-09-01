@@ -103,8 +103,20 @@ class ValidationTest extends CatsEffectSuite {
     "four" -> lift(arg[Int]("x")) { case _ => "heya" }
   ).subtypeOf[Catch]
 
+  case object InOutSameName
+  implicit lazy val inOutSameName: Type[IO, InOutSameName.type] = tpe[IO, InOutSameName.type](
+    "InOutSameName",
+    "blah" -> lift(_ => "blah")
+  )
+
+  implicit lazy val inOutSameNameInput: Input[InOutSameName.type] = input[InOutSameName.type](
+    "InOutSameName",
+    arg[String]("blah").map(_ => InOutSameName)
+  )
+
   lazy val schemaShape: SchemaShape[IO, Unit, Unit, Unit] = SchemaShape.unit[IO](
     fields(
+      "inOutSameName" -> lift(arg[InOutSameName.type]("blah"))((_, _) => InOutSameName),
       "badStructure" -> lift(_ => BadStructure()),
       "duplicateUnion" -> lift(_ => (MutuallyRecursive1(42): MutRecUnion)),
       "duplicateInterface" -> lift(_ => (MutuallyRecursive1(42): MutRecInterface)),
@@ -153,6 +165,14 @@ class ValidationTest extends CatsEffectSuite {
     //     Validation.Edge.OutputType("MutuallyRecursive1") ::
     //     Nil
     // })
+  }
+
+  test("should catch input and output types with same name") {
+    val err = errors.collect { case (Validation.Error.DuplicateTypenameInInputAndOutput("InOutSameName"), path) =>
+      path.path.toList
+    }
+
+    assert(clue(err).size == 1)
   }
 }
 
