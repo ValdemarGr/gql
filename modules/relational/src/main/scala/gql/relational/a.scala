@@ -659,30 +659,10 @@ object Test7 {
             fastEntities {
               name
               age
-            }
-            fe2: fastEntities {
-              name
-              age
-            }
-            fe3: fastEntities {
-              name
-              age
-            }
-            fe4: fastEntities {
-              name
-              age
-            }
-            fe5: fastEntities {
-              name
-              age
-            }
-            fe6: fastEntities {
-              name
-              age
-            }
-            fe7: fastEntities {
-              name
-              age
+              pets {
+                name
+                id
+              }
             }
           }
         }

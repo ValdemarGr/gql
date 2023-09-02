@@ -70,6 +70,7 @@ trait QueryAlgebra {
         val decoder = (sel.decoder, done.dec).tupled
         val qc2 = Interpreter.QueryContent(sel.cols ++ qc.selections, qc.joins)
         val frag = Interpreter.renderQuery(qc2)
+        println(s"running ${frag.asInstanceOf[skunk.AppliedFragment].fragment}")
         val result = runQuery(frag, decoder)
         result
           .map(_.groupMap { case (k, _) => k } { case (_, v) => v })
@@ -120,7 +121,7 @@ trait QueryAlgebra {
     implicit lazy val applicativeForSelect: Applicative[Select] = new Applicative[Select] {
       override def pure[A](x: A): Select[A] = 
         Select(Chain.empty, Applicative[Decoder].pure(x))
-        
+
       override def ap[A, B](ff: Select[A => B])(fa: Select[A]): Select[B] =
         Select(ff.cols ++ fa.cols, ff.decoder ap fa.decoder)
     }

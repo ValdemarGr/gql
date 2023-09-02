@@ -38,13 +38,13 @@ object SkunkSchema extends QueryAlgebra with QueryDsl {
 
   def runField[F[_]: MonadCancelThrow, G[_], I, B, ArgType](pool: Resource[F, Session[F]], arg: Arg[ArgType])(
       q: (NonEmptyList[I], ArgType) => Query[G, (Query.Select[I], B)]
-  )(implicit tpe: => Out[F, G[QueryResult[B]]]) = 
+  )(implicit tpe: => Out[F, G[QueryResult[B]]]) =
     Field(resolveQuery(EmptyableArg.Lift(arg), q, SkunkRunQuery(pool)), Eval.later(tpe))
 
   def runField[F[_]: MonadCancelThrow, G[_], I, B](pool: Resource[F, Session[F]])(
-    q: NonEmptyList[I] => Query[G, (Query.Select[I], B)]
-    )(implicit tpe: => Out[F, G[QueryResult[B]]]) = 
-      Field(resolveQuery[F, G, I, B, Unit](EmptyableArg.Empty, (i, _) => q(i), SkunkRunQuery(pool)), Eval.later(tpe))
+      q: NonEmptyList[I] => Query[G, (Query.Select[I], B)]
+  )(implicit tpe: => Out[F, G[QueryResult[B]]]) =
+    Field(resolveQuery[F, G, I, B, Unit](EmptyableArg.Empty, (i, _) => q(i), SkunkRunQuery(pool)), Eval.later(tpe))
 
   trait SkunkTable[A] extends Table[A] {
     def aliased(x: Fragment[Void]): Fragment[Void] =
@@ -109,12 +109,52 @@ class MySchema(pool: Resource[IO, Session[IO]]) {
   }
   val entityTable2 = table(EntityTable2)
 
+  case class PetTable(alias: String) extends SkunkTable[UUID] {
+    def table = void"pet"
+    def groupingKey = void"id"
+    def groupingKeyDecoder: Decoder[UUID] = uuid
+
+    val (id, selId) = sel("id", uuid)
+    val (name, selName) = sel("name", text)
+  }
+  val petTable = table(PetTable)
+
+  case class PetEntityTable(alias: String) extends SkunkTable[UUID] {
+    def table = void"pet_entity"
+    def groupingKey = void"pet_id"
+    def groupingKeyDecoder: Decoder[UUID] = uuid
+
+    val (petId, selPetId) = sel("pet_id", uuid)
+    val (entityId, selEntityId) = sel("entity_id", uuid)
+  }
+  val petEntityTable = table(PetEntityTable)
+
+  implicit lazy val pet: Type[IO, QueryResult[PetTable]] = tpe[IO, QueryResult[PetTable]](
+    "Pet",
+    "name" -> query(_.selName),
+    "id" -> query(_.selId)
+  )
+
   implicit lazy val entity2: Type[IO, QueryResult[EntityTable2]] = tpe[IO, QueryResult[EntityTable2]](
     "Entity",
     "name" -> query(_.selName),
     "id" -> query(_.selId),
     "age" -> query(_.selAge),
-    "height" -> query(_.selHeight)
+    "height" -> query(_.selHeight),
+    "pets" -> queryAndThen[IO, Lambda[X => X], EntityTable2, UUID, List[QueryResult[PetTable]]](_.selId)(
+      _.andThen(
+        resolveQuery(
+          EmptyableArg.Empty,
+          { (is: NonEmptyList[UUID], _: Unit) =>
+            for {
+              pe <- petEntityTable.join[List](pe => sql"${pe.entityId} in ${uuid.list(is.size).values}".apply(is.toList))
+              p <- petTable.join(p => sql"${p.id} = ${pe.petId}".apply(Void))
+            } yield (pe.selEntityId, p)
+          },
+          SkunkRunQuery(pool)
+        )
+      )
+    )
   )
 
   implicit lazy val entity: Type[IO, QueryResult[EntityTable]] = tpe[IO, QueryResult[EntityTable]](
@@ -125,21 +165,6 @@ class MySchema(pool: Resource[IO, Session[IO]]) {
     "height" -> query(_.selHeight)
   )
 
-  // List[ResultSet] => G[A]
-  // 1:1 List[ResultSet] => (PrimaryKey, List[ResultSet])
-  // xs => xs.groupBy(_.id).require1Element: Either[String, (PrimaryKey, List[ResultSet])]
-  // 1:n List[ResultSet] => Map[PrimaryKey, List[ResultSet]]
-  // xs => xs.groupBy(_.id): Map[PrimaryKey, List[ResultSet]]
-  // 1:{0,1} List[ResultSet] => Option[(PrimaryKey, List[ResultSet])]
-  // xs => xs.groupBy(_.id).requireAtMost1Element: Either[String, Option[(PrimaryKey, List[ResultSet])]]
-  /*
-
-  val xs: List[(ContractName, ContractId, ContractEntityContractId, ContractEntityEntityId, EntityName, EntityId, EntityAge, EntityHeight)]
-  val ys = xs.groupBy(x => x.contractId): Map[ContractId, List[(ContractEntityContractId, ContractEntityEntityId, EntityName, EntityId, EntityAge, EntityHeight)]]
-  ...: Map[ContractId, Map[ContractEntityContractId, List[(EntityName, EntityId, EntityAge, EntityHeight)]]]
-  ...: Map[ContractId, Map[ContractEntityContractId, Map[EntityId, List[(EntityName, EntityAge, EntityHeight)]]]]
-
-   */
   implicit lazy val contract: Type[IO, QueryResult[ContractTable]] = tpe[IO, QueryResult[ContractTable]](
     "Contract",
     "name" -> query(c => (c.selName, c.selId).mapN(_ + _.toString())),
@@ -150,14 +175,6 @@ class MySchema(pool: Resource[IO, Session[IO]]) {
         val extra = void""
         sql"${c.id} = ${e.contractId}${extra.fragment}".apply(extra.argument)
       }
-      // for {
-      //   cet <- contractEntityTable.join[List](cet => sql"${cet.contractId} = ${c.id}")
-      //   e <- entityTable.join[List] { e =>
-      //     val _ = ens.foldMap(xs => sql" and ${e.name} in (${text.list(xs)})".apply(xs))
-      //     val extra = void""
-      //     sql"${e.id} = ${cet.entityId}${extra.fragment} and ${c.parent.parent.pk} is not null".apply(extra.argument)
-      //   }
-      // } yield e
     }
   )
 
