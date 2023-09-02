@@ -34,9 +34,9 @@ object SkunkSchema extends QueryAlgebra with QueryDsl {
   def runQuery[F[_]: MonadCancelThrow, G[_], I, B, ArgType](
       pool: Resource[F, Session[F]],
       toplevelArg: EmptyableArg[ArgType],
-      q: (I, ArgType) => Query[G, B]
+      q: (NonEmptyList[I], ArgType) => Query[Lambda[X => List[G[X]]], B]
   ) = {
-    resolveQuery[F, G, I, B, ArgType](toplevelArg, q).evalMap { case (qc, d: Interpreter.Done[G, a, QueryResult[B]]) =>
+    resolveQuery[F, G, I, B, ArgType](toplevelArg, q).evalMap { case (qc, d: Interpreter.Done[Lambda[X => List[G[X]]], a, QueryResult[B]]) =>
       val af = Interpreter.renderQuery(qc)
       println(af.fragment.sql)
       val out: F[List[a]] = pool.use(_.execute(af.fragment.query(d.dec))(af.argument))
@@ -65,7 +65,8 @@ object SkunkSchema extends QueryAlgebra with QueryDsl {
     }
   }
 
-  def lazyPool[F[_]: Concurrent](pool: Resource[F, Session[F]]): Resource[F, LazyResource[F, Session[F]]] =
+  type Connection[F[_]] = LazyResource[F, Session[F]]
+  def lazyPool[F[_]: Concurrent](pool: Resource[F, Session[F]]): Resource[F, Connection[F]] =
     LazyResource.fromResource(pool)
 }
 
