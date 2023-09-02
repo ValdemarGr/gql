@@ -28,7 +28,7 @@ import natchez.Kernel
 import natchez.Span
 import cats.arrow.FunctionK
 
-trait QueryDsl extends QueryAlgebra {
+trait QueryDsl extends QueryAlgebra { self =>
   def query[F[_], G[_], A, B](f: A => Query[G, Query.Select[B]])(implicit
       tpe: => Out[F, G[B]]
   ): Field[F, QueryResult[A], G[B]] =
@@ -39,18 +39,6 @@ trait QueryDsl extends QueryAlgebra {
   ): Field[F, QueryResult[A], G[B]] =
     queryFull(EmptyableArg.Lift(a))((a, c) => f(a, c), Resolver.id[F, G[B]])(tpe)
 
-  def queryAndThen[F[_], G[_], A, B, D](f: A => Query[G, Query.Select[B]])(g: Resolver[F, G[B], G[B]] => Resolver[F, G[B], D])(implicit
-      tpe: => Out[F, D]
-  ): Field[F, QueryResult[A], D] =
-    queryFull(EmptyableArg.Empty)((a, _) => f(a), g(Resolver.id[F, G[B]]))(tpe)
-
-  def queryAndThen[F[_], G[_], A, B, C, D](
-      a: Arg[C]
-  )(f: (A, C) => Query[G, Query.Select[B]])(g: Resolver[F, G[B], G[B]] => Resolver[F, G[B], D])(implicit
-      tpe: => Out[F, D]
-  ): Field[F, QueryResult[A], D] =
-    queryFull(EmptyableArg.Lift(a))((a, c) => f(a, c), g(Resolver.id[F, G[B]]))(tpe)
-
   def cont[F[_], G[_], A, B](f: A => Query[G, B])(implicit
       tpe: => Out[F, G[QueryResult[B]]]
   ): Field[F, QueryResult[A], G[QueryResult[B]]] =
@@ -60,6 +48,16 @@ trait QueryDsl extends QueryAlgebra {
       tpe: => Out[F, G[QueryResult[B]]]
   ): Field[F, QueryResult[A], G[QueryResult[B]]] =
     contFull(EmptyableArg.Lift(a))((a, c) => f(a, c))(tpe)
+
+  def runField[F[_]: Queryable: Applicative, G[_], I, B, ArgType](connection: Connection[F], arg: Arg[ArgType])(
+      q: (NonEmptyList[I], ArgType) => Query[G, (Query.Select[I], B)]
+  )(implicit tpe: => Out[F, G[QueryResult[B]]]) =
+    Field(resolveQuery(EmptyableArg.Lift(arg), q, connection), Eval.later(tpe))
+
+  def runField[F[_]: Queryable: Applicative, G[_], I, B](connection: Connection[F])(
+      q: NonEmptyList[I] => Query[G, (Query.Select[I], B)]
+  )(implicit tpe: => Out[F, G[QueryResult[B]]]) =
+    Field(resolveQuery[F, G, I, B, Unit](EmptyableArg.Empty, (i, _) => q(i), connection), Eval.later(tpe))
 
   def table[T <: Table[?]](f: String => T): TableAlg[T] = new TableAlg[T] {
     def make: String => T = f
@@ -111,16 +109,55 @@ trait QueryDsl extends QueryAlgebra {
   final class RelationalFieldBuilder[F[_], A](private val dummy: Boolean = false) {
     def tpe(name: String, hd: (String, Field[F, QueryResult[A], ?]), tl: (String, Field[F, QueryResult[A], ?])*): Type[F, QueryResult[A]] =
       gql.dsl.tpe[F, QueryResult[A]](name, hd, tl: _*)
-  }
 
-  final class PartialQuery[G[_], A, B, C, D](
-      ea: EmptyableArg[B],
-      g: D => Query[G, Query.Select[C]],
-      f: (A, B) => D
-  ) {
-    def apply[F[_], E](h: Resolver[F, G[C], G[C]] => Resolver[F, G[C], E])(implicit
-        tpe: => Out[F, E]
-    ): Field[F, QueryResult[A], E] =
-      queryFull[F, G, A, C, B, E](ea)((a, b) => g(f(a, b)), h(Resolver.id[F, G[C]]))(tpe)
+    def queryAndThen[G[_], B, C](f: A => Query[G, Query.Select[B]])(g: Resolver[F, G[B], G[B]] => Resolver[F, G[B], C])(
+      tpe: => Out[F, C]
+    ): Field[F, QueryResult[A], C] = 
+      queryFull(EmptyableArg.Empty)((a, _) => f(a), g(Resolver.id[F, G[B]]))(tpe)
+
+    def queryAndThen[G[_], B, C, D](
+        a: Arg[C]
+    )(f: (A, C) => Query[G, Query.Select[B]])(g: Resolver[F, G[B], G[B]] => Resolver[F, G[B], D])(implicit
+        tpe: => Out[F, D]
+    ): Field[F, QueryResult[A], D] =
+/*      queryFull(EmptyableArg.Lift(a))((a, c) => f(a, c), g(Resolver.id[F, G[B]]))(tpe)
+
+    def contBoundary[G[_], B, C, D](connection: Connection[F])(f: A => Query[G, Query.Select[B]])(
+      continue: NonEmptyList[B] => Query[G, C]
+    )(implicit F: Applicative[F], Q: Queryable[F], tpe: => Out[F, G[QueryResult[B]]]) = 
+      Field(
+        queryFull(EmptyableArg.Empty)((i, _) => q(a), Resolver.id[F, G[B]])(tpe)
+      )
+      Field(queryAndThen(f)(_.andThen(resolveQuery(EmptyableArg.Empty, (i, _) => q(i), connection))), Eval.later(tpe))
+*/
+    def query[G[_], B](f: A => Query[G, Query.Select[B]])(implicit
+        tpe: => Out[F, G[B]]
+    ): Field[F, QueryResult[A], G[B]] =
+      self.query(f)(tpe)
+
+    def query[G[_], B, C](a: Arg[C])(f: (A, C) => Query[G, Query.Select[B]])(implicit
+        tpe: => Out[F, G[B]]
+    ): Field[F, QueryResult[A], G[B]] =
+      self.query(a)(f)(tpe)
+
+    def cont[G[_], B](f: A => Query[G, B])(implicit
+        tpe: => Out[F, G[QueryResult[B]]]
+    ): Field[F, QueryResult[A], G[QueryResult[B]]] =
+      self.cont(f)(tpe)
+
+    def cont[G[_], B, C](a: Arg[C])(f: (A, C) => Query[G, B])(implicit
+        tpe: => Out[F, G[QueryResult[B]]]
+    ): Field[F, QueryResult[A], G[QueryResult[B]]] =
+      self.cont(a)(f)(tpe)
+
+    def runField[G[_], I, B, ArgType](connection: Connection[F], arg: Arg[ArgType])(
+        q: (NonEmptyList[I], ArgType) => Query[G, (Query.Select[I], B)]
+    )(implicit F: Applicative[F], Q: Queryable[F], tpe: => Out[F, G[QueryResult[B]]]) =
+      self.runField(connection, arg)(q)(Q, F, tpe)
+
+    def runField[G[_], I, B](connection: Connection[F])(
+        q: NonEmptyList[I] => Query[G, (Query.Select[I], B)]
+    )(implicit F: Applicative[F], Q: Queryable[F], tpe: => Out[F, G[QueryResult[B]]]) =
+      self.runField(connection)(q)(Q, F, tpe)
   }
 }

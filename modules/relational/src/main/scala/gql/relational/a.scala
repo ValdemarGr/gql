@@ -636,13 +636,15 @@ object Test7 {
     import gql.relational.MySchema
     import gql.relational.SkunkSchema
     val ms = new MySchema(xaPool)
+    import MySchema._
     import ms._
+    implicit val c0 = ms.contract
     val ss = SchemaShape.unit[IO](
       fields[IO, Unit](
         "name" -> lift(_ => "edlav"),
         "contract" -> SkunkSchema.runField(xaPool, arg[UUID]("contractId"))((_: NonEmptyList[Unit], a: UUID) =>
-          ms.contractTable.join[Option](c => sql"${c.id} = ${uuid}".apply(a)).map(t => (().pure[SkunkSchema.Query.Select], t))
-        )(implicitly, gql.ast.gqlOutForOption(ms.contract))
+          MySchema.contractTable.join[Option](c => sql"${c.id} = ${uuid}".apply(a)).map(t => (().pure[SkunkSchema.Query.Select], t))
+        )
       )
     )
 
