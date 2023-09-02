@@ -70,9 +70,10 @@ trait QueryAlgebra {
         val decoder = (sel.decoder, done.dec).tupled
         val qc2 = Interpreter.QueryContent(sel.cols ++ qc.selections, qc.joins)
         val frag = Interpreter.renderQuery(qc2)
-        println(s"running ${frag.asInstanceOf[skunk.AppliedFragment].fragment}")
+        println(s"running:\n${frag.asInstanceOf[skunk.AppliedFragment].fragment.sql}\n")
         val result = runQuery(frag, decoder)
         result
+          .map{ xs => println(s"got ${xs.size} results"); xs }
           .map(_.groupMap { case (k, _) => k } { case (_, v) => v })
           .map(_.fmap(done.reassoc))
     }

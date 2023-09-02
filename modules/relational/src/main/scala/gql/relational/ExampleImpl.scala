@@ -141,7 +141,13 @@ class MySchema(pool: Resource[IO, Session[IO]]) {
     "id" -> query(_.selId),
     "age" -> query(_.selAge),
     "height" -> query(_.selHeight),
-    "pets" -> queryAndThen[IO, Lambda[X => X], EntityTable2, UUID, List[QueryResult[PetTable]]](_.selId)(
+    "pets" -> cont { e =>
+      for {
+        pe <- petEntityTable.join[List](pe => sql"${pe.entityId} = ${e.id}".apply(Void))
+        p <- petTable.join(p => sql"${p.id} = ${pe.petId}".apply(Void))
+      } yield p
+    }
+    /*"pets" -> queryAndThen[IO, Lambda[X => X], EntityTable2, UUID, List[QueryResult[PetTable]]](_.selId)(
       _.andThen(
         resolveQuery(
           EmptyableArg.Empty,
@@ -154,7 +160,7 @@ class MySchema(pool: Resource[IO, Session[IO]]) {
           SkunkRunQuery(pool)
         )
       )
-    )
+    )*/
   )
 
   implicit lazy val entity: Type[IO, QueryResult[EntityTable]] = tpe[IO, QueryResult[EntityTable]](

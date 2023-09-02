@@ -26,7 +26,6 @@ import gql.Application
 import natchez.TraceValue
 import natchez.Kernel
 import natchez.Span
-import java.net.URI
 import cats.arrow.FunctionK
 
 trait QueryDsl extends QueryAlgebra {
@@ -39,11 +38,24 @@ trait QueryDsl extends QueryAlgebra {
       tpe: => Out[F, G[B]]
   ): Field[F, QueryResult[A], G[B]] =
     queryFull(EmptyableArg.Lift(a))((a, c) => f(a, c), Resolver.id[F, G[B]])(tpe)
-
+  /*
   def queryAndThen[F[_], G[_], A, B, D](f: A => Query[G, Query.Select[B]])(g: Resolver[F, G[B], G[B]] => Resolver[F, G[B], D])(implicit
       tpe: => Out[F, D]
   ): Field[F, QueryResult[A], D] =
     queryFull(EmptyableArg.Empty)((a, _) => f(a), g(Resolver.id[F, G[B]]))(tpe)
+
+  def queryAndThen[F[_], G[_], A, B, C, D](
+      a: Arg[C]
+  )(f: (A, C) => Query[G, Query.Select[B]])(g: Resolver[F, G[B], G[B]] => Resolver[F, G[B], D])(implicit
+      tpe: => Out[F, D]
+  ): Field[F, QueryResult[A], D] =
+    queryFull(EmptyableArg.Lift(a))((a, c) => f(a, c), g(Resolver.id[F, G[B]]))(tpe)*/
+
+  def queryAndThen[G[_], A, B](f: A => Query[G, Query.Select[B]]): PartiallyAppliedQueryAndThen[G, A, Unit, B, A] =
+    new PartiallyAppliedQueryAndThen[G, A, Unit, B, A](EmptyableArg.Empty, f, (a, _) => a)
+
+  def queryAndThen[G[_], A, B, C](a: Arg[C])(f: (A, C) => Query[G, Query.Select[B]]): PartiallyAppliedQueryAndThen[G, A, C, B, A] =
+    new PartiallyAppliedQueryAndThen[G, A, C, B, (A, C)](EmptyableArg.Lift(a), f, (a, c) => (a, c))
 
   def queryAndThen[F[_], G[_], A, B, C, D](
       a: Arg[C]
@@ -107,5 +119,16 @@ trait QueryDsl extends QueryAlgebra {
         qa.read(tfa).toRight("internal query association error, could not read result from query result").flatten.toIor
       })(tpe)
       .addAttributes(tfa)
+  }
+
+  final class PartiallyAppliedQueryAndThen[G[_], A, B, C, D](
+      ea: EmptyableArg[B],
+      g: D => Query[G, Query.Select[C]],
+      f: (A, B) => D
+  ) {
+    def apply[F[_], E](h: Resolver[F, G[C], G[C]] => Resolver[F, G[C], E])(implicit
+        tpe: => Out[F, E]
+    ): Field[F, QueryResult[A], E] =
+      queryFull[F, G, A, C, B, E](ea)((a, b) => g(f(a, b)), h(Resolver.id[F, G[C]]))(tpe)
   }
 }
