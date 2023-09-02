@@ -640,8 +640,8 @@ object Test7 {
     val ss = SchemaShape.unit[IO](
       fields[IO, Unit](
         "name" -> lift(_ => "edlav"),
-        "contract" -> SkunkSchema.runField(xaPool, arg[UUID]("contractId"))((_: Unit, a: UUID) =>
-          ms.contractTable.join[Option](c => sql"${c.id} = ${uuid}".apply(a))
+        "contract" -> SkunkSchema.runField(xaPool, arg[UUID]("contractId"))((_: NonEmptyList[Unit], a: UUID) =>
+          ms.contractTable.join[Option](c => sql"${c.id} = ${uuid}".apply(a)).map(t => (().pure[SkunkSchema.Query.Select], t))
         )(implicitly, gql.ast.gqlOutForOption(ms.contract))
       )
     )
