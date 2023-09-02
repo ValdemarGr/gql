@@ -10,6 +10,7 @@ import cats.arrow.FunctionK
 import gql.ast._
 import gql.EmptyableArg
 import gql.resolver.FieldMeta
+import gql._
 
 trait QueryAlgebra {
   import QueryAlgebra.{QueryState => _, QueryStateImpl => _, _}
@@ -24,29 +25,31 @@ trait QueryAlgebra {
   def stringToFrag(s: String): Frag
   implicit def appliedFragmentMonoid: Monoid[Frag]
 
-  trait RunQuery[F[_]] {
-    def apply[A](query: Frag, decoder: Decoder[A]): F[List[A]]
+  type Connection[F[_]]
+  trait Queryable[F[_]] {
+    def apply[A](query: Frag, decoder: Decoder[A], connection: Connection[F]): F[List[A]]
   }
-  def resolveQuery[F[_], G[_], I, B, ArgType](
+
+  def resolveQuery[F[_]: Queryable, G[_], I, B, ArgType](
       toplevelArg: EmptyableArg[ArgType],
       q: (NonEmptyList[I], ArgType) => Query[G, (Query.Select[I], B)],
-      runQuery: RunQuery[F]
+      connection: Connection[F]
   )(implicit F: Applicative[F]): Resolver[F, I, G[QueryResult[B]]] =
     compileToResolver[F, G, I, ArgType, Either[String, G[QueryResult[B]]]](toplevelArg) { (xs, at, fm) =>
-      evalQuery(xs, fm, q(xs, at), runQuery)
+      evalQuery(xs, fm, q(xs, at), connection)
     }.emap(_.toIor)
 
-  def resolveQuerySingle[F[_], G[_], I, B, ArgType](
+  def resolveQuerySingle[F[_]: Queryable, G[_], I, B, ArgType](
       toplevelArg: EmptyableArg[ArgType],
       q: (I, ArgType) => Query[G, B],
-      runQuery: RunQuery[F]
+      connection: Connection[F]
   )(implicit F: Applicative[F]): Resolver[F, I, G[QueryResult[B]]] =
     compileToResolver[F, G, I, ArgType, Either[String, G[QueryResult[B]]]](toplevelArg) { (xs, at, fm) =>
       xs.toList
         .traverse { x =>
           val baseQuery = q(x, at)
           val moddedQuery = baseQuery.map(b => (Applicative[Query.Select].pure(x), b))
-          evalQuery(NonEmptyList.one(x), fm, moddedQuery, runQuery)
+          evalQuery(NonEmptyList.one(x), fm, moddedQuery, connection)
         }
         .map(_.flatMap(_.toList).toMap)
     }.emap(_.toIor)
@@ -55,8 +58,8 @@ trait QueryAlgebra {
       xs: NonEmptyList[I],
       fm: FieldMeta[F],
       query: Query[G, (Query.Select[I], B)],
-      runQuery: RunQuery[F]
-  )(implicit F: Applicative[F]): F[Map[I, Either[String, G[QueryResult[B]]]]] = {
+      connection: Connection[F]
+  )(implicit F: Applicative[F], queryable: Queryable[F]): F[Map[I, Either[String, G[QueryResult[B]]]]] = {
     val eff = Interpreter.collapseQuery(query).flatMap { qs =>
       val out = Interpreter.compileQueryState(fm.astNode, qs.map { case (_, b) => b }, FieldVariant.SubSelection[B]())
       out tupleLeft qs.map { case (sel, _) => sel }.value
@@ -71,7 +74,7 @@ trait QueryAlgebra {
         val qc2 = Interpreter.QueryContent(sel.cols ++ qc.selections, qc.joins)
         val frag = Interpreter.renderQuery(qc2)
         println(s"running:\n${frag.asInstanceOf[skunk.AppliedFragment].fragment.sql}\n")
-        val result = runQuery(frag, decoder)
+        val result = queryable(frag, decoder, connection)
         result
           .map{ xs => println(s"got ${xs.size} results"); xs }
           .map(_.groupMap { case (k, _) => k } { case (_, v) => v })
