@@ -38,24 +38,11 @@ trait QueryDsl extends QueryAlgebra {
       tpe: => Out[F, G[B]]
   ): Field[F, QueryResult[A], G[B]] =
     queryFull(EmptyableArg.Lift(a))((a, c) => f(a, c), Resolver.id[F, G[B]])(tpe)
-  /*
+
   def queryAndThen[F[_], G[_], A, B, D](f: A => Query[G, Query.Select[B]])(g: Resolver[F, G[B], G[B]] => Resolver[F, G[B], D])(implicit
       tpe: => Out[F, D]
   ): Field[F, QueryResult[A], D] =
     queryFull(EmptyableArg.Empty)((a, _) => f(a), g(Resolver.id[F, G[B]]))(tpe)
-
-  def queryAndThen[F[_], G[_], A, B, C, D](
-      a: Arg[C]
-  )(f: (A, C) => Query[G, Query.Select[B]])(g: Resolver[F, G[B], G[B]] => Resolver[F, G[B], D])(implicit
-      tpe: => Out[F, D]
-  ): Field[F, QueryResult[A], D] =
-    queryFull(EmptyableArg.Lift(a))((a, c) => f(a, c), g(Resolver.id[F, G[B]]))(tpe)*/
-
-  def queryAndThen[G[_], A, B](f: A => Query[G, Query.Select[B]]): PartiallyAppliedQueryAndThen[G, A, Unit, B, A] =
-    new PartiallyAppliedQueryAndThen[G, A, Unit, B, A](EmptyableArg.Empty, f, (a, _) => a)
-
-  def queryAndThen[G[_], A, B, C](a: Arg[C])(f: (A, C) => Query[G, Query.Select[B]]): PartiallyAppliedQueryAndThen[G, A, C, B, A] =
-    new PartiallyAppliedQueryAndThen[G, A, C, B, (A, C)](EmptyableArg.Lift(a), f, (a, c) => (a, c))
 
   def queryAndThen[F[_], G[_], A, B, C, D](
       a: Arg[C]
@@ -121,7 +108,12 @@ trait QueryDsl extends QueryAlgebra {
       .addAttributes(tfa)
   }
 
-  final class PartiallyAppliedQueryAndThen[G[_], A, B, C, D](
+  final class RelationalFieldBuilder[F[_], A](private val dummy: Boolean = false) {
+    def tpe(name: String, hd: (String, Field[F, QueryResult[A], ?]), tl: (String, Field[F, QueryResult[A], ?])*): Type[F, QueryResult[A]] =
+      gql.dsl.tpe[F, QueryResult[A]](name, hd, tl: _*)
+  }
+
+  final class PartialQuery[G[_], A, B, C, D](
       ea: EmptyableArg[B],
       g: D => Query[G, Query.Select[C]],
       f: (A, B) => D
