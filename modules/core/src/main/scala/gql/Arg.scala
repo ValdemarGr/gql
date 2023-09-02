@@ -96,13 +96,13 @@ object Arg {
 }
 
 sealed trait EmptyableArg[A] {
-  def addArg[F[_], B]: Resolver[F, B, B]
+  def addArg[F[_], B]: Resolver[F, B, (A, B)]
 }
 object EmptyableArg {
   case object Empty extends EmptyableArg[Unit] {
-    override def addArg[F[_], B]: Resolver[F, B, B] = Resolver.id[F, B]
+    override def addArg[F[_], B]: Resolver[F, B, (Unit, B)] = Resolver.id[F, B].map(((), _))
   }
   final case class Lift[A](a: Arg[A]) extends EmptyableArg[A] {
-    override def addArg[F[_], B]: Resolver[F, B, B] = Resolver.id[F, B].arg(a).map{ case (_, x) => x }
+    override def addArg[F[_], B]: Resolver[F, B, (A, B)] = Resolver.id[F, B].arg(a)
   }
 }
