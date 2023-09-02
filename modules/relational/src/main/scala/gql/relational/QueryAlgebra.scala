@@ -118,7 +118,9 @@ trait QueryAlgebra {
     ) extends Query[H, A]
     case class Select[A](cols: Chain[Frag], decoder: Decoder[A]) extends Query[Lambda[X => X], Select[A]]
     implicit lazy val applicativeForSelect: Applicative[Select] = new Applicative[Select] {
-
+      override def pure[A](x: A): Select[A] = 
+        Select(Chain.empty, Applicative[Decoder].pure(x))
+        
       override def ap[A, B](ff: Select[A => B])(fa: Select[A]): Select[B] =
         Select(ff.cols ++ fa.cols, ff.decoder ap fa.decoder)
     }

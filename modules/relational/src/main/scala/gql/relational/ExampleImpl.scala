@@ -31,29 +31,20 @@ object SkunkSchema extends QueryAlgebra with QueryDsl {
   type Decoder[A] = skunk.Decoder[A]
   def optDecoder[A](d: Decoder[A]): Decoder[Option[A]] = d.opt
 
-  def runQuery[F[_]: MonadCancelThrow, G[_], I, B, ArgType](
-      pool: Resource[F, Session[F]],
-      toplevelArg: EmptyableArg[ArgType],
-      q: (NonEmptyList[I], ArgType) => Query[Lambda[X => List[G[X]]], B]
-  ) = {
-    resolveQuery[F, G, I, B, ArgType](toplevelArg, q).evalMap { case (qc, d: Interpreter.Done[Lambda[X => List[G[X]]], a, QueryResult[B]]) =>
-      val af = Interpreter.renderQuery(qc)
-      println(af.fragment.sql)
-      val out: F[List[a]] = pool.use(_.execute(af.fragment.query(d.dec))(af.argument))
-
-      out.map { x => println(x.size); x }.map(xs => d.reassoc(xs).toIor)
-    }.rethrow
+  case class SkunkRunQuery[F[_]: MonadCancelThrow](pool: Resource[F, Session[F]]) extends RunQuery[F] {
+    def apply[A](query: AppliedFragment, decoder: Decoder[A]): F[List[A]] =
+      pool.use(_.execute(query.fragment.query(decoder))(query.argument))
   }
 
   def runField[F[_]: MonadCancelThrow, G[_], I, B, ArgType](pool: Resource[F, Session[F]], arg: Arg[ArgType])(
-      q: (I, ArgType) => Query[G, B]
-  )(implicit
-      tpe: => Out[F, G[QueryResult[B]]]
-  ) = Field(runQuery(pool, EmptyableArg.Lift(arg), q), Eval.later(tpe))
+      q: (NonEmptyList[I], ArgType) => Query[G, (Query.Select[I], B)]
+  )(implicit tpe: => Out[F, G[QueryResult[B]]]) = 
+    Field(resolveQuery(EmptyableArg.Lift(arg), q, SkunkRunQuery(pool)), Eval.later(tpe))
 
-  def runField[F[_]: MonadCancelThrow, G[_], I, B](pool: Resource[F, Session[F]])(q: I => Query[G, B])(implicit
-      tpe: => Out[F, G[QueryResult[B]]]
-  ) = Field(runQuery[F, G, I, B, Unit](pool, EmptyableArg.Empty, (i, _) => q(i)), Eval.later(tpe))
+  def runField[F[_]: MonadCancelThrow, G[_], I, B](pool: Resource[F, Session[F]])(
+    q: NonEmptyList[I] => Query[G, (Query.Select[I], B)]
+    )(implicit tpe: => Out[F, G[QueryResult[B]]]) = 
+      Field(resolveQuery[F, G, I, B, Unit](EmptyableArg.Empty, (i, _) => q(i), SkunkRunQuery(pool)), Eval.later(tpe))
 
   trait SkunkTable[A] extends Table[A] {
     def aliased(x: Fragment[Void]): Fragment[Void] =
@@ -61,7 +52,7 @@ object SkunkSchema extends QueryAlgebra with QueryDsl {
 
     def sel[A](x: String, d: Decoder[A]): (Fragment[Void], Query.Select[A]) = {
       val col = aliased(sql"#${x}")
-      col -> Query.Select(NonEmptyChain.one(col.apply(Void)), d)
+      col -> Query.Select(Chain(col.apply(Void)), d)
     }
   }
 
@@ -153,60 +144,7 @@ class MySchema(pool: Resource[IO, Session[IO]]) {
     "Contract",
     "name" -> query(c => (c.selName, c.selId).mapN(_ + _.toString())),
     "id" -> query(_.selId),
-    "fastEntities" -> queryAndThen[IO, Lambda[X => X], ContractTable, UUID, List[QueryResult[EntityTable2]]] { c =>
-      // contractEntityTable.join[List](cet => sql"${c.id} = ${cet.contractId}".apply(Void)).map(_.selEntityId)
-      c.selId
-    } { (xs: Resolver[IO, UUID, UUID]) =>
-      val res = resolveQuery[IO, List, UUID, EntityTable2, Unit](
-        EmptyableArg.Empty,
-        { (i, _) =>
-          entityTable2.join[List](e => sql"${e.contractId} = ${uuid}".apply(i))
-        }
-      )
-      type K = (UUID, Interpreter.QueryContent, Interpreter.Done[List, _, QueryResult[EntityTable2]])
-      type V = List[QueryResult[EntityTable2]]
-      val ilb = Resolver.inlineBatch[IO, (UUID, Interpreter.QueryContent, Interpreter.Done[List, _, QueryResult[EntityTable2]]), V] {
-        (ys: Set[K]) =>
-          ys.toList.headOption
-            .traverse { case (_, qc, d: Interpreter.Done[List, a, QueryResult[EntityTable2]]) =>
-              val af = Interpreter.renderQuery(qc.copy(selections = Chain(void"t1.contract_id") ++ qc.selections))
-
-              val done2 = Interpreter.Done[Lambda[X => Map[UUID, List[X]]], (UUID, a), QueryResult[EntityTable2]](
-                uuid ~ d.dec,
-                xs =>
-                  xs.groupMap { case (k, _) => k } { case (_, v) => v }
-                    .toList
-                    .traverse { case (k, vs) =>
-                      d.reassoc(vs) tupleLeft k
-                    }
-                    .map(_.toMap)
-              )
-
-              println(af.fragment.sql)
-              val out = pool.use(_.execute(af.fragment.query(done2.dec))(af.argument))
-
-              out
-                .map { x => println(x.size); x }
-                .map(xs => done2.reassoc(xs).toIor)
-                .map { x =>
-                  x.toEither.toOption.get.map { case (k, v) => (k, qc, d) -> v }
-                }
-            }
-            .map(_.get.asInstanceOf[Map[K, V]])
-      }
-
-      val prepped = res.tupleIn.map { case ((qc, d), id) =>
-        Set((id, qc, d).asInstanceOf[K]): Set[K]
-      }
-
-      val combined =
-        prepped.andThen(ilb).map(_.map { case ((k, _, _), vs) => k -> vs }).tupleIn.map { case (outs, id) => println(outs); outs(id) }
-
-      combined
-    } /*
-    "fastEntities" -> cont(
-      arg[Option[List[String]]]("entityNames")
-    ) { (c, ens) =>
+    "fastEntities" -> cont(arg[Option[List[String]]]("entityNames")) { (c, ens) =>
       entityTable2.join[List] { e =>
         val _ = ens.foldMap(xs => sql" and ${e.name} in (${text.list(xs)})".apply(xs))
         val extra = void""
@@ -220,7 +158,7 @@ class MySchema(pool: Resource[IO, Session[IO]]) {
       //     sql"${e.id} = ${cet.entityId}${extra.fragment} and ${c.parent.parent.pk} is not null".apply(extra.argument)
       //   }
       // } yield e
-    }*/
+    }
   )
 
 }
