@@ -120,16 +120,20 @@ trait QueryDsl extends QueryAlgebra { self =>
     )(f: (A, C) => Query[G, Query.Select[B]])(g: Resolver[F, G[B], G[B]] => Resolver[F, G[B], D])(implicit
         tpe: => Out[F, D]
     ): Field[F, QueryResult[A], D] =
-/*      queryFull(EmptyableArg.Lift(a))((a, c) => f(a, c), g(Resolver.id[F, G[B]]))(tpe)
+      queryFull(EmptyableArg.Lift(a))((a, c) => f(a, c), g(Resolver.id[F, G[B]]))(tpe)
 
-    def contBoundary[G[_], B, C, D](connection: Connection[F])(f: A => Query[G, Query.Select[B]])(
-      continue: NonEmptyList[B] => Query[G, C]
-    )(implicit F: Applicative[F], Q: Queryable[F], tpe: => Out[F, G[QueryResult[B]]]) = 
-      Field(
-        queryFull(EmptyableArg.Empty)((i, _) => q(a), Resolver.id[F, G[B]])(tpe)
-      )
-      Field(queryAndThen(f)(_.andThen(resolveQuery(EmptyableArg.Empty, (i, _) => q(i), connection))), Eval.later(tpe))
-*/
+    def contBoundary[G[_], H[_], B, C, D](connection: Connection[F])(f: A => Query[G, Query.Select[B]])(
+      continue: NonEmptyList[List[B]] => Query[H, (Query.Select[List[B]], C)]
+    )(implicit F: Applicative[F], Q: Queryable[F], tpe: => Out[F, H[QueryResult[C]]]) = 
+        queryFull[F, List, A, B, Unit, H[QueryResult[C]]](EmptyableArg.Empty)((i, _) => Query.ToList(f(i)), Resolver.id[F, List[B]].andThen(
+          resolveQuery[F, H, List[B], C, Unit](
+            EmptyableArg.Empty, 
+            (i, _) => continue(i), 
+            connection
+          )
+        )
+      )(tpe)
+
     def query[G[_], B](f: A => Query[G, Query.Select[B]])(implicit
         tpe: => Out[F, G[B]]
     ): Field[F, QueryResult[A], G[B]] =
