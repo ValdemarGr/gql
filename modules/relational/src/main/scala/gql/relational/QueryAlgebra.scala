@@ -117,17 +117,20 @@ trait QueryAlgebra {
         fa: Query[G, A],
         f: A => Query[H, B]
     ) extends Query[Lambda[X => G[H[X]]], B]
+    case class ToList[G[_], A](fa: Query[G, A]) extends Query[List, A]
     case class MapK[G[_], H[_], A](
         fa: Query[G, A],
         f: G ~> H
     ) extends Query[H, A]
     case class Select[A](cols: Chain[Frag], decoder: Decoder[A]) extends Query[Lambda[X => X], Select[A]]
-    implicit lazy val applicativeForSelect: Applicative[Select] = new Applicative[Select] {
-      override def pure[A](x: A): Select[A] = 
-        Select(Chain.empty, Applicative[Decoder].pure(x))
+    object Select {
+      implicit lazy val applicativeForSelect: Applicative[Select] = new Applicative[Select] {
+        override def pure[A](x: A): Select[A] = 
+          Select(Chain.empty, Applicative[Decoder].pure(x))
 
-      override def ap[A, B](ff: Select[A => B])(fa: Select[A]): Select[B] =
-        Select(ff.cols ++ fa.cols, ff.decoder ap fa.decoder)
+        override def ap[A, B](ff: Select[A => B])(fa: Select[A]): Select[B] =
+          Select(ff.cols ++ fa.cols, ff.decoder ap fa.decoder)
+      }
     }
   }
 
@@ -446,6 +449,16 @@ trait QueryAlgebra {
       case p: Query.Pure[a]              => Effect.pure(QueryStateImpl(JoinType.One.reassoc[Unit], ().pure[Decoder], p.a, FunctionK.id[G]))
       case s: Query.Select[a]            => Effect.pure(QueryStateImpl(JoinType.One.reassoc[Unit], ().pure[Decoder], s, FunctionK.id[G]))
       case fm: Query.FlatMap[g, h, a, b] => handleFlatMap(fm)
+      case toList: Query.ToList[g, a] => 
+        collapseQuery(toList.fa).map{ qs =>
+          QueryStateImpl(
+            JoinType.joinTypeList.reassoc[Unit],
+            ().pure[Decoder],
+            qs.value,
+            FunctionK.id[List]
+          )
+        }
+        ???
       case j: Query.Join[g, t] =>
         for {
           n <- nextId
