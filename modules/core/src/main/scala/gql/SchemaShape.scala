@@ -231,7 +231,7 @@ object SchemaShape {
     type H[A] = StateT[G, Set[String], A]
     val S = Stateful[H, Set[String]]
     val H = Monad[H]
-    implicit lazy val parForState = Parallel.identity[H]
+    implicit lazy val parForState: Parallel[H] = Parallel.identity[H]
 
     def nextIfNotSeen(tl: Toplevel[F, ?])(ha: => H[A]): H[A] =
       S.get.flatMap { seen =>
