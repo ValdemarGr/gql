@@ -661,7 +661,7 @@ object Test7 {
             fastEntities {
               name
               age
-              pets {
+              pets(entity_filter: "c4958a82-7ba8-498e-8220-a5b10c047229") {
                 name
                 id
               }
