@@ -47,6 +47,14 @@ object SkunkSchema extends QueryAlgebra with QueryDsl {
     }
   }
 
+  trait SkunkTableAlg[T <: Table[?]] extends TableAlg[T] {
+    def join[G[_]: QueryAlgebra.JoinType](joinPred: T => Fragment[Void])(implicit dummy: DummyImplicit): Query.Join[G, T] =
+      join[G](joinPred.andThen(_.apply(Void)))
+  }
+  def skunkTable[T <: Table[?]](f: String => T): SkunkTableAlg[T] = new SkunkTableAlg[T] {
+    def make: String => T = f
+  }
+
   type LazyConnection[F[_]] = LazyResource[F, Session[F]]
   def lazyPool[F[_]: Concurrent](pool: Resource[F, Session[F]]): Resource[F, LazyConnection[F]] =
     LazyResource.fromResource(pool)
@@ -56,14 +64,42 @@ class MySchema(pool: Resource[IO, Session[IO]]) {
   import SkunkSchema._
   import MySchema._
 
-
   implicit lazy val pet: Type[IO, QueryResult[PetTable]] = tpe[IO, QueryResult[PetTable]](
     "Pet",
     "name" -> query(_.selName),
     "id" -> query(_.selId)
   )
 
-  implicit lazy val entity2: Type[IO, QueryResult[EntityTable2]] = relBuilder[IO, EntityTable2]{ b =>
+  case class DummyTable[K](
+      alias: String,
+      table: AppliedFragment,
+      groupingKey: AppliedFragment,
+      groupingKeyDecoder: Decoder[K]
+  ) extends SkunkTable[K]
+
+  case class Countries(
+      alias: String,
+      limit: Int,
+      offset: Int,
+      order: Option[AppliedFragment],
+      filter: Option[Int]
+  ) extends SkunkTable[String] {
+    def table = {
+      val ord = order.foldMap(f => sql"order by ${f.fragment}".apply(f.argument))
+      val filt = filter.foldMap(f => sql"where population > ${int4}".apply(f))
+      sql"""(
+      select *
+      from countries
+      ${filt.fragment}
+      ${ord.fragment}
+      limit ${int4} offset ${int4}
+    )""".apply((filt.argument, ord.argument, limit, offset))
+    }
+    def groupingKey = void"name"
+    def groupingKeyDecoder: Decoder[String] = text
+  }
+
+  implicit lazy val entity2: Type[IO, QueryResult[EntityTable2]] = relBuilder[IO, EntityTable2] { b =>
     b.tpe(
       "Entity",
       "name" -> b.query(_.selName),
@@ -72,14 +108,14 @@ class MySchema(pool: Resource[IO, Session[IO]]) {
       "height" -> b.query(_.selHeight),
       "pets" -> b.cont { e =>
         for {
-          pe <- petEntityTable.join[List](pe => sql"${pe.entityId} = ${e.id}".apply(Void))
-          p <- petTable.join(p => sql"${p.id} = ${pe.petId}".apply(Void))
+          pe <- petEntityTable.join[List](pe => sql"${pe.entityId} = ${e.id}")
+          p <- petTable.join(p => sql"${p.id} = ${pe.petId}")
         } yield p
       },
-      "pets" -> b.contBoundary(pool)(_.selId) { is => 
+      "pets2" -> b.contBoundary(pool)(_.selId) { is =>
         for {
           pe <- petEntityTable.join[List](pe => sql"${pe.entityId} in ${uuid.list(is.size).values}".apply(is.toList))
-          p <- petTable.join(p => sql"${p.id} = ${pe.petId}".apply(Void))
+          p <- petTable.join(p => sql"${p.id} = ${pe.petId}")
         } yield (pe.selEntityId, p)
       }
     )
@@ -109,7 +145,7 @@ class MySchema(pool: Resource[IO, Session[IO]]) {
 }
 
 object MySchema {
-    import SkunkSchema._
+  import SkunkSchema._
   case class EntityTable(alias: String) extends SkunkTable[UUID] {
     def table = void"entity"
     def groupingKey = void"id"
@@ -163,7 +199,7 @@ object MySchema {
     val (id, selId) = sel("id", uuid)
     val (name, selName) = sel("name", text)
   }
-  val petTable = table(PetTable)
+  val petTable = skunkTable(PetTable)
 
   case class PetEntityTable(alias: String) extends SkunkTable[UUID] {
     def table = void"pet_entity"
@@ -173,5 +209,5 @@ object MySchema {
     val (petId, selPetId) = sel("pet_id", uuid)
     val (entityId, selEntityId) = sel("entity_id", uuid)
   }
-  val petEntityTable = table(PetEntityTable)
+  val petEntityTable = skunkTable(PetEntityTable)
 }

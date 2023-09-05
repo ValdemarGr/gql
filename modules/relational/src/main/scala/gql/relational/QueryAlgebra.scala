@@ -467,7 +467,6 @@ trait QueryAlgebra {
             FunctionK.id[List]
           )
         }
-        ???
       case j: Query.Join[g, t] =>
         for {
           n <- nextId
