@@ -10,7 +10,6 @@ import cats.arrow.FunctionK
 import gql.ast._
 import gql.EmptyableArg
 import gql.resolver.FieldMeta
-import gql._
 
 trait QueryAlgebra {
   import QueryAlgebra.{QueryState => _, QueryStateImpl => _, _}
@@ -30,21 +29,30 @@ trait QueryAlgebra {
     def apply[A](query: Frag, decoder: Decoder[A], connection: Connection[F]): F[List[A]]
   }
 
-  def resolveQuery[F[_]: Queryable, G[_], I, B, ArgType](
+  def resolveQueryFull[F[_]: Queryable, G[_], H[_], I, B, ArgType](
       toplevelArg: EmptyableArg[ArgType],
       q: (NonEmptyList[I], ArgType) => Query[G, (Query.Select[I], B)],
       connection: Connection[F]
-  )(implicit F: Applicative[F]): Resolver[F, I, G[QueryResult[B]]] =
-    compileToResolver[F, G, I, ArgType, Either[String, G[QueryResult[B]]]](toplevelArg) { (xs, at, fm) =>
+  )(implicit F: Applicative[F], H: Reassociateable[H]): Resolver[F, H[I], H[G[QueryResult[B]]]] = {
+    implicit val T: Traverse[H] = H.traverse
+    compileToResolver[F, G, H, I, ArgType, Either[String, G[QueryResult[B]]]](toplevelArg) { (xs, at, fm) =>
       evalQuery(xs, fm, q(xs, at), connection)
-    }.emap(_.toIor)
+    }.emap(_.traverse(_.toIor))
+  }
+
+  def resolveQuery[F[_]: Queryable: Applicative, G[_], I, B, ArgType](
+      toplevelArg: EmptyableArg[ArgType],
+      q: (NonEmptyList[I], ArgType) => Query[G, (Query.Select[I], B)],
+      connection: Connection[F]
+  ): Resolver[F, I, G[QueryResult[B]]] =
+    resolveQueryFull[F, G, Id, I, B, ArgType](toplevelArg, q, connection)
 
   def resolveQuerySingle[F[_]: Queryable, G[_], I, B, ArgType](
       toplevelArg: EmptyableArg[ArgType],
       q: (I, ArgType) => Query[G, B],
       connection: Connection[F]
   )(implicit F: Applicative[F]): Resolver[F, I, G[QueryResult[B]]] =
-    compileToResolver[F, G, I, ArgType, Either[String, G[QueryResult[B]]]](toplevelArg) { (xs, at, fm) =>
+    compileToResolver[F, G, Id, I, ArgType, Either[String, G[QueryResult[B]]]](toplevelArg) { (xs, at, fm) =>
       xs.toList
         .traverse { x =>
           val baseQuery = q(x, at)
@@ -76,7 +84,7 @@ trait QueryAlgebra {
         println(s"running:\n${frag.asInstanceOf[skunk.AppliedFragment].fragment.sql}\n")
         val result = queryable(frag, decoder, connection)
         result
-          .map{ xs => println(s"got ${xs.size} results"); xs }
+          .map { xs => println(s"got ${xs.size} results"); xs }
           .map(_.groupMap { case (k, _) => k } { case (_, v) => v })
           .map(_.fmap(done.reassoc))
     }
@@ -125,7 +133,7 @@ trait QueryAlgebra {
     case class Select[A](cols: Chain[Frag], decoder: Decoder[A]) extends Query[Lambda[X => X], Select[A]]
     object Select {
       implicit lazy val applicativeForSelect: Applicative[Select] = new Applicative[Select] {
-        override def pure[A](x: A): Select[A] = 
+        override def pure[A](x: A): Select[A] =
           Select(Chain.empty, Applicative[Decoder].pure(x))
 
         override def ap[A, B](ff: Select[A => B])(fa: Select[A]): Select[B] =
@@ -163,30 +171,36 @@ trait QueryAlgebra {
       done: Interpreter.Done[G, A, B],
       rootQueryValue: C
   )
-  def compileToResolver[F[_], G[_], I, ArgType, O](toplevelArg: EmptyableArg[ArgType])(
+  def compileToResolver[F[_], G[_], H[_]: Traverse, I, ArgType, O](toplevelArg: EmptyableArg[ArgType])(
       compiler: (NonEmptyList[I], ArgType, FieldMeta[F]) => F[Map[I, O]]
-  )(implicit F: Applicative[F]): Resolver[F, I, O] = {
-    type K = ((ArgType, FieldMeta[F]), I)
+  )(implicit F: Applicative[F]): Resolver[F, H[I], H[O]] = {
+    type K[V[_]] = ((ArgType, FieldMeta[F]), V[I])
     Resolver
-      .meta[F, I]
+      .meta[F, H[I]]
       .andThen(toplevelArg.addArg)
       .tupleIn
-      .map(Set(_))
-      .andThen(Resolver.inlineBatch[F, K, O] { xs =>
-        val lst = xs.toList
-        lst.toNel
-          .traverse { nel =>
-            val rev = nel.map { case (v, k) => k -> v }.toList.toMap
-            val ((a, fm), _) = nel.head
-            val inputs = nel.map { case (_, i) => i }
-            compiler(inputs, a, fm)
-              .map(_.toList.mapFilter { case (i, o) => rev.get(i).tupleRight(i).tupleRight(o) })
-              .map(_.toMap)
+      .andThen(
+        Resolver
+          .id[F, K[H]]
+          .map { case (k, h) => (h.toList tupleLeft k).toSet }
+          .andThen(Resolver.inlineBatch[F, K[Id], O] { xs =>
+            val lst = xs.toList
+            lst.toNel
+              .traverse { nel =>
+                val rev = nel.map { case (v, k) => k -> v }.toList.toMap
+                val ((a, fm), _) = nel.head
+                val inputs = nel.map { case (_, i) => i }
+                compiler(inputs, a, fm)
+                  .map(_.toList.mapFilter { case (i, o) => rev.get(i).tupleRight(i).tupleRight(o) })
+                  .map(_.toMap)
+              }
+              .map(_.getOrElse(Map.empty))
+          })
+          .tupleIn
+          .emap { case (o, (k, h)) =>
+            h.traverse(i => o.get((k, i)).toRightIor("Could not find query result"))
           }
-          .map(_.getOrElse(Map.empty))
-      })
-      .tupleIn
-      .emap { case (o, i) => o.collectFirst { case ((_, k), v) if k == i => v }.toRightIor("Could not find query result") }
+      )
   }
 
   def resolvePreparedQuery[F[_], G[_], I, B, ArgType](
@@ -405,15 +419,10 @@ trait QueryAlgebra {
     ): QueryState[Lambda[X => G[H[X]]], (AK, BK), B] = {
       type N[A] = qsa.T[qsb.T[A]]
       val reassoc: Reassoc[N, (AK, BK)] = new Reassoc[N, (AK, BK)] {
-        def nestedTraverse = Nested.catsDataTraverseForNested[qsa.T, qsb.T](qsa.reassoc.traverse, qsb.reassoc.traverse)
-        def traverse = new Traverse[N] {
-          override def foldLeft[A, B](fa: N[A], b: B)(f: (B, A) => B): B =
-            nestedTraverse.foldLeft(Nested(fa), b)(f)
-          override def foldRight[A, B](fa: N[A], lb: Eval[B])(f: (A, Eval[B]) => Eval[B]): Eval[B] =
-            nestedTraverse.foldRight(Nested(fa), lb)(f)
-          override def traverse[G[_]: Applicative, A, B](fa: N[A])(f: A => G[B]): G[N[B]] =
-            nestedTraverse.traverse(Nested(fa))(f).map(_.value)
-        }
+        def traverse = Reassociateable.reassociateStep(
+          Reassociateable.reassocaiteForAnyTraverse(qsa.reassoc.traverse),
+          Reassociateable.reassocaiteForAnyTraverse(qsb.reassoc.traverse)
+        ).traverse
 
         override def apply[A](fa: List[((AK, BK), A)]): Either[String, N[List[A]]] = {
           val ys = fa.map { case ((ak, bk), a) => (ak, (bk, a)) }
@@ -449,8 +458,8 @@ trait QueryAlgebra {
       case p: Query.Pure[a]              => Effect.pure(QueryStateImpl(JoinType.One.reassoc[Unit], ().pure[Decoder], p.a, FunctionK.id[G]))
       case s: Query.Select[a]            => Effect.pure(QueryStateImpl(JoinType.One.reassoc[Unit], ().pure[Decoder], s, FunctionK.id[G]))
       case fm: Query.FlatMap[g, h, a, b] => handleFlatMap(fm)
-      case toList: Query.ToList[g, a] => 
-        collapseQuery(toList.fa).map{ qs =>
+      case toList: Query.ToList[g, a] =>
+        collapseQuery(toList.fa).map { qs =>
           QueryStateImpl(
             JoinType.joinTypeList.reassoc[Unit],
             ().pure[Decoder],
@@ -513,6 +522,7 @@ object QueryAlgebra {
     type T[A] = I[A]
   }
 
+  // Structure that aids re-construction of hierarchical data from flat data
   trait Reassoc[G[_], Key] {
     def traverse: Traverse[G]
 
@@ -587,5 +597,39 @@ object QueryAlgebra {
         override def apply[A](fa: List[A]): Either[String, List[A]] = Right(fa)
       }
     }
+  }
+}
+
+// A typeclass that exists for any traversable which is subject to derivation for nested effects
+trait Reassociateable[F[_]] {
+  def traverse: Traverse[F]
+}
+
+object Reassociateable extends ReassociateableLowPrio1 {
+  implicit def reassociateStep[F[_], G[_]](implicit F: Reassociateable[F], G: Reassociateable[G]): Reassociateable[Lambda[X => F[G[X]]]] = {
+    type H[A] = F[G[A]]
+    new Reassociateable[H] {
+      val instance = Nested.catsDataTraverseForNested(F.traverse, G.traverse)
+      def traverse = new Traverse[H] {
+        override def foldLeft[A, B](fa: H[A], b: B)(f: (B, A) => B): B = 
+          instance.foldLeft(Nested(fa), b)(f)
+        override def foldRight[A, B](fa: H[A], lb: Eval[B])(f: (A, Eval[B]) => Eval[B]): Eval[B] = 
+          instance.foldRight(Nested(fa), lb)(f)
+        override def traverse[G[_]: Applicative, A, B](fa: H[A])(f: A => G[B]): G[H[B]] = 
+          instance.traverse(Nested(fa))(f).map(_.value)
+      }
+    }
+  }
+}
+
+trait ReassociateableLowPrio1 extends ReassociateableLowPrio2 {
+  implicit lazy val reassociateForId: Reassociateable[Id] = new Reassociateable[Id] {
+    def traverse = Traverse[Id]
+  }
+}
+
+trait ReassociateableLowPrio2 {
+  implicit def reassocaiteForAnyTraverse[F[_]](implicit F: Traverse[F]): Reassociateable[F] = new Reassociateable[F] {
+    def traverse = F
   }
 }

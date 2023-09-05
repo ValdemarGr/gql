@@ -63,33 +63,27 @@ class MySchema(pool: Resource[IO, Session[IO]]) {
     "id" -> query(_.selId)
   )
 
-  implicit lazy val entity2: Type[IO, QueryResult[EntityTable2]] = tpe[IO, QueryResult[EntityTable2]](
-    "Entity",
-    "name" -> query(_.selName),
-    "id" -> query(_.selId),
-    "age" -> query(_.selAge),
-    "height" -> query(_.selHeight),
-    "pets" -> cont { e =>
-      for {
-        pe <- petEntityTable.join[List](pe => sql"${pe.entityId} = ${e.id}".apply(Void))
-        p <- petTable.join(p => sql"${p.id} = ${pe.petId}".apply(Void))
-      } yield p
-    }
-    /*"pets" -> queryAndThen[IO, Lambda[X => X], EntityTable2, UUID, List[QueryResult[PetTable]]](_.selId)(
-      _.andThen(
-        resolveQuery(
-          EmptyableArg.Empty,
-          { (is: NonEmptyList[UUID], _: Unit) =>
-            for {
-              pe <- petEntityTable.join[List](pe => sql"${pe.entityId} in ${uuid.list(is.size).values}".apply(is.toList))
-              p <- petTable.join(p => sql"${p.id} = ${pe.petId}".apply(Void))
-            } yield (pe.selEntityId, p)
-          },
-          SkunkRunQuery(pool)
-        )
-      )
-    )*/
-  )
+  implicit lazy val entity2: Type[IO, QueryResult[EntityTable2]] = relBuilder[IO, EntityTable2]{ b =>
+    b.tpe(
+      "Entity",
+      "name" -> b.query(_.selName),
+      "id" -> b.query(_.selId),
+      "age" -> b.query(_.selAge),
+      "height" -> b.query(_.selHeight),
+      "pets" -> b.cont { e =>
+        for {
+          pe <- petEntityTable.join[List](pe => sql"${pe.entityId} = ${e.id}".apply(Void))
+          p <- petTable.join(p => sql"${p.id} = ${pe.petId}".apply(Void))
+        } yield p
+      },
+      "pets" -> b.contBoundary(pool)(_.selId) { is => 
+        for {
+          pe <- petEntityTable.join[List](pe => sql"${pe.entityId} in ${uuid.list(is.size).values}".apply(is.toList))
+          p <- petTable.join(p => sql"${p.id} = ${pe.petId}".apply(Void))
+        } yield (pe.selEntityId, p)
+      }
+    )
+  }
 
   implicit lazy val entity: Type[IO, QueryResult[EntityTable]] = tpe[IO, QueryResult[EntityTable]](
     "Entity",

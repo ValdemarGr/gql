@@ -1,32 +1,14 @@
 package gql.relational
 
-import cats.effect._
-import skunk.implicits._
 import gql.ast._
 import gql.dsl._
 import cats.implicits._
-import fs2.Pure
-import skunk.codec._
 import skunk._
 import cats._
 import gql.resolver.Resolver
 import cats.data._
-import scala.reflect.ClassTag
-import java.util.UUID
 import gql.Arg
 import gql.EmptyableArg
-import gql.resolver.FieldMeta
-import cats.mtl.Stateful
-import cats.mtl.Tell
-import gql.{preparation => prep}
-import cats.mtl.Raise
-import gql.Schema
-import gql.SchemaShape
-import gql.Application
-import natchez.TraceValue
-import natchez.Kernel
-import natchez.Span
-import cats.arrow.FunctionK
 
 trait QueryDsl extends QueryAlgebra { self =>
   def query[F[_], G[_], A, B](f: A => Query[G, Query.Select[B]])(implicit
@@ -58,6 +40,12 @@ trait QueryDsl extends QueryAlgebra { self =>
       q: NonEmptyList[I] => Query[G, (Query.Select[I], B)]
   )(implicit tpe: => Out[F, G[QueryResult[B]]]) =
     Field(resolveQuery[F, G, I, B, Unit](EmptyableArg.Empty, (i, _) => q(i), connection), Eval.later(tpe))
+
+  final class BuildWithBuilder[F[_], A] {
+    def apply[B](f: RelationalFieldBuilder[F, A] => B): B = f(new RelationalFieldBuilder[F, A]())
+  }
+
+  def relBuilder[F[_], A] = new BuildWithBuilder[F, A]
 
   def table[T <: Table[?]](f: String => T): TableAlg[T] = new TableAlg[T] {
     def make: String => T = f
@@ -111,8 +99,8 @@ trait QueryDsl extends QueryAlgebra { self =>
       gql.dsl.tpe[F, QueryResult[A]](name, hd, tl: _*)
 
     def queryAndThen[G[_], B, C](f: A => Query[G, Query.Select[B]])(g: Resolver[F, G[B], G[B]] => Resolver[F, G[B], C])(
-      tpe: => Out[F, C]
-    ): Field[F, QueryResult[A], C] = 
+        tpe: => Out[F, C]
+    ): Field[F, QueryResult[A], C] =
       queryFull(EmptyableArg.Empty)((a, _) => f(a), g(Resolver.id[F, G[B]]))(tpe)
 
     def queryAndThen[G[_], B, C, D](
@@ -122,17 +110,65 @@ trait QueryDsl extends QueryAlgebra { self =>
     ): Field[F, QueryResult[A], D] =
       queryFull(EmptyableArg.Lift(a))((a, c) => f(a, c), g(Resolver.id[F, G[B]]))(tpe)
 
-    def contBoundary[G[_], H[_], B, C, D](connection: Connection[F])(f: A => Query[G, Query.Select[B]])(
-      continue: NonEmptyList[List[B]] => Query[H, (Query.Select[List[B]], C)]
-    )(implicit F: Applicative[F], Q: Queryable[F], tpe: => Out[F, H[QueryResult[C]]]) = 
-        queryFull[F, List, A, B, Unit, H[QueryResult[C]]](EmptyableArg.Empty)((i, _) => Query.ToList(f(i)), Resolver.id[F, List[B]].andThen(
-          resolveQuery[F, H, List[B], C, Unit](
-            EmptyableArg.Empty, 
-            (i, _) => continue(i), 
-            connection
+    def contBoundaryFull[G[_]: Reassociateable, H[_], B, C, D, Arg1, Arg2](ea1: EmptyableArg[Arg1], connection: Connection[F])(
+        f: (A, Arg1) => Query[G, Query.Select[B]]
+    )(ea2: EmptyableArg[Arg2])(continue: (NonEmptyList[B], Arg2) => Query[H, (Query.Select[B], C)])(implicit
+        F: Applicative[F],
+        Q: Queryable[F],
+        tpe: => Out[F, G[H[QueryResult[C]]]]
+    ) =
+      queryFull[F, G, A, B, Arg1, G[H[QueryResult[C]]]](ea1)(
+        f,
+        Resolver
+          .id[F, G[B]]
+          .andThen(
+            resolveQueryFull[F, H, G, B, C, Arg2](ea2, continue, connection)
           )
-        )
       )(tpe)
+      
+    def contBoundary11[G[_]: Reassociateable, H[_], B, C, D, Arg1, Arg2](a1: Arg[Arg1], connection: Connection[F])(
+        f: (A, Arg1) => Query[G, Query.Select[B]]
+    )(a2: Arg[Arg2])(continue: (NonEmptyList[B], Arg2) => Query[H, (Query.Select[B], C)])(implicit
+        F: Applicative[F],
+        Q: Queryable[F],
+        tpe: => Out[F, G[H[QueryResult[C]]]]
+    ) = {
+      implicit def tpe0: Out[F, G[H[QueryResult[C]]]] = tpe
+      contBoundaryFull[G, H, B, C, D, Arg1, Arg2](EmptyableArg.Lift(a1), connection)(f)(EmptyableArg.Lift(a2))(continue)
+    }
+
+    def contBoundary10[G[_]: Reassociateable, H[_], B, C, D, Arg1](a1: Arg[Arg1], connection: Connection[F])(
+        f: (A, Arg1) => Query[G, Query.Select[B]]
+    )(continue: NonEmptyList[B] => Query[H, (Query.Select[B], C)])(implicit
+        F: Applicative[F],
+        Q: Queryable[F],
+        tpe: => Out[F, G[H[QueryResult[C]]]]
+    ) = {
+      implicit def tpe0: Out[F, G[H[QueryResult[C]]]] = tpe
+      contBoundaryFull[G, H, B, C, D, Arg1, Unit](EmptyableArg.Lift(a1), connection)(f)(EmptyableArg.Empty)((i, _) => continue(i))
+    }
+
+    def contBoundary01[G[_]: Reassociateable, H[_], B, C, D, Arg2](connection: Connection[F])(
+        f: A => Query[G, Query.Select[B]]
+    )(a2: Arg[Arg2])(continue: (NonEmptyList[B], Arg2) => Query[H, (Query.Select[B], C)])(implicit
+        F: Applicative[F],
+        Q: Queryable[F],
+        tpe: => Out[F, G[H[QueryResult[C]]]]
+    ) = {
+      implicit def tpe0: Out[F, G[H[QueryResult[C]]]] = tpe
+      contBoundaryFull[G, H, B, C, D, Unit, Arg2](EmptyableArg.Empty, connection)((i, _) => f(i))(EmptyableArg.Lift(a2))(continue)
+    }
+
+    def contBoundary[G[_]: Reassociateable, H[_], B, C, D](connection: Connection[F])(
+        f: A => Query[G, Query.Select[B]]
+    )(continue: NonEmptyList[B] => Query[H, (Query.Select[B], C)])(implicit
+        F: Applicative[F],
+        Q: Queryable[F],
+        tpe: => Out[F, G[H[QueryResult[C]]]]
+    ) = {
+      implicit def tpe0: Out[F, G[H[QueryResult[C]]]] = tpe
+      contBoundaryFull[G, H, B, C, D, Unit, Unit](EmptyableArg.Empty, connection)((i, _) => f(i))(EmptyableArg.Empty)((i, _) => continue(i))
+    }
 
     def query[G[_], B](f: A => Query[G, Query.Select[B]])(implicit
         tpe: => Out[F, G[B]]
