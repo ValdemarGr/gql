@@ -285,7 +285,11 @@ lazy val relational = project
     .settings(sharedSettings)
     .dependsOn(server)
     .settings(
-      libraryDependencies += "org.tpolecat" %% "skunk-core" % "0.6.0"
+      libraryDependencies ++= Seq(
+        "org.tpolecat" %% "skunk-core" % "0.6.0",
+        "org.tpolecat" %% "doobie-core"      % "1.0.0-RC4",
+        "org.tpolecat" %% "doobie-postgres"  % "1.0.0-RC4",
+      )
     )
 
 lazy val mdocExt = project
