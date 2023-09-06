@@ -125,38 +125,16 @@ trait QueryDsl extends QueryAlgebra { self =>
             resolveQueryFull[F, H, G, B, C, Arg2](ea2, continue, connection)
           )
       )(tpe)
-      
-    def contBoundary11[G[_]: Reassociateable, H[_], B, C, D, Arg1, Arg2](a1: Arg[Arg1], connection: Connection[F])(
-        f: (A, Arg1) => Query[G, Query.Select[B]]
-    )(a2: Arg[Arg2])(continue: (NonEmptyList[B], Arg2) => Query[H, (Query.Select[B], C)])(implicit
-        F: Applicative[F],
-        Q: Queryable[F],
-        tpe: => Out[F, G[H[QueryResult[C]]]]
-    ) = {
-      implicit def tpe0: Out[F, G[H[QueryResult[C]]]] = tpe
-      contBoundaryFull[G, H, B, C, D, Arg1, Arg2](EmptyableArg.Lift(a1), connection)(f)(EmptyableArg.Lift(a2))(continue)
-    }
 
-    def contBoundary10[G[_]: Reassociateable, H[_], B, C, D, Arg1](a1: Arg[Arg1], connection: Connection[F])(
-        f: (A, Arg1) => Query[G, Query.Select[B]]
-    )(continue: NonEmptyList[B] => Query[H, (Query.Select[B], C)])(implicit
+    def contBoundary[G[_]: Reassociateable, H[_], B, C, D, ArgType](a: Arg[ArgType], connection: Connection[F])(
+        f: (A, ArgType) => Query[G, Query.Select[B]]
+    )(continue: (NonEmptyList[B], ArgType) => Query[H, (Query.Select[B], C)])(implicit
         F: Applicative[F],
         Q: Queryable[F],
         tpe: => Out[F, G[H[QueryResult[C]]]]
     ) = {
       implicit def tpe0: Out[F, G[H[QueryResult[C]]]] = tpe
-      contBoundaryFull[G, H, B, C, D, Arg1, Unit](EmptyableArg.Lift(a1), connection)(f)(EmptyableArg.Empty)((i, _) => continue(i))
-    }
-
-    def contBoundary01[G[_]: Reassociateable, H[_], B, C, D, Arg2](connection: Connection[F])(
-        f: A => Query[G, Query.Select[B]]
-    )(a2: Arg[Arg2])(continue: (NonEmptyList[B], Arg2) => Query[H, (Query.Select[B], C)])(implicit
-        F: Applicative[F],
-        Q: Queryable[F],
-        tpe: => Out[F, G[H[QueryResult[C]]]]
-    ) = {
-      implicit def tpe0: Out[F, G[H[QueryResult[C]]]] = tpe
-      contBoundaryFull[G, H, B, C, D, Unit, Arg2](EmptyableArg.Empty, connection)((i, _) => f(i))(EmptyableArg.Lift(a2))(continue)
+      contBoundaryFull[G, H, B, C, D, ArgType, ArgType](EmptyableArg.Lift(a), connection)(f)(EmptyableArg.Lift(a))(continue)
     }
 
     def contBoundary[G[_]: Reassociateable, H[_], B, C, D](connection: Connection[F])(
