@@ -1,11 +1,9 @@
 package gql.relational
 
 import cats.effect._
-import skunk.implicits._
 import gql.ast._
 import gql.dsl._
 import cats.implicits._
-import skunk._
 import cats._
 import java.util.UUID
 import gql.Arg
@@ -38,4 +36,41 @@ object DoobieIntegraion extends QueryAlgebra with QueryDsl {
     )
 
   implicit def applicativeForDecoder: Applicative[Decoder] = doobie.Read.ReadApply
+
+  type Connection[F[_]] = Transactor[F]
+  implicit def doobieQueryable[F[_]: MonadCancelThrow]: Queryable[F] = new Queryable[F] {
+    def apply[A](query: Frag, decoder: Decoder[A], connection: Connection[F]): F[List[A]] = 
+      query.query(decoder).to[List].transact(connection)
+  }
+
+  trait DoobieTable[A] extends Table[A] {
+    def aliased(x: Fragment): Fragment =
+      Fragment.const(alias) ++ fr"." ++ x
+
+    def sel[A](x: String, d: Decoder[A]): (Fragment, Query.Select[A]) = {
+      val col = aliased(Fragment.const(x))
+      col -> Query.Select(Chain(col), d)
+    }
+  }
+}
+
+object ExampleDoobie {
+  import DoobieIntegraion._
+  import doobie.postgres.implicits._
+
+  case class ContractTable(alias: String) extends DoobieTable[UUID] {
+    def table = fr"contract"
+    def groupingKey = fr"id"
+    def groupingKeyDecoder = Read[UUID]
+
+    val (id, selId) = sel("id", Read[UUID])
+    val (name, selName) = sel("name", Read[String])
+  }
+  val contractTable = table(ContractTable)
+
+  implicit lazy val contract2: Type[IO, QueryResult[ContractTable]] = tpe[IO, QueryResult[ContractTable]](
+    "Contract2",
+    "name" -> query(_.selName),
+    "id" -> query(_.selId)
+  )
 }

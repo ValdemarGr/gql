@@ -81,7 +81,7 @@ trait QueryAlgebra {
         val decoder = (sel.decoder, done.dec).tupled
         val qc2 = Interpreter.QueryContent(sel.cols ++ qc.selections, qc.joins)
         val frag = Interpreter.renderQuery(qc2)
-        println(s"running:\n${frag.asInstanceOf[skunk.AppliedFragment].fragment.sql}\n")
+        println(s"running:\n${frag}\n")
         val result = queryable(frag, decoder, connection)
         result
           .map { xs => println(s"got ${xs.size} results"); xs }
