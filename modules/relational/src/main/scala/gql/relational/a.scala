@@ -28,6 +28,7 @@ import natchez.Kernel
 import natchez.Span
 import java.net.URI
 import cats.arrow.FunctionK
+import doobie.util.transactor
 
 object Main extends IOApp.Simple {
   override def run: IO[Unit] =
@@ -622,6 +623,14 @@ object Test7 {
       override def traceId: IO[Option[String]] = IO.pure(None)
       override def traceUri: IO[Option[URI]] = IO.pure(None)
     }
+
+    val doobieConn = transactor.Transactor.fromDriverManager[IO](
+        driver = "org.postgresql.Driver",  // JDBC driver classname
+        url = "jdbc:postgresql:postgres",     // Connect URL
+        user = "postgres",                 // Database user name
+        password = "1234",             // Database password
+        logHandler = None   
+    )
     val pool =
       Session
         .single[IO](
@@ -638,13 +647,18 @@ object Test7 {
     val ms = new MySchema(xaPool)
     import MySchema._
     import ms._
+    import ExampleDoobie.{ContractTable => CT}
     implicit val c0 = ms.contract
     val ss = SchemaShape.unit[IO](
       fields[IO, Unit](
         "name" -> lift(_ => "edlav"),
         "contract" -> SkunkSchema.runField(xaPool, arg[UUID]("contractId"))((_: NonEmptyList[Unit], a: UUID) =>
           MySchema.contractTable.join[Option](c => sql"${c.id} = ${uuid}".apply(a)).map(t => (().pure[SkunkSchema.Query.Select], t))
-        )
+        ),
+        "contract2" -> DoobieIntegraion.runField[IO, List, Unit, CT](doobieConn){(_: NonEmptyList[Unit]) =>
+          import doobie.implicits._
+          ExampleDoobie.contractTable.join[List](x => fr"1 = 1").map(t => (().pure[DoobieIntegraion.Query.Select], t))
+        }
       )
     )
 
@@ -661,11 +675,15 @@ object Test7 {
             fastEntities {
               name
               age
-              pets(entity_filter: "c4958a82-7ba8-498e-8220-a5b10c047229") {
+              pets {
                 name
                 id
               }
             }
+          }
+          contract2 {
+            name
+            id
           }
         }
         """
