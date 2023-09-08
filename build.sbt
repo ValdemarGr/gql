@@ -280,6 +280,14 @@ lazy val serverHttp4s = project
   )
   .dependsOn(server)
 
+lazy val relational = project
+    .in(file("modules/relational"))
+    .settings(sharedSettings)
+    .dependsOn(server)
+    .settings(
+      libraryDependencies += "org.tpolecat" %% "skunk-core" % "0.6.0"
+    )
+
 lazy val mdocExt = project
   .in(file("modules/mdoc-ext"))
   .settings(sharedSettings)
