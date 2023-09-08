@@ -668,25 +668,25 @@ object Test7 {
         .compile(
           schema,
           """
-        query {
-          contract(contractId: "1ff0ca77-c13f-4af8-9166-72373f309247") {
-            name
-            id
-            fastEntities {
-              name
-              age
-              pets {
+            query {
+              contract(contractId: "1ff0ca77-c13f-4af8-9166-72373f309247") {
+                name
+                id
+                fastEntities {
+                  name
+                  age
+                  pets {
+                    name
+                    id
+                  }
+                }
+              }
+              contract2 {
                 name
                 id
               }
             }
-          }
-          contract2 {
-            name
-            id
-          }
-        }
-        """
+          """
         ) match {
         case Right(Application.Query(run)) => run.flatMap(IO.println)
         case x                             => IO.println(x)
