@@ -53,7 +53,7 @@ trait SubqueryInterpreter[F[_]] {
 
   def startNext[I](s: Prepared[F, I], in: Chain[EvalNode[F, I]]): W[Chain[Json]]
 
-  def runDataField[I](df: PreparedDataField[F, I], input: Chain[EvalNode[F, I]]): W[Chain[Json]]
+  def runDataField[I](df: PreparedDataField[F, I, ?], input: Chain[EvalNode[F, I]]): W[Chain[Json]]
 }
 
 object SubqueryInterpreter {
@@ -107,10 +107,10 @@ object SubqueryInterpreter {
             case Right(o) => W.pure(Some(o))
           }
 
-        def attemptTimed[A](cursor: UniqueEdgeCursor, constructor: Throwable => EvalFailure)(fo: F[A]): W[Option[A]] =
+        def attemptTimed[A](cursor: UniqueEdgeCursor, constructor: Throwable => EvalFailure, n: Int = 1)(fo: F[A]): W[Option[A]] =
           attemptEffect(constructor) {
             fo.timed.flatMap { case (dur, x) =>
-              submit(cursor.asString, dur, 1) as x
+              submit(cursor.asString, dur, n) as x
             }
           }
 
@@ -132,16 +132,16 @@ object SubqueryInterpreter {
             val keys: Set[k] = inputs.toList.flatMap(_.node.value.toList).toSet
 
             attemptTimed(cursor, e => EvalFailure.BatchResolution(inputs.map(_.node.cursor), e), keys.size) {
-              alg.run(keys).map{ m =>
-                inputs.map{ id =>
+              alg.run(keys).map { m =>
+                inputs.map { id =>
                   id.map { keys =>
                     Chain.fromIterableOnce[k](keys).mapFilter(k => m.get(k) tupleLeft k).iterator.toMap
                   }
                 }
               }
             }
-            .map(xs => Chain.fromOption(xs).flatten)
-            .flatMap(runEdgeCont(_, cont))
+              .map(xs => Chain.fromOption(xs).flatten)
+              .flatMap(runEdgeCont(_, cont))
           case EmbedError() =>
             (inputs: Chain[IndexedData[F, Ior[String, C]]])
               .flatTraverse { id =>
@@ -214,8 +214,13 @@ object SubqueryInterpreter {
 
               (leftF, rightF).parMapN(_ ++ _)
             }
-          case GetMeta(pm) =>
-            runNext(inputs.map(in => in as FieldMeta(QueryMeta(in.node.cursor, pm.variables), pm.args, pm.alias)))
+          case GetMeta(pm0) =>
+            val pm = pm0.value
+            runNext {
+              inputs.map { in =>
+                in as FieldMeta(QueryMeta(in.node.cursor, pm.variables), pm.args, pm.pdf)
+              }
+            }
           case alg: First[F @unchecked, i2, o2, c2] =>
             // (o2, c2) <:< C
             // (i2, c2) <:< I
@@ -258,7 +263,7 @@ object SubqueryInterpreter {
           }
       }
 
-      def runDataField[I](df: PreparedDataField[F, I], in: Chain[EvalNode[F, I]]): W[Chain[Json]] = {
+      def runDataField[I](df: PreparedDataField[F, I, ?], in: Chain[EvalNode[F, I]]): W[Chain[Json]] = {
         df.cont match {
           case cont: PreparedCont[F, i, a] =>
             runEdge[i, a](
@@ -294,7 +299,7 @@ object SubqueryInterpreter {
                     .map(_.foldLeft(Map.empty[String, Json])(_ ++ _))
                 }
               }).map(Chain.fromSeq)
-            case df @ PreparedDataField(_, _, _) =>
+            case df @ PreparedDataField(_, _, _, _, _) =>
               runDataField(df, in)
                 .map(_.map(j => Map(df.outputName -> j)))
                 .map(Chain(_))
