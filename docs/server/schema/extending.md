@@ -4,7 +4,7 @@ title: Extending schemas
 The AST in gql is subject to extension.
 In particular, the schema can be used to write arbitary information that can later be used for various purposes.
 
-Integrations that use schema extensions are the [goi](../integrations/goi) and relational integrations.
+Integrations that use schema extensions are the [goi](../integrations/goi) and [relational](../integrations/relational) integrations.
 
 Lets get some imports ready before we start.
 ```scala mdoc
