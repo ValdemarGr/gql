@@ -177,12 +177,12 @@ object ast extends AstImplicits.Implicits {
     def asAbstract: AbstractField[F, B]
   }
 
-  trait FieldAttribute[+F[_], B]
+  trait FieldAttribute[+F[_]]
   final case class Field[+F[_], -A, B](
       resolve: Resolver[F, A, B],
       output: Eval[Out[F, B]],
       description: Option[String] = None,
-      attributes: List[FieldAttribute[F, B]] = Nil
+      attributes: List[FieldAttribute[F]] = Nil
   ) extends AnyField[F, A, B] {
     def document(description: String): Field[F, A, B] = copy(description = Some(description))
 
@@ -211,7 +211,7 @@ object ast extends AstImplicits.Implicits {
     def contramap[F2[x] >: F[x], A2](f: A2 => A): Field[F2, A2, B] =
       compose[F2, A2](Resolver.lift[F2, A2](f))
 
-    def addAttributes[F2[x] >: F[x]](attrs: FieldAttribute[F2, B]*): Field[F2, A, B] =
+    def addAttributes[F2[x] >: F[x]](attrs: FieldAttribute[F2]*): Field[F2, A, B] =
       copy(attributes = attributes ++ attrs.toList)
   }
 

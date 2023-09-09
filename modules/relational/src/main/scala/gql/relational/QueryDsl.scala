@@ -54,7 +54,7 @@ trait QueryDsl extends QueryAlgebra { self =>
   def queryFull[F[_], G[_], A, B, C, D](a: EmptyableArg[C])(f: (A, C) => Query[G, Query.Select[B]], resolverCont: Resolver[F, G[B], D])(
       implicit tpe: => Out[F, D]
   ): Field[F, QueryResult[A], D] = {
-    val tfa: TableFieldAttribute[F, G, A, B, C, Query.Select[B], D] = new TableFieldAttribute[F, G, A, B, C, Query.Select[B], D] {
+    val tfa: TableFieldAttribute[F, G, A, B, C, Query.Select[B]] = new TableFieldAttribute[F, G, A, B, C, Query.Select[B]] {
       def arg = a
       def query(value: A, argument: C): Query[G, Query.Select[B]] = f(value, argument)
       def fieldVariant = FieldVariant.Selection()
@@ -80,8 +80,8 @@ trait QueryDsl extends QueryAlgebra { self =>
       case EmptyableArg.Lift(y) => Resolver.id[F, I2].arg(y).map { case (_, i2) => i2 }
     }
 
-    val tfa: TableFieldAttribute[F, G, A, QueryResult[B], C, B, G[QueryResult[B]]] =
-      new TableFieldAttribute[F, G, A, QueryResult[B], C, B, G[QueryResult[B]]] {
+    val tfa: TableFieldAttribute[F, G, A, QueryResult[B], C, B] =
+      new TableFieldAttribute[F, G, A, QueryResult[B], C, B] {
         def arg = a
         def query(value: A, argument: C): Query[G, B] = f(value, argument)
         def fieldVariant = FieldVariant.SubSelection()

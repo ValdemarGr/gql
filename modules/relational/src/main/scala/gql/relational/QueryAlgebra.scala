@@ -96,14 +96,14 @@ trait QueryAlgebra {
     case class SubSelection[A]() extends FieldVariant[A, QueryResult[A]]
   }
 
-  trait TableFieldAttribute[F[_], G[_], A, B, ArgType, Q, O] extends FieldAttribute[F, O] {
+  trait TableFieldAttribute[F[_], G[_], A, B, ArgType, Q] extends FieldAttribute[F] {
     def arg: EmptyableArg[ArgType]
     def query(value: A, argument: ArgType): Query[G, Q]
     def fieldVariant: FieldVariant[Q, B]
   }
 
   trait QueryResult[A] {
-    def read[F[_], G[_], A0, B, ArgType, Q](tfa: TableFieldAttribute[F, G, A0, B, ArgType, Q, ?]): Option[Either[String, G[B]]]
+    def read[F[_], G[_], A0, B, ArgType, Q](tfa: TableFieldAttribute[F, G, A0, B, ArgType, Q]): Option[Either[String, G[B]]]
   }
 
   sealed trait Query[G[_], A] {
@@ -282,10 +282,10 @@ trait QueryAlgebra {
         }
     }
 
-    def compileNextField[F[_], G[_], A, B, ArgType, Q, O](
+    def compileNextField[F[_], G[_], A, B, ArgType, Q](
         pdf: prep.PreparedDataField[F, ?, ?],
         a: A,
-        tfa: TableFieldAttribute[F, G, A, B, ArgType, Q, O]
+        tfa: TableFieldAttribute[F, G, A, B, ArgType, Q]
     ): Interpreter.Effect[Done[G, ?, B]] =
       getArg(pdf, tfa.arg)
         .map(tfa.query(a, _))
@@ -327,7 +327,7 @@ trait QueryAlgebra {
           }
 
           ys.map { dones =>
-            type K = TableFieldAttribute[F, Any, ?, ?, ?, ?, ?]
+            type K = TableFieldAttribute[F, Any, ?, ?, ?, ?]
             val decs = dones
               .flatTraverse { case (done, attr) =>
                 done.dec.map { x => List[(K, Any)](attr.attr -> x) }
@@ -341,11 +341,11 @@ trait QueryAlgebra {
               val grouped = keys.toList.map(k => k -> xs.flatMap(_.get(k))).toMap
               new QueryResult[Q] {
                 def read[F[_], G[_], A0, B, ArgType, Q](
-                    tfa: TableFieldAttribute[F, G, A0, B, ArgType, Q, ?]
+                    tfa: TableFieldAttribute[F, G, A0, B, ArgType, Q]
                 ): Option[Either[String, G[B]]] =
-                  doneMap.asInstanceOf[Map[TableFieldAttribute[F, G, A0, B, ArgType, Q, ?], Done[G, ?, ?]]].get(tfa).flatMap {
+                  doneMap.asInstanceOf[Map[TableFieldAttribute[F, G, A0, B, ArgType, Q], Done[G, ?, ?]]].get(tfa).flatMap {
                     case (done: Done[G, a, ?]) =>
-                      grouped.asInstanceOf[Map[TableFieldAttribute[F, G, A0, B, ArgType, Q, ?], List[Any]]].get(tfa).map { ys =>
+                      grouped.asInstanceOf[Map[TableFieldAttribute[F, G, A0, B, ArgType, Q], List[Any]]].get(tfa).map { ys =>
                         done.reassoc(ys.asInstanceOf[List[a]]).map(_.asInstanceOf[G[B]])
                       }
                   }
@@ -370,7 +370,7 @@ trait QueryAlgebra {
 
     case class FieldWithAttr[F[_], G[_], A](
         field: prep.PreparedDataField[F, QueryResult[A], ?],
-        attr: TableFieldAttribute[F, G, A, ?, ?, ?, ?]
+        attr: TableFieldAttribute[F, G, A, ?, ?, ?]
     )
     def getNextAttributes[F[_], A, B](pdf: prep.PreparedDataField[F, A, B]) = {
       val selFields: List[prep.PreparedField[F, ?]] = findNextSel(pdf.cont.cont).toList.flatMap(_.fields)
@@ -378,8 +378,8 @@ trait QueryAlgebra {
         .flatMap(pf => findNextFields(pf))
         .collect { case x: prep.PreparedDataField[F, ?, ?] => x }
         .map { x =>
-          x.source.attributes.collectFirst { case a: TableFieldAttribute[F, g, a, ?, ?, ?, ?] @unchecked => a }.map {
-            case tfa: TableFieldAttribute[F, g, a, ?, ?, ?, ?] =>
+          x.source.attributes.collectFirst { case a: TableFieldAttribute[F, g, a, ?, ?, ?] @unchecked => a }.map {
+            case tfa: TableFieldAttribute[F, g, a, ?, ?, ?] =>
               FieldWithAttr(x.asInstanceOf[prep.PreparedDataField[F, QueryResult[a], ?]], tfa)
           }
         }
