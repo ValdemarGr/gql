@@ -27,7 +27,7 @@ object SkunkIntegration extends QueryAlgebra {
   }
 }
 
-object SkunkDsl extends QueryDsl(SkunkIntegration) {
+object dsl extends QueryDsl(SkunkIntegration) {
   import algebra._
   trait SkunkTable[A] extends Table[A] {
     def aliased(x: Fragment[Void]): Fragment[Void] =

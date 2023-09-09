@@ -1,7 +1,6 @@
 package gql.relational
 
 import cats.implicits._
-import skunk._
 import cats._
 import gql.resolver.Resolver
 import cats.data._
