@@ -184,11 +184,19 @@ object SchemaShape {
           nextIfNotSeen(t) {
             lazy val nextF = t match {
               case ol: ObjectLike[F, ?] =>
-                ol.anyFields.parFoldMapA { case (name, af) =>
-                  (goOutput(af.output.value) >>
-                    af.asAbstract.arg.parFoldMapA(_.entries.parFoldMapA(x => goInput(x.input.value))))
-                    .mapF(runPf(VisitNode.FieldNode(name, af)))
-                } >> ol.implementsMap.values.toList.map(_.value).parFoldMapA(goOutput)
+                val fieldEffects = ol.anyFields.parFoldMapA { case (name, af) =>
+                  val effect = (
+                    goOutput(af.output.value),
+                    af.asAbstract.arg.parFoldMapA(_.entries.parFoldMapA(x => goInput(x.input.value)))
+                  ).parMapN(_ |+| _)
+
+                  effect.mapF(runPf(VisitNode.FieldNode(name, af)))
+                }
+
+                (
+                  ol.implementsMap.values.toList.map(_.value).parFoldMapA(goOutput),
+                  fieldEffects
+                ).parMapN(_ |+| _)
               case Union(_, instances, _) =>
                 instances.parFoldMapA(inst => goOutput(inst.tpe.value))
               case _ => H.pure(M.empty)
