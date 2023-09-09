@@ -18,7 +18,7 @@ import cats.effect.std.Supervisor
 import cats.effect.std.Hotswap
 import cats.effect.std.Mutex
 
-object SkunkSchema extends QueryAlgebra with QueryDsl {
+object SkunkSchema extends QueryAlgebra {
   type Frag = skunk.AppliedFragment
 
   def stringToFrag(s: String): Frag = sql"#${s}".apply(Void)
@@ -36,6 +36,10 @@ object SkunkSchema extends QueryAlgebra with QueryDsl {
     def apply[A](query: AppliedFragment, decoder: Decoder[A], connection: Connection[F]): F[List[A]] =
       connection.use(_.execute(query.fragment.query(decoder))(query.argument))
   }
+}
+
+object SkunkDSL extends QueryDsl(SkunkSchema) {
+  import algebra._
 
   trait SkunkTable[A] extends Table[A] {
     def aliased(x: Fragment[Void]): Fragment[Void] =
@@ -54,14 +58,14 @@ object SkunkSchema extends QueryAlgebra with QueryDsl {
   def skunkTable[T <: Table[?]](f: String => T): SkunkTableAlg[T] = new SkunkTableAlg[T] {
     def make: String => T = f
   }
-
+  
   type LazyConnection[F[_]] = LazyResource[F, Session[F]]
   def lazyPool[F[_]: Concurrent](pool: Resource[F, Session[F]]): Resource[F, LazyConnection[F]] =
     LazyResource.fromResource(pool)
 }
 
 class MySchema(pool: Resource[IO, Session[IO]]) {
-  import SkunkSchema._
+  import SkunkDSL._
   import MySchema._
 
   implicit lazy val pet: Type[IO, QueryResult[PetTable]] = tpe[IO, QueryResult[PetTable]](
@@ -145,7 +149,7 @@ class MySchema(pool: Resource[IO, Session[IO]]) {
 }
 
 object MySchema {
-  import SkunkSchema._
+  import SkunkDSL._
   case class EntityTable(alias: String) extends SkunkTable[UUID] {
     def table = void"entity"
     def groupingKey = void"id"

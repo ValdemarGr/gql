@@ -1,22 +1,12 @@
-package gql.relational
+package gql.relational.doobie
 
 import cats.effect._
-import gql.ast._
-import gql.dsl._
 import cats.implicits._
 import cats._
-import java.util.UUID
-import gql.Arg
-import gql.EmptyableArg
-import skunk.codec.all._
 import cats.data._
-import gql.resolver.Resolver
-import cats.effect.std.AtomicCell
-import cats.effect.std.Supervisor
-import cats.effect.std.Hotswap
-import cats.effect.std.Mutex
 import doobie._
 import doobie.implicits._
+import gql.relational.{QueryAlgebra, QueryDsl}
 
 object DoobieIntegraion extends QueryAlgebra {
   type Frag = doobie.Fragment
@@ -56,25 +46,4 @@ object DoobieDSL extends QueryDsl(DoobieIntegraion) {
       col -> Query.Select(Chain(col), d)
     }
   }
-}
-
-object ExampleDoobie {
-  import DoobieDSL._
-  import doobie.postgres.implicits._
-
-  case class ContractTable(alias: String) extends DoobieTable[UUID] {
-    def table = fr"contract"
-    def groupingKey = fr"id"
-    def groupingKeyDecoder = Read[UUID]
-
-    val (id, selId) = sel("id", Read[UUID])
-    val (name, selName) = sel("name", Read[String])
-  }
-  val contractTable = table(ContractTable)
-
-  implicit lazy val contract2: Type[IO, QueryResult[ContractTable]] = tpe[IO, QueryResult[ContractTable]](
-    "Contract2",
-    "name" -> query(_.selName),
-    "id" -> query(_.selId)
-  )
 }

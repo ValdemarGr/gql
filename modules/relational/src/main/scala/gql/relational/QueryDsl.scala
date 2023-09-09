@@ -10,7 +10,12 @@ import cats.data._
 import gql.Arg
 import gql.EmptyableArg
 
-trait QueryDsl extends QueryAlgebra { self =>
+// For all query algebras this dsl can exist
+abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
+  import algebra._
+
+  type QueryResult[A] = algebra.QueryResult[A]
+
   def query[F[_], G[_], A, B](f: A => Query[G, Query.Select[B]])(implicit
       tpe: => Out[F, G[B]]
   ): Field[F, QueryResult[A], G[B]] =
