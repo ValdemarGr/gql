@@ -19,6 +19,8 @@ import sbt._
 import Keys._
 import buildinfo.BuildInfo
 
+import java.io.File
+
 object GqlCodeGenPlugin extends AutoPlugin {
   object autoImport {
     object Gql {
@@ -45,7 +47,7 @@ object GqlCodeGenPlugin extends AutoPlugin {
 
       val findResources = taskKey[Seq[CustomResourceGroup]]("Find the resources")
 
-      val codeGenInput = taskKey[Seq[(String, Seq[File])]]("The code generator input")
+      val codeGenInput = taskKey[Seq[CodeGenInput]]("The code generator input")
 
       val invokeCodeGen = taskKey[Seq[File]]("Invoke the code generator")
 
@@ -56,6 +58,8 @@ object GqlCodeGenPlugin extends AutoPlugin {
   }
 
   import autoImport._
+
+  case class CodeGenInput(json: String, inFiles: Seq[File], outFiles: Seq[File])
 
   override def projectSettings: Seq[Setting[_]] =
     List(
@@ -116,40 +120,51 @@ object GqlCodeGenPlugin extends AutoPlugin {
           val f = base / rg.name
           IO.createDirectory(f)
 
-          val sh = (f / s"shared.scala")
+          val sh = f / s"shared.scala"
 
-          val queries = rg.files.map { in =>
+          def escapeSlash(s: String) = s.replace("\\", "\\\\")
+
+          val queryInputs = rg.files.map { in =>
             val fn = in.name.replaceAll("\\.", "_")
             val outFile = f / s"${fn}.scala"
-            s"""{"query": "${in.absolutePath}", "output": "${outFile.absolutePath}"}""" -> outFile
-          }
 
-          s"""{"schema":"${rg.schemaPath.absolutePath}","shared":"${(f / s"shared.scala").absolutePath}","queries":[${queries
-              .map(_._1)
-              .mkString(",")}]}""" -> (queries.map(_._2) ++ Seq(sh))
+            CodeGenInput(
+              json = s"""{"query": "${escapeSlash(in.absolutePath)}", "output": "${escapeSlash(outFile.absolutePath)}"}""",
+              inFiles = Seq(in),
+              outFiles = Seq(outFile)
+            )
+          }
+          val (queries, inFiless, outFiless) = queryInputs.flatMap(CodeGenInput.unapply).unzip3
+
+          CodeGenInput(
+            json =
+              s"""{"schema":"${escapeSlash(rg.schemaPath.absolutePath)}","shared":"${escapeSlash(sh.absolutePath)}","queries":[${queries
+                  .mkString(",")}]}""",
+            inFiles = inFiless.flatten,
+            outFiles = outFiless.flatten ++ Seq(sh)
+          )
         }
       },
       Gql.invokeCodeGen := {
+        val streamsObj = streams.value
         val cp = (Compile / externalDependencyClasspath).value
-
         val cmd = Gql.codeGenInput.value
 
-        val log = streams.value.log
+        val cachedFun =
+          FileFunction.cached(streamsObj.cacheDirectory / "gql-invoke-codegen", inStyle = FilesInfo.full, outStyle = FilesInfo.full) { _ =>
+            val args =
+              List(
+                "java",
+                "gql.client.codegen.GeneratorCli"
+              ) ++ List("--validate").filter(_ => Gql.validate.value) ++ List("--input") ++ cmd.map(_.json)
 
-        val args =
-          List(
-            "java",
-            "-cp"
-          ) ++ List(cp.map(_.data.toString()).mkString(":")) ++ List(
-            "gql.client.codegen.GeneratorCli"
-          ) ++ List("--validate").filter(_ => Gql.validate.value) ++ List(
-            "--input"
-          ) ++ cmd.map(_._1)
+            scala.sys.process.Process(args, None, "CLASSPATH" -> cp.map(_.data.toString).mkString(File.pathSeparator)).! match {
+              case 0 => cmd.flatMap(_.outFiles).toSet
+              case n => sys.error(s"Process exited with code $n")
+            }
+          }
 
-        scala.sys.process.Process(args, None).! match {
-          case 0 => cmd.flatMap(_._2)
-          case n => sys.error(s"Process exited with code $n")
-        }
+        cachedFun(cmd.flatMap(_.inFiles).toSet).toSeq
       },
       Compile / sourceGenerators += Gql.invokeCodeGen.taskValue
     )

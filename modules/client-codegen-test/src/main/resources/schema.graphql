@@ -1,6 +1,12 @@
 type Query {
   dog: Dog
   findDog(searchBy: FindDogInput): Dog
+  outputOnly: OutputOnly
+}
+
+enum OutputOnly {
+  OK
+  NOT_OK
 }
 
 enum DogCommand {

@@ -362,13 +362,14 @@ object Generator {
     val gqlName = f.alias.getOrElse(f.name)
     val n = toPascal(gqlName)
 
-    val existsing = fd.argumentsDefinition.map(iv => iv.name -> iv).toMap
+    val existing = fd.argumentsDefinition.map(iv => iv.name -> iv).toMap
     val provided = f.arguments.map(_.nel.toList).getOrElse(Nil).map(_.name).toSet
-    val existingProvided = existsing.view.filterKeys(provided.contains).toMap
+    val existingProvided = existing.view.filterKeys(provided.contains).toMap
 
     val putUsedInputsF = existingProvided.values.toList.traverse_(x => partitionEmittableInputType[F](env, x.tpe))
 
-    putUsedInputsF &>
+    partitionEmittableInputDef[F](env, ms.inner) &>
+      putUsedInputsF &>
       f.selectionSet
         .map(_.selections)
         .parTraverse(generateTypeDef[F](env, n, ms.inner, _, None))

@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package gql.interpreter
+package gql.server.interpreter
 
 import cats.effect.implicits._
 import cats.implicits._
