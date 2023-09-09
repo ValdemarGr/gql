@@ -96,7 +96,7 @@ trait QueryAlgebra {
     case class SubSelection[A]() extends FieldVariant[A, QueryResult[A]]
   }
 
-  trait TableFieldAttribute[F[_], G[_], A, B, ArgType, Q, O] extends FieldAttribute[F, QueryResult[A], O] {
+  trait TableFieldAttribute[F[_], G[_], A, B, ArgType, Q, O] extends FieldAttribute[F, O] {
     def arg: EmptyableArg[ArgType]
     def query(value: A, argument: ArgType): Query[G, Q]
     def fieldVariant: FieldVariant[Q, B]

@@ -74,10 +74,35 @@ We will catch both of these errors by validating our schema.
 sealed trait Error
 object Error {
   case class MultiplePermissionLists(field: String, perms: List[List[String]]) extends Error
-  case class MissingPermission(field: String, path: Chain[String]) extends Error
+  case class MissingPermission(field: String) extends Error
 }
 
 def validate(schema: SchemaShape[IO, ?, ?, ?]): Chain[Error] = {
-  
+  implicit val P = Parallel.identity[Eval]
+  import SchemaShape._
+  import VisitNode._
+  val fa = schema.visitOnce[Eval, Chain[Error]]{
+    case FieldNode(name, f: Field[IO, ?, ?]) => 
+      println(name)
+      println(f)
+      f.attributes.collect{ case a: AuthorizedField[IO, _, _] => a } match {
+        case Nil => Eval.now(Chain(Error.MissingPermission(name)))
+        case a :: Nil => Eval.now(Chain.empty)
+        case ys => Eval.now(Chain(Error.MultiplePermissionLists(name, ys.map(_.permissions))))
+      }
+  }
+
+  fa.value
 }
+```
+
+Lets see what happens when we validate our schema.
+```scala mdoc
+lazy val s = SchemaShape.unit[IO](
+  fields[IO, Unit](
+    "person" -> lift(_ => Person("John", 42))
+  )
+)
+
+validate(s)
 ```
