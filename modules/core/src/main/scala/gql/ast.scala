@@ -206,7 +206,7 @@ object ast extends AstImplicits.Implicits {
       )
 
     def compose[F2[x] >: F[x], A2](r: Resolver[F2, A2, A]): Field[F2, A2, B] =
-      Field(r.andThen(resolve), output, description)
+      copy[F2, A2, B](r.andThen(resolve))
 
     def contramap[F2[x] >: F[x], A2](f: A2 => A): Field[F2, A2, B] =
       compose[F2, A2](Resolver.lift[F2, A2](f))

@@ -4,7 +4,7 @@ title: Extending schemas
 The AST in gql is subject to extension.
 In particular, the schema can be used to write arbitary information that can later be used for various purposes.
 
-Integrations that use schema extensions extensively are the [goi](../integrations/goi) and relational integrations.
+Integrations that use schema extensions are the [goi](../integrations/goi) and relational integrations.
 
 Lets get some imports ready before we start.
 ```scala mdoc
@@ -23,9 +23,9 @@ For this showcase, our goal will be to add authorization to any schema.
 To extend the schema with new attributes we must define what attribute we wish to embed into the schema.
 We can extend a special trait based on the ast node we wish to extend.
 ```scala mdoc
-case class AuthorizedField[F[_], A, B](
+case class AuthorizedField(
   permissions: List[String]
-) extends FieldAttribute[F, A, B]
+) extends FieldAttribute[fs2.Pure]
 ```
 
 Lets also introduce some functions related to authorization.
@@ -38,7 +38,7 @@ Now we will use our new attribute to create a dsl for out extension.
 def authed[A, B](perms: String*)(field: Field[IO, A, B]): Field[IO, A, B] = {
   val permissions = perms.toList
   field
-    .addAttributes(AuthorizedField[IO, A, B](permissions))
+    .addAttributes(AuthorizedField(permissions))
     .compose(Resolver.id[IO, A].arg(arg[String]("secretToken")).evalMap{ case (token, a) =>
       checkPermissions(token, permissions).map{
         case false => s"your token didn't satisfy the permissions ${permissions.mkString(", ")}".leftIor
@@ -58,7 +58,7 @@ implicit lazy val person = tpe[IO, Person](
     lift(_.name)
   },
   "age" -> lift(_.name),
-  "name2" -> authed("read:name") {
+  "name2" -> authed("read:name", "read:name2") {
     authed("read:name") {
       lift(_.age)
     }
@@ -73,22 +73,26 @@ We will catch both of these errors by validating our schema.
 ```scala mdoc
 sealed trait Error
 object Error {
-  case class MultiplePermissionLists(field: String, perms: List[List[String]]) extends Error
-  case class MissingPermission(field: String) extends Error
+  case class MultiplePermissionLists(field: String, perms: List[List[String]]) extends Error {
+    override def toString = 
+      s"Field '$field' has multiple permission lists: ${perms.map(ps => s"{${ps.mkString(",")}}").mkString(", ")}"
+  }
+  case class MissingPermission(field: String) extends Error {
+    override def toString = s"Field '$field' is missing a permission list"
+  }
 }
 
 def validate(schema: SchemaShape[IO, ?, ?, ?]): Chain[Error] = {
-  implicit val P = Parallel.identity[Eval]
   import SchemaShape._
   import VisitNode._
   val fa = schema.visitOnce[Eval, Chain[Error]]{
-    case FieldNode(name, f: Field[IO, ?, ?]) => 
-      println(name)
-      println(f)
-      f.attributes.collect{ case a: AuthorizedField[IO, _, _] => a } match {
-        case Nil => Eval.now(Chain(Error.MissingPermission(name)))
-        case a :: Nil => Eval.now(Chain.empty)
-        case ys => Eval.now(Chain(Error.MultiplePermissionLists(name, ys.map(_.permissions))))
+    case FieldNode(name, f: Field[IO, ?, ?]) =>
+      Eval.now {
+        f.attributes.collect{ case a: AuthorizedField => a } match {
+          case Nil => Chain(Error.MissingPermission(name))
+          case a :: Nil => Chain.empty
+          case ys => Chain(Error.MultiplePermissionLists(name, ys.map(_.permissions)))
+        }
       }
   }
 
@@ -104,5 +108,7 @@ lazy val s = SchemaShape.unit[IO](
   )
 )
 
-validate(s)
+validate(s).toList.foreach(println)
 ```
+
+Notice that the errors we expected were caught by our validation.
