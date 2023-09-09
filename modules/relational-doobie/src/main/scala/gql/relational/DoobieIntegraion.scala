@@ -34,7 +34,7 @@ object DoobieIntegraion extends QueryAlgebra {
   }
 }
 
-object DoobieDSL extends QueryDsl(DoobieIntegraion) {
+object dsl extends QueryDsl(DoobieIntegraion) {
   import algebra._
 
   trait DoobieTable[A] extends Table[A] {

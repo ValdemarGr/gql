@@ -2,8 +2,325 @@
 title: Relational
 ---
 :::caution
-This integration is fairly new and sofisticated so it might be subject to change.
+This integration is fairly new and sofisticated so it can be subject to change.
 :::
 gql also comes with an optional integration for relational databases.
 
-This integration is library agnostic and is based on query fragments that can be composed into a full query.
+The relational integration is library agnostic and is based on query fragments that can be composed into a full query.
+
+The relational module ships with two implementations, one for `skunk` and another for `doobie`.
+They can be found in the [modules](../../overview/modules) section.
+:::tip
+Integrating a new library requires very little code.
+The skunk integration only spans 18 lines of code.
+:::
+
+## Skunk example
+For this example we will use `skunk`.
+We will start off with some imports.
+```scala mdoc
+import skunk._
+import skunk.codec.all._
+import skunk.implicits._
+import gql.ast._
+import gql.dsl._
+import gql.relational._
+import gql.relational.skunk.dsl._
+import cats._
+import cats.effect._
+import cats.implicits._
+```
+
+Before we start declaring fragments, we need to define our domain.
+```scala mdoc
+final case class Home(name: String, address: String)
+// many homes belong to many people
+final case class Person(name: String, age: Int)
+// a pet has one owner
+final case class Pet(name: String, age: Int, owner: Int)
+```
+
+The realtional module also ships with a dsl that makes declaration use conscise.
+We will start off just declaring the home table.
+```scala mdoc:silent
+case class HomeTable(
+  // When a table is queried it must have an alias
+  alias: String
+) extends SkunkTable[Int] { // The table must also declare how it's rows are uniquely identified
+  // Note that we use only skunk tools to declare the contents of this structure
+
+  // We can declare how this table is referenced in sql (or some other query language)
+  def table = void"home"
+
+  // Unique identifier expression
+  def groupingKey = void"id"
+  def groupingKeyDecoder = int4
+
+  // The SkunkTable trait gives some convinience methods for declaring columns
+  val (idCol, id) = sel("id", int4)
+  val (nameCol, name) = sel("name", text)
+  val (addressCol, address) = sel("address", text)
+}
+// We get some methods if show how given an alias we can get a table
+val homeTable = skunkTable(HomeTable)
+```
+
+We will also need to declare the other two tables, this time with less comments.
+```scala mdoc:silent
+case class PersonTable(alias: String) extends SkunkTable[Int] {
+  def table = void"person"
+
+  def groupingKey = void"id"
+  def groupingKeyDecoder = int4
+
+  val (idCol, id) = sel("id", int4)
+  val (nameCol, name) = sel("name", text)
+  val (ageCol, age) = sel("age", int4)
+}
+val personTable = skunkTable(PersonTable)
+
+case class PetTable(alias: String) extends SkunkTable[Int] {
+  def table = void"pet"
+
+  def groupingKey = void"id"
+  def groupingKeyDecoder = int4
+
+  val (nameCol, name) = sel("name", text)
+  val (ageCol, age) = sel("age", int4)
+  val (ownerCol, owner) = sel("owner", int4)
+}
+val petTable = skunkTable(PetTable)
+```
+
+Since `Home` and `Person` have a many to many relationship, we will have to go through another table table to get the relationship.
+```scala mdoc:silent
+case class HomePersonTable(alias: String) extends SkunkTable[(Int, Int)] {
+  def table = void"home_person"
+
+  def groupingKey = void"home_id, " |+| aliasedFrag(void"person_id")
+  def groupingKeyDecoder = int4 ~ int4
+
+  val (homeCol, home) = sel("home_id", int4)
+  val (personCol, person) = sel("person_id", int4)
+}
+val homePersonTable = skunkTable(HomePersonTable)
+```
+
+Now we can start declaring our graphql schema.
+```scala mdoc:silent
+implicit lazy val pet = tpe[IO, QueryResult[PetTable]](
+  "PetTable",
+  "name" -> query(_.name), // query is a method that compiles to a projection in the query language (sql)
+  "age" -> query(_.age)
+)
+
+implicit lazy val person = tpe[IO, QueryResult[PersonTable]](
+  "PersonTable",
+  "name" -> query(_.name),
+  "age" -> query(_.age),
+  "pets" -> cont{ person => // cont is a continuation that will create a new table from the current one
+    // The join method takes a type parameter that declares the multiplicity of the join
+    // If no type parameter is given, the join is assumed to be one to one
+    petTable.join[List]{ pet =>
+      // Given an instance of the pet table, we can declare a join predicate
+      sql"${pet.ownerCol} = ${person.idCol}"
+    }
+  }
+)
+
+implicit lazy val home = tpe[IO, QueryResult[HomeTable]](
+  "HomeTable",
+  "name" -> query(_.name),
+  "address" -> query(_.address),
+  "caption" -> query(h => (h.name, h.address).mapN(_ + " at " + _)), // projections form an applicative
+  "people" -> cont{ home =>
+    // Tables can be flatmapped together
+    for {
+      hp <- homePersonTable.join[List](hp => sql"${home.idCol} = ${hp.homeCol}")
+      p <- personTable.join(p => sql"${hp.personCol} = ${p.idCol}")
+    } yield p
+  }
+)
+```
+Now we are done declaring our schema.
+
+Before querying it we will need our database up and running.
+```scala mdoc
+import cats.effect.unsafe.implicits.global
+import natchez.noop._ // needed for skunk connection
+implicit val trace = NoopTrace[IO]()
+
+def connection = Session.single[IO](
+  host = "127.0.0.1",
+  port = 5432,
+  user = "postgres",
+  database = "postgres"
+)
+```
+
+
+<details>
+  <summary>We will also need to create our tables and insert some data.</summary>
+
+```scala mdoc
+connection.use{ ses =>
+  val queries = List(
+    sql"drop table if exists pet",
+    sql"drop table if exists home_person",
+    sql"drop table if exists person",
+    sql"drop table if exists home",
+    sql"""create table home_person (
+      home_id int not null,
+      person_id int not null
+    )""",
+    sql"""create table pet (
+      id int4 primary key,
+      name text not null,
+      age int not null,
+      owner int not null
+    )""",
+    sql"""create table person (
+      id int4 primary key,
+      name text not null,
+      age int not null
+    )""",
+    sql"""create table home (
+      id int4 primary key,
+      name text not null,
+      address text not null
+    )""",
+    sql"""insert into home (id, name, address) values (1, 'Doe Home', '123 Main St')""",
+    sql"""insert into person (id, name, age) values (1, 'John Doe', 42)""",
+    sql"""insert into person (id, name, age) values (2, 'Jane Doe', 40)""",
+    sql"""insert into home_person (home_id, person_id) values (1, 1)""", 
+    sql"""insert into home_person (home_id, person_id) values (1, 2)""",
+    sql"""insert into pet (id, name, age, owner) values (1, 'Fluffy', 2, 1)""",
+  )
+
+  queries.traverse(x => ses.execute(x.command))
+}.unsafeRunSync()
+```
+
+</details>
+
+```scala mdoc
+
+def schema = gql.Schema.query(
+  tpe[IO, Unit](
+    "Query",
+    "homes" -> runFieldSingle(connection) { (_: Unit) => 
+      homeTable.join[List](_ => sql"true")
+    }
+  )
+)
+
+def q = """
+query {
+  homes {
+    name
+    address
+    caption
+    people {
+      name
+      age
+      pets {
+        name
+        age
+      }
+    }
+  }
+}
+"""
+
+import io.circe.syntax._
+import gql._
+schema
+  .map(Compiler[IO].compile(_, q))
+  .flatMap { case Right(Application.Query(run)) => run.map(_.asJson.spaces2) }
+  .unsafeRunSync()
+```
+And thats it!
+
+Just for fun, we check out the generated sql.
+```scala mdoc:nest
+import gql.relational.skunk._
+implicit def logQueries[F[_]: MonadCancelThrow]: SkunkIntegration.Queryable[F] = new SkunkIntegration.Queryable[F] {
+  def apply[A](query: AppliedFragment, decoder: Decoder[A], connection: SkunkIntegration.Connection[F]): F[List[A]] = {
+    println(query.fragment.sql)
+    SkunkIntegration.skunkQueryable[F].apply(query, decoder, connection)
+  }
+}
+
+def schema = gql.Schema.query(
+  tpe[IO, Unit](
+    "Query",
+    "homes" -> runFieldSingle(connection) { (_: Unit) => 
+      homeTable.join[List](_ => sql"true")
+    }
+  )
+)
+
+schema
+  .map(Compiler[IO].compile(_, q))
+  .flatMap { case Right(Application.Query(run)) => run.void }
+  .unsafeRunSync()
+```
+
+### Implementing your own integration
+The entire dsl and query compiler is available if you implement a of methods.
+
+Here is the full skunk integration.
+```scala mdoc
+import _root_.{skunk => sk}
+object MyIntegration extends QueryAlgebra {
+  // What is a fragment
+  type Frag = sk.AppliedFragment
+  // How do we make a fragment for a string
+  def stringToFrag(s: String): Frag = sql"#${s}".apply(Void)
+  // Combine and create empty fragments
+  implicit def appliedFragmentMonoid: Monoid[Frag] = sk.AppliedFragment.MonoidAppFragment
+  // How do we decode and encode values
+  type Encoder[A] = sk.Encoder[A]
+  type Decoder[A] = sk.Decoder[A]
+  // How can we combine decoders
+  implicit def applicativeForDecoder: Applicative[Decoder] = Decoder.ApplicativeDecoder
+  // How do we make an optional decoder
+  def optDecoder[A](d: Decoder[A]): Decoder[Option[A]] = d.opt
+  // What is needed to perform a query
+  type Connection[F[_]] = Resource[F, Session[F]]
+  // Given a connection, how do we use it
+  implicit def skunkQueryable[F[_]: MonadCancelThrow]: Queryable[F] = new Queryable[F] {
+    def apply[A](query: AppliedFragment, decoder: Decoder[A], connection: Connection[F]): F[List[A]] =
+      connection.use(_.execute(query.fragment.query(decoder))(query.argument))
+  }
+}
+```
+
+The dsl can be instantiated for any query algebra.
+```scala mdoc
+object myDsl extends QueryDsl(MyIntegration)
+```
+you can also add integration specific methods to your dsl.
+
+Yep thats it.
+
+### Simplifying relationships
+HomePersonJoin tbl
+
+### Modifying query results
+MapK
+
+### Adding arguments
+
+### Declaring complex subqueries
+Using table abstraction
+
+### Using relational without tables
+Inline table creation
+
+### Running transactions
+Lazy session
+#### Subscriptions
+evalMap reset
+
+### Handling N+1

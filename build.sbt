@@ -285,12 +285,7 @@ lazy val relational = project
     .settings(sharedSettings)
     .dependsOn(server)
     .settings(
-      name := "gql-relational",
-      libraryDependencies ++= Seq(
-        "org.tpolecat" %% "skunk-core" % "0.6.0",
-        "org.tpolecat" %% "doobie-core"      % "1.0.0-RC4",
-        "org.tpolecat" %% "doobie-postgres"  % "1.0.0-RC4",
-      )
+      name := "gql-relational"
     )
 
 lazy val relationalSkunk = project
@@ -351,7 +346,8 @@ lazy val docs = project
       "VERSION" -> tlLatestVersion.value.getOrElse(version.value)
     ),
     libraryDependencies ++= Seq(
-      "com.47deg" %% "fetch" % "3.1.2"
+      "com.47deg" %% "fetch" % "3.1.2",
+      "org.tpolecat" %% "natchez-noop" % "0.3.2"
     ),
     tlFatalWarnings := false
   )
@@ -360,6 +356,8 @@ lazy val docs = project
   .dependsOn(serverHttp4s)
   .dependsOn(serverGraphqlWs)
   .dependsOn(relational)
+  .dependsOn(relationalSkunk)
+  .dependsOn(relationalDoobie)
   .dependsOn(serverNatchez)
   .dependsOn(clientCodegen)
   .dependsOn(clientCodegenCli)

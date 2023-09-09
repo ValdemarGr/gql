@@ -3,7 +3,6 @@ package gql.relational
 import gql.ast._
 import gql.dsl._
 import cats.implicits._
-import skunk._
 import cats._
 import gql.resolver.Resolver
 import cats.data._
@@ -45,6 +44,16 @@ abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
       q: NonEmptyList[I] => Query[G, (Query.Select[I], B)]
   )(implicit tpe: => Out[F, G[QueryResult[B]]]) =
     Field(resolveQuery[F, G, I, B, Unit](EmptyableArg.Empty, (i, _) => q(i), connection), Eval.later(tpe))
+
+  def runFieldSingle[F[_]: Queryable: Applicative, G[_], I, B, ArgType](connection: Connection[F], arg: Arg[ArgType])(
+      q: (I, ArgType) => Query[G, B]
+  )(implicit tpe: => Out[F, G[QueryResult[B]]]) =
+    Field(resolveQuerySingle(EmptyableArg.Lift(arg), q, connection), Eval.later(tpe))
+
+  def runFieldSingle[F[_]: Queryable: Applicative, G[_], I, B](connection: Connection[F])(
+      q: I => Query[G, B]
+  )(implicit tpe: => Out[F, G[QueryResult[B]]]) =
+    Field(resolveQuerySingle[F, G, I, B, Unit](EmptyableArg.Empty, (i, _) => q(i), connection), Eval.later(tpe))
 
   final class BuildWithBuilder[F[_], A] {
     def apply[B](f: RelationalFieldBuilder[F, A] => B): B = f(new RelationalFieldBuilder[F, A]())
@@ -182,5 +191,15 @@ abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
         q: NonEmptyList[I] => Query[G, (Query.Select[I], B)]
     )(implicit F: Applicative[F], Q: Queryable[F], tpe: => Out[F, G[QueryResult[B]]]) =
       self.runField(connection)(q)(Q, F, tpe)
+
+    def runFieldSingle[G[_], I, B, ArgType](connection: Connection[F], arg: Arg[ArgType])(
+        q: (I, ArgType) => Query[G, B]
+    )(implicit F: Applicative[F], Q: Queryable[F], tpe: => Out[F, G[QueryResult[B]]]) =
+      self.runFieldSingle(connection, arg)(q)(Q, F, tpe)
+
+    def runFieldSingle[G[_], I, B](connection: Connection[F])(
+        q: I => Query[G, B]
+    )(implicit F: Applicative[F], Q: Queryable[F], tpe: => Out[F, G[QueryResult[B]]]) =
+      self.runFieldSingle(connection)(q)(Q, F, tpe)
   }
 }
