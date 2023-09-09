@@ -369,7 +369,7 @@ If your stream is sequential, gql will only pull elements when they are needed.
 The interpreter performs a global re-interpretation of your schema, when one or more streams emit.
 That is, the interpreter cycles through the following two phases:
 * Interpret for the current values.
-* Await new values (and values that arrived furing the previous step).
+* Await new values (and values that arrived during the previous step).
 
 Here is an example of some streams in action:
 ```scala mdoc
