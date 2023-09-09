@@ -164,7 +164,7 @@ trait QueryAlgebra {
       Query.Join(make, joinPred, implicitly[JoinType[G]])
   }
 
-  final case class PreparedQuery[G[_], A, B, C](
+  case class PreparedQuery[G[_], A, B, C](
       qc: QueryContent,
       done: Done[G, A, B],
       rootQueryValue: C
