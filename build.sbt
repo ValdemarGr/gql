@@ -285,11 +285,32 @@ lazy val relational = project
     .settings(sharedSettings)
     .dependsOn(server)
     .settings(
+      name := "gql-relational",
       libraryDependencies ++= Seq(
         "org.tpolecat" %% "skunk-core" % "0.6.0",
         "org.tpolecat" %% "doobie-core"      % "1.0.0-RC4",
         "org.tpolecat" %% "doobie-postgres"  % "1.0.0-RC4",
       )
+    )
+
+lazy val relationalSkunk = project
+    .in(file("modules/relational-skunk"))
+    .settings(sharedSettings)
+    .dependsOn(server)
+    .dependsOn(relational)
+    .settings(
+      name := "gql-relational-skunk",
+      libraryDependencies ++= Seq("org.tpolecat" %% "skunk-core" % "0.6.0")
+    )
+
+lazy val relationalDoobie = project
+    .in(file("modules/relational-doobie"))
+    .settings(sharedSettings)
+    .dependsOn(server)
+    .dependsOn(relational)
+    .settings(
+      name := "gql-relational-doobie",
+      libraryDependencies ++= Seq("org.tpolecat" %% "doobie-core"      % "1.0.0-RC4")
     )
 
 lazy val mdocExt = project
@@ -338,6 +359,7 @@ lazy val docs = project
   .dependsOn(core % "compile->compile;compile->test")
   .dependsOn(serverHttp4s)
   .dependsOn(serverGraphqlWs)
+  .dependsOn(relational)
   .dependsOn(serverNatchez)
   .dependsOn(clientCodegen)
   .dependsOn(clientCodegenCli)

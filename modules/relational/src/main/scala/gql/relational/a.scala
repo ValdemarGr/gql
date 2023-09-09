@@ -73,10 +73,10 @@ object Main extends IOApp.Simple {
     val ss = SchemaShape.unit[IO](
       fields[IO, Unit](
         "name" -> lift(_ => "edlav"),
-        "contract" -> SkunkSchema.runField(xaPool, arg[UUID]("contractId"))((_: NonEmptyList[Unit], a: UUID) =>
+        "contract" -> SkunkDSL.runField(xaPool, arg[UUID]("contractId"))((_: NonEmptyList[Unit], a: UUID) =>
           MySchema.contractTable.join[Option](c => sql"${c.id} = ${uuid}".apply(a)).map(t => (().pure[SkunkSchema.Query.Select], t))
         ),
-        "contract2" -> DoobieIntegraion.runField[IO, List, Unit, CT](doobieConn){(_: NonEmptyList[Unit]) =>
+        "contract2" -> DoobieDSL.runField[IO, List, Unit, CT](doobieConn){(_: NonEmptyList[Unit]) =>
           import doobie.implicits._
           ExampleDoobie.contractTable.join[List](x => fr"1 = 1").map(t => (().pure[DoobieIntegraion.Query.Select], t))
         }
