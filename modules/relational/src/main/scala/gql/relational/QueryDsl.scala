@@ -8,6 +8,7 @@ import gql.resolver.Resolver
 import cats.data._
 import gql.Arg
 import gql.EmptyableArg
+import cats.arrow.FunctionK
 
 // For all query algebras this dsl can exist
 abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
@@ -60,6 +61,27 @@ abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
   }
 
   def relBuilder[F[_], A] = new BuildWithBuilder[F, A]
+
+  trait TableAlg[T <: Table[?]] {
+    def make: String => T
+
+    def join[G[_]: QueryAlgebra.JoinType](joinPred: T => Frag): algebra.Query[G, T] = {
+      val q: algebra.Query[Lambda[X => X], T] = Query.Join(make, joinPred)
+      q.flatMap{ t =>
+        new algebra.Query.ModifyQueryState[G, Lambda[X => X], T](algebra.Query.Pure(t)) {
+          def apply[K](fa: Effect[QueryState[Lambda[X => X],K,T]]): Effect[QueryState[G, _, T]] = 
+            fa.map{ qs =>
+              QueryAlgebra.QueryStateImpl[algebra.Decoder, G, G, Option[K], T](
+                QueryAlgebra.ReassocOpt(implicitly[QueryAlgebra.JoinType[G]].reassoc[K]),
+                algebra.optDecoder(qs.decoder),
+                qs.value,
+                FunctionK.id[G]
+              )
+            }
+        }
+      }
+    }
+  }
 
   def table[T <: Table[?]](f: String => T): TableAlg[T] = new TableAlg[T] {
     def make: String => T = f
