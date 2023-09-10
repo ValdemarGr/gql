@@ -40,7 +40,7 @@ object dsl extends QueryDsl(SkunkIntegration) {
   }
 
   trait SkunkTableAlg[T <: Table[?]] extends TableAlg[T] {
-    def join[G[_]: QueryAlgebra.JoinType](joinPred: T => Fragment[Void])(implicit dummy: DummyImplicit): Query.Join[G, T] =
+    def join[G[_]: QueryAlgebra.JoinType](joinPred: T => Fragment[Void])(implicit dummy: DummyImplicit): Query[G, T] =
       join[G](joinPred.andThen(_.apply(Void)))
   }
   def skunkTable[T <: Table[?]](f: String => T): SkunkTableAlg[T] = new SkunkTableAlg[T] {
