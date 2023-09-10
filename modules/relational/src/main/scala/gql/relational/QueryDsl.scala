@@ -67,15 +67,14 @@ abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
   def reassociateFull[G[_], Key](reassoc: QueryAlgebra.Reassoc[G, Key], dec: algebra.Decoder[Key], cols: Frag*): Query[G, Unit] = 
     new algebra.Query.ModifyQueryState[G, Lambda[X => X], Unit, Unit](algebra.Query.Pure(())) {
       def apply[K](fa: Effect[QueryState[Lambda[X => X],K,Unit]]): Effect[QueryState[G, ?, Unit]] = 
-        fa >>
-          algebra.addSelection(Chain.fromSeq(cols)).as {
-            QueryAlgebra.QueryState(
-              reassoc,
-              dec,
-              (),
-              FunctionK.id[G]
-            )
-          }
+        algebra.addSelection(Chain.fromSeq(cols)).as {
+          QueryAlgebra.QueryState(
+            reassoc,
+            dec,
+            (),
+            FunctionK.id[G]
+          )
+        }
     }
   
   def reassociate[G[_]: QueryAlgebra.JoinType, A](dec: algebra.Decoder[A], cols: Frag*) =
