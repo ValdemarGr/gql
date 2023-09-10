@@ -250,3 +250,18 @@ println(withCompany.render)
 
 println(withCompany.addOutputTypes(person).render)
 ```
+
+## Variance of the Out type
+The `Out[F[_], A]` is invariant in `A`.
+It might seem convinient to let `A` be contravariant (`-A`) but this causes ambiguity when trying to find implicits/givens.
+```scala mdoc:fail:nest
+trait Typeclass[-A]
+
+trait Animal
+trait Dog extends Animal
+
+implicit object AnimalTC extends Typeclass[Animal]
+implicit object DogTC extends Typeclass[Dog]
+
+implicitly[Typeclass[Dog]]
+```

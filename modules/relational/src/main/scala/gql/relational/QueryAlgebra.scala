@@ -103,13 +103,15 @@ trait QueryAlgebra {
     def read[F[_], G[_], A0, B, ArgType, Q](tfa: TableFieldAttribute[F, G, A0, B, ArgType, Q]): Option[Either[String, G[B]]]
   }
 
-  sealed trait Query[G[_], A] {
+  sealed trait Query[G[_], +A] {
     def flatMap[H[_], B](f: A => Query[H, B]): Query[Lambda[X => G[H[X]]], B] =
       Query.FlatMap(this, f)
 
     def map[B](f: A => B): Query[G, B] = flatMap[Lambda[X => X], B](a => Query.Pure(f(a)))
 
     def mapK[H[_]](fk: G ~> H): Query[H, A] = Query.MapK(this, fk)
+
+    def widen[B >: A]: Query[G, B] = this.map(a => a)
   }
   object Query {
     case class Join[G[_], T <: Table[?]](
@@ -123,6 +125,11 @@ trait QueryAlgebra {
         f: A => Query[H, B]
     ) extends Query[Lambda[X => G[H[X]]], B]
     case class ToList[G[_], A](fa: Query[G, A]) extends Query[List, A]
+    case class Reassociate[G[_]](
+      reassoc: Reassociateable[G],
+      groupBy: Frag,
+      groupingDecoder: Decoder[?]
+    ) extends Query[G, Unit]
     case class MapK[G[_], H[_], A](
         fa: Query[G, A],
         f: G ~> H

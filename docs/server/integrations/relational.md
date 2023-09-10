@@ -233,7 +233,7 @@ query {
 """
 
 import io.circe.syntax._
-import gql._
+import gql.{Compiler, Application}
 schema
   .map(Compiler[IO].compile(_, q))
   .flatMap { case Right(Application.Query(run)) => run.map(_.asJson.spaces2) }
@@ -266,8 +266,11 @@ schema
   .unsafeRunSync()
 ```
 
+### Runtime semantics
+How reassociate
+
 ### Implementing your own integration
-The entire dsl and query compiler is available if you implement a of methods.
+The entire dsl and query compiler is available if you implement a couple of methods.
 
 Here is the full skunk integration.
 ```scala mdoc
@@ -297,15 +300,50 @@ object MyIntegration extends QueryAlgebra {
 ```
 
 The dsl can be instantiated for any query algebra.
-```scala mdoc
+```scala mdoc:nest
 object myDsl extends QueryDsl(MyIntegration)
 ```
 you can also add integration specific methods to your dsl.
+```scala mdoc:nest
+object myDsl extends QueryDsl(MyIntegration) {
+  def someOperationSpecificToMyIntegration = ???
+}
+```
 
-Yep thats it.
 
 ### Simplifying relationships
-HomePersonJoin tbl
+The join between `home` and `person` can be a bit daunting, since you have to keep track of multiplicity yourself.
+Instead we can use the database to handle some of the multiplicity for us by generalizing the person table.
+```scala mdoc:silent
+case class PersonTable(alias: String, table: AppliedFragment) extends SkunkTable[Int] {
+  def groupingKey = void"id"
+  def groupingKeyDecoder = int4
+
+  val (idCol, id) = sel("id", int4)
+  val (nameCol, name) = sel("name", text)
+  val (ageCol, age) = sel("age", int4)
+}
+
+val personTable = skunkTable(PersonTable(_, void"person"))
+
+val homePersonQuery = void"(select * from home_person inner join person on home_person.person_id = person.id)"
+val homePersonTable = skunkTable(PersonTable(_, homePersonQuery))
+```
+
+And now using our subquery we can simplify the join.
+```scala mdoc:silent:nest
+implicit lazy val person: Type[IO, QueryResult[PersonTable]] = ???
+
+implicit lazy val home = tpe[IO, QueryResult[HomeTable]](
+  "HomeTable",
+  "name" -> query(_.name),
+  "address" -> query(_.address),
+  "caption" -> query(h => (h.name, h.address).mapN(_ + " at " + _)), // projections form an applicative
+  "people" -> cont{ h => 
+    homePersonTable.join[List](hp => sql"${h.idCol} = ${hp.aliased(sql"home_id")}")
+  }
+)
+```
 
 ### Modifying query results
 MapK
