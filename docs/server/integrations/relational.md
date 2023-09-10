@@ -27,6 +27,7 @@ import gql.dsl._
 import gql.relational._
 import gql.relational.skunk.dsl._
 import cats._
+import cats.arrow._
 import cats.effect._
 import cats.implicits._
 ```
@@ -266,8 +267,66 @@ schema
   .unsafeRunSync()
 ```
 
+### Simplifying relationships
+The join between `home` and `person` can be a bit daunting, since you have to keep track of multiplicity yourself.
+Instead we can use the database to handle some of the multiplicity for us by generalizing the person table.
+```scala mdoc:silent
+case class PersonTable(alias: String, table: AppliedFragment) extends SkunkTable[Int] {
+  def groupingKey = void"id"
+  def groupingKeyDecoder = int4
+
+  val (idCol, id) = sel("id", int4)
+  val (nameCol, name) = sel("name", text)
+  val (ageCol, age) = sel("age", int4)
+}
+
+val personTable = skunkTable(PersonTable(_, void"person"))
+
+val homePersonQuery = void"(select * from home_person inner join person on home_person.person_id = person.id)"
+val homePersonTable = skunkTable(PersonTable(_, homePersonQuery))
+```
+
+And now using our subquery we can simplify the join.
+```scala mdoc:silent:nest
+implicit lazy val person: Type[IO, QueryResult[PersonTable]] = ???
+
+implicit lazy val home = tpe[IO, QueryResult[HomeTable]](
+  "HomeTable",
+  "name" -> query(_.name),
+  "address" -> query(_.address),
+  "caption" -> query(h => (h.name, h.address).mapN(_ + " at " + _)), // projections form an applicative
+  "people" -> cont{ h => 
+    homePersonTable.join[List](hp => sql"${h.idCol} = ${hp.aliased(sql"home_id")}")
+  }
+)
+```
+
 ### Runtime semantics
-How reassociate
+SQL is a language that works on flat arrays of rows, but for it to map well to graphql some work must be performed.
+Most use-cases should be covered by simply invoking the `join` method with the proper multiplicity parameter, so this section is more of a technical reference.
+
+When you AST is inspected to build the query, the recursive AST walk also composes a big reassociation function that can translate a list of flat query results into the proper nested structure.
+This composed function also tracks the visited columns and their decoders.
+
+The query algebra has a special operation that more or less lets the caller modify the state however they wish.
+The dsl uses this state modification for various tasks, such as providing a convinient `join` method that both joins a table and performs the proper reassociation of results.
+Consider the following example that joins a table more explicitly.
+```scala mdoc
+val q = for {
+  ht <- homeTable.simpleJoin(_ => void"true")
+  _ <- reassociate[List, Int](ht.selGroupKey.decoder, ht.selGroupKey.cols.toList: _*)
+  // some other reassociation criteria
+  _ <- reassociate[Option, Int](int4, void"42")
+} yield ht
+
+// we can even perform them before the join
+val q2 = reassociate[Option, String](text, void"'john doe'").flatMap(_ => q)
+
+// we can also change the result structure after reassociation
+q2.mapK[List](new (Lambda[X => Option[List[Option[X]]]] ~> List) {
+  def apply[A](fa: Option[List[Option[A]]]): List[A] = fa.toList.flatten.flatMap(_.toList)
+})
+```
 
 ### Implementing your own integration
 The entire dsl and query compiler is available if you implement a couple of methods.
@@ -309,44 +368,6 @@ object myDsl extends QueryDsl(MyIntegration) {
   def someOperationSpecificToMyIntegration = ???
 }
 ```
-
-
-### Simplifying relationships
-The join between `home` and `person` can be a bit daunting, since you have to keep track of multiplicity yourself.
-Instead we can use the database to handle some of the multiplicity for us by generalizing the person table.
-```scala mdoc:silent
-case class PersonTable(alias: String, table: AppliedFragment) extends SkunkTable[Int] {
-  def groupingKey = void"id"
-  def groupingKeyDecoder = int4
-
-  val (idCol, id) = sel("id", int4)
-  val (nameCol, name) = sel("name", text)
-  val (ageCol, age) = sel("age", int4)
-}
-
-val personTable = skunkTable(PersonTable(_, void"person"))
-
-val homePersonQuery = void"(select * from home_person inner join person on home_person.person_id = person.id)"
-val homePersonTable = skunkTable(PersonTable(_, homePersonQuery))
-```
-
-And now using our subquery we can simplify the join.
-```scala mdoc:silent:nest
-implicit lazy val person: Type[IO, QueryResult[PersonTable]] = ???
-
-implicit lazy val home = tpe[IO, QueryResult[HomeTable]](
-  "HomeTable",
-  "name" -> query(_.name),
-  "address" -> query(_.address),
-  "caption" -> query(h => (h.name, h.address).mapN(_ + " at " + _)), // projections form an applicative
-  "people" -> cont{ h => 
-    homePersonTable.join[List](hp => sql"${h.idCol} = ${hp.aliased(sql"home_id")}")
-  }
-)
-```
-
-### Modifying query results
-MapK
 
 ### Adding arguments
 

@@ -87,9 +87,12 @@ abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
   trait TableAlg[T <: Table[?]] {
     def make: String => T
 
+    def simpleJoin(joinPred: T => Frag): algebra.Query[Lambda[X => X], T] =
+      Query.Join(make, joinPred)
+
     def join[G[_]: QueryAlgebra.JoinType](joinPred: T => Frag): algebra.Query[G, T] = 
       for {
-        t <- Query.Join(make, joinPred)
+        t <- simpleJoin(joinPred)
         _ <- reassociate(t.selGroupKey.decoder, t.selGroupKey.cols.toList: _*)
       } yield t
   }
