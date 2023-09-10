@@ -62,25 +62,36 @@ abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
 
   def relBuilder[F[_], A] = new BuildWithBuilder[F, A]
 
+  // This is potentially unsafe and pretty low-level
+  // Take a look at [[reassociate]] for a safer version and ideas of how to use this properly
+  def reassociateFull[G[_], Key](reassoc: QueryAlgebra.Reassoc[G, Key], dec: algebra.Decoder[Key], cols: Frag*): Query[G, Unit] = 
+    new algebra.Query.ModifyQueryState[G, Lambda[X => X], Unit, Unit](algebra.Query.Pure(())) {
+      def apply[K](fa: Effect[QueryState[Lambda[X => X],K,Unit]]): Effect[QueryState[G, ?, Unit]] = 
+        algebra.addSelection(Chain.fromSeq(cols)).as {
+          QueryAlgebra.QueryState(
+            reassoc,
+            dec,
+            (),
+            FunctionK.id[G]
+          )
+        }
+    }
+  
+  def reassociate[G[_]: QueryAlgebra.JoinType, A](dec: algebra.Decoder[A], cols: Frag*) =
+    reassociateFull[G, Option[A]](
+      QueryAlgebra.ReassocOpt(implicitly[QueryAlgebra.JoinType[G]].reassoc[A]), 
+      algebra.optDecoder(dec), 
+      cols: _*
+    )
+
   trait TableAlg[T <: Table[?]] {
     def make: String => T
 
-    def join[G[_]: QueryAlgebra.JoinType](joinPred: T => Frag): algebra.Query[G, T] = {
-      val q: algebra.Query[Lambda[X => X], T] = Query.Join(make, joinPred)
-      q.flatMap{ t =>
-        new algebra.Query.ModifyQueryState[G, Lambda[X => X], T](algebra.Query.Pure(t)) {
-          def apply[K](fa: Effect[QueryState[Lambda[X => X],K,T]]): Effect[QueryState[G, _, T]] = 
-            fa.map{ qs =>
-              QueryAlgebra.QueryStateImpl[algebra.Decoder, G, G, Option[K], T](
-                QueryAlgebra.ReassocOpt(implicitly[QueryAlgebra.JoinType[G]].reassoc[K]),
-                algebra.optDecoder(qs.decoder),
-                qs.value,
-                FunctionK.id[G]
-              )
-            }
-        }
-      }
-    }
+    def join[G[_]: QueryAlgebra.JoinType](joinPred: T => Frag): algebra.Query[G, T] = 
+      for {
+        t <- Query.Join(make, joinPred)
+        _ <- reassociate(t.selGroupKey.decoder, t.selGroupKey.cols.toList: _*)
+      } yield t
   }
 
   def table[T <: Table[?]](f: String => T): TableAlg[T] = new TableAlg[T] {
