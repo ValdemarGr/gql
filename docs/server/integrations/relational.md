@@ -271,7 +271,7 @@ schema
 The join between `home` and `person` can be a bit daunting, since you have to keep track of multiplicity yourself.
 Instead we can use the database to handle some of the multiplicity for us by generalizing the person table.
 ```scala mdoc:silent
-case class PersonTable(alias: String, table: AppliedFragment) extends SkunkTable[Int] {
+case class SharedPersonTable(alias: String, table: AppliedFragment) extends SkunkTable[Int] {
   def groupingKey = void"id"
   def groupingKeyDecoder = int4
 
@@ -280,23 +280,21 @@ case class PersonTable(alias: String, table: AppliedFragment) extends SkunkTable
   val (ageCol, age) = sel("age", int4)
 }
 
-val personTable = skunkTable(PersonTable(_, void"person"))
+val sharedPersonTable = skunkTable(SharedPersonTable(_, void"person"))
 
 val homePersonQuery = void"(select * from home_person inner join person on home_person.person_id = person.id)"
-val homePersonTable = skunkTable(PersonTable(_, homePersonQuery))
-```
+val sharedHomePersonTable = skunkTable(SharedPersonTable(_, homePersonQuery))
 
-And now using our subquery we can simplify the join.
-```scala mdoc:silent:nest
-implicit lazy val person: Type[IO, QueryResult[PersonTable]] = ???
+// And now using our subquery we can simplify the join.
+implicit lazy val person: Type[IO, QueryResult[SharedPersonTable]] = ???
 
-implicit lazy val home = tpe[IO, QueryResult[HomeTable]](
+tpe[IO, QueryResult[HomeTable]](
   "HomeTable",
   "name" -> query(_.name),
   "address" -> query(_.address),
   "caption" -> query(h => (h.name, h.address).mapN(_ + " at " + _)), // projections form an applicative
   "people" -> cont{ h => 
-    homePersonTable.join[List](hp => sql"${h.idCol} = ${hp.aliased(sql"home_id")}")
+    sharedHomePersonTable.join[List](hp => sql"${h.idCol} = ${hp.aliased(sql"home_id")}")
   }
 )
 ```
@@ -312,7 +310,7 @@ The query algebra has a special operation that more or less lets the caller modi
 The dsl uses this state modification for various tasks, such as providing a convinient `join` method that both joins a table and performs the proper reassociation of results.
 Consider the following example that joins a table more explicitly.
 ```scala mdoc
-val q = for {
+val q1 = for {
   ht <- homeTable.simpleJoin(_ => void"true")
   _ <- reassociate[List, Int](ht.selGroupKey.decoder, ht.selGroupKey.cols.toList: _*)
   // some other reassociation criteria
@@ -320,7 +318,7 @@ val q = for {
 } yield ht
 
 // we can even perform them before the join
-val q2 = reassociate[Option, String](text, void"'john doe'").flatMap(_ => q)
+val q2 = reassociate[Option, String](text, void"'john doe'").flatMap(_ => q1)
 
 // we can also change the result structure after reassociation
 q2.mapK[List](new (Lambda[X => Option[List[Option[X]]]] ~> List) {
@@ -370,12 +368,49 @@ object myDsl extends QueryDsl(MyIntegration) {
 ```
 
 ### Adding arguments
+All field combinators allow arguments to be provided naturally, regardless of where the field is in the query.
+```scala mdoc:silent
+implicit lazy val pt: Type[IO, QueryResult[PersonTable]] = ???
+
+tpe[IO, QueryResult[HomeTable]](
+  "HomeTable",
+  "people" -> cont(arg[List[Int]]("ids")) { (home, ids) =>
+    for {
+      hp <- homePersonTable.join[List](hp => sql"${home.idCol} = ${hp.homeCol}")
+      p <- personTable.join(p => sql"${hp.personCol} = ${p.idCol} and ${p.idCol} in (${int4.list(ids)})".apply(ids))
+    } yield p
+  }
+)
+```
 
 ### Declaring complex subqueries
 Using table abstraction
 
 ### Using relational without tables
-Inline table creation
+There is no restriction on how you can implement a table, so you can choose your own strategy.
+For instance say we just wanted to declare everything up-front and select fields ad-hoc.
+```scala mdoc:silent
+case class AdHocTable(
+  alias: String, 
+  table: AppliedFragment,
+  groupingKey: AppliedFragment,
+  groupingKeyDecoder: Decoder[Int]
+) extends SkunkTable[Int]
+
+tpe[IO, QueryResult[HomeTable]](
+  "HomeTable",
+  "people" -> cont(arg[List[Int]]("ids")) { (home, ids) =>
+    for {
+      hp <- skunkTable(alias => 
+          AdHocTable(alias, void"home_person", sql"home_id, #${alias}.person_id".apply(Void), int4)
+        ).join[List](hp => sql"${home.idCol} = ${hp.aliased(sql"home_id")}")
+      p <- personTable.join(p => sql"${hp.aliased(sql".person_id")} = ${p.idCol} and ${p.idCol} in (${int4.list(ids)})".apply(ids))
+    } yield p
+  }
+)
+```
+Since there is no dsl for this, constructing the query is a bit gruesome.
+Consider if a dsl is possible for your formulation.
 
 ### Running transactions
 Lazy session
