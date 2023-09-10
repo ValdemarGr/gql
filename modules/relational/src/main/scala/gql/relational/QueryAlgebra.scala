@@ -422,7 +422,6 @@ trait QueryAlgebra {
         jp = j.joinPred(t)
         tbl = t.table
         _ <- addJoin(tbl |+| stringToFrag(" as ") |+| stringToFrag(n), jp)
-        _ <- addSelection(t.selGroupKey.cols)
       } yield QueryAlgebra.QueryState.pure(t)
   }
 }

@@ -145,7 +145,7 @@ implicit lazy val home = tpe[IO, QueryResult[HomeTable]](
 Now we are done declaring our schema.
 
 Before querying it we will need our database up and running.
-```scala mdoc
+```scala mdoc:silent
 import cats.effect.unsafe.implicits.global
 import natchez.noop._ // needed for skunk connection
 implicit val trace = NoopTrace[IO]()
@@ -236,7 +236,7 @@ import io.circe.syntax._
 import gql.{Compiler, Application}
 schema
   .map(Compiler[IO].compile(_, q))
-  .flatMap { case Right(Application.Query(run)) => run.map(_.asJson.spaces2) }
+  .flatMap { case Right(Application.Query(run)) => run.map(_.handleErrors{e => println(e.getMessage()); ""}.asJson.spaces2) }
   .unsafeRunSync()
 ```
 And thats it!
