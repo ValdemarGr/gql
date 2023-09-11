@@ -311,7 +311,7 @@ Most use-cases should be covered by simply invoking the `join` method with the p
 When you AST is inspected to build the query, the recursive AST walk also composes a big reassociation function that can translate a list of flat query results into the proper nested structure.
 This composed function also tracks the visited columns and their decoders.
 
-The query algebra has a special operation that more or less lets the caller modify the state however they wish.
+The query algebra has a special operation that lets the caller modify the state however they wish.
 The dsl uses this state modification for various tasks, such as providing a convinient `join` method that both joins a table and performs the proper reassociation of results.
 Consider the following example that joins a table more explicitly.
 ```scala mdoc
@@ -329,6 +329,14 @@ val q2 = reassociate[Option](text, void"'john doe'").flatMap(_ => q1)
 q2.mapK[List](new (Lambda[X => Option[List[Option[X]]]] ~> List) {
   def apply[A](fa: Option[List[Option[A]]]): List[A] = fa.toList.flatten.flatMap(_.toList)
 })
+```
+
+Accessing the lowlevel state also lets the user perform other tasks such as unique id (new alias) generation.
+```scala mdoc
+for {
+  alias1 <- newAlias
+  alias2 <- newAlias
+} yield ()
 ```
 
 ### Implementing your own integration
@@ -389,7 +397,64 @@ tpe[IO, QueryResult[HomeTable]](
 ```
 
 ### Declaring complex subqueries
-Using table abstraction
+Sometimes your tables must have complex filtering, limiting, ordering and so on.
+The most obvious way to declare such parameters is simply to use a subquery.
+```scala mdoc:silent
+case class ParameterizedPersonTable(alias: String, table: AppliedFragment) extends SkunkTable {
+  def tableKeys = keys(void"id" -> int4)
+
+  val (idCol, id) = sel("id", int4)
+  val (nameCol, name) = sel("name", text)
+  val (ageCol, age) = sel("age", int4)
+}
+def parameterizedPersonTable(
+  limitOffset: Option[(Int, Int)],
+  order: Option[AppliedFragment],
+  filter: Option[AppliedFragment]
+) = skunkTable{ alias => 
+  val filt = filter.foldMap(f => sql"where ${f.fragment}".apply(f.argument))
+  val ord = order.foldMap(f => sql"order by ${f.fragment}".apply(f.argument))
+  val lim = 
+    limitOffset.foldMap{ case (limit, offset) => sql"limit ${int4} offset ${int4}".apply((limit, offset))}
+  ParameterizedPersonTable(
+    alias,
+    sql"""|(
+          |  select *
+          |  from person
+          |  ${filt.fragment}
+          |  ${ord.fragment}
+          |  ${lim.fragment}
+          |)""".stripMargin.apply((filt.argument, ord.argument, lim.argument))
+  )
+}
+```
+And now we can use our new table.
+```scala mdoc:silent
+implicit lazy val ppt: Type[IO, QueryResult[ParameterizedPersonTable]] = ???
+
+val personQueryArgs = (
+  arg[Option[Int]]("limit"),
+  arg[Option[Int]]("offset"),
+  arg[Option[Boolean]]("order"),
+  arg[Option[Int]]("ageFilter")
+).tupled
+tpe[IO, QueryResult[HomeTable]](
+  "HomeTable",
+  "people" -> cont(personQueryArgs) { case (home, (lim, off, ord, af)) =>
+    for {
+      hp <- homePersonTable.join[List](hp => sql"${home.idCol} = ${hp.homeCol}")
+      p <- parameterizedPersonTable(
+        limitOffset = (lim, off).tupled,
+        order = ord.map{
+          case true => void"age desc"
+          case false => void"age asc"
+        },
+        filter = af.map(age => sql"age > ${int4}".apply(age))
+      ).join(p => sql"${hp.personCol} = ${p.idCol}")
+    } yield p
+  }
+)
+```
 
 ### Using relational without tables
 There is no restriction on how you can implement a table, so you can choose your own strategy.

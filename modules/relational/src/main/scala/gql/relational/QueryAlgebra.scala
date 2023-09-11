@@ -116,10 +116,6 @@ trait QueryAlgebra {
     def widen[B >: A]: Query[G, B] = this.map(a => a)
   }
   object Query {
-    case class Join[T <: Table](
-        tbl: String => T,
-        joinPred: T => Frag
-    ) extends Query[Lambda[X => X], T]
     case class Pure[A](a: A) extends Query[Lambda[X => X], A]
     case class FlatMap[G[_], H[_], A, B](
         fa: Query[G, A],
@@ -138,6 +134,14 @@ trait QueryAlgebra {
           Select(ff.cols ++ fa.cols, ff.decoder ap fa.decoder)
       }
     }
+
+    def pure[A](a: A): Query[Lambda[X => X], A] = Pure(a)
+
+    def liftEffect[A](effect: Effect[A]): Query[Lambda[X => X], A] = 
+      new ModifyQueryState[Lambda[X => X],  Lambda[X => X], Unit, A](pure(())) {
+        def apply[K](fa: Effect[QueryState[Lambda[X => X],K,Unit]]): Effect[QueryState[Lambda[X => X], ?, A]] = 
+          effect.map(QueryAlgebra.QueryState.pure(_))
+      }
   }
 
   trait Table {
@@ -233,7 +237,7 @@ trait QueryAlgebra {
   val S = Stateful[Effect, Int]
   val T = Tell[Effect, QueryContent]
   val R = Raise[Effect, String]
-  val nextId = S.get.map(i => s"t${i.toString()}") <* S.modify(_ + 1)
+  val nextId: Effect[String] = S.get.map(i => s"t${i.toString()}") <* S.modify(_ + 1)
   def addJoin(tbl: Frag, pred: Frag): Effect[Unit] =
     T.tell(QueryContent(Chain.empty, Chain(QueryJoin(tbl, pred))))
   def addSelection(f: Chain[Frag]): Effect[Unit] =
@@ -415,14 +419,6 @@ trait QueryAlgebra {
         qsa <- collapseQuery(fm.fa)
         qsb <- collapseQuery(fm.f(qsa.value))
       } yield QueryAlgebra.QueryState.meld(qsa, qsb)
-    case j: Query.Join[t] =>
-      for {
-        n <- nextId
-        t = j.tbl(n)
-        jp = j.joinPred(t)
-        tbl = t.table
-        _ <- addJoin(tbl |+| stringToFrag(" as ") |+| stringToFrag(n), jp)
-      } yield QueryAlgebra.QueryState.pure(t)
   }
 }
 
