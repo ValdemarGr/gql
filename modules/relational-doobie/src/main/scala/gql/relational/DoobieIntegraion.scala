@@ -37,7 +37,7 @@ object DoobieIntegraion extends QueryAlgebra {
 object dsl extends QueryDsl(DoobieIntegraion) {
   import algebra._
 
-  trait DoobieTable[A] extends Table[A] {
+  trait DoobieTable extends Table {
     def aliased(x: Fragment): Fragment =
       Fragment.const(alias) ++ fr"." ++ x
 
