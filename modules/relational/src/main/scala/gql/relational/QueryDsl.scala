@@ -62,6 +62,17 @@ abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
 
   def relBuilder[F[_], A] = new BuildWithBuilder[F, A]
 
+  def newAlias: Query[Lambda[X => X], String] = algebra.Query.liftEffect(algebra.nextId)
+
+  def joinFull[A](make: String => A, pred: A => Frag, join: A => Frag): algebra.Query[Lambda[X => X], A] =
+    for {
+      n <- newAlias
+      a = make(n)
+      p = pred(a)
+      j = join(a)
+      _ <- algebra.Query.liftEffect(algebra.addJoin(j, p))
+    } yield a
+
   // This is potentially unsafe and pretty low-level
   // Take a look at [[reassociate]] for a safer version and ideas of how to use this properly
   def reassociateFull[G[_], Key](reassoc: QueryAlgebra.Reassoc[G, Key], dec: algebra.Decoder[Key], cols: Frag*): Query[G, Unit] = 
@@ -91,7 +102,7 @@ abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
     def make: String => T
 
     def simpleJoin(joinPred: T => Frag): algebra.Query[Lambda[X => X], T] =
-      Query.Join(make, joinPred)
+      joinFull[T](make, joinPred, t => t.table |+| stringToFrag(" as ") |+| stringToFrag(t.alias))
 
     def join[G[_]: QueryAlgebra.JoinType](joinPred: T => Frag): algebra.Query[G, T] = 
       for {
