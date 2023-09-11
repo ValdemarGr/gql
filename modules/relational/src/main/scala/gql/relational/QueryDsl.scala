@@ -77,14 +77,17 @@ abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
         }
     }
   
-  def reassociate[G[_]: QueryAlgebra.JoinType, A](dec: algebra.Decoder[A], cols: Frag*) =
-    reassociateFull[G, Option[A]](
-      QueryAlgebra.ReassocOpt(implicitly[QueryAlgebra.JoinType[G]].reassoc[A]), 
-      algebra.optDecoder(dec), 
-      cols: _*
-    )
+  def reassociate[G[_]: QueryAlgebra.JoinType](dec: algebra.Decoder[?], cols: Frag*) = {
+    def go[A](dec: algebra.Decoder[A]) =
+      reassociateFull[G, Option[A]](
+        QueryAlgebra.ReassocOpt(implicitly[QueryAlgebra.JoinType[G]].reassoc[A]), 
+        algebra.optDecoder(dec), 
+        cols: _*
+      )
+    go(dec)
+  }
 
-  trait TableAlg[T <: Table[?]] {
+  trait TableAlg[T <: Table] {
     def make: String => T
 
     def simpleJoin(joinPred: T => Frag): algebra.Query[Lambda[X => X], T] =
@@ -93,11 +96,12 @@ abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
     def join[G[_]: QueryAlgebra.JoinType](joinPred: T => Frag): algebra.Query[G, T] = 
       for {
         t <- simpleJoin(joinPred)
-        _ <- reassociate(t.selGroupKey.decoder, t.selGroupKey.cols.toList: _*)
+        (cols, dec) = t.tableKeys
+        _ <- reassociate(dec, cols.toList: _*)
       } yield t
   }
 
-  def table[T <: Table[?]](f: String => T): TableAlg[T] = new TableAlg[T] {
+  def table[T <: Table](f: String => T): TableAlg[T] = new TableAlg[T] {
     def make: String => T = f
   }
 

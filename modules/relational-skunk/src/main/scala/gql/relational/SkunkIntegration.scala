@@ -29,8 +29,8 @@ object SkunkIntegration extends QueryAlgebra {
 
 object dsl extends QueryDsl(SkunkIntegration) {
   import algebra._
-  trait SkunkTable[A] extends Table[A] {
-    def aliased(x: Fragment[Void]): Fragment[Void] =
+  trait SkunkTable extends Table {
+    def aliased[A](x: Fragment[A]): Fragment[A] =
       sql"#${alias}.${x}"
 
     def sel[A](x: String, d: Decoder[A]): (Fragment[Void], Query.Select[A]) = {
@@ -39,11 +39,11 @@ object dsl extends QueryDsl(SkunkIntegration) {
     }
   }
 
-  trait SkunkTableAlg[T <: Table[?]] extends TableAlg[T] {
+  trait SkunkTableAlg[T <: Table] extends TableAlg[T] {
     def join[G[_]: QueryAlgebra.JoinType](joinPred: T => Fragment[Void])(implicit dummy: DummyImplicit): Query[G, T] =
       join[G](joinPred.andThen(_.apply(Void)))
   }
-  def skunkTable[T <: Table[?]](f: String => T): SkunkTableAlg[T] = new SkunkTableAlg[T] {
+  def skunkTable[T <: Table](f: String => T): SkunkTableAlg[T] = new SkunkTableAlg[T] {
     def make: String => T = f
   }
   

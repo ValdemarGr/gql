@@ -116,7 +116,7 @@ trait QueryAlgebra {
     def widen[B >: A]: Query[G, B] = this.map(a => a)
   }
   object Query {
-    case class Join[T <: Table[?]](
+    case class Join[T <: Table](
         tbl: String => T,
         joinPred: T => Frag
     ) extends Query[Lambda[X => X], T]
@@ -140,21 +140,21 @@ trait QueryAlgebra {
     }
   }
 
-  trait Table[A] {
+  trait Table {
     def alias: String
 
     def table: Frag
 
-    def groupingKey: Frag
-    def groupingKeyDecoder: Decoder[A]
+    def tableKeys: (Chain[Frag], Decoder[?])
 
     def aliasedFrag(x: Frag): Frag =
       stringToFrag(alias) |+| stringToFrag(".") |+| x
 
+    def keys(cols: (Frag, Decoder[?])*) = 
+      Chain.fromSeq(cols.map{ case (f, _) => aliasedFrag(f) }) -> cols.traverse{ case (_, d) => d.widen[Any] }
+    
     def select[A](name: Frag, dec: Decoder[A]): Query.Select[A] =
       Query.Select(Chain(aliasedFrag(name)), dec)
-
-    def selGroupKey: Query.Select[A] = select(groupingKey, groupingKeyDecoder)
   }
 
   case class PreparedQuery[G[_], A, B, C](

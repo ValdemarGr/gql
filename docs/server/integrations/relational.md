@@ -27,6 +27,7 @@ import gql.dsl._
 import gql.relational._
 import gql.relational.skunk.dsl._
 import cats._
+import cats.data._
 import cats.arrow._
 import cats.effect._
 import cats.implicits._
@@ -47,15 +48,15 @@ We will start off just declaring the home table.
 case class HomeTable(
   // When a table is queried it must have an alias
   alias: String
-) extends SkunkTable[Int] { // The table must also declare how it's rows are uniquely identified
+) extends SkunkTable {
   // Note that we use only skunk tools to declare the contents of this structure
 
   // We can declare how this table is referenced in sql (or some other query language)
   def table = void"home"
 
-  // Unique identifier expression
-  def groupingKey = void"id"
-  def groupingKeyDecoder = int4
+  // Set of columns that uniquely identify a row
+  // The dsl will add the table alias to all column related methods
+  def tableKeys = keys(void"id" -> int4)
 
   // The SkunkTable trait gives some convinience methods for declaring columns
   val (idCol, id) = sel("id", int4)
@@ -68,11 +69,10 @@ val homeTable = skunkTable(HomeTable)
 
 We will also need to declare the other two tables, this time with less comments.
 ```scala mdoc:silent
-case class PersonTable(alias: String) extends SkunkTable[Int] {
+case class PersonTable(alias: String) extends SkunkTable {
   def table = void"person"
 
-  def groupingKey = void"id"
-  def groupingKeyDecoder = int4
+  def tableKeys = keys(void"id" -> int4)
 
   val (idCol, id) = sel("id", int4)
   val (nameCol, name) = sel("name", text)
@@ -80,11 +80,10 @@ case class PersonTable(alias: String) extends SkunkTable[Int] {
 }
 val personTable = skunkTable(PersonTable)
 
-case class PetTable(alias: String) extends SkunkTable[Int] {
+case class PetTable(alias: String) extends SkunkTable {
   def table = void"pet"
 
-  def groupingKey = void"id"
-  def groupingKeyDecoder = int4
+  def tableKeys = keys(void"id" -> int4)
 
   val (nameCol, name) = sel("name", text)
   val (ageCol, age) = sel("age", int4)
@@ -95,11 +94,13 @@ val petTable = skunkTable(PetTable)
 
 Since `Home` and `Person` have a many to many relationship, we will have to go through another table table to get the relationship.
 ```scala mdoc:silent
-case class HomePersonTable(alias: String) extends SkunkTable[(Int, Int)] {
+case class HomePersonTable(alias: String) extends SkunkTable {
   def table = void"home_person"
 
-  def groupingKey = void"home_id, " |+| aliasedFrag(void"person_id")
-  def groupingKeyDecoder = int4 ~ int4
+  def tableKeys = keys(
+    void"home_id" -> int4,
+    void"person_id" -> int4
+  )
 
   val (homeCol, home) = sel("home_id", int4)
   val (personCol, person) = sel("person_id", int4)
@@ -245,11 +246,16 @@ And thats it!
 Just for fun, we check out the generated sql.
 ```scala mdoc:nest
 import gql.relational.skunk._
-implicit def logQueries[F[_]: MonadCancelThrow]: SkunkIntegration.Queryable[F] = new SkunkIntegration.Queryable[F] {
-  def apply[A](query: AppliedFragment, decoder: Decoder[A], connection: SkunkIntegration.Connection[F]): F[List[A]] = {
-    println(query.fragment.sql)
-    SkunkIntegration.skunkQueryable[F].apply(query, decoder, connection)
-  }
+implicit def logQueries[F[_]: MonadCancelThrow]: SkunkIntegration.Queryable[F] = 
+  new SkunkIntegration.Queryable[F] {
+    def apply[A](
+      query: AppliedFragment,
+      decoder: Decoder[A], 
+      connection: SkunkIntegration.Connection[F]
+    ): F[List[A]] = {
+      println(query.fragment.sql)
+      SkunkIntegration.skunkQueryable[F].apply(query, decoder, connection)
+    }
 }
 
 def schema = gql.Schema.query(
@@ -271,9 +277,8 @@ schema
 The join between `home` and `person` can be a bit daunting, since you have to keep track of multiplicity yourself.
 Instead we can use the database to handle some of the multiplicity for us by generalizing the person table.
 ```scala mdoc:silent
-case class SharedPersonTable(alias: String, table: AppliedFragment) extends SkunkTable[Int] {
-  def groupingKey = void"id"
-  def groupingKeyDecoder = int4
+case class SharedPersonTable(alias: String, table: AppliedFragment) extends SkunkTable {
+  def tableKeys = keys(void"id" -> int4)
 
   val (idCol, id) = sel("id", int4)
   val (nameCol, name) = sel("name", text)
@@ -312,13 +317,13 @@ Consider the following example that joins a table more explicitly.
 ```scala mdoc
 val q1 = for {
   ht <- homeTable.simpleJoin(_ => void"true")
-  _ <- reassociate[List, Int](ht.selGroupKey.decoder, ht.selGroupKey.cols.toList: _*)
+  _ <- reassociate[List](ht.tableKeys._2, ht.tableKeys._1.toList: _*)
   // some other reassociation criteria
-  _ <- reassociate[Option, Int](int4, void"42")
+  _ <- reassociate[Option](int4, void"42")
 } yield ht
 
 // we can even perform them before the join
-val q2 = reassociate[Option, String](text, void"'john doe'").flatMap(_ => q1)
+val q2 = reassociate[Option](text, void"'john doe'").flatMap(_ => q1)
 
 // we can also change the result structure after reassociation
 q2.mapK[List](new (Lambda[X => Option[List[Option[X]]]] ~> List) {
@@ -393,16 +398,15 @@ For instance say we just wanted to declare everything up-front and select fields
 case class AdHocTable(
   alias: String, 
   table: AppliedFragment,
-  groupingKey: AppliedFragment,
-  groupingKeyDecoder: Decoder[Int]
-) extends SkunkTable[Int]
+  tableKeys: (Chain[AppliedFragment], Decoder[?]),
+) extends SkunkTable
 
 tpe[IO, QueryResult[HomeTable]](
   "HomeTable",
   "people" -> cont(arg[List[Int]]("ids")) { (home, ids) =>
     for {
       hp <- skunkTable(alias => 
-          AdHocTable(alias, void"home_person", sql"home_id, #${alias}.person_id".apply(Void), int4)
+          AdHocTable(alias, void"home_person", Chain(sql"#${alias}.home_id", sql"#${alias}.person_id").map(_.apply(Void)) -> int4 ~ int4)
         ).join[List](hp => sql"${home.idCol} = ${hp.aliased(sql"home_id")}")
       p <- personTable.join(p => sql"${hp.aliased(sql".person_id")} = ${p.idCol} and ${p.idCol} in (${int4.list(ids)})".apply(ids))
     } yield p
