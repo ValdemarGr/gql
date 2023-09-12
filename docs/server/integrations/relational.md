@@ -304,7 +304,7 @@ tpe[IO, QueryResult[HomeTable]](
 )
 ```
 
-### Runtime semantics
+## Runtime semantics
 SQL is a language that works on flat arrays of rows, but for it to map well to graphql some work must be performed.
 Most use-cases should be covered by simply invoking the `join` method with the proper multiplicity parameter, so this section is more of a technical reference.
 
@@ -339,7 +339,7 @@ for {
 } yield ()
 ```
 
-### Implementing your own integration
+## Implementing your own integration
 The entire dsl and query compiler is available if you implement a couple of methods.
 
 Here is the full skunk integration.
@@ -380,7 +380,7 @@ object myDsl extends QueryDsl(MyIntegration) {
 }
 ```
 
-### Adding arguments
+## Adding arguments
 All field combinators allow arguments to be provided naturally, regardless of where the field is in the query.
 ```scala mdoc:silent
 implicit lazy val pt: Type[IO, QueryResult[PersonTable]] = ???
@@ -396,7 +396,7 @@ tpe[IO, QueryResult[HomeTable]](
 )
 ```
 
-### Declaring complex subqueries
+## Declaring complex subqueries
 Sometimes your tables must have complex filtering, limiting, ordering and so on.
 The most obvious way to declare such parameters is simply to use a subquery.
 ```scala mdoc:silent
@@ -456,7 +456,7 @@ tpe[IO, QueryResult[HomeTable]](
 )
 ```
 
-### Using relational without tables
+## Using relational without tables
 There is no restriction on how you can implement a table, so you can choose your own strategy.
 For instance say we just wanted to declare everything up-front and select fields ad-hoc.
 ```scala mdoc:silent
@@ -481,9 +481,128 @@ tpe[IO, QueryResult[HomeTable]](
 Since there is no dsl for this, constructing the query is a bit gruesome.
 Consider if a dsl is possible for your formulation.
 
-### Running transactions
-Lazy session
-#### Subscriptions
-evalMap reset
+## Running transactions
+Most usecases involve running all queries in a transaction, but none of the examples so far have introduces this.
+The implementation of transactions depends on the database library, but many implementations share common properties.
 
-### Handling N+1
+If your database library supports opening transactions as a resource then the you can lazily open a transaction.
+Here is an example using skunk.
+
+:::warning
+Transactions have not been explored much yet, so there might be better ways to do this.
+:::
+```scala mdoc:silent
+import cats.mtl._
+
+def myConnection: Resource[IO, Session[IO]] = Session.single[IO](
+  host = "127.0.0.1",
+  port = 5432,
+  user = "postgres",
+  database = "postgres"
+)
+
+// The outer resource manages the lifecycle of the connection
+// The inner resource leases the connection, if the inner resource is not closed, the outer waits
+def lazyConnection: Resource[IO, LazyResource[IO, Session[IO]]] = 
+  gql.relational.LazyResource.fromResource(myConnection)
+
+val liftK = Kleisli.liftK[IO, Resource[IO, Session[IO]]]
+
+type GetConn[F[_]] = Ask[F, Resource[F, Session[F]]]
+
+def makeConn[F[_]](conn: GetConn[F]): Resource[F, Session[F]] = 
+  Resource.eval(conn.ask[Resource[F, Session[F]]]).flatten
+
+// We define our schema as requiring a connection
+def myQuery[F[_]: Async](conn: GetConn[F]): Type[F, Unit] = {
+  implicit lazy val homeTableTpe: Type[F, QueryResult[HomeTable]] = ???
+  tpe[F, Unit](
+    "Query",
+    "homes" -> runFieldSingle(makeConn(conn)) { (_: Unit) => 
+      homeTable.join[List](_ => sql"true")
+    }
+  )
+}
+
+implicit def functorForAsk[F[_]]: Functor[Ask[F, *]] = ???
+def kleisliAsk[F[_]: Applicative, A] = Ask[Kleisli[F, A, *], A]
+
+def runQuery: IO[String => Compiler.Outcome[IO]] = 
+  gql.Statistics[IO].map{ stats => 
+    type G[A] = Kleisli[IO, Resource[IO, Session[IO]], A]
+
+    val liftK = Kleisli.liftK[IO, Resource[IO, Session[IO]]]
+
+    val ask: Ask[G, Resource[G, Session[G]]] = 
+      kleisliAsk[IO, Resource[IO, Session[IO]]].map(_.mapK(liftK).map(_.mapK(liftK)))
+
+    val schema = gql.Schema.query(stats.mapK(liftK))(myQuery[G](ask))
+
+    val oneshot = lazyConnection.map(_.get.flatTap(_.transaction))
+
+    (query: String) => 
+      Compiler[G]
+        .compile(schema, q)
+        .map{ 
+          case gql.Application.Query(fa) => gql.Application.Query(oneshot.useKleisli(fa))
+          case gql.Application.Mutation(fa) => gql.Application.Mutation(oneshot.useKleisli(fa))
+          // Subscription is a bit more complex since we would like to close the transaction on every event
+          case gql.Application.Subscription(fa) => 
+            gql.Application.Subscription{
+              fs2.Stream.resource(lazyConnection).flatMap{ lc =>
+                fa
+                  .translate(Kleisli.applyK[IO, Resource[IO, Session[IO]]](lc.get.flatTap(_.transaction)))
+                  .evalTap(_ => lc.forceClose)
+              }
+            }
+        }
+  }
+```
+
+## Handling N+1
+The relational module can handle N+1 queries and queries that can cause cartesian products.
+To solve N+1, the user must use the `runField` method instead of the `runFieldSingle`.
+The `runField` method takes a list of inputs `I` and produces `Query[G, (Select[I], B)]`, such that query results can be reassociated with the inputs.
+```scala mdoc
+def myBatchedHomeQuery(conn: Resource[IO, Session[IO]]) = {
+  case class MyDatatype(homeId: Int)
+
+  tpe[IO, MyDatatype](
+    "MyDatatype",
+    "home" -> runField[IO, List, MyDatatype, HomeTable](conn) { xs => 
+      val lst = xs.toList.map(_.homeId)
+      for {
+        ht <- homeTable.join[List](ht => sql"${ht.idCol} in (${int4.list(lst)})".apply(lst))
+      } yield (ht.id.fmap(MyDatatype), ht)
+    }
+  )
+}
+```
+
+To solve the query multiplicity explosions you can use the `contBoundary` which works almost like `cont`, except the query will be split up into two queries.
+
+The `contBoundary` function takes two interesting parameters.
+The first parameter will be a projection of the current query, decoded into `B`.
+The second parameter turns this `B` into another query, which will be the root of the new query.
+```scala mdoc
+def boundaryQuery(conn: Resource[IO, Session[IO]]) = {
+  case class MyDatatype(homeId: Int)
+
+  relBuilder[IO, HomeTable]{ rb =>
+    rb.tpe(
+      "HomeTable",
+      "people" -> rb.contBoundary(conn){ home =>
+        homePersonTable.join[List](hp => sql"${home.idCol} = ${hp.homeCol}").map(_.person)
+      }{ (xs: NonEmptyList[Int]) =>
+        val lst = xs.toList
+        personTable.join(p => sql"${p.idCol} in (${int4.list(lst)})".apply(lst)).map(p => p.id -> p)
+      }
+    )
+  }
+}
+```
+:::info
+The `contBoundary` is only available in when using the `relBuilder`, since type inference does not work very well.
+
+Inference troubles with `runField` can also be alleviated by using the `relBuilder`.
+:::
