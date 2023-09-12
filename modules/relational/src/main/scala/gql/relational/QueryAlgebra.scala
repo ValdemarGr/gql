@@ -11,7 +11,7 @@ import gql.EmptyableArg
 import gql.resolver.FieldMeta
 
 trait QueryAlgebra {
-  type QueryState[G[_], Key, C] = QueryAlgebra.QueryState[Decoder, G, Key, C]
+  type QueryState[G[_], C] = QueryAlgebra.QueryState[Decoder, G, C]
   val QueryStateImpl = QueryAlgebra.QueryStateImpl
 
   type Decoder[A]
@@ -92,38 +92,37 @@ trait QueryAlgebra {
     case class SubSelection[A]() extends FieldVariant[A, QueryResult[A]]
   }
 
-  trait TableFieldAttribute[F[_], G[_], A, B, ArgType, Q] extends FieldAttribute[F] {
+  trait TableFieldAttribute[G[_], A, B, ArgType, Q] extends FieldAttribute[fs2.Pure] {
     def arg: EmptyableArg[ArgType]
     def query(value: A, argument: ArgType): Query[G, Q]
     def fieldVariant: FieldVariant[Q, B]
   }
 
+  // trait VariantQueryAttribute[A] extends VariantAttribute[fs2.Pure]
+
   trait QueryResult[A] {
-    def read[F[_], G[_], A0, B, ArgType, Q](tfa: TableFieldAttribute[F, G, A0, B, ArgType, Q]): Option[Either[String, G[B]]]
+    def read[G[_], A0, B, ArgType, Q](tfa: TableFieldAttribute[G, A0, B, ArgType, Q]): Option[Either[String, G[B]]]
   }
 
   sealed trait Query[G[_], +A] {
     def flatMap[H[_], B](f: A => Query[H, B]): Query[Lambda[X => G[H[X]]], B] =
       Query.FlatMap(this, f)
 
-    def map[B](f: A => B): Query[G, B] = flatMap[Lambda[X => X], B](a => Query.Pure(f(a)))
+    def map[B](f: A => B): Query[G, B] = flatMap[Lambda[X => X], B](a => Query.pure(f(a)))
 
-    def mapK[H[_]](fk: G ~> H): Query[H, A] = new Query.ModifyQueryState[H, G, A, A](this) {
-      def apply[K](fa: Effect[QueryState[G, K, A]]): Effect[QueryState[H, ?, A]] =
-        fa.map(_.mapK(fk))
-    }
+    def mapK[H[_]](fk: G ~> H): Query[H, A] = 
+      Query.LiftEffect(compile[A].map(_.mapK(fk)))
 
     def widen[B >: A]: Query[G, B] = this.map(a => a)
+
+    def compile[B >: A]: Effect[QueryState[G, B]] = collapseQuery(this)
   }
   object Query {
-    case class Pure[A](a: A) extends Query[Lambda[X => X], A]
     case class FlatMap[G[_], H[_], A, B](
         fa: Query[G, A],
         f: A => Query[H, B]
     ) extends Query[Lambda[X => G[H[X]]], B]
-    abstract class ModifyQueryState[G[_], H[_], A, B](val fa: Query[H, A]) extends Query[G, B] {
-      def apply[K](fa: Effect[QueryState[H, K, A]]): Effect[QueryState[G, ?, B]]
-    }
+    case class LiftEffect[G[_], A](fa: Effect[QueryState[G, A]]) extends Query[G, A]
     case class Select[A](cols: Chain[Frag], decoder: Decoder[A]) extends Query[Lambda[X => X], Select[A]]
     object Select {
       implicit lazy val applicativeForSelect: Applicative[Select] = new Applicative[Select] {
@@ -135,13 +134,17 @@ trait QueryAlgebra {
       }
     }
 
-    def pure[A](a: A): Query[Lambda[X => X], A] = Pure(a)
+    def pure[A](a: A): Query[Lambda[X => X], A] = 
+      liftState[Lambda[X => X], A](QueryAlgebra.QueryState.pure[Decoder, A](a))
 
-    def liftEffect[A](effect: Effect[A]): Query[Lambda[X => X], A] = 
-      new ModifyQueryState[Lambda[X => X],  Lambda[X => X], Unit, A](pure(())) {
-        def apply[K](fa: Effect[QueryState[Lambda[X => X],K,Unit]]): Effect[QueryState[Lambda[X => X], ?, A]] = 
-          effect.map(QueryAlgebra.QueryState.pure(_))
-      }
+    def liftState[G[_], A](state: QueryState[G, A]): Query[G, A] =
+      liftEffect[G, A](Effect.pure(state))
+
+    def liftEffect[G[_], A](effect: Effect[QueryState[G, A]]): Query[G, A] =
+      LiftEffect(effect)
+
+    def liftF[A](fa: Effect[A]): Query[Lambda[X => X], A] =
+      liftEffect(fa.map(QueryAlgebra.QueryState.pure[Decoder, A](_)))
   }
 
   trait Table {
@@ -154,9 +157,9 @@ trait QueryAlgebra {
     def aliasedFrag(x: Frag): Frag =
       stringToFrag(alias) |+| stringToFrag(".") |+| x
 
-    def keys(cols: (Frag, Decoder[?])*) = 
-      Chain.fromSeq(cols.map{ case (f, _) => aliasedFrag(f) }) -> cols.traverse{ case (_, d) => d.widen[Any] }
-    
+    def keys(cols: (Frag, Decoder[?])*) =
+      Chain.fromSeq(cols.map { case (f, _) => aliasedFrag(f) }) -> cols.traverse { case (_, d) => d.widen[Any] }
+
     def select[A](name: Frag, dec: Decoder[A]): Query.Select[A] =
       Query.Select(Chain(aliasedFrag(name)), dec)
   }
@@ -279,16 +282,16 @@ trait QueryAlgebra {
   def compileNextField[F[_], G[_], A, B, ArgType, Q](
       pdf: prep.PreparedDataField[F, ?, ?],
       a: A,
-      tfa: TableFieldAttribute[F, G, A, B, ArgType, Q]
+      tfa: TableFieldAttribute[G, A, B, ArgType, Q]
   ): Effect[Done[G, ?, B]] =
     getArg(pdf, tfa.arg)
       .map(tfa.query(a, _))
       .flatMap(collapseQuery)
       .flatMap(compileQueryState(pdf, _, tfa.fieldVariant))
 
-  def compileQueryState[F[_], G[_], B, ArgType, Q, O, Key](
+  def compileQueryState[F[_], G[_], B, ArgType, Q, O](
       pdf: prep.PreparedDataField[F, ?, ?],
-      qs: QueryState[G, Key, Q],
+      qs: QueryState[G, Q],
       variant: FieldVariant[Q, B]
   ): Effect[Done[G, ?, B]] =
     variant match {
@@ -296,7 +299,7 @@ trait QueryAlgebra {
         // implicitly[Select[B] =:= Q]
         val sel: Query.Select[B] = qs.value
         addSelection(sel.cols).as {
-          Done[G, (Key, Option[B]), B](
+          Done[G, (qs.Key, Option[B]), B](
             (qs.decoder, optDecoder(sel.decoder)).tupled,
             { xs =>
               val ys = xs.collect { case (k, Some(v)) => k -> v }
@@ -321,7 +324,7 @@ trait QueryAlgebra {
         }
 
         ys.map { dones =>
-          type K = TableFieldAttribute[F, Any, ?, ?, ?, ?]
+          type K = TableFieldAttribute[Any, ?, ?, ?, ?]
           val decs = dones
             .flatTraverse { case (done, attr) =>
               done.dec.map { x => List[(K, Any)](attr.attr -> x) }
@@ -334,21 +337,21 @@ trait QueryAlgebra {
             val keys = xs.flatMap(_.keySet).toSet
             val grouped = keys.toList.map(k => k -> xs.flatMap(_.get(k))).toMap
             new QueryResult[Q] {
-              def read[F[_], G[_], A0, B, ArgType, Q](
-                  tfa: TableFieldAttribute[F, G, A0, B, ArgType, Q]
+              def read[G[_], A0, B, ArgType, Q](
+                  tfa: TableFieldAttribute[G, A0, B, ArgType, Q]
               ): Option[Either[String, G[B]]] =
-                doneMap.asInstanceOf[Map[TableFieldAttribute[F, G, A0, B, ArgType, Q], Done[G, ?, ?]]].get(tfa).flatMap {
+                doneMap.asInstanceOf[Map[TableFieldAttribute[G, A0, B, ArgType, Q], Done[G, ?, ?]]].get(tfa).flatMap {
                   case (done: Done[G, a, ?]) =>
-                    grouped.asInstanceOf[Map[TableFieldAttribute[F, G, A0, B, ArgType, Q], List[Any]]].get(tfa).map { ys =>
+                    grouped.asInstanceOf[Map[TableFieldAttribute[G, A0, B, ArgType, Q], List[Any]]].get(tfa).map { ys =>
                       done.reassoc(ys.asInstanceOf[List[a]]).map(_.asInstanceOf[G[B]])
                     }
                 }
             }
           }
 
-          Done[G, (Key, Map[K, Any]), QueryResult[Q]](
+          Done[G, (qs.Key, Map[K, Any]), QueryResult[Q]](
             (qs.decoder, decs).tupled,
-            { (xs: List[(Key, Map[K, Any])]) =>
+            { (xs: List[(qs.Key, Map[K, Any])]) =>
               qs.reassoc(xs)
                 .map(gs =>
                   qs.fk {
@@ -364,7 +367,7 @@ trait QueryAlgebra {
 
   case class FieldWithAttr[F[_], G[_], A](
       field: prep.PreparedDataField[F, QueryResult[A], ?],
-      attr: TableFieldAttribute[F, G, A, ?, ?, ?]
+      attr: TableFieldAttribute[G, A, ?, ?, ?]
   )
   def getNextAttributes[F[_], A, B](pdf: prep.PreparedDataField[F, A, B]) = {
     val selFields: List[prep.PreparedField[F, ?]] = findNextSel(pdf.cont.cont).toList.flatMap(_.fields)
@@ -372,8 +375,8 @@ trait QueryAlgebra {
       .flatMap(pf => findNextFields(pf))
       .collect { case x: prep.PreparedDataField[F, ?, ?] => x }
       .map { x =>
-        x.source.attributes.collectFirst { case a: TableFieldAttribute[F, g, a, ?, ?, ?] @unchecked => a }.map {
-          case tfa: TableFieldAttribute[F, g, a, ?, ?, ?] =>
+        x.source.attributes.collectFirst { case a: TableFieldAttribute[g, a, ?, ?, ?] @unchecked => a }.map {
+          case tfa: TableFieldAttribute[g, a, ?, ?, ?] =>
             FieldWithAttr(x.asInstanceOf[prep.PreparedDataField[F, QueryResult[a], ?]], tfa)
         }
       }
@@ -407,13 +410,9 @@ trait QueryAlgebra {
     override def empty: QueryContent = QueryContent(Chain.empty, Chain.empty)
   }
 
-  def collapseQuery[G[_], C](q: Query[G, C]): Effect[QueryState[G, ?, C]] = q match {
-    case p: Query.Pure[a]   => Effect.pure(QueryAlgebra.QueryState.pure(p.a))
+  def collapseQuery[G[_], C](q: Query[G, C]): Effect[QueryState[G, C]] = q match {
     case s: Query.Select[a] => Effect.pure(QueryAlgebra.QueryState.pure(s))
-    case mqs: Query.ModifyQueryState[g, h, a, c] =>
-      collapseQuery(mqs.fa) match {
-        case fb: Effect[QueryState[h, ?, ?]] => mqs.apply(fb).widen[QueryState[g, ?, c]]
-      }
+    case le: Query.LiftEffect[g, a]   => le.fa
     case fm: Query.FlatMap[g, h, a, b] =>
       for {
         qsa <- collapseQuery(fm.fa)
@@ -423,37 +422,44 @@ trait QueryAlgebra {
 }
 
 object QueryAlgebra {
-  trait QueryState[Decoder[_], G[_], Key, C] { self =>
+  trait QueryState[Decoder[_], G[_], C] { self =>
+    type Key
     type T[_]
     def reassoc: Reassoc[T, Key]
     def decoder: Decoder[Key]
     def value: C
     def fk: T ~> G
-    def map[B](f: C => B): QueryState[Decoder, G, Key, B] =
+    def map[B](f: C => B): QueryState[Decoder, G, B] =
       QueryStateImpl(reassoc, decoder, f(value), fk)
-    def mapK[H[_]](fk: G ~> H): QueryState[Decoder, H, Key, C] =
+    def mapK[H[_]](fk: G ~> H): QueryState[Decoder, H, C] =
       QueryStateImpl(reassoc, decoder, value, fk compose self.fk)
   }
 
   object QueryState {
-    type Aux[Decoder[_], G[_], Key, C, T0[_]] = QueryState[Decoder, G, Key, C] { type T[A] = T0[A] }
+    type Aux[Decoder[_], G[_], C, K0, T0[_]] = QueryState[Decoder, G, C] { 
+      type T[A] = T0[A] 
+      type Key = K0
+    }
 
     def apply[Decoder[_], G[_], Key, C, T0[_]](
         reassoc0: Reassoc[T0, Key],
         decoder0: Decoder[Key],
         value0: C,
         fk0: T0 ~> G
-    ): QueryState.Aux[Decoder, G, Key, C, T0] =
+    ): QueryState.Aux[Decoder, G, C, Key, T0] =
       QueryStateImpl(reassoc0, decoder0, value0, fk0)
 
-    def pure[Decoder[_]: Applicative, A](c: A): QueryState[Decoder, Lambda[X => X], Unit, A] =
+    def pure[Decoder[_]: Applicative, A](c: A): QueryState[Decoder, Lambda[X => X], A] =
       QueryStateImpl(JoinType.One.reassoc[Unit], ().pure[Decoder], c, FunctionK.id[Id])
 
-    def meld[Decoder[_]: Applicative, G[_], H[_], A, B, AK, BK](
-        qsa: QueryState[Decoder, G, AK, A],
-        qsb: QueryState[Decoder, H, BK, B]
-    ) = {
+    def meld[Decoder[_]: Applicative, G[_], H[_], A, B](
+        qsa: QueryState[Decoder, G, A],
+        qsb: QueryState[Decoder, H, B]
+    ): QueryState[Decoder, Lambda[X => G[H[X]]], B] = {
       type N[A] = qsa.T[qsb.T[A]]
+      type AK = qsa.Key
+      type BK = qsb.Key
+
       val reassoc: Reassoc[N, (AK, BK)] = new Reassoc[N, (AK, BK)] {
         def traverse = Reassociateable
           .reassociateStep(
@@ -482,13 +488,14 @@ object QueryAlgebra {
   }
 
   // Trivial implementation of QueryState
-  final case class QueryStateImpl[Decoder[_], G[_], I[_], Key, C](
-      reassoc: Reassoc[I, Key],
-      decoder: Decoder[Key],
+  final case class QueryStateImpl[Decoder[_], G[_], I[_], K, C](
+      reassoc: Reassoc[I, K],
+      decoder: Decoder[K],
       value: C,
       fk: I ~> G
-  ) extends QueryState[Decoder, G, Key, C] {
+  ) extends QueryState[Decoder, G, C] {
     type T[A] = I[A]
+    type Key = K
   }
 
   // Structure that aids re-construction of hierarchical data from flat data
