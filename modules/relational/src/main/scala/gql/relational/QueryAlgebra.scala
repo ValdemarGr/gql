@@ -98,7 +98,9 @@ trait QueryAlgebra {
     def fieldVariant: FieldVariant[Q, B]
   }
 
-  // trait VariantQueryAttribute[A] extends VariantAttribute[fs2.Pure]
+  trait VariantQueryAttribute[G[_], A] extends VariantAttribute[fs2.Pure] {
+    def query: Query[G, A]
+  }
 
   trait QueryResult[A] {
     def read[G[_], A0, B, ArgType, Q](tfa: TableFieldAttribute[G, A0, B, ArgType, Q]): Option[Either[String, G[B]]]
