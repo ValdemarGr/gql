@@ -95,9 +95,13 @@ object ast extends AstImplicits.Implicits {
     def document(description: String): Input[A] = copy(description = Some(description))
   }
 
-  final case class Variant[+F[_], A, B](tpe: Eval[Type[F, B]])(implicit val specify: A => Option[B]) {
+  trait VariantAttribute[+F[_]]
+  final case class Variant[+F[_], A, B](
+    tpe: Eval[Type[F, B]],
+    attributes: List[VariantAttribute[F]] = Nil
+  )(implicit val specify: A => Option[B]) {
     def contramap[C](g: C => A): Variant[F, C, B] =
-      Variant[F, C, B](tpe)(c => specify(g(c)))
+      Variant[F, C, B](tpe, attributes)(c => specify(g(c)))
   }
 
   final case class Union[+F[_], A](

@@ -62,7 +62,7 @@ abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
 
   def relBuilder[F[_], A] = new BuildWithBuilder[F, A]
 
-  def newAlias: Query[Lambda[X => X], String] = algebra.Query.liftEffect(algebra.nextId)
+  def newAlias: Query[Lambda[X => X], String] = algebra.Query.liftF(algebra.nextId)
 
   def joinFull[A](make: String => A, pred: A => Frag, join: A => Frag): algebra.Query[Lambda[X => X], A] =
     for {
@@ -70,23 +70,22 @@ abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
       a = make(n)
       p = pred(a)
       j = join(a)
-      _ <- algebra.Query.liftEffect(algebra.addJoin(j, p))
+      _ <- algebra.Query.liftF(algebra.addJoin(j, p))
     } yield a
 
   // This is potentially unsafe and pretty low-level
   // Take a look at [[reassociate]] for a safer version and ideas of how to use this properly
   def reassociateFull[G[_], Key](reassoc: QueryAlgebra.Reassoc[G, Key], dec: algebra.Decoder[Key], cols: Frag*): Query[G, Unit] = 
-    new algebra.Query.ModifyQueryState[G, Lambda[X => X], Unit, Unit](algebra.Query.Pure(())) {
-      def apply[K](fa: Effect[QueryState[Lambda[X => X],K,Unit]]): Effect[QueryState[G, ?, Unit]] = 
-        algebra.addSelection(Chain.fromSeq(cols)).as {
-          QueryAlgebra.QueryState(
+    algebra.Query.liftEffect[G, Unit](
+      algebra.addSelection(Chain.fromSeq(cols)).as {
+          QueryAlgebra.QueryState[algebra.Decoder, G, Key, Unit, G](
             reassoc,
             dec,
             (),
             FunctionK.id[G]
           )
         }
-    }
+    )
   
   def reassociate[G[_]: QueryAlgebra.JoinType](dec: algebra.Decoder[?], cols: Frag*) = {
     def go[A](dec: algebra.Decoder[A]) =
@@ -119,7 +118,7 @@ abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
   def queryFull[F[_], G[_], A, B, C, D](a: EmptyableArg[C])(f: (A, C) => Query[G, Query.Select[B]], resolverCont: Resolver[F, G[B], D])(
       implicit tpe: => Out[F, D]
   ): Field[F, QueryResult[A], D] = {
-    val tfa: TableFieldAttribute[F, G, A, B, C, Query.Select[B]] = new TableFieldAttribute[F, G, A, B, C, Query.Select[B]] {
+    val tfa: TableFieldAttribute[G, A, B, C, Query.Select[B]] = new TableFieldAttribute[G, A, B, C, Query.Select[B]] {
       def arg = a
       def query(value: A, argument: C): Query[G, Query.Select[B]] = f(value, argument)
       def fieldVariant = FieldVariant.Selection()
@@ -145,8 +144,8 @@ abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
       case EmptyableArg.Lift(y) => Resolver.id[F, I2].arg(y).map { case (_, i2) => i2 }
     }
 
-    val tfa: TableFieldAttribute[F, G, A, QueryResult[B], C, B] =
-      new TableFieldAttribute[F, G, A, QueryResult[B], C, B] {
+    val tfa: TableFieldAttribute[G, A, QueryResult[B], C, B] =
+      new TableFieldAttribute[G, A, QueryResult[B], C, B] {
         def arg = a
         def query(value: A, argument: C): Query[G, B] = f(value, argument)
         def fieldVariant = FieldVariant.SubSelection()
