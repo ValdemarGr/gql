@@ -98,8 +98,9 @@ trait QueryAlgebra {
     def fieldVariant: FieldVariant[Q, B]
   }
 
-  trait VariantQueryAttribute[G[_], A] extends VariantAttribute[fs2.Pure] {
-    def query: Query[G, A]
+  trait VariantQueryAttribute[G[_], A, B] extends VariantAttribute[fs2.Pure] {
+    def matchCase: A
+    def query: Query[Lambda[X => X], (Query.Select[A], B)]
   }
 
   trait QueryResult[A] {
@@ -375,7 +376,6 @@ trait QueryAlgebra {
     val selFields: List[prep.PreparedField[F, ?]] = findNextSel(pdf.cont.cont).toList.flatMap(_.fields)
     selFields
       .flatMap(pf => findNextFields(pf))
-      .collect { case x: prep.PreparedDataField[F, ?, ?] => x }
       .map { x =>
         x.source.attributes.collectFirst { case a: TableFieldAttribute[g, a, ?, ?, ?] @unchecked => a }.map {
           case tfa: TableFieldAttribute[g, a, ?, ?, ?] =>
