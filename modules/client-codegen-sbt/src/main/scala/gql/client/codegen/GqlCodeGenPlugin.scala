@@ -158,7 +158,7 @@ object GqlCodeGenPlugin extends AutoPlugin {
         val runnerObj = runner.value
 
         val cachedFun =
-          FileFunction.cached(streamsObj.cacheDirectory / "gql-invoke-codegen", inStyle = FilesInfo.full, outStyle = FilesInfo.full) { _ =>
+          FileFunction.cached(streamsObj.cacheDirectory / "gql-invoke-codegen", inStyle = FilesInfo.lastModified, outStyle = FilesInfo.exists) { _ =>
             val args = List("--validate").filter(_ => Gql.validate.value) ++ List("--input") ++ cmd.map(_.json)
 
             runnerObj.run("gql.client.codegen.GeneratorCli", cp, args, streamsObj.log) match {
