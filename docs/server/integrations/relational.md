@@ -326,7 +326,7 @@ val q1 = for {
 val q2 = reassociate[Option](text, void"'john doe'").flatMap(_ => q1)
 
 // we can also change the result structure after reassociation
-q2.mapK[List](new (Lambda[X => Option[List[Option[X]]]] ~> List) {
+q2.mapK[List](new (λ[X => Option[List[Option[X]]]] ~> List) {
   def apply[A](fa: Option[List[Option[A]]]): List[A] = fa.toList.flatten.flatMap(_.toList)
 })
 ```

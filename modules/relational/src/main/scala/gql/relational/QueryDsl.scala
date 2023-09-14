@@ -62,9 +62,9 @@ abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
 
   def relBuilder[F[_], A] = new BuildWithBuilder[F, A]
 
-  def newAlias: Query[Lambda[X => X], String] = algebra.Query.liftF(algebra.nextId)
+  def newAlias: Query[λ[X => X], String] = algebra.Query.liftF(algebra.nextId)
 
-  def joinFull[A](make: String => A, pred: A => Frag, join: A => Frag): algebra.Query[Lambda[X => X], A] =
+  def joinFull[A](make: String => A, pred: A => Frag, join: A => Frag): algebra.Query[λ[X => X], A] =
     for {
       n <- newAlias
       a = make(n)
@@ -100,7 +100,7 @@ abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
   trait TableAlg[T <: Table] {
     def make: String => T
 
-    def simpleJoin(joinPred: T => Frag): algebra.Query[Lambda[X => X], T] =
+    def simpleJoin(joinPred: T => Frag): algebra.Query[λ[X => X], T] =
       joinFull[T](make, joinPred, t => t.table |+| stringToFrag(" as ") |+| stringToFrag(t.alias))
 
     def join[G[_]: QueryAlgebra.JoinType](joinPred: T => Frag): algebra.Query[G, T] = 

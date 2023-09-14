@@ -60,17 +60,6 @@ trait QueryAlgebra {
         .map(_.flatMap(_.toList).toMap)
     }.emap(_.toIor)
 
-  /*
-   * implicit lazy val myType1: Type[IO, QueryResult[Type1Table]] = ???
-   *
-   * implicit lazy val myType2: Type[IO, QueryResult[Type2Table]] = ???
-   *
-   * implicit lazy val myUnion = union[QueryResult[GeneralTable]]("MyUnion")
-   *   .instance{ g: General => Type1Table.join(t1t => sql"${g1.id} = t1t.id") }
-   *   .instance{ g: General => Type2Table.join(t2t => sql"${g2.id} = t2t.id") }
-   *   .build()
-   */
-
   def evalQuery[F[_], G[_], I, B, ArgType](
       xs: NonEmptyList[I],
       fm: FieldMeta[F],
@@ -110,8 +99,7 @@ trait QueryAlgebra {
   }
 
   trait VariantQueryAttribute[G[_], A, B] extends VariantAttribute[fs2.Pure] {
-    def matchCase: A
-    def query: Query[Lambda[X => X], (Query.Select[A], B)]
+    def query: Query[λ[X => X], B]
   }
 
   trait QueryResult[A] {
@@ -119,12 +107,12 @@ trait QueryAlgebra {
   }
 
   sealed trait Query[G[_], +A] {
-    def flatMap[H[_], B](f: A => Query[H, B]): Query[Lambda[X => G[H[X]]], B] =
+    def flatMap[H[_], B](f: A => Query[H, B]): Query[λ[X => G[H[X]]], B] =
       Query.FlatMap(this, f)
 
-    def map[B](f: A => B): Query[G, B] = flatMap[Lambda[X => X], B](a => Query.pure(f(a)))
+    def map[B](f: A => B): Query[G, B] = flatMap[λ[X => X], B](a => Query.pure(f(a)))
 
-    def mapK[H[_]](fk: G ~> H): Query[H, A] = 
+    def mapK[H[_]](fk: G ~> H): Query[H, A] =
       Query.LiftEffect(compile[A].map(_.mapK(fk)))
 
     def widen[B >: A]: Query[G, B] = this.map(a => a)
@@ -135,9 +123,9 @@ trait QueryAlgebra {
     case class FlatMap[G[_], H[_], A, B](
         fa: Query[G, A],
         f: A => Query[H, B]
-    ) extends Query[Lambda[X => G[H[X]]], B]
+    ) extends Query[λ[X => G[H[X]]], B]
     case class LiftEffect[G[_], A](fa: Effect[QueryState[G, A]]) extends Query[G, A]
-    case class Select[A](cols: Chain[Frag], decoder: Decoder[A]) extends Query[Lambda[X => X], Select[A]]
+    case class Select[A](cols: Chain[Frag], decoder: Decoder[A]) extends Query[λ[X => X], Select[A]]
     object Select {
       implicit lazy val applicativeForSelect: Applicative[Select] = new Applicative[Select] {
         override def pure[A](x: A): Select[A] =
@@ -148,8 +136,8 @@ trait QueryAlgebra {
       }
     }
 
-    def pure[A](a: A): Query[Lambda[X => X], A] = 
-      liftState[Lambda[X => X], A](QueryAlgebra.QueryState.pure[Decoder, A](a))
+    def pure[A](a: A): Query[λ[X => X], A] =
+      liftState[λ[X => X], A](QueryAlgebra.QueryState.pure[Decoder, A](a))
 
     def liftState[G[_], A](state: QueryState[G, A]): Query[G, A] =
       liftEffect[G, A](Effect.pure(state))
@@ -157,7 +145,7 @@ trait QueryAlgebra {
     def liftEffect[G[_], A](effect: Effect[QueryState[G, A]]): Query[G, A] =
       LiftEffect(effect)
 
-    def liftF[A](fa: Effect[A]): Query[Lambda[X => X], A] =
+    def liftF[A](fa: Effect[A]): Query[λ[X => X], A] =
       liftEffect(fa.map(QueryAlgebra.QueryState.pure[Decoder, A](_)))
   }
 
@@ -384,7 +372,8 @@ trait QueryAlgebra {
       attr: TableFieldAttribute[G, A, ?, ?, ?]
   )
   def getNextAttributes[F[_], A, B](pdf: prep.PreparedDataField[F, A, B]) = {
-    val selFields: List[prep.PreparedField[F, ?]] = findNextSel(pdf.cont.cont).toList.flatMap(_.fields)
+    val sel = findNextSel(pdf.cont.cont)
+    val selFields: List[prep.PreparedField[F, ?]] = sel.toList.flatMap(_.fields)
     selFields
       .flatMap(pf => findNextFields(pf))
       .map { x =>
@@ -424,8 +413,8 @@ trait QueryAlgebra {
   }
 
   def collapseQuery[G[_], C](q: Query[G, C]): Effect[QueryState[G, C]] = q match {
-    case s: Query.Select[a] => Effect.pure(QueryAlgebra.QueryState.pure(s))
-    case le: Query.LiftEffect[g, a]   => le.fa
+    case s: Query.Select[a]         => Effect.pure(QueryAlgebra.QueryState.pure(s))
+    case le: Query.LiftEffect[g, a] => le.fa
     case fm: Query.FlatMap[g, h, a, b] =>
       for {
         qsa <- collapseQuery(fm.fa)
@@ -449,8 +438,8 @@ object QueryAlgebra {
   }
 
   object QueryState {
-    type Aux[Decoder[_], G[_], C, K0, T0[_]] = QueryState[Decoder, G, C] { 
-      type T[A] = T0[A] 
+    type Aux[Decoder[_], G[_], C, K0, T0[_]] = QueryState[Decoder, G, C] {
+      type T[A] = T0[A]
       type Key = K0
     }
 
@@ -462,13 +451,13 @@ object QueryAlgebra {
     ): QueryState.Aux[Decoder, G, C, Key, T0] =
       QueryStateImpl(reassoc0, decoder0, value0, fk0)
 
-    def pure[Decoder[_]: Applicative, A](c: A): QueryState[Decoder, Lambda[X => X], A] =
+    def pure[Decoder[_]: Applicative, A](c: A): QueryState[Decoder, λ[X => X], A] =
       QueryStateImpl(JoinType.One.reassoc[Unit], ().pure[Decoder], c, FunctionK.id[Id])
 
     def meld[Decoder[_]: Applicative, G[_], H[_], A, B](
         qsa: QueryState[Decoder, G, A],
         qsb: QueryState[Decoder, H, B]
-    ): QueryState[Decoder, Lambda[X => G[H[X]]], B] = {
+    ): QueryState[Decoder, λ[X => G[H[X]]], B] = {
       type N[A] = qsa.T[qsb.T[A]]
       type AK = qsa.Key
       type BK = qsb.Key
@@ -491,7 +480,7 @@ object QueryAlgebra {
         }
       }
 
-      val fk = new (Lambda[X => qsa.T[qsb.T[X]]] ~> Lambda[X => G[H[X]]]) {
+      val fk = new (λ[X => qsa.T[qsb.T[X]]] ~> λ[X => G[H[X]]]) {
         def apply[A](fa: qsa.T[qsb.T[A]]): G[H[A]] =
           qsa.fk(qsa.reassoc.traverse.map(fa)(t2 => qsb.fk(t2)))
       }
@@ -518,7 +507,7 @@ object QueryAlgebra {
     def apply[A](fa: List[(Key, A)]): Either[String, G[List[A]]]
   }
   object Reassoc {
-    def id: Reassoc[Lambda[X => X], Unit] = new Reassoc[Lambda[X => X], Unit] {
+    def id: Reassoc[λ[X => X], Unit] = new Reassoc[λ[X => X], Unit] {
       def traverse = Traverse[Id]
       def apply[A](fa: List[(Unit, A)]): Either[String, Id[List[A]]] = Right(fa.map { case (_, a) => a })
     }
@@ -544,9 +533,9 @@ object QueryAlgebra {
   }
   object JoinType extends LowPrioJoinTypeImplicits1 {
     // A => A instead of Id since scala doesn't want reduce Id to A => A, and Id is noisy
-    case object One extends JoinType[Lambda[A => A]] {
-      def reassoc[Key]: Reassoc[Lambda[A => A], Key] = new ReassocGroup[Lambda[X => X], Key] {
-        def traverse = Traverse[Lambda[X => X]]
+    case object One extends JoinType[λ[A => A]] {
+      def reassoc[Key]: Reassoc[λ[A => A], Key] = new ReassocGroup[λ[X => X], Key] {
+        def traverse = Traverse[λ[X => X]]
         override def groups[A](fa: List[List[A]]): Either[String, List[A]] = {
           fa match {
             case x :: Nil => Right(x)
@@ -569,7 +558,7 @@ object QueryAlgebra {
     }
 
     case class Many[G[_]](
-        fromListFK: List ~> Lambda[X => Either[String, G[X]]],
+        fromListFK: List ~> λ[X => Either[String, G[X]]],
         traverse: Traverse[G]
     ) extends JoinType[G] {
       def traverse0 = traverse
@@ -580,16 +569,16 @@ object QueryAlgebra {
       }
     }
 
-    implicit lazy val joinTypeOne: JoinType[Lambda[A => A]] = JoinType.One
+    implicit lazy val joinTypeOne: JoinType[λ[A => A]] = JoinType.One
   }
   trait LowPrioJoinTypeImplicits1 extends LowPrioJoinTypeImplicits2 {
     implicit lazy val joinTypeOpt: JoinType[Option] = JoinType.Opt
   }
   trait LowPrioJoinTypeImplicits2 {
-    def make[G[_]](fromList: List ~> Lambda[X => Either[String, G[X]]])(implicit G: Traverse[G]): JoinType[G] =
+    def make[G[_]](fromList: List ~> λ[X => Either[String, G[X]]])(implicit G: Traverse[G]): JoinType[G] =
       JoinType.Many(fromList, G)
     implicit lazy val joinTypeList: JoinType[List] = make {
-      new (List ~> Lambda[X => Either[String, List[X]]]) {
+      new (List ~> λ[X => Either[String, List[X]]]) {
         override def apply[A](fa: List[A]): Either[String, List[A]] = Right(fa)
       }
     }
@@ -602,7 +591,7 @@ trait Reassociateable[F[_]] {
 }
 
 object Reassociateable extends ReassociateableLowPrio1 {
-  implicit def reassociateStep[F[_], G[_]](implicit F: Reassociateable[F], G: Reassociateable[G]): Reassociateable[Lambda[X => F[G[X]]]] = {
+  implicit def reassociateStep[F[_], G[_]](implicit F: Reassociateable[F], G: Reassociateable[G]): Reassociateable[λ[X => F[G[X]]]] = {
     type H[A] = F[G[A]]
     new Reassociateable[H] {
       val instance = Nested.catsDataTraverseForNested(F.traverse, G.traverse)
