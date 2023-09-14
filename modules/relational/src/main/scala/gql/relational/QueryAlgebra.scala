@@ -373,21 +373,9 @@ trait QueryAlgebra {
   )
   def getNextAttributes[F[_], A, B](pdf: prep.PreparedDataField[F, A, B]) = {
     val sel = findNextSel(pdf.cont.cont)
-
-    sel.map { s =>
-      s.source match {
-        // Type is trivial, we just continue on to all fields
-        case t: gql.ast.Type[F, a] => t
-        // For interface we ?
-        case i: gql.ast.Interface[F, a] => i
-        // For union, we must delve into the variant selections
-        case u: gql.ast.Union[F, a] => u
-      }
-    }
-
     val selFields: List[prep.PreparedField[F, ?]] = sel.toList.flatMap(_.fields)
     selFields
-      .flatMap(pf => findNextFields(pf))
+      .flatMap(findNextFields(_))
       .map { x =>
         x.source.attributes.collectFirst { case a: TableFieldAttribute[g, a, ?, ?, ?] @unchecked => a }.map {
           case tfa: TableFieldAttribute[g, a, ?, ?, ?] =>
