@@ -20,6 +20,7 @@ import Keys._
 import buildinfo.BuildInfo
 
 import java.io.File
+import scala.util.{Failure, Success}
 
 object GqlCodeGenPlugin extends AutoPlugin {
   object autoImport {
@@ -61,8 +62,13 @@ object GqlCodeGenPlugin extends AutoPlugin {
 
   case class CodeGenInput(json: String, inFiles: Seq[File], outFiles: Seq[File])
 
+  lazy val GqlCliConfig = config("gql-cli").hide
+
+  override def projectConfigurations: Seq[Configuration] = Seq(GqlCliConfig)
+
   override def projectSettings: Seq[Setting[_]] =
     List(
+      ivyConfigurations += GqlCliConfig,
       Gql.validate := true,
       Gql.resourceGroups := Seq(Gql.DefaultResourceGroup),
       Gql.findResources := {
@@ -111,7 +117,7 @@ object GqlCodeGenPlugin extends AutoPlugin {
         customs ++ default
       },
       Gql.libraryVersion := BuildInfo.version,
-      libraryDependencies += "io.github.valdemargr" %% "gql-client-codegen-cli" % Gql.libraryVersion.value,
+      libraryDependencies += "io.github.valdemargr" %% "gql-client-codegen-cli" % Gql.libraryVersion.value % GqlCliConfig,
       Gql.codeGenInput := {
         val base = (Compile / sourceManaged).value / "gql"
         IO.createDirectory(base)
@@ -147,20 +153,17 @@ object GqlCodeGenPlugin extends AutoPlugin {
       },
       Gql.invokeCodeGen := {
         val streamsObj = streams.value
-        val cp = (Compile / externalDependencyClasspath).value
+        val cp = update.value.select(configurationFilter(GqlCliConfig.name))
         val cmd = Gql.codeGenInput.value
+        val runnerObj = runner.value
 
         val cachedFun =
-          FileFunction.cached(streamsObj.cacheDirectory / "gql-invoke-codegen", inStyle = FilesInfo.full, outStyle = FilesInfo.full) { _ =>
-            val args =
-              List(
-                "java",
-                "gql.client.codegen.GeneratorCli"
-              ) ++ List("--validate").filter(_ => Gql.validate.value) ++ List("--input") ++ cmd.map(_.json)
+          FileFunction.cached(streamsObj.cacheDirectory / "gql-invoke-codegen", inStyle = FilesInfo.lastModified) { _ =>
+            val args = List("--validate").filter(_ => Gql.validate.value) ++ List("--input") ++ cmd.map(_.json)
 
-            scala.sys.process.Process(args, None, "CLASSPATH" -> cp.map(_.data.toString).mkString(File.pathSeparator)).! match {
-              case 0 => cmd.flatMap(_.outFiles).toSet
-              case n => sys.error(s"Process exited with code $n")
+            runnerObj.run("gql.client.codegen.GeneratorCli", cp, args, streamsObj.log) match {
+              case Success(_) => cmd.flatMap(_.outFiles).toSet
+              case Failure(e) => throw e
             }
           }
 
