@@ -99,7 +99,7 @@ trait QueryAlgebra {
   }
 
   trait VariantQueryAttribute[G[_], A, B] extends VariantAttribute[fs2.Pure] {
-    def query: Query[λ[X => X], B]
+    def query(value: A): Query[λ[X => X], B]
   }
 
   trait QueryResult[A] {
@@ -373,6 +373,18 @@ trait QueryAlgebra {
   )
   def getNextAttributes[F[_], A, B](pdf: prep.PreparedDataField[F, A, B]) = {
     val sel = findNextSel(pdf.cont.cont)
+
+    sel.map { s =>
+      s.source match {
+        // Type is trivial, we just continue on to all fields
+        case t: gql.ast.Type[F, a] => t
+        // For interface we ?
+        case i: gql.ast.Interface[F, a] => i
+        // For union, we must delve into the variant selections
+        case u: gql.ast.Union[F, a] => u
+      }
+    }
+
     val selFields: List[prep.PreparedField[F, ?]] = sel.toList.flatMap(_.fields)
     selFields
       .flatMap(pf => findNextFields(pf))
@@ -386,7 +398,7 @@ trait QueryAlgebra {
   }
 
   def findNextFields[F[_], A](p: prep.PreparedField[F, A]): List[prep.PreparedDataField[F, ?, ?]] = p match {
-    case prep.PreparedSpecification(_, _, xs) => xs
+    case prep.PreparedSpecification(_, xs)    => xs
     case pdf: prep.PreparedDataField[F, A, ?] => List(pdf)
   }
 

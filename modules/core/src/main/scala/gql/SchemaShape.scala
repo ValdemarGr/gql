@@ -96,7 +96,9 @@ object SchemaShape {
   sealed trait InterfaceImpl[+F[_], A]
   object InterfaceImpl {
     final case class OtherInterface[F[_], A](i: Interface[F, A]) extends InterfaceImpl[F, A]
-    final case class TypeImpl[F[_], A, B](t: Type[F, B], specify: A => Option[B]) extends InterfaceImpl[F, A]
+    final case class TypeImpl[F[_], A, B](t: Type[F, B], impl: Implementation[F, B, A]) extends InterfaceImpl[F, A] {
+      def specify = impl.specify
+    }
   }
 
   // Key is the interface
@@ -293,7 +295,7 @@ object SchemaShape {
           case ol: ObjectLike[F, ?] =>
             val values: List[(Interface[F, ?], InterfaceImpl[F, ?])] = ol match {
               case t: Type[F, a] =>
-                t.implementations.map(x => x.implementation.value -> InterfaceImpl.TypeImpl(t, x.specify))
+                t.implementations.map(x => x.implementation.value -> InterfaceImpl.TypeImpl(t, x))
               case i: Interface[F, ?] =>
                 i.implementations.map(x => x.value -> InterfaceImpl.OtherInterface(i))
             }

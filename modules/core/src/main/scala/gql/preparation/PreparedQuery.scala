@@ -60,8 +60,8 @@ final case class PreparedCont[+F[_], I, A](
 )
 
 final case class Selection[F[_], I](
-  fields: List[PreparedField[F, I]],
-  source: ast.Selectable[F, I]
+    fields: List[PreparedField[F, I]],
+    source: ast.Selectable[F, I]
 ) extends Prepared[F, I]
 
 final case class PreparedList[F[_], A, C, B](of: PreparedCont[F, A, B], toSeq: C => Seq[A]) extends Prepared[F, C]
@@ -83,9 +83,37 @@ final case class PreparedDataField[+F[_], A, B](
     parsedArgs.get(a).asInstanceOf[Option[A]]
 }
 
+sealed trait Specialization[F[_], A, B] {
+  def specify(a: A): Ior[String, Option[B]]
+  def source: ast.Selectable[F, A]
+  def target: ast.Type[F, B]
+  def typename = target.name
+}
+object Specialization {
+  final case class Type[F[_], A](
+      source: ast.Type[F, A]
+  ) extends Specialization[F, A, A] {
+    def target: ast.Type[F, A] = source
+    def specify(a: A): Ior[String, Option[A]] = a.rightIor.map(_.some)
+  }
+  final case class Union[F[_], A, B](
+      source: ast.Union[F, A],
+      variant: ast.Variant[F, A, B]
+  ) extends Specialization[F, A, B] {
+    def target = variant.tpe.value
+    def specify(a: A): Ior[String, Option[B]] = variant.specify(a).rightIor
+  }
+  final case class Interface[F[_], A, B](
+      target: ast.Type[F, B],
+      impl: ast.Implementation[F, B, A]
+  ) extends Specialization[F, A, B] {
+    def source = impl.implementation.value
+    def specify(a: A): Ior[String, Option[B]] = impl.specify(a).rightIor
+  }
+}
+
 final case class PreparedSpecification[F[_], I, A](
-    typename: String,
-    specify: I => Option[A],
+    specialization: Specialization[F, I, A],
     selection: List[PreparedDataField[F, A, ?]]
 ) extends PreparedField[F, I]
 

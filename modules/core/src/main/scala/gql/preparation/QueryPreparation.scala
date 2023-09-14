@@ -48,7 +48,7 @@ trait QueryPreparation[F[_], G[_], C] {
   def mergeImplementations[A](
       base: Selectable[G, A],
       sels: NonEmptyList[SelectionInfo[G, C]]
-  ): F[NonEmptyList[MergedImplementation[G, A, ?, C]]]
+  ): F[NonEmptyList[MergedSpecialization[G, A, ?, C]]]
 
   def prepareSelectable[A](
       s: Selectable[G, A],
@@ -58,6 +58,8 @@ trait QueryPreparation[F[_], G[_], C] {
 
 object QueryPreparation {
   type H[F[_], A] = Kleisli[WriterT[F, List[(Arg[?], Any)], *], UniqueEdgeCursor, A]
+  // Oof this is pretty complicated
+  // Using MTL and returning something that needs itself as an argument (lazy self reference)
   case class K[F[_], G[_], A](value: H[F, Eval[PreparedMeta[G]] => A])
   implicit def applicativeForK[F[_], G[_]](implicit F: Parallel[F]): Applicative[K[F, G, *]] = new Applicative[K[F, G, *]] {
     val P = Parallel[H[F, *]]
@@ -89,6 +91,27 @@ object QueryPreparation {
         tpe: Type[G, B],
         specify: A => Option[B]
     )
+
+    def findImplementations2[A](
+        s: Selectable[G, A]
+    ): List[Specialization[G, A, ?]] = s match {
+      case t: Type[G, ?] => List(Specialization.Type(t))
+      case u: Union[G, ?] =>
+        u.types.toList.map { case x: gql.ast.Variant[G, A, b] =>
+          Specialization.Union(u, x)
+        }
+      case it @ Interface(_, _, _, _) =>
+        val m: Map[String, SchemaShape.InterfaceImpl[G, A]] =
+          implementations
+            .get(it.name)
+            .getOrElse(Map.empty)
+            .collect { case (k, v: SchemaShape.InterfaceImpl[G, A] @unchecked) => (k, v) }
+
+        m.values.toList
+          .collect { case ti: SchemaShape.InterfaceImpl.TypeImpl[G, A, b] =>
+            Specialization.Interface(ti.t, ti.impl)
+          }
+    }
 
     def findImplementations[A](
         s: Selectable[G, A]
@@ -268,15 +291,22 @@ object QueryPreparation {
       }
 
       override def mergeImplementations[A](
+          // Whatever is defined in the ast at this position
           base: Selectable[G, A],
+          // What the caller has matched on at this position in the query
           sels: NonEmptyList[SelectionInfo[G, C]]
-      ): F[NonEmptyList[MergedImplementation[G, A, _, C]]] = {
+      ): F[NonEmptyList[MergedSpecialization[G, A, ?, C]]] = {
         // We need to find all implementations of the base type
-        val concreteBaseMap = findImplementations[A](base).map(x => x.tpe.name -> x).toMap
+        val concreteBaseMap = findImplementations2[A](base).map(x => x.target.name -> x).toMap
 
-        val concreteBase = concreteBaseMap.toList
+        val concreteBase: List[(String, Specialization[G, A, ?])] =
+          concreteBaseMap.toList
 
-        val nestedSelections: List[(String, NonEmptyList[FieldInfo[G, C]])] = sels.toList.flatMap { sel =>
+        type Typename = String
+        // Concrete type of caller match type -> fields for that type
+        // If A <: I and B <: I (subtype <: supertype) and we select name on I,
+        // then we have List("A" -> NonEmptyList.of(nameField), "B" -> NonEmptyList.of(nameField))
+        val nestedSelections: List[(Typename, NonEmptyList[FieldInfo[G, C]])] = sels.toList.flatMap { sel =>
           /* The set of typenames that implement whatever we're selecting on
            * ```graphql
            * interface A {
@@ -293,6 +323,8 @@ object QueryPreparation {
            * In this case, we have a selection on `A`, so we must figure out what types implement `A`
            * and then for every type `T` that implements `A`, we must find the field `name` and select it on `T`.
            */
+
+          // What typenames implement whatever the caller matched on
           val concreteIntersections = findImplementations(sel.s)
             .map { case FoundImplementation(t, _) => t.name }
 
@@ -310,7 +342,6 @@ object QueryPreparation {
          * since that would require us to walk the tree again.
          */
 
-        type Typename = String
         type FieldName = String
         // There may be more than one field with the same name
         // This is fine, but we need to merge their implementations
@@ -318,49 +349,53 @@ object QueryPreparation {
           .groupMap { case (k, _) => k } { case (_, vs) => vs }
           .collect { case (k, x :: xs) => k -> NonEmptyList(x, xs).flatten.groupByNem(_.outputName) }
 
-        val merged = grouped.fmap(_.fmap { fields =>
-          // TODO at a glance, there might be some field duplication here
-          val sels = fields.toList
-            .map(_.tpe.inner)
-            .collect { case s: TypeInfo.Selectable[G, C] => s.selection.toList }
-            .flatten
-          MergedFieldInfo(
-            fields.head.name,
-            fields.head.alias,
-            fields.head.args,
-            sels,
-            fields.head.directives,
-            fields.head.caret,
-            fields.head.path
-          )
-        })
+        // Since we have multiple fields implementations for each fieldname
+        // we pick one of them as the correct one
+        // if the schema is valid, any one field on same the typename should be equivalent
+        val merged: Map[Typename, NonEmptyMap[FieldName, MergedFieldInfo[G, C]]] =
+          grouped.fmap(_.fmap { fields =>
+            // TODO at a glance, there might be some field duplication here
+            val sels = fields.toList
+              .map(_.tpe.inner)
+              .collect { case s: TypeInfo.Selectable[G, C] => s.selection.toList }
+              .flatten
+            MergedFieldInfo(
+              fields.head.name,
+              fields.head.alias,
+              fields.head.args,
+              sels,
+              fields.head.directives,
+              fields.head.caret,
+              fields.head.path
+            )
+          })
 
-        val collected: F[List[MergedImplementation[G, A, ?, C]]] = concreteBase.parFlatTraverse {
-          case (k, (fi: FoundImplementation[A, b])) =>
-            val t = fi.tpe
-            val specify = fi.specify
-            merged.get(k).toList.traverse { fields =>
-              fields.toNonEmptyList
-                .parTraverse { f =>
-                  if (f.name === "__typename")
-                    F.pure(PairedFieldSelection[G, b, C](f, gql.dsl.lift[b](_ => t.name)))
-                  else {
-                    t.fieldMap.get(f.name) match {
-                      case None =>
-                        raise[PairedFieldSelection[G, b, C]](s"Could not find field '${f.name}' on type `${t.name}`.", Nil)
-                      case Some(field) => F.pure(PairedFieldSelection[G, b, C](f, field))
-                    }
+        // For every concrete implementation of the ast type (possible type)
+        // We find the selection for that type (and omit it if the type was not selected)
+        val collected: F[List[MergedSpecialization[G, A, ?, C]]] = concreteBase.parFlatTraverse { case (k, (sp: Specialization[G, A, b])) =>
+          val t = sp.target
+          merged.get(k).toList.traverse { fields =>
+            fields.toNonEmptyList
+              .parTraverse { f =>
+                if (f.name === "__typename")
+                  F.pure(PairedFieldSelection[G, b, C](f, gql.dsl.lift[b](_ => t.name)))
+                else {
+                  t.fieldMap.get(f.name) match {
+                    case None =>
+                      raise[PairedFieldSelection[G, b, C]](s"Could not find field '${f.name}' on type `${t.name}`.", Nil)
+                    case Some(field) => F.pure(PairedFieldSelection[G, b, C](f, field))
                   }
                 }
-                .map(fields => MergedImplementation[G, A, b, C](t, fields, specify))
-            }
+              }
+              .map(fields => MergedSpecialization[G, A, b, C](sp, fields))
+          }
         }
 
         collected.flatMap { xs =>
           xs.toNel match {
             case Some(x) => F.pure(x)
             case None =>
-              raise[NonEmptyList[MergedImplementation[G, A, ?, C]]](
+              raise[NonEmptyList[MergedSpecialization[G, A, ?, C]]](
                 s"Could not find any implementations of `${base.name}` in the selection set.",
                 Nil
               )
@@ -374,14 +409,14 @@ object QueryPreparation {
       ): F[Selection[G, A]] =
         mergeImplementations[A](s, sis)
           .flatMap { impls =>
-            impls.parTraverse[F, PreparedSpecification[G, A, ?]] { case impl: MergedImplementation[G, A, b, C] =>
+            impls.parTraverse[F, PreparedSpecification[G, A, ?]] { case impl: MergedSpecialization[G, A, b, C] =>
               val fa = impl.selections.toList.parFlatTraverse { sel =>
                 sel.field match {
-                  case field: Field[G, b2, t] => prepareField[b, t](sel.info, field, impl.leaf.name)
+                  case field: Field[G, b2, t] => prepareField[b, t](sel.info, field, impl.spec.typename)
                 }
               }
 
-              fa.map(xs => PreparedSpecification[G, A, b](s.name, impl.specify, xs))
+              fa.map(xs => PreparedSpecification[G, A, b](impl.spec, xs))
             }
           }
           .map(xs => Selection(xs.toList, s))
@@ -407,6 +442,11 @@ final case class MergedImplementation[G[_], A, B, C](
     leaf: Type[G, B],
     selections: NonEmptyList[PairedFieldSelection[G, B, C]],
     specify: A => Option[B]
+)
+
+final case class MergedSpecialization[G[_], A, B, C](
+    spec: Specialization[G, A, B],
+    selections: NonEmptyList[PairedFieldSelection[G, B, C]]
 )
 
 final case class PartialFieldMeta[C](
