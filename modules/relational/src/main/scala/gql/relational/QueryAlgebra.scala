@@ -374,7 +374,23 @@ trait QueryAlgebra {
   def getNextAttributes[F[_], A, B](pdf: prep.PreparedDataField[F, A, B]) = {
     val sel = findNextSel(pdf.cont.cont)
     val selFields: List[prep.PreparedField[F, ?]] = sel.toList.flatMap(_.fields)
-    selFields
+
+    val dataFields: List[prep.PreparedDataField[F, ?, ?]] = 
+      selFields.collect{ case pdf: prep.PreparedDataField[F, ?, ?] => pdf }
+
+    val specs: List[prep.PreparedSpecification[F, ?, ?]] = 
+      selFields.collect{ case ps: prep.PreparedSpecification[F, ?, ?]    => ps }
+
+    val typeFields: List[prep.PreparedDataField[F, ?, ?]] = 
+      dataFields ++ specs.collect{ case prep.PreparedSpecification(prep.Specialization.Type(_), xs) => xs }.flatten
+
+    val variants: List[(Variant[F, ?, ?], List[prep.PreparedDataField[F, ?, ?]])] = 
+      selFields.collect{ case prep.PreparedSpecification(prep.Specialization.Union(_, v), xs) => (v, xs) }
+
+    val interfaces: List[(Implementation[F, ?, ?], List[prep.PreparedDataField[F, ?, ?]])] =
+      selFields.collect{ case prep.PreparedSpecification(prep.Specialization.Interface(_, impl), xs) => (impl, xs) }
+
+    typeFields
       .flatMap(findNextFields(_))
       .map { x =>
         x.source.attributes.collectFirst { case a: TableFieldAttribute[g, a, ?, ?, ?] @unchecked => a }.map {
