@@ -52,11 +52,11 @@ object DebugPrinter {
 
     def preparedFieldDoced[F[_]]: Doced[PreparedField[F, ?]] = pf =>
       pf match {
-        case PreparedSpecification(tn, _, sels) =>
+        case PreparedSpecification(spec, sels) =>
           record(
             "PreparedSpecification",
             kvs(
-              "typename" -> Doc.text(tn),
+              "typename" -> Doc.text(spec.typename),
               "selections" -> recordBy(
                 "PreparedSelections",
                 Doc.char('{'),
@@ -100,8 +100,8 @@ object DebugPrinter {
     def preparedStepDoced[F[_]]: Doced[PreparedStep[F, ?, ?]] = { pc =>
       import PreparedStep._
       pc match {
-        case Lift(_)        => Doc.text("Lift(...)")
-        case EmbedEffect(_) => Doc.text("EmbedEffect")
+        case Lift(_)           => Doc.text("Lift(...)")
+        case EmbedEffect(_)    => Doc.text("EmbedEffect")
         case InlineBatch(_, _) => Doc.text("InlineBatch")
         case EmbedStream(signal, _) =>
           record("EmbedStream", kvs("signal" -> Doc.text(signal.toString())))

@@ -135,8 +135,8 @@ object Analyzer {
         prepared.traverse_ { p =>
           resetParents {
             p match {
-              case PreparedDataField(_, _, cont, _, _)    => analyzeCont[G](cont.edges, cont.cont)
-              case PreparedSpecification(_, _, selection) => analyzeFields[G](selection)
+              case PreparedDataField(_, _, cont, _, _) => analyzeCont[G](cont.edges, cont.cont)
+              case PreparedSpecification(_, selection) => analyzeFields[G](selection)
             }
           }
         }

@@ -66,6 +66,11 @@ object SubqueryInterpreter {
       val W = Async[W]
       val lift: F ~> W = WriterT.liftK[F, Chain[EvalFailure]]
 
+      def liftIor[A](cursor: Cursor, ior: Ior[String, A]): W[Option[A]] =
+        WriterT.put[F, Chain[EvalFailure], Option[A]](ior.right)(
+          Chain.fromOption(ior.left.map(e => EvalFailure.Raised(cursor, e)))
+        )
+
       def submit(name: String, duration: FiniteDuration, size: Int): F[Unit] =
         sup.supervise(stats.updateStats(name, duration, size)).void
 
@@ -145,12 +150,7 @@ object SubqueryInterpreter {
           case EmbedError() =>
             (inputs: Chain[IndexedData[F, Ior[String, C]]])
               .flatTraverse { id =>
-                val ior = id.sequence
-                WriterT.put[F, Chain[EvalFailure], Chain[IndexedData[F, C]]](
-                  Chain.fromOption(ior.right)
-                )(
-                  Chain.fromOption(ior.left.map(e => EvalFailure.Raised(id.node.cursor, e)))
-                )
+                liftIor(id.node.cursor, id.sequence).map(Chain.fromOption(_))
               }
               .flatMap(runEdgeCont(_, cont))
           case alg: Compose[F, ?, a, ?] =>
@@ -283,22 +283,30 @@ object SubqueryInterpreter {
         Chain
           .fromSeq(dfs.toList)
           .parFlatTraverse {
-            case PreparedSpecification(_, _, Nil)             => W.pure(Chain(in.as(Map.empty[String, Json])))
-            case PreparedSpecification(_, specify, selection) =>
-              // Partition into what inputs satisfy the fragment and what don't
-              // Run the ones that do
-              // Then re-build an output, padding every empty output
-              val parted = in.map(x => x.setValue(specify(x.value)))
-              val somes = parted.collect { case EvalNode(c, Some(x), s) => EvalNode(c, x, s) }
-              val fa = selection.parTraverse { df =>
-                runDataField(df, somes).map(_.map(j => Map(df.outputName -> j)))
-              }
-              fa.map(_.toList.map { ys =>
-                Chain.fromSeq {
-                  unflatten(parted.map(_.value.size.toInt).toVector, ys.toVector)
-                    .map(_.foldLeft(Map.empty[String, Json])(_ ++ _))
+            case PreparedSpecification(_, Nil)      => W.pure(Chain(in.as(Map.empty[String, Json])))
+            case ps: PreparedSpecification[F, I, a] =>
+              // Invariant specified.length == in.length
+              val specified: W[Chain[EvalNode[F, Option[a]]]] =
+                in
+                  .traverse(x => liftIor(x.cursor, ps.specialization.specify(x.value)).map(_.flatten).map(x.setValue))
+
+              specified.flatMap { parted =>
+                // Partition into what inputs satisfy the fragment and what don't
+                // Run the ones that do
+                // Then re-build an output, padding every empty output
+                val somes = parted.collect { case EvalNode(c, Some(x), s) => EvalNode(c, x, s) }
+                // Run the somes
+                val fa = ps.selection.parTraverse { df =>
+                  runDataField(df, somes).map(_.map(j => Map(df.outputName -> j)))
                 }
-              }).map(Chain.fromSeq)
+                // Reassociate the somes and nones
+                fa.map(_.toList.map { ys =>
+                  Chain.fromSeq {
+                    unflatten(parted.map(_.value.size.toInt).toVector, ys.toVector)
+                      .map(_.foldLeft(Map.empty[String, Json])(_ ++ _))
+                  }
+                }).map(Chain.fromSeq)
+              }
             case df @ PreparedDataField(_, _, _, _, _) =>
               runDataField(df, in)
                 .map(_.map(j => Map(df.outputName -> j)))
