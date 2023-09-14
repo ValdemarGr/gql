@@ -143,7 +143,7 @@ object Analyzer {
 
       def analyzePrepared[G[_]](p: Prepared[G, ?]): F[Unit] = p match {
         case PreparedLeaf(_, _)          => F.unit
-        case Selection(fields)           => analyzeFields[G](fields)
+        case Selection(fields, _)        => analyzeFields[G](fields)
         case l: PreparedList[G, ?, ?, ?] => analyzeCont[G](l.of.edges, l.of.cont)
         case o: PreparedOption[G, ?, ?]  => analyzeCont[G](o.of.edges, o.of.cont)
       }

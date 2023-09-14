@@ -191,7 +191,7 @@ object RootPreparation {
             case QA.OperationDefinition.Detailed(ot, _, _, _, ss) => (ot, ss)
           }
 
-          def runWith[A](o: gql.ast.Type[G, A]): F[List[PreparedSpecification[G, A, _]]] =
+          def runWith[A](o: gql.ast.Type[G, A]): F[Selection[G, A]] =
             variables(od, variableMap, schema).flatMap { vm =>
               implicit val AP: ArgParsing[F, C] = ArgParsing[F, C](vm)
               implicit val DA: DirectiveAlg[F, G, C] = DirectiveAlg.forPositions[F, G, C](schema.discover.positions)
@@ -202,10 +202,11 @@ object RootPreparation {
               )
               val FM = FieldMerging[F, C]
               val QP = QueryPreparation[F, G, C](vm, schema.discover.implementations)
-              val prog = FC.collectSelectionInfo(o, ss).flatMap { root =>
-                root.toNel.toList.flatTraverse { r =>
-                  FM.checkSelectionsMerge(r) >> QP.prepareSelectable(o, r).map(_.toList)
-                }
+              val prog: F[Selection[G, A]] = FC.collectSelectionInfo(o, ss).flatMap {
+                case x :: xs =>
+                  val r = NonEmptyList(x, xs)
+                  FM.checkSelectionsMerge(r) >> QP.prepareSelectable(o, r)
+                case _ => F.pure(Selection(Nil, o))
               }
               LI.listen(prog).flatMap { case (res, used) =>
                 val unused = vm.keySet -- used
@@ -237,7 +238,7 @@ object RootPreparation {
 
 sealed trait PreparedRoot[G[_], Q, M, S]
 object PreparedRoot {
-  final case class Query[G[_], Q, M, S](query: List[PreparedField[G, Q]]) extends PreparedRoot[G, Q, M, S]
-  final case class Mutation[G[_], Q, M, S](mutation: List[PreparedField[G, M]]) extends PreparedRoot[G, Q, M, S]
-  final case class Subscription[G[_], Q, M, S](subscription: List[PreparedField[G, S]]) extends PreparedRoot[G, Q, M, S]
+  final case class Query[G[_], Q, M, S](query: Selection[G, Q]) extends PreparedRoot[G, Q, M, S]
+  final case class Mutation[G[_], Q, M, S](mutation: Selection[G, M]) extends PreparedRoot[G, Q, M, S]
+  final case class Subscription[G[_], Q, M, S](subscription: Selection[G, S]) extends PreparedRoot[G, Q, M, S]
 }

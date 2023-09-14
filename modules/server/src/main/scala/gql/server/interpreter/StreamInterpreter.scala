@@ -36,9 +36,9 @@ import scala.concurrent.duration.FiniteDuration
 trait StreamInterpreter[F[_]] {
   import StreamInterpreter._
 
-  def interpretStream[A](root: A, selections: List[PreparedField[F, A]], takeOne: Boolean = false): Stream[F, Result]
+  def interpretStream[A](root: A, selection: Selection[F, A], takeOne: Boolean = false): Stream[F, Result]
 
-  def interpretSync[A](root: A, selections: List[PreparedField[F, A]]): F[Result]
+  def interpretSync[A](root: A, selection: Selection[F, A]): F[Result]
 }
 
 object StreamInterpreter {
@@ -60,10 +60,10 @@ object StreamInterpreter {
       debug: DebugPrinter[F],
       accumulate: Option[FiniteDuration]
   ): StreamInterpreter[F] = new StreamInterpreter[F] {
-    override def interpretSync[A](root: A, selections: List[PreparedField[F, A]]): F[Result] =
-      interpretStream(root, selections, takeOne = true).take(1).compile.lastOrError
+    override def interpretSync[A](root: A, selection: Selection[F, A]): F[Result] =
+      interpretStream(root, selection, takeOne = true).take(1).compile.lastOrError
 
-    override def interpretStream[A](root: A, selections: List[PreparedField[F, A]], takeOne: Boolean): Stream[F, Result] =
+    override def interpretStream[A](root: A, selection: Selection[F, A], takeOne: Boolean): Stream[F, Result] =
       Stream.resource(Scope[F](None)).flatMap { rootScope =>
         Stream
           .eval(SignalScopes[F, StreamingData[F, ?, ?]](takeOne = takeOne, debug, accumulate, rootScope))
@@ -72,7 +72,7 @@ object StreamInterpreter {
 
             val changeStream = Stream.repeatEval(ss.unconsRelevantEvents)
 
-            val initial = QueryInterpreter.Input.root(root, Selection(selections), rootScope)
+            val initial = QueryInterpreter.Input.root(root, selection, rootScope)
 
             Stream.eval(interpreter.interpretAll(NonEmptyList.one(initial))).flatMap { res =>
               val jo: JsonObject = res.roots.map(_.value).reduceLeft(_ deepMerge _).asObject.get
