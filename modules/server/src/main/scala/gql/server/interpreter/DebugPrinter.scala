@@ -78,7 +78,7 @@ object DebugPrinter {
 
     def preparedDoced[F[_]]: Doced[Prepared[F, ?]] = pc =>
       pc match {
-        case Selection(fields) =>
+        case Selection(fields, _) =>
           record(
             "Selection",
             Doc.intercalate(Doc.char(',') + Doc.space, fields.map(preparedFieldDoced(_)).toList)

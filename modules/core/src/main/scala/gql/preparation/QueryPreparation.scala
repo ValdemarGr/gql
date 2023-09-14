@@ -53,7 +53,7 @@ trait QueryPreparation[F[_], G[_], C] {
   def prepareSelectable[A](
       s: Selectable[G, A],
       sis: NonEmptyList[SelectionInfo[G, C]]
-  ): F[NonEmptyList[PreparedSpecification[G, A, ?]]]
+  ): F[Selection[G, A]]
 }
 
 object QueryPreparation {
@@ -157,7 +157,7 @@ object QueryPreparation {
             K(pure((pm: Eval[PreparedMeta[G]]) => PreparedStep.GetMeta[G, I](pm)))
           case alg: Step.Alg.Batch[?, k, v] =>
             liftK(nextId.map(i => PreparedStep.Batch[G, k, v](alg.id, UniqueBatchInstance(i))))
-          case alg: Step.Alg.InlineBatch[?, k, v] => 
+          case alg: Step.Alg.InlineBatch[?, k, v] =>
             askK.map(PreparedStep.InlineBatch[G, k, v](alg.run, _))
           case alg: Step.Alg.First[?, i, o, c] =>
             rec[i, o](alg.step, "first").map(PreparedStep.First[G, i, o, c](_))
@@ -189,7 +189,7 @@ object QueryPreparation {
             val compiledCont = prepare[b](fi, out.of, fieldMeta)
             (compiledStep, compiledCont).mapN((s, c) => PreparedOption(PreparedCont(s, c)))
           case (s: Selectable[G, a], Some(ss)) =>
-            liftK(prepareSelectable[a](s, ss).map(xs => Selection(xs.toList)))
+            liftK(prepareSelectable[A](s, ss).widen[Prepared[G, A]])
           case (e: Enum[a], None) =>
             pureK(PreparedLeaf(e.name, x => Json.fromString(e.revm(x))))
           case (s: Scalar[a], None) =>
@@ -371,18 +371,20 @@ object QueryPreparation {
       override def prepareSelectable[A](
           s: Selectable[G, A],
           sis: NonEmptyList[SelectionInfo[G, C]]
-      ): F[NonEmptyList[PreparedSpecification[G, A, _]]] =
-        mergeImplementations[A](s, sis).flatMap { impls =>
-          impls.parTraverse[F, PreparedSpecification[G, A, ?]] { case impl: MergedImplementation[G, A, b, C] =>
-            val fa = impl.selections.toList.parFlatTraverse { sel =>
-              sel.field match {
-                case field: Field[G, b2, t] => prepareField[b, t](sel.info, field, impl.leaf.name)
+      ): F[Selection[G, A]] =
+        mergeImplementations[A](s, sis)
+          .flatMap { impls =>
+            impls.parTraverse[F, PreparedSpecification[G, A, ?]] { case impl: MergedImplementation[G, A, b, C] =>
+              val fa = impl.selections.toList.parFlatTraverse { sel =>
+                sel.field match {
+                  case field: Field[G, b2, t] => prepareField[b, t](sel.info, field, impl.leaf.name)
+                }
               }
-            }
 
-            fa.map(xs => PreparedSpecification[G, A, b](s.name, impl.specify, xs))
+              fa.map(xs => PreparedSpecification[G, A, b](s.name, impl.specify, xs))
+            }
           }
-        }
+          .map(xs => Selection(xs.toList, s))
     }
   }
 }

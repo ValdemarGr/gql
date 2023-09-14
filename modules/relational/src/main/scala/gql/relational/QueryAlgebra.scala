@@ -60,6 +60,17 @@ trait QueryAlgebra {
         .map(_.flatMap(_.toList).toMap)
     }.emap(_.toIor)
 
+  /*
+   * implicit lazy val myType1: Type[IO, QueryResult[Type1Table]] = ???
+   *
+   * implicit lazy val myType2: Type[IO, QueryResult[Type2Table]] = ???
+   *
+   * implicit lazy val myUnion = union[QueryResult[GeneralTable]]("MyUnion")
+   *   .instance{ g: General => Type1Table.join(t1t => sql"${g1.id} = t1t.id") }
+   *   .instance{ g: General => Type2Table.join(t2t => sql"${g2.id} = t2t.id") }
+   *   .build()
+   */
+
   def evalQuery[F[_], G[_], I, B, ArgType](
       xs: NonEmptyList[I],
       fm: FieldMeta[F],

@@ -317,8 +317,8 @@ object SubqueryInterpreter {
       def startNext[I](s: Prepared[F, I], in: Chain[EvalNode[F, I]]): W[Chain[Json]] = W.defer {
         s match {
           case PreparedLeaf(_, enc) => W.pure(in.map(x => enc(x.value)))
-          case Selection(Nil)       => W.pure(in.as(Json.obj()))
-          case Selection(fields)    => runFields(fields, in).map(_.map(JsonObject.fromMap(_).asJson))
+          case Selection(Nil, _)    => W.pure(in.as(Json.obj()))
+          case Selection(fields, _) => runFields(fields, in).map(_.map(JsonObject.fromMap(_).asJson))
           case s: PreparedList[F, a, ?, b] =>
             val of = s.of
             val toSeq = s.toSeq
