@@ -92,14 +92,17 @@ trait QueryAlgebra {
     case class SubSelection[A]() extends FieldVariant[A, QueryResult[A]]
   }
 
-  trait TableFieldAttribute[G[_], A, B, ArgType, Q] extends FieldAttribute[fs2.Pure] {
+  trait AnyQueryAttribute[G[_], A]
+
+  trait TableFieldAttribute[G[_], A, B, ArgType, Q] extends FieldAttribute[fs2.Pure] with AnyQueryAttribute[G, B] {
     def arg: EmptyableArg[ArgType]
     def query(value: A, argument: ArgType): Query[G, Q]
     def fieldVariant: FieldVariant[Q, B]
   }
 
-  trait VariantQueryAttribute[G[_], A, B] extends VariantAttribute[fs2.Pure] {
-    def query(value: A): Query[λ[X => X], B]
+  trait VariantQueryAttribute[G[_], A, Q, B] extends VariantAttribute[fs2.Pure] with AnyQueryAttribute[G, B] {
+    def query(value: A): Query[λ[X => X], Q]
+    def fieldVariant: FieldVariant[Q, B]
   }
 
   trait QueryResult[A] {
@@ -291,6 +294,36 @@ trait QueryAlgebra {
       .flatMap(collapseQuery)
       .flatMap(compileQueryState(pdf, _, tfa.fieldVariant))
 
+  def compileNextVariant[F[_], G[_], A, B, Q](
+    a: A,
+    vqa: VariantQueryAttribute[G, A, Q, B]
+  ) = {
+    collapseQuery(vqa.query(a)).map{ qs =>
+      vqa.fieldVariant match {
+        case _: FieldVariant.Selection[a] =>
+          val sel: Query.Select[B] = qs.value
+          addSelection(sel.cols).as {
+            Done[Lambda[X => X], (qs.Key, Option[B]), B](
+              (qs.decoder, optDecoder(sel.decoder)).tupled,
+              { xs =>
+                val ys = xs.collect { case (k, Some(v)) => k -> v }
+                qs.reassoc(ys)
+                  .flatMap { gs =>
+                    qs.reassoc.traverse.traverse(gs) {
+                      case x :: _ => Right(x)
+                      case xs     => Left(s"Expected 1 element, but got ${xs.size}")
+                    }
+                  }
+                  .map(qs.fk(_))
+              }
+            )
+          }
+        case _: FieldVariant.SubSelection[a] => ???
+          //val passthrough: Q = qs.value
+      }
+    }
+  }
+
   def compileQueryState[F[_], G[_], B, ArgType, Q, O](
       pdf: prep.PreparedDataField[F, ?, ?],
       qs: QueryState[G, Q],
@@ -367,6 +400,18 @@ trait QueryAlgebra {
         }
     }
 
+  sealed trait QueryTask[F[_], G[_], A]
+  object QueryTask {
+    case class Type[F[_], G[_], A](
+        v: prep.PreparedDataField[F, QueryResult[A], ?],
+        attr: TableFieldAttribute[G, A, ?, ?, ?]
+    )
+    case class Variant[F[_], G[_], A, B](
+        v: gql.ast.Variant[F, QueryResult[A], B],
+        attr: VariantQueryAttribute[G, A, ?, B],
+        fields: List[prep.PreparedDataField[F, B, ?]]
+    ) extends QueryTask[F, G, A]
+  }
   case class FieldWithAttr[F[_], G[_], A](
       field: prep.PreparedDataField[F, QueryResult[A], ?],
       attr: TableFieldAttribute[G, A, ?, ?, ?]
@@ -375,20 +420,33 @@ trait QueryAlgebra {
     val sel = findNextSel(pdf.cont.cont)
     val selFields: List[prep.PreparedField[F, ?]] = sel.toList.flatMap(_.fields)
 
-    val dataFields: List[prep.PreparedDataField[F, ?, ?]] = 
-      selFields.collect{ case pdf: prep.PreparedDataField[F, ?, ?] => pdf }
+    val dataFields: List[prep.PreparedDataField[F, ?, ?]] =
+      selFields.collect { case pdf: prep.PreparedDataField[F, ?, ?] => pdf }
 
-    val specs: List[prep.PreparedSpecification[F, ?, ?]] = 
-      selFields.collect{ case ps: prep.PreparedSpecification[F, ?, ?]    => ps }
+    val specs: List[prep.PreparedSpecification[F, ?, ?]] =
+      selFields.collect { case ps: prep.PreparedSpecification[F, ?, ?] => ps }
 
-    val typeFields: List[prep.PreparedDataField[F, ?, ?]] = 
-      dataFields ++ specs.collect{ case prep.PreparedSpecification(prep.Specialization.Type(_), xs) => xs }.flatten
+    val variants = specs.mapFilter[QueryTask[F, ?, ?]] { case ps: prep.PreparedSpecification[F, a, b] =>
+      ps.specialization match {
+        case prep.Specialization.Union(_, v) =>
+          v.attributes.collectFirst { case vqa: VariantQueryAttribute[g, a, q, b] @unchecked =>
+            QueryTask.Variant[F, g, a, b](
+              v.asInstanceOf[gql.ast.Variant[F, QueryResult[a], b]],
+              vqa,
+              ps.selection.asInstanceOf[List[prep.PreparedDataField[F, b, ?]]]
+            )
+          }
+        case _ => None
+      }
+    }
 
-    val variants: List[(Variant[F, ?, ?], List[prep.PreparedDataField[F, ?, ?]])] = 
-      selFields.collect{ case prep.PreparedSpecification(prep.Specialization.Union(_, v), xs) => (v, xs) }
+    val typeFields: List[prep.PreparedDataField[F, ?, ?]] =
+      dataFields ++ specs.collect { case prep.PreparedSpecification(prep.Specialization.Type(_), xs) => xs }.flatten
 
     val interfaces: List[(Implementation[F, ?, ?], List[prep.PreparedDataField[F, ?, ?]])] =
-      selFields.collect{ case prep.PreparedSpecification(prep.Specialization.Interface(_, impl), xs) => (impl, xs) }
+      selFields.collect { case prep.PreparedSpecification(prep.Specialization.Interface(_, impl), xs) => (impl, xs) }
+
+    val _ = interfaces
 
     typeFields
       .flatMap(findNextFields(_))
