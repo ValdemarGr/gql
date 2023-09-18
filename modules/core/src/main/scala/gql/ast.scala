@@ -55,9 +55,11 @@ object ast extends AstImplicits.Implicits {
     def abstractFieldsNel: NonEmptyList[(String, AbstractField[F, ?])]
   }
 
-  final case class Implementation[+F[_], A, B](implementation: Eval[Interface[F, B]])(implicit
-      val specify: B => Option[A]
-  )
+  trait ImplementationAttribute[+F[_]]
+  final case class Implementation[+F[_], A, B](
+      implementation: Eval[Interface[F, B]],
+      attributes: List[ImplementationAttribute[F]] = Nil
+  )(val specify: B => Option[A])
 
   trait TypeAttribute[+F[_], A]
   final case class Type[+F[_], A](
@@ -97,9 +99,9 @@ object ast extends AstImplicits.Implicits {
 
   trait VariantAttribute[+F[_]]
   final case class Variant[+F[_], A, B](
-    tpe: Eval[Type[F, B]],
-    attributes: List[VariantAttribute[F]] = Nil
-  )(implicit val specify: A => Option[B]) {
+      tpe: Eval[Type[F, B]],
+      attributes: List[VariantAttribute[F]] = Nil
+  )(val specify: A => Ior[String, Option[B]]) {
     def contramap[C](g: C => A): Variant[F, C, B] =
       Variant[F, C, B](tpe, attributes)(c => specify(g(c)))
   }

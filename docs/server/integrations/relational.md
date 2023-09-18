@@ -396,6 +396,134 @@ tpe[IO, QueryResult[HomeTable]](
 )
 ```
 
+## Sum types
+Sum types can naturally be declared also.
+
+<details>
+  <summary>Lets set up some tables for sum types.</summary>
+
+```scala mdoc
+connection.use{ ses =>
+  val queries = List(
+    sql"drop table if exists owner",
+    sql"drop table if exists dog",
+    sql"drop table if exists cat",
+    sql"""create table owner (
+      id int4 primary key
+    )""",
+    sql"""create table dog (
+      id int4 primary key,
+      owner_id int4 not null,
+      name text not null,
+      age int not null
+    )""",
+    sql"""create table cat (
+      id int4 primary key,
+      owner_id int4 not null,
+      name text not null,
+      age int not null
+    )""",
+    sql"""insert into owner (id) values (1)""",
+    sql"""insert into owner (id) values (2)""",
+    sql"""insert into dog (id, owner_id, name, age) values (1, 1, 'Dog', 42)""",
+    sql"""insert into cat (id, owner_id, name, age) values (2, 2, 'Cat', 22)""",
+  )
+
+  queries.traverse(x => ses.execute(x.command))
+}.unsafeRunSync()
+```
+
+</details>
+
+And now we can run it.
+```scala mdoc:nest
+sealed trait Animal
+case class Dog(owner: String, name: String, age: Int) extends Animal
+case class Cat(owner: String, name: String, age: Int) extends Animal
+
+case class OwnerTable(alias: String) extends SkunkTable {
+  def table = void"owner"
+  def tableKeys = keys(void"id" -> int4)
+  val (idCol, id) = sel("id", int4)
+}
+val ownerTable = skunkTable(OwnerTable)
+
+case class DogTable(alias: String) extends SkunkTable {
+  def table = void"dog"
+  def tableKeys = keys(void"id" -> int4)
+  
+  val (ownerCol, owner) = sel("owner_id", int4)
+  val (nameCol, name) = sel("name", text)
+  val (ageCol, age) = sel("age", int4)
+}
+val dogTable = skunkTable(DogTable)
+
+case class CatTable(alias: String) extends SkunkTable {
+  def table = void"cat"
+  def tableKeys = keys(void"id" -> int4)
+  
+  val (ownerCol, owner) = sel("owner_id", int4)
+  val (nameCol, name) = sel("name", text)
+  val (ageCol, age) = sel("age", int4)
+}
+val catTable = skunkTable(CatTable)
+
+implicit lazy val cat = tpe[IO, QueryResult[CatTable]](
+  "Cat",
+  "owner" -> query(_.owner),
+  "name" -> query(_.name),
+  "age" -> query(_.age)
+)
+
+implicit lazy val dog = tpe[IO, QueryResult[DogTable]](
+  "Dog",
+  "owner" -> query(_.owner),
+  "name" -> query(_.name),
+  "age" -> query(_.age)
+)
+
+// we use the builder to create a union type
+implicit lazy val animal = relBuilder[IO, OwnerTable] { b =>
+  b
+    .union("Animal")
+    .contVariant(owner => dogTable.join[Option](dog => sql"${owner.idCol} = ${dog.ownerCol}"))
+    .contVariant(owner => catTable.join[Option](cat => sql"${owner.idCol} = ${cat.ownerCol}"))
+}
+
+def schema = gql.Schema.query(
+  tpe[IO, Unit](
+    "Query",
+    "animals" -> runFieldSingle(connection) { (_: Unit) =>
+      ownerTable.join[List](_ => sql"true")
+    }
+  )
+)
+
+def animalQuery = """
+  query {
+    animals {
+      __typename
+      ... on Dog {
+        owner
+        name
+        age
+      }
+      ... on Cat {
+        owner
+        name
+        age
+      }
+    }
+  }
+"""
+
+schema
+  .map(Compiler[IO].compile(_, animalQuery))
+  .flatMap { case Right(Application.Query(run)) => run.map(_.handleErrors{e => println(e.getMessage()); ""}.asJson.spaces2) }
+  .unsafeRunSync()
+```
+
+
 ## Declaring complex subqueries
 Sometimes your tables must have complex filtering, limiting, ordering and so on.
 The most obvious way to declare such parameters is simply to use a subquery.
@@ -606,3 +734,4 @@ The `contBoundary` is only available in when using the `relBuilder`, since type 
 
 Inference troubles with `runField` can also be alleviated by using the `relBuilder`.
 :::
+

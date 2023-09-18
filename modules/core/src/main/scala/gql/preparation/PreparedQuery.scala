@@ -101,7 +101,7 @@ object Specialization {
       variant: ast.Variant[F, A, B]
   ) extends Specialization[F, A, B] {
     def target = variant.tpe.value
-    def specify(a: A): Ior[String, Option[B]] = variant.specify(a).rightIor
+    def specify(a: A): Ior[String, Option[B]] = variant.specify(a)
   }
   final case class Interface[F[_], A, B](
       target: ast.Type[F, B],

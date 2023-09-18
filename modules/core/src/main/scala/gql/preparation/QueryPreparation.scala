@@ -113,25 +113,6 @@ object QueryPreparation {
           }
     }
 
-    def findImplementations[A](
-        s: Selectable[G, A]
-    ): List[FoundImplementation[A, ?]] = s match {
-      case t: Type[G, ?] => List(FoundImplementation(t, Some(_)))
-      case u: Union[G, ?] =>
-        u.types.toList.map { case x: gql.ast.Variant[G, A, b] =>
-          FoundImplementation(x.tpe.value, x.specify)
-        }
-      case it @ Interface(_, _, _, _) =>
-        val m: Map[String, SchemaShape.InterfaceImpl[G, A]] =
-          implementations
-            .get(it.name)
-            .getOrElse(Map.empty)
-            .collect { case (k, v: SchemaShape.InterfaceImpl[G, A] @unchecked) => (k, v) }
-
-        m.values.toList
-          .collect { case ti: SchemaShape.InterfaceImpl.TypeImpl[G, A, b] => FoundImplementation(ti.t, ti.specify) }
-    }
-
     type L[A] = K[F, G, A]
 
     def lift[A](fa: F[A]): H[F, A] = Kleisli.liftF(WriterT.liftF(fa))
@@ -325,8 +306,7 @@ object QueryPreparation {
            */
 
           // What typenames implement whatever the caller matched on
-          val concreteIntersections = findImplementations(sel.s)
-            .map { case FoundImplementation(t, _) => t.name }
+          val concreteIntersections = findImplementations2(sel.s).map(_.target.name)
 
           concreteIntersections tupleRight sel.fields
         }

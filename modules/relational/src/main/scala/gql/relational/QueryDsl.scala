@@ -75,23 +75,23 @@ abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
 
   // This is potentially unsafe and pretty low-level
   // Take a look at [[reassociate]] for a safer version and ideas of how to use this properly
-  def reassociateFull[G[_], Key](reassoc: QueryAlgebra.Reassoc[G, Key], dec: algebra.Decoder[Key], cols: Frag*): Query[G, Unit] = 
+  def reassociateFull[G[_], Key](reassoc: QueryAlgebra.Reassoc[G, Key], dec: algebra.Decoder[Key], cols: Frag*): Query[G, Unit] =
     algebra.Query.liftEffect[G, Unit](
       algebra.addSelection(Chain.fromSeq(cols)).as {
-          QueryAlgebra.QueryState[algebra.Decoder, G, Key, Unit, G](
-            reassoc,
-            dec,
-            (),
-            FunctionK.id[G]
-          )
-        }
+        QueryAlgebra.QueryState[algebra.Decoder, G, Key, Unit, G](
+          reassoc,
+          dec,
+          (),
+          FunctionK.id[G]
+        )
+      }
     )
-  
+
   def reassociate[G[_]: QueryAlgebra.JoinType](dec: algebra.Decoder[?], cols: Frag*) = {
     def go[A](dec: algebra.Decoder[A]) =
       reassociateFull[G, Option[A]](
-        QueryAlgebra.ReassocOpt(implicitly[QueryAlgebra.JoinType[G]].reassoc[A]), 
-        algebra.optDecoder(dec), 
+        QueryAlgebra.ReassocOpt(implicitly[QueryAlgebra.JoinType[G]].reassoc[A]),
+        algebra.optDecoder(dec),
         cols: _*
       )
     go(dec)
@@ -103,7 +103,7 @@ abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
     def simpleJoin(joinPred: T => Frag): algebra.Query[λ[X => X], T] =
       joinFull[T](make, joinPred, t => t.table |+| stringToFrag(" as ") |+| stringToFrag(t.alias))
 
-    def join[G[_]: QueryAlgebra.JoinType](joinPred: T => Frag): algebra.Query[G, T] = 
+    def join[G[_]: QueryAlgebra.JoinType](joinPred: T => Frag): algebra.Query[G, T] =
       for {
         t <- simpleJoin(joinPred)
         (cols, dec) = t.tableKeys
@@ -158,9 +158,58 @@ abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
       .addAttributes(tfa)
   }
 
+  def contVariant[F[_], A, B](f: A => Query[Option, B])(implicit tpe: => Type[F, QueryResult[B]]) = {
+    val attr = new UnificationQueryAttribute[A, B, QueryResult[B]] {
+      def fieldVariant: FieldVariant[B, QueryResult[B]] = FieldVariant.SubSelection[B]()
+      def query(value: A): Query[Option, B] = f(value)
+    }
+    gql.ast.Variant[F, QueryResult[A], QueryResult[B]](Eval.later(tpe), List(attr)) { qr =>
+      qr.read(attr).sequence.map(_.flatten).toIor
+    }
+  }
+
+  def queryVariant[F[_], A, B](f: A => Query[Option, Query.Select[B]])(implicit tpe: => Type[F, B]) = {
+    val attr = new UnificationQueryAttribute[A, Query.Select[B], B] {
+      def fieldVariant: FieldVariant[Query.Select[B], B] = FieldVariant.Selection[B]()
+      def query(value: A): Query[Option, Query.Select[B]] = f(value)
+    }
+    gql.ast.Variant[F, QueryResult[A], B](Eval.later(tpe), List(attr)) { qr =>
+      qr.read(attr).sequence.map(_.flatten).toIor
+    }
+  }
+
+  final class PartiallyAppliedRelationalUnion0[F[_], A](private val name: String) {
+    def contVariant[B](f: A => Query[Option, B])(implicit tpe: => Type[F, QueryResult[B]]) =
+      new PartiallyAppliedRelationalUnion1(name, self.contVariant[F, A, B](f)(tpe))
+
+    def queryVariant[B](f: A => Query[Option, Query.Select[B]])(implicit tpe: => Type[F, B]) =
+      new PartiallyAppliedRelationalUnion1(name, self.queryVariant[F, A, B](f)(tpe))
+  }
+
+  final class PartiallyAppliedRelationalUnion1[F[_], A](private val name: String, hd: Variant[F, QueryResult[A], ?]) {
+    def contVariant[B](f: A => Query[Option, B])(implicit tpe: => Type[F, QueryResult[B]]) =
+      Union[F, QueryResult[A]](name, NonEmptyList.of(hd, self.contVariant[F, A, B](f)(tpe)))
+
+    def queryVariant[B](f: A => Query[Option, Query.Select[B]])(implicit tpe: => Type[F, B]) =
+      Union[F, QueryResult[A]](name, NonEmptyList.of(hd, self.queryVariant[F, A, B](f)(tpe)))
+  }
+
+  final class RelationalUnionOps[F[_], A](private val u: Union[F, QueryResult[A]]) {
+    def contVariant[B](f: A => Query[Option, B])(implicit tpe: => Type[F, QueryResult[B]]): Union[F, QueryResult[A]] =
+      u.copy(types = u.types :+ self.contVariant[F, A, B](f)(tpe))
+
+    def queryVariant[B](f: A => Query[Option, Query.Select[B]])(implicit tpe: => Type[F, B]): Union[F, QueryResult[A]] =
+      u.copy(types = u.types :+ self.queryVariant[F, A, B](f)(tpe))
+  }
+
+  implicit def relationalUnionDslOps[F[_], A](u: Union[F, QueryResult[A]]): RelationalUnionOps[F, A] =
+    new RelationalUnionOps(u)
+
   final class RelationalFieldBuilder[F[_], A](private val dummy: Boolean = false) {
     def tpe(name: String, hd: (String, Field[F, QueryResult[A], ?]), tl: (String, Field[F, QueryResult[A], ?])*): Type[F, QueryResult[A]] =
       gql.dsl.tpe[F, QueryResult[A]](name, hd, tl: _*)
+
+    def union(name: String) = new PartiallyAppliedRelationalUnion0[F, A](name)
 
     def queryAndThen[G[_], B, C](f: A => Query[G, Query.Select[B]])(g: Resolver[F, G[B], G[B]] => Resolver[F, G[B], C])(
         tpe: => Out[F, C]

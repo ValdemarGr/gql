@@ -195,7 +195,7 @@ object SchemaUtil {
     def variant[A](s: String) =
       partitionType(s) match {
         case i: ObjectType =>
-          Right(Variant(Eval.always(convertObject(i).toOption.get))((_: Unit) => None))
+          Right(Variant(Eval.always(convertObject(i).toOption.get))((_: Unit) => Ior.right(None)))
         case _ => s"Expected object type, got something else `${s}`".leftNec
       }
 
