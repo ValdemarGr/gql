@@ -15,6 +15,7 @@
  */
 package gql.dsl
 
+import cats.implicits._
 import gql.ast._
 import cats.data._
 import cats._
@@ -39,7 +40,7 @@ trait UnionDslFull {
 object UnionDsl extends UnionDslFull {
   final class PartiallyAppliedUnion0[F[_], A](private val name: String) extends AnyVal {
     def variant[B](pf: PartialFunction[A, B])(implicit innerTpe: => Type[F, B]): PartiallyAppliedUnion1[F, A] =
-      new PartiallyAppliedUnion1[F, A](name, Variant[F, A, B](Eval.later(innerTpe))(pf.lift))
+      new PartiallyAppliedUnion1[F, A](name, Variant[F, A, B](Eval.later(innerTpe))(pf.lift.andThen(_.rightIor)))
 
     def subtype[B: ClassTag](implicit ev: B <:< A, innerTpe: => Type[F, B]): PartiallyAppliedUnion1[F, A] =
       variant[B] { case a: B => a }(innerTpe)
@@ -47,7 +48,7 @@ object UnionDsl extends UnionDslFull {
 
   final class PartiallyAppliedUnion1[F[_], A](private val name: String, private val hd: Variant[F, A, ?]) {
     def variant[B](pf: PartialFunction[A, B])(implicit innerTpe: => Type[F, B]): Union[F, A] =
-      Union[F, A](name, NonEmptyList.of(hd, Variant[F, A, B](Eval.later(innerTpe))(pf.lift)), None)
+      Union[F, A](name, NonEmptyList.of(hd, Variant[F, A, B](Eval.later(innerTpe))(pf.lift.andThen(_.rightIor))), None)
 
     def subtype[B: ClassTag](implicit ev: B <:< A, innerTpe: => Type[F, B]): Union[F, A] =
       variant[B] { case a: B => a }(innerTpe)
@@ -55,7 +56,7 @@ object UnionDsl extends UnionDslFull {
 
   final case class UnionOps[F[_], A](private val u: Union[F, A]) extends AnyVal {
     def variant[B](pf: PartialFunction[A, B])(implicit innerTpe: => Type[F, B]): Union[F, A] =
-      u.copy(types = Variant[F, A, B](Eval.later(innerTpe))(pf.lift) :: u.types)
+      u.copy(types = Variant[F, A, B](Eval.later(innerTpe))(pf.lift.andThen(_.rightIor)) :: u.types)
 
     def subtype[B: ClassTag](implicit ev: B <:< A, innerTpe: => Type[F, B]): Union[F, A] =
       variant[B] { case a: B => a }(innerTpe)
