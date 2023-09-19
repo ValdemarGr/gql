@@ -13,22 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package gql.server.interpreter
+package gql.goi
 
-import org.typelevel.paiges._
+import gql.ast._
+import cats.data._
 
-// Like show, but for docs.
-// The doc algorithm is global, so we need to keep things in "doc" for as long as possible to get the best results.
-trait Doced[A] {
-  def apply(a: A): Doc
-}
-
-object Doced {
-  def apply[A](implicit ev: Doced[A]): Doced[A] = ev
-
-  def doc[A](a: A)(implicit ev: Doced[A]): Doc = ev(a)
-
-  def from[A](f: A => Doc): Doced[A] = f(_)
-
-  def empty[A]: Doced[A] = _ => Doc.empty
-}
+final case class GoiAttribute[F[_], A, Id](
+    codec: IDCodec[Id],
+    fromIds: NonEmptyList[Id] => F[Map[Id, A]]
+) extends TypeAttribute[F, A]

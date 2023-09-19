@@ -19,7 +19,7 @@ import cats._
 import cats.implicits._
 import io.circe._
 import cats.effect._
-import gql.interpreter.{Interpreter, DebugPrinter}
+import gql.server.interpreter.{StreamInterpreter, DebugPrinter}
 import cats.data._
 import scala.concurrent.duration._
 import io.circe.syntax._
@@ -136,29 +136,36 @@ object Compiler {
       implicit val s = schema.statistics
       implicit val p = schema.planner
 
+      compileWithInterpreter(
+        ps,
+        StreamInterpreter[F](schema.state, debug, accumulate),
+        queryInput,
+        mutationInput,
+        subscriptionInput
+      )
+    }
+
+    def compileWithInterpreter[Q, M, S](
+        ps: PreparedRoot[F, Q, M, S],
+        interpreter: StreamInterpreter[F],
+        queryInput: F[Q] = F.unit,
+        mutationInput: F[M] = F.unit,
+        subscriptionInput: F[S] = F.unit
+    ): Application[F] =
       ps match {
         case PreparedRoot.Query(ps) =>
           Application.Query {
-            queryInput.flatMap { qi =>
-              Interpreter.runSync(qi, ps, schema.state, debug).map { case (e, d) => QueryResult(d, e.flatMap(_.asResult)) }
-            }
+            queryInput.flatMap(interpreter.interpretSync(_, ps).map(_.asQueryResult))
           }
         case PreparedRoot.Mutation(ps) =>
           Application.Mutation {
-            mutationInput.flatMap { mi =>
-              Interpreter.runSync(mi, ps, schema.state, debug).map { case (e, d) => QueryResult(d, e.flatMap(_.asResult)) }
-            }
+            mutationInput.flatMap(interpreter.interpretSync(_, ps).map(_.asQueryResult))
           }
         case PreparedRoot.Subscription(ps) =>
           Application.Subscription {
-            fs2.Stream.eval(subscriptionInput).flatMap { si =>
-              Interpreter.runStreamed(si, ps, schema.state, debug, accumulate).map { case (e, d) =>
-                QueryResult(d, e.flatMap(_.asResult))
-              }
-            }
+            fs2.Stream.eval(subscriptionInput).flatMap(interpreter.interpretStream(_, ps).map(_.asQueryResult))
           }
       }
-    }
   }
 
   def apply[F[_]](implicit F: Async[F]): PartiallyAppliedCompiler[F] = new PartiallyAppliedCompiler[F](F)

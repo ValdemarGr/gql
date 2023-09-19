@@ -15,20 +15,21 @@
  */
 package gql.server.interpreter
 
-import org.typelevel.paiges._
+import gql._
 
-// Like show, but for docs.
-// The doc algorithm is global, so we need to keep things in "doc" for as long as possible to get the best results.
-trait Doced[A] {
-  def apply(a: A): Doc
+final case class EvalNode[F[_], +A](cursor: Cursor, value: A, scope: Scope[F]) {
+  def setValue[B](value: B): EvalNode[F, B] = copy(value = value)
+
+  def modify(f: Cursor => Cursor): EvalNode[F, A] = copy(cursor = f(cursor))
+
+  def succeed[B](value: B, f: Cursor => Cursor): EvalNode[F, B] =
+    EvalNode(f(cursor), value, scope)
+
+  def succeed[B](value: B): EvalNode[F, B] = succeed(value, identity)
+
+  def setScope(scope: Scope[F]) = copy(scope = scope)
 }
 
-object Doced {
-  def apply[A](implicit ev: Doced[A]): Doced[A] = ev
-
-  def doc[A](a: A)(implicit ev: Doced[A]): Doc = ev(a)
-
-  def from[A](f: A => Doc): Doced[A] = f(_)
-
-  def empty[A]: Doced[A] = _ => Doc.empty
+object EvalNode {
+  def empty[F[_], A](value: A, scope: Scope[F]) = EvalNode[F, A](Cursor.empty, value, scope)
 }

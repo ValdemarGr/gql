@@ -292,11 +292,10 @@ object QueryPreparation {
           .collect { case (k, x :: xs) => k -> NonEmptyList(x, xs).flatten.groupByNem(_.outputName) }
 
         val merged = grouped.fmap(_.fmap { fields =>
+          // TODO at a glance, there might be some field duplication here
           val sels = fields.toList
             .map(_.tpe.inner)
-            .collect { case s: TypeInfo.Selectable[G, C] =>
-              s.selection.toList
-            }
+            .collect { case s: TypeInfo.Selectable[G, C] => s.selection.toList }
             .flatten
           MergedFieldInfo(
             fields.head.name,

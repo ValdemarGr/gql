@@ -1,4 +1,4 @@
-val scala213Version = "2.13.11"
+val scala213Version = "2.13.12"
 
 ThisBuild / scalaVersion := scala213Version
 ThisBuild / crossScalaVersions := Seq(scala213Version, "3.2.2", "3.3.0")
@@ -109,11 +109,11 @@ lazy val sharedSettings = Seq(
     "co.fs2" %% "fs2-core" % "3.7.0",
     "co.fs2" %% "fs2-io" % "3.7.0",
     "org.typelevel" %% "cats-parse" % "0.3.8",
-    "io.circe" %% "circe-core" % "0.14.5",
-    "io.circe" %% "circe-parser" % "0.14.5",
+    "io.circe" %% "circe-core" % "0.14.6",
+    "io.circe" %% "circe-parser" % "0.14.6",
     "org.tpolecat" %% "sourcepos" % "1.1.0",
     "org.typelevel" %% "paiges-core" % "0.4.2",
-    "org.scalameta" %% "munit" % "1.0.0-M8" % Test,
+    "org.scalameta" %% "munit" % "1.0.0-M10" % Test,
     "org.typelevel" %% "munit-cats-effect" % "2.0.0-M3" % Test
   )
 )
