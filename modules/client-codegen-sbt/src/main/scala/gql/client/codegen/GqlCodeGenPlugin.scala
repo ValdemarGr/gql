@@ -146,7 +146,7 @@ object GqlCodeGenPlugin extends AutoPlugin {
             json =
               s"""{"schema":"${escapeSlash(rg.schemaPath.absolutePath)}","shared":"${escapeSlash(sh.absolutePath)}","queries":[${queries
                   .mkString(",")}]}""",
-            inFiles = inFiless.flatten,
+            inFiles = inFiless.flatten :+ rg.schemaPath,
             outFiles = outFiless.flatten ++ Seq(sh)
           )
         }
