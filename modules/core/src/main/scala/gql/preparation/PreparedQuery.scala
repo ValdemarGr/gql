@@ -108,7 +108,7 @@ object Specialization {
       impl: ast.Implementation[F, B, A]
   ) extends Specialization[F, A, B] {
     def source = impl.implementation.value
-    def specify(a: A): Ior[String, Option[B]] = impl.specify(a).rightIor
+    def specify(a: A): Ior[String, Option[B]] = impl.specify(a)
   }
 }
 

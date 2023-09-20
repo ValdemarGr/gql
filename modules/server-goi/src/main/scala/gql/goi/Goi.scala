@@ -50,7 +50,7 @@ object Goi {
     F.delay(new String(Base64.getEncoder.encode(s"$typename:$id".getBytes()), StandardCharsets.UTF_8))
 
   def makeImpl[A](specify: Node => Option[A]) =
-    gql.ast.Implementation(Eval.now(Node.nodeInterface))(specify)
+    gql.ast.Implementation(Eval.now(Node.nodeInterface))(specify.andThen(_.rightIor))
 
   def addIdWith[F[_], A, B](
       t: Type[F, A],

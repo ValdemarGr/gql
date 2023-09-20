@@ -188,7 +188,7 @@ object SchemaUtil {
     def implementation[A](s: String): EitherNec[String, Implementation[Pure, A, ?]] =
       partitionType(s) match {
         case i: InterfaceType =>
-          Right(Implementation(Eval.always(convertInterface(i).toOption.get))(_ => Option.empty[A]))
+          Right(Implementation(Eval.always(convertInterface(i).toOption.get))(_ => Ior.right(Option.empty[A])))
         case _ => s"Expected interface, got object `${s}`".leftNec
       }
 
