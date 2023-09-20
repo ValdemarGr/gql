@@ -99,7 +99,7 @@ lazy val sharedSettings = Seq(
         "-Wconf:cat=unused-nowarn:s",
         "-Ywarn-unused:-nowarn"
       )
-    } else Seq.empty
+    } else Seq("-explain")
   },
   libraryDependencies ++= Seq(
     "org.typelevel" %% "cats-effect" % "3.5.1",

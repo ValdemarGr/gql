@@ -206,7 +206,7 @@ dog.fields.map{ case (k, _) => k}.mkString_(", ")
 dog.fields.exists{ case (_, v) => v == overwirttenName }
 ``` 
 
-To showcase the iheritance a bit further, consider the following invalid schema.
+To showcase the inheritance a bit further, consider the following invalid schema.
 ```scala mdoc:nest
 implicit lazy val pet = interface[IO, Pet](
   "Pet",

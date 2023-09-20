@@ -1,3 +1,18 @@
+/*
+ * Copyright 2023 Valdemar Grange
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package gql.relational
 
 import gql.ast._
@@ -19,22 +34,22 @@ abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
   def query[F[_], G[_], A, B](f: A => Query[G, Query.Select[B]])(implicit
       tpe: => Out[F, G[B]]
   ): Field[F, QueryResult[A], G[B]] =
-    queryFull(EmptyableArg.Empty)((a, _) => f(a), Resolver.id[F, G[B]])(tpe)
+    queryFull[F, G, A, B, Unit, G[B]](EmptyableArg.Empty)((a, _) => f(a), Resolver.id[F, G[B]])(tpe)
 
   def query[F[_], G[_], A, B, C](a: Arg[C])(f: (A, C) => Query[G, Query.Select[B]])(implicit
       tpe: => Out[F, G[B]]
   ): Field[F, QueryResult[A], G[B]] =
-    queryFull(EmptyableArg.Lift(a))((a, c) => f(a, c), Resolver.id[F, G[B]])(tpe)
+    queryFull[F, G, A, B, C, G[B]](EmptyableArg.Lift(a))((a, c) => f(a, c), Resolver.id[F, G[B]])(tpe)
 
   def cont[F[_], G[_], A, B](f: A => Query[G, B])(implicit
       tpe: => Out[F, G[QueryResult[B]]]
   ): Field[F, QueryResult[A], G[QueryResult[B]]] =
-    contFull(EmptyableArg.Empty)((a, _) => f(a))(tpe)
+    contFull[F, G, A, B, Unit](EmptyableArg.Empty)((a, _) => f(a))(tpe)
 
   def cont[F[_], G[_], A, B, C](a: Arg[C])(f: (A, C) => Query[G, B])(implicit
       tpe: => Out[F, G[QueryResult[B]]]
   ): Field[F, QueryResult[A], G[QueryResult[B]]] =
-    contFull(EmptyableArg.Lift(a))((a, c) => f(a, c))(tpe)
+    contFull[F, G, A, B, C](EmptyableArg.Lift(a))((a, c) => f(a, c))(tpe)
 
   def runField[F[_]: Queryable: Applicative, G[_], I, B, ArgType](connection: Connection[F], arg: Arg[ArgType])(
       q: (NonEmptyList[I], ArgType) => Query[G, (Query.Select[I], B)]
@@ -87,7 +102,7 @@ abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
       }
     )
 
-  def reassociate[G[_]: QueryAlgebra.JoinType](dec: algebra.Decoder[?], cols: Frag*) = {
+  def reassociate[G[_]: QueryAlgebra.JoinType, B](dec: algebra.Decoder[B], cols: Frag*) = {
     def go[A](dec: algebra.Decoder[A]) =
       reassociateFull[G, Option[A]](
         QueryAlgebra.ReassocOpt(implicitly[QueryAlgebra.JoinType[G]].reassoc[A]),
@@ -210,7 +225,7 @@ abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
       def fieldVariant: FieldVariant[A, QueryResult[A]] = FieldVariant.SubSelection[A]()
       def query(value: B): Query[Option, A] = f(value)
     }
-    gql.ast.Implementation[F, QueryResult[A], QueryResult[B]](Eval.later(interface), List(attr)){ qr =>
+    gql.ast.Implementation[F, QueryResult[A], QueryResult[B]](Eval.later(interface), List(attr)) { qr =>
       qr.read(attr).sequence.map(_.flatten).toIor
     }
   }
@@ -220,7 +235,7 @@ abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
       def fieldVariant: FieldVariant[Query.Select[A], A] = FieldVariant.Selection[A]()
       def query(value: B): Query[Option, Query.Select[A]] = f(value)
     }
-    gql.ast.Implementation[F, A, QueryResult[B]](Eval.later(interface), List(attr)){ qr =>
+    gql.ast.Implementation[F, A, QueryResult[B]](Eval.later(interface), List(attr)) { qr =>
       qr.read(attr).sequence.map(_.flatten).toIor
     }
   }
@@ -250,14 +265,14 @@ abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
     def queryAndThen[G[_], B, C](f: A => Query[G, Query.Select[B]])(g: Resolver[F, G[B], G[B]] => Resolver[F, G[B], C])(
         tpe: => Out[F, C]
     ): Field[F, QueryResult[A], C] =
-      queryFull(EmptyableArg.Empty)((a, _) => f(a), g(Resolver.id[F, G[B]]))(tpe)
+      queryFull[F, G, A, B, Unit, C](EmptyableArg.Empty)((a, _) => f(a), g(Resolver.id[F, G[B]]))(tpe)
 
     def queryAndThen[G[_], B, C, D](
         a: Arg[C]
     )(f: (A, C) => Query[G, Query.Select[B]])(g: Resolver[F, G[B], G[B]] => Resolver[F, G[B], D])(implicit
         tpe: => Out[F, D]
     ): Field[F, QueryResult[A], D] =
-      queryFull(EmptyableArg.Lift(a))((a, c) => f(a, c), g(Resolver.id[F, G[B]]))(tpe)
+      queryFull[F, G, A, B, C, D](EmptyableArg.Lift(a))((a, c) => f(a, c), g(Resolver.id[F, G[B]]))(tpe)
 
     def contBoundaryFull[G[_]: Reassociateable, H[_], B, C, D, Arg1, Arg2](ea1: EmptyableArg[Arg1], connection: Connection[F])(
         f: (A, Arg1) => Query[G, Query.Select[B]]
@@ -281,10 +296,13 @@ abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
         F: Applicative[F],
         Q: Queryable[F],
         tpe: => Out[F, G[H[QueryResult[C]]]]
-    ) = {
-      implicit def tpe0: Out[F, G[H[QueryResult[C]]]] = tpe
-      contBoundaryFull[G, H, B, C, D, ArgType, ArgType](EmptyableArg.Lift(a), connection)(f)(EmptyableArg.Lift(a))(continue)
-    }
+    ) =
+      contBoundaryFull[G, H, B, C, D, ArgType, ArgType](EmptyableArg.Lift(a), connection)(f)(EmptyableArg.Lift(a))(continue)(
+        implicitly,
+        implicitly,
+        implicitly,
+        tpe
+      )
 
     def contBoundary[G[_]: Reassociateable, H[_], B, C, D](connection: Connection[F])(
         f: A => Query[G, Query.Select[B]]
@@ -292,10 +310,15 @@ abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
         F: Applicative[F],
         Q: Queryable[F],
         tpe: => Out[F, G[H[QueryResult[C]]]]
-    ) = {
-      implicit def tpe0: Out[F, G[H[QueryResult[C]]]] = tpe
-      contBoundaryFull[G, H, B, C, D, Unit, Unit](EmptyableArg.Empty, connection)((i, _) => f(i))(EmptyableArg.Empty)((i, _) => continue(i))
-    }
+    ) =
+      contBoundaryFull[G, H, B, C, D, Unit, Unit](EmptyableArg.Empty, connection)((i, _) => f(i))(EmptyableArg.Empty)((i, _) =>
+        continue(i)
+      )(
+        implicitly,
+        implicitly,
+        implicitly,
+        tpe
+      )
 
     def query[G[_], B](f: A => Query[G, Query.Select[B]])(implicit
         tpe: => Out[F, G[B]]
