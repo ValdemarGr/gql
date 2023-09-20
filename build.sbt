@@ -281,32 +281,32 @@ lazy val serverHttp4s = project
   .dependsOn(server)
 
 lazy val relational = project
-    .in(file("modules/relational"))
-    .settings(sharedSettings)
-    .dependsOn(server)
-    .settings(
-      name := "gql-relational"
-    )
+  .in(file("modules/relational"))
+  .settings(sharedSettings)
+  .dependsOn(server)
+  .settings(
+    name := "gql-relational"
+  )
 
 lazy val relationalSkunk = project
-    .in(file("modules/relational-skunk"))
-    .settings(sharedSettings)
-    .dependsOn(server)
-    .dependsOn(relational)
-    .settings(
-      name := "gql-relational-skunk",
-      libraryDependencies ++= Seq("org.tpolecat" %% "skunk-core" % "0.6.0")
-    )
+  .in(file("modules/relational-skunk"))
+  .settings(sharedSettings)
+  .dependsOn(server)
+  .dependsOn(relational)
+  .settings(
+    name := "gql-relational-skunk",
+    libraryDependencies ++= Seq("org.tpolecat" %% "skunk-core" % "0.6.0")
+  )
 
 lazy val relationalDoobie = project
-    .in(file("modules/relational-doobie"))
-    .settings(sharedSettings)
-    .dependsOn(server)
-    .dependsOn(relational)
-    .settings(
-      name := "gql-relational-doobie",
-      libraryDependencies ++= Seq("org.tpolecat" %% "doobie-core"      % "1.0.0-RC4")
-    )
+  .in(file("modules/relational-doobie"))
+  .settings(sharedSettings)
+  .dependsOn(server)
+  .dependsOn(relational)
+  .settings(
+    name := "gql-relational-doobie",
+    libraryDependencies ++= Seq("org.tpolecat" %% "doobie-core" % "1.0.0-RC4")
+  )
 
 lazy val mdocExt = project
   .in(file("modules/mdoc-ext"))
