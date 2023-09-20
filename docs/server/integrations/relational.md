@@ -308,7 +308,7 @@ tpe[IO, QueryResult[HomeTable]](
 SQL is a language that works on flat arrays of rows, but for it to map well to graphql some work must be performed.
 Most use-cases should be covered by simply invoking the `join` method with the proper multiplicity parameter, so this section is more of a technical reference.
 
-When you AST is inspected to build the query, the recursive AST walk also composes a big reassociation function that can translate a list of flat query results into the proper nested structure.
+When your AST is inspected to build the query, the recursive AST walk also composes a big reassociation function that can translate a list of flat query results into the proper nested structure.
 This composed function also tracks the visited columns and their decoders.
 
 The query algebra has a special operation that lets the caller modify the state however they wish.
