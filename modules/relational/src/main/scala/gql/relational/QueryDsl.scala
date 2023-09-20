@@ -205,6 +205,42 @@ abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
   implicit def relationalUnionDslOps[F[_], A](u: Union[F, QueryResult[A]]): RelationalUnionOps[F, A] =
     new RelationalUnionOps(u)
 
+  def contImplementation[F[_], A, B](f: B => Query[Option, A])(implicit interface: => Interface[F, QueryResult[B]]) = {
+    val attr = new UnificationQueryAttribute[B, A, QueryResult[A]] {
+      def fieldVariant: FieldVariant[A, QueryResult[A]] = FieldVariant.SubSelection[A]()
+      def query(value: B): Query[Option, A] = f(value)
+    }
+    gql.ast.Implementation[F, QueryResult[A], QueryResult[B]](Eval.later(interface), List(attr)){ qr =>
+      qr.read(attr).sequence.map(_.flatten).toIor
+    }
+  }
+
+  def queryImplementation[F[_], A, B](f: B => Query[Option, Query.Select[A]])(implicit interface: => Interface[F, QueryResult[B]]) = {
+    val attr = new UnificationQueryAttribute[B, Query.Select[A], A] {
+      def fieldVariant: FieldVariant[Query.Select[A], A] = FieldVariant.Selection[A]()
+      def query(value: B): Query[Option, Query.Select[A]] = f(value)
+    }
+    gql.ast.Implementation[F, A, QueryResult[B]](Eval.later(interface), List(attr)){ qr =>
+      qr.read(attr).sequence.map(_.flatten).toIor
+    }
+  }
+
+  final class RelationalTypeOps1[F[_], A](private val tpe: Type[F, QueryResult[A]]) {
+    def contImplements[B](f: B => Query[Option, A])(implicit interface: => Interface[F, QueryResult[B]]): Type[F, QueryResult[A]] =
+      tpe.copy(implementations = self.contImplementation[F, A, B](f)(interface) :: tpe.implementations)
+  }
+
+  implicit def relationalTypeDslOps1[F[_], A](tpe: Type[F, QueryResult[A]]): RelationalTypeOps1[F, A] =
+    new RelationalTypeOps1(tpe)
+
+  final class RelationalTypeOps0[F[_], A](private val tpe: Type[F, A]) {
+    def queryImplements[B](f: B => Query[Option, Query.Select[A]])(implicit interface: => Interface[F, QueryResult[B]]): Type[F, A] =
+      tpe.copy(implementations = self.queryImplementation[F, A, B](f)(interface) :: tpe.implementations)
+  }
+
+  implicit def relationalTypeDslOps0[F[_], A](tpe: Type[F, A]): RelationalTypeOps0[F, A] =
+    new RelationalTypeOps0(tpe)
+
   final class RelationalFieldBuilder[F[_], A](private val dummy: Boolean = false) {
     def tpe(name: String, hd: (String, Field[F, QueryResult[A], ?]), tl: (String, Field[F, QueryResult[A], ?])*): Type[F, QueryResult[A]] =
       gql.dsl.tpe[F, QueryResult[A]](name, hd, tl: _*)

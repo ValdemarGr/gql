@@ -437,16 +437,21 @@ connection.use{ ses =>
 
 And now we can run it.
 ```scala mdoc:nest
-sealed trait Animal
+sealed trait Animal { 
+  def name: String
+}
 case class Dog(owner: String, name: String, age: Int) extends Animal
 case class Cat(owner: String, name: String, age: Int) extends Animal
 
-case class OwnerTable(alias: String) extends SkunkTable {
+trait OwnerTable extends SkunkTable {
   def table = void"owner"
   def tableKeys = keys(void"id" -> int4)
   val (idCol, id) = sel("id", int4)
 }
-val ownerTable = skunkTable(OwnerTable)
+case class OwnerTableUnion(alias: String) extends OwnerTable
+case class OwnerTableInterface(alias: String) extends OwnerTable
+val ownerTableUnion = skunkTable(OwnerTableUnion)
+val ownerTableInterface = skunkTable(OwnerTableInterface)
 
 case class DogTable(alias: String) extends SkunkTable {
   def table = void"dog"
@@ -468,22 +473,31 @@ case class CatTable(alias: String) extends SkunkTable {
 }
 val catTable = skunkTable(CatTable)
 
+implicit lazy val animalInterface = interface[IO, QueryResult[OwnerTableInterface]](
+  "AnimalInterface",
+  "owner" -> abst[IO, String]
+)
+
 implicit lazy val cat = tpe[IO, QueryResult[CatTable]](
   "Cat",
   "owner" -> query(_.owner),
   "name" -> query(_.name),
   "age" -> query(_.age)
-)
+).contImplements[OwnerTableInterface]{ owner => 
+  catTable.join[Option](cat => sql"${owner.idCol} = ${cat.ownerCol}")
+}
 
 implicit lazy val dog = tpe[IO, QueryResult[DogTable]](
   "Dog",
   "owner" -> query(_.owner),
   "name" -> query(_.name),
   "age" -> query(_.age)
-)
+).contImplements[OwnerTableInterface]{ owner => 
+  dogTable.join[Option](dog => sql"${owner.idCol} = ${dog.ownerCol}")
+}
 
 // we use the builder to create a union type
-implicit lazy val animal = relBuilder[IO, OwnerTable] { b =>
+implicit lazy val animal = relBuilder[IO, OwnerTableUnion] { b =>
   b
     .union("Animal")
     .contVariant(owner => dogTable.join[Option](dog => sql"${owner.idCol} = ${dog.ownerCol}"))
@@ -494,7 +508,10 @@ def schema = gql.Schema.query(
   tpe[IO, Unit](
     "Query",
     "animals" -> runFieldSingle(connection) { (_: Unit) =>
-      ownerTable.join[List](_ => sql"true")
+      ownerTableUnion.join[List](_ => sql"true")
+    },
+    "animalInterfaces" -> runFieldSingle(connection) { (_: Unit) =>
+      ownerTableInterface.join[List](_ => sql"true")
     }
   )
 )
@@ -502,6 +519,19 @@ def schema = gql.Schema.query(
 def animalQuery = """
   query {
     animals {
+      __typename
+      ... on Dog {
+        owner
+        name
+        age
+      }
+      ... on Cat {
+        owner
+        name
+        age
+      }
+    }
+    animalInterfaces {
       __typename
       ... on Dog {
         owner
@@ -615,11 +645,75 @@ The implementation of transactions depends on the database library, but many imp
 
 If your database library supports opening transactions as a resource then the you can lazily open a transaction.
 Here is an example using skunk.
+```scala mdoc:silent:nest
+trait SessionContext {
+  def getSession: Resource[IO, Session[IO]]
+}
 
-:::warning
-Transactions have not been explored much yet, so there might be better ways to do this.
-:::
-```scala mdoc:silent
+object SessionContext {
+  def fromIOLocal(iol: IOLocal[Option[Resource[IO, Session[IO]]]]) = new SessionContext {
+    def getSession = Resource.eval(iol.get).flatMap{
+      case None => Resource.eval(IO.raiseError(new Exception("No session in context")))
+      case Some(sc) => sc
+    }
+  }
+}
+
+def myConnection: Resource[IO, Session[IO]] = Session.single[IO](
+  host = "127.0.0.1",
+  port = 5432,
+  user = "postgres",
+  database = "postgres"
+)
+
+// The outer resource manages the lifecycle of the connection
+// The inner resource leases the connection, if the inner resource is not closed, the outer waits
+def lazyConnection: Resource[IO, LazyResource[IO, Session[IO]]] = 
+  gql.relational.LazyResource.fromResource(myConnection)
+
+// We define our schema as requiring a connection
+def myQuery(ctx: SessionContext): Type[IO, Unit] = {
+  implicit lazy val homeTableTpe: Out[IO, QueryResult[HomeTable]] = ???
+  tpe[IO, Unit](
+    "Query",
+    "homes" -> runFieldSingle(ctx.getSession) { (_: Unit) => 
+      homeTable.join[List](_ => sql"true")
+    }
+  )
+}
+
+def runQuery: IO[String => Compiler.Outcome[IO]] = 
+  gql.Statistics[IO].flatMap{ stats => 
+    IOLocal[Option[Resource[IO, Session[IO]]]](None).map{ loc =>
+      val sc = SessionContext.fromIOLocal(loc)
+
+      val schema = gql.Schema.query(stats)(myQuery(sc))
+
+      val setResource = lazyConnection.evalMap(x => loc.set(Some(x.get)))
+
+      (query: String) => 
+        Compiler[IO]
+          .compile(schema, q)
+          .map{
+            case gql.Application.Query(fa) => gql.Application.Query(setResource.surround(fa))
+            case gql.Application.Mutation(fa) => gql.Application.Mutation(setResource.surround(fa))
+            // Subscription is a bit more complex since we would like to close the transaction on every event
+            case gql.Application.Subscription(fa) => 
+              gql.Application.Subscription{
+                fs2.Stream.resource(lazyConnection).flatMap{ x =>
+                  fs2.Stream.exec(loc.set(Some(x.get))) ++
+                    fa.evalTap(_ => x.forceClose)
+                }
+              }
+          }
+    }
+  }
+```
+
+<details>
+  <summary>You can also use MTL for passing the transaction around</summary>
+
+```scala mdoc:silent:nest
 import cats.mtl._
 
 def myConnection: Resource[IO, Session[IO]] = Session.single[IO](
@@ -686,6 +780,9 @@ def runQuery: IO[String => Compiler.Outcome[IO]] =
         }
   }
 ```
+
+</details>
+
 
 ## Handling N+1
 The relational module can handle N+1 queries and queries that can cause cartesian products.

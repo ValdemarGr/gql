@@ -59,7 +59,7 @@ object ast extends AstImplicits.Implicits {
   final case class Implementation[+F[_], A, B](
       implementation: Eval[Interface[F, B]],
       attributes: List[ImplementationAttribute[F]] = Nil
-  )(val specify: B => Option[A])
+  )(val specify: B => Ior[String, Option[A]])
 
   trait TypeAttribute[+F[_], A]
   final case class Type[+F[_], A](
