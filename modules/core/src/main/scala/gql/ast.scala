@@ -177,18 +177,33 @@ object ast extends AstImplicits.Implicits {
     lazy val revm = kv.map(_.swap).toList.toMap
   }
 
+  trait FieldAttribute[+F[_], -A, B]
+  trait AnonymousFieldAttribute[+F[_], B] extends FieldAttribute[F, Any, B]
+  // Field, but without any implementation
+  final case class AbstractField[+F[_], T](
+      arg: Option[Arg[?]],
+      output: Eval[Out[F, T]],
+      description: Option[String] = None,
+      attributes: List[AnonymousFieldAttribute[F, T]] = Nil
+  ) extends AnyField[F, Any, T] {
+    def document(description: String): AbstractField[F, T] = copy(description = Some(description))
+
+    def asAbstract = this
+  }
+
   sealed trait AnyField[+F[_], -A, B] {
     def output: Eval[Out[F, B]]
 
     def asAbstract: AbstractField[F, B]
+
+    def attributes: List[FieldAttribute[F, A, B]]
   }
 
-  trait FieldAttribute[+F[_]]
-  final case class Field[+F[_], -A, B](
-      resolve: Resolver[F, A, B],
-      output: Eval[Out[F, B]],
-      description: Option[String] = None,
-      attributes: List[FieldAttribute[F]] = Nil
+  abstract class Field[+F[_], -A, B](
+      val resolve: Resolver[F, A, B],
+      val output: Eval[Out[F, B]],
+      val description: Option[String] = None,
+      val attributes: List[FieldAttribute[F, A, B]] = Nil
   ) extends AnyField[F, A, B] {
     def document(description: String): Field[F, A, B] = copy(description = Some(description))
 
@@ -211,25 +226,27 @@ object ast extends AstImplicits.Implicits {
         description
       )
 
-    def compose[F2[x] >: F[x], A2](r: Resolver[F2, A2, A]): Field[F2, A2, B] =
-      copy[F2, A2, B](r.andThen(resolve))
+    // def compose[F2[x] >: F[x], A2](r: Resolver[F2, A2, A]): Field[F2, A2, B] =
+    //   copy[F2, A2, B](r.andThen(resolve))
 
-    def contramap[F2[x] >: F[x], A2](f: A2 => A): Field[F2, A2, B] =
-      compose[F2, A2](Resolver.lift[F2, A2](f))
+    // def contramap[F2[x] >: F[x], A2](f: A2 => A): Field[F2, A2, B] =
+    //   compose[F2, A2](Resolver.lift[F2, A2](f))
 
-    def addAttributes[F2[x] >: F[x]](attrs: FieldAttribute[F2]*): Field[F2, A, B] =
+    def addAttributes[F2[x] >: F[x], A2 <: A](attrs: FieldAttribute[F2, A2, B]*): Field[F2, A2, B] =
       copy(attributes = attributes ++ attrs.toList)
   }
 
-  // Field, but without any implementation
-  final case class AbstractField[+F[_], T](
-      arg: Option[Arg[?]],
-      output: Eval[Out[F, T]],
-      description: Option[String] = None
-  ) extends AnyField[F, Any, T] {
-    def document(description: String): AbstractField[F, T] = copy(description = Some(description))
+  case class ContravariantField[+F[_], -A, B](
+      resolver: Resolver[F, A, B],
+      output: Eval[Out[F, B]],
+      description: Option[String] = None,
+      attributes: List[AnonymousFieldAttribute[F, B]] = Nil
+  ) {
+    def compose[F2[x] >: F[x], A2](r: Resolver[F2, A2, A]): ContravariantField[F2, A2, B] =
+      copy[F2, A2, B](r.andThen(resolve))
 
-    def asAbstract = this
+    def contramap[F2[x] >: F[x], A2](f: A2 => A): ContravariantField[F2, A2, B] =
+      compose[F2, A2](Resolver.lift[F2, A2](f))
   }
 
   final case class OutOpt[+F[_], A, B](of: Out[F, B], resolver: Resolver[F, A, B]) extends Out[F, Option[A]]
