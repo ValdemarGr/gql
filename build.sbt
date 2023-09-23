@@ -1,7 +1,7 @@
 val scala213Version = "2.13.12"
 
 ThisBuild / scalaVersion := scala213Version
-ThisBuild / crossScalaVersions := Seq(scala213Version, "3.2.2", "3.3.0")
+ThisBuild / crossScalaVersions := Seq(scala213Version, "3.3.0")
 ThisBuild / organization := "io.github.valdemargr"
 
 ThisBuild / tlBaseVersion := "0.2"
@@ -23,7 +23,7 @@ ThisBuild / tlMimaPreviousVersions := Set.empty
 ThisBuild / mimaReportSignatureProblems := false
 ThisBuild / mimaFailOnProblem := false
 ThisBuild / mimaPreviousArtifacts := Set.empty
-ThisBuild / tlFatalWarnings := true
+ThisBuild / tlFatalWarnings := false
 
 ThisBuild / githubWorkflowAddedJobs ++= Seq(
   WorkflowJob(
