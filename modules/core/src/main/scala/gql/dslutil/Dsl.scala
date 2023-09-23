@@ -13,17 +13,28 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package gql.dsl
+package gql.dslutil
 
-import gql.ast._
-import cats.data._
+trait GqlDslFull
+    extends DirectiveDslFull
+    with EnumDslFull
+    with FieldDslFull
+    with InputDslFull
+    with InterfaceDslFull
+    with TypeDslFull
+    with UnionDslFull
+    with Aliases
 
-trait EnumDslFull {
-  def enumVal[A](value: A): EnumValue[A] =
-    EnumValue(value)
+trait GqlDsl[F[_]]
+    extends DirectiveDsl[F]
+    with EnumDslFull
+    with FieldDsl[F]
+    with InputDslFull
+    with InterfaceDsl[F]
+    with TypeDsl[F]
+    with UnionDsl[F]
+    with Aliases
 
-  def enumType[A](name: String, hd: (String, EnumValue[? <: A]), tl: (String, EnumValue[? <: A])*) =
-    Enum[A](name, NonEmptyList(hd, tl.toList))
+object GqlDsl extends GqlDslFull {
+  def apply[F[_]]: GqlDsl[F] = new GqlDsl[F] {}
 }
-
-object EnumDsl extends EnumDslFull

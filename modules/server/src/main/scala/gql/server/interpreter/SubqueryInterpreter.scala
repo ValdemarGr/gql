@@ -132,7 +132,7 @@ object SubqueryInterpreter {
                 runF.map(Chain.fromOption(_))
               }
               .flatMap(runEdgeCont(_, cont))
-          case alg: InlineBatch[F, k, o] =>
+          case alg: InlineBatch[F, k, o]  =>
             val cursor = alg.stableUniqueEdgeName
             val keys: Set[k] = inputs.toList.flatMap(_.node.value.toList).toSet
 
@@ -161,7 +161,7 @@ object SubqueryInterpreter {
               // We modify the cont for the next stream emission
               // We need to get rid of the skips since they are a part of THIS evaluation, not the next
               val ridded = StepCont.visit(cont)(new StepCont.Visitor[F] {
-                override def visitJoin[I, O](cont: StepCont.Join[F, I, O]): StepCont[F, I, O] =
+                override def visitJoin[I2, O2](cont: StepCont.Join[F, I2, O2]): StepCont[F, I2, O2] =
                   cont.next
               })
 
@@ -176,7 +176,7 @@ object SubqueryInterpreter {
                           signal = alg.signal,
                           cursor = id.node.cursor
                         )
-                        .map { case (s, sd) => sd.value.map { case i: i @unchecked => (i, s) } }
+                        .map { case (s, sd) => sd.value.map { x => (x.asInstanceOf[i], s) } }
                         .rethrow
                     }
                 }
@@ -224,15 +224,17 @@ object SubqueryInterpreter {
           case alg: First[F @unchecked, i2, o2, c2] =>
             // (o2, c2) <:< C
             // (i2, c2) <:< I
+            val theCompilerNeedsHelp = (inputs: Chain[IndexedData[F, (i2, c2)]])
             val inputMap: Map[Int, c2] =
-              inputs.map(in => in.index -> (in.map { case (_, c2) => c2 }.node.value)).toIterable.toMap
+              theCompilerNeedsHelp
+                .map(in => in.index -> (in.map { case (_, c2) => c2 }.node.value)).toIterable.toMap
 
             val base: StepCont[F, C, O] = cont
             val contR = StepCont.TupleWith[F, o2, c2, O](
               inputMap,
               base
             )
-            runStep[i2, o2, O](inputs.map(_.map { case (i2, _) => i2 }), alg.step, contR)
+            runStep[i2, o2, O](theCompilerNeedsHelp.map(_.map { case (i2, _) => i2 }), alg.step, contR)
           case alg: Batch[F @unchecked, k, v] =>
             val keys: Chain[(Cursor, Set[k])] = inputs.map(id => id.node.cursor -> id.node.value)
 

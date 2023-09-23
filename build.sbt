@@ -23,7 +23,7 @@ ThisBuild / tlMimaPreviousVersions := Set.empty
 ThisBuild / mimaReportSignatureProblems := false
 ThisBuild / mimaFailOnProblem := false
 ThisBuild / mimaPreviousArtifacts := Set.empty
-//ThisBuild / tlFatalWarnings := true
+ThisBuild / tlFatalWarnings := true
 
 ThisBuild / githubWorkflowAddedJobs ++= Seq(
   WorkflowJob(
@@ -99,7 +99,7 @@ lazy val sharedSettings = Seq(
         "-Wconf:cat=unused-nowarn:s",
         "-Ywarn-unused:-nowarn"
       )
-    } else Seq("-explain")
+    } else Seq.empty //Seq("-explain")
   },
   libraryDependencies ++= Seq(
     "org.typelevel" %% "cats-effect" % "3.5.1",
@@ -185,7 +185,6 @@ lazy val testCodeGen = project
   .dependsOn(serverHttp4s % "test->test")
   .settings(
     tlFatalWarnings := false,
-    tlFatalWarningsInCi := false,
     codeGenForTest := {
       Def.taskDyn {
         val sp = file("./modules/client-codegen-test/src/main/resources/schema.graphql").absolutePath.replace("\\", "\\\\")

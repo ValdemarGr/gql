@@ -172,7 +172,7 @@ object Query {
 
     def decoderForSelectionSet[A](ss: SelectionSet[A]): Decoder[A] = {
       val compiler = new (Selection ~> Decoder) {
-        override def apply[A](fa: Selection[A]): Decoder[A] = {
+        override def apply[B](fa: Selection[B]): Decoder[B] = {
           fa match {
             case f: Selection.Field[a] =>
               val name = f.alias.getOrElse(f.fieldName)

@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package gql.dsl
+package gql.dslutil
 
 import cats.implicits._
 import gql.ast._
@@ -25,7 +25,7 @@ trait UnionDsl[F[_]] {
   def union[A](name: String): UnionDsl.PartiallyAppliedUnion0[F, A] =
     UnionDsl.union[F, A](name)
 
-  implicit def unionDslUnionOps[F[_], A](u: Union[F, A]): UnionDsl.UnionOps[F, A] =
+  implicit def unionDslUnionOps[A](u: Union[F, A]): UnionDsl.UnionOps[F, A] =
     UnionDsl.unionDslFullUnionOps[F, A](u)
 }
 

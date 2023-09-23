@@ -13,15 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package gql
+package gql.dslutil
 
-import cats.data._
 import gql.ast._
+import cats.data._
 
-package object dsl extends GqlDslFull {
-  type Fields[F[_], -A] = NonEmptyList[(String, Field[F, A, ?])]
+trait EnumDslFull {
+  def enumVal[A](value: A): EnumValue[A] =
+    EnumValue(value)
 
-  type AbstractFields[F[_]] = NonEmptyList[(String, AbstractField[F, ?])]
-
-  type AnyFields[F[_], -A] = NonEmptyList[(String, AnyField[F, A, ?])]
+  def enumType[A](name: String, hd: (String, EnumValue[? <: A]), tl: (String, EnumValue[? <: A])*) =
+    Enum[A](name, NonEmptyList(hd, tl.toList))
 }
+
+object EnumDsl extends EnumDslFull

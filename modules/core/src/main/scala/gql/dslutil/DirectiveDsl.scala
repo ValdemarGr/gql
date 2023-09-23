@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package gql.dsl
+package gql.dslutil
 
 import cats.data._
 import gql.parser.{QueryAst => QA}
@@ -29,13 +29,13 @@ trait DirectiveDsl[F[_]] {
   def onField[A](directive: Directive[A], handler: Position.FieldHandler[F, A]): State[SchemaState[F], Position.Field[F, A]] =
     DirectiveDsl.onField(directive, handler)
 
-  def onFragmentSpread[F[_], A](
+  def onFragmentSpread[A](
       directive: Directive[A],
       handler: Position.QueryHandler[QA.FragmentSpread, A]
   ): State[SchemaState[F], Position.FragmentSpread[A]] =
     DirectiveDsl.onFragmentSpread(directive, handler)
 
-  def onInlineFragmentSpread[F[_], A](
+  def onInlineFragmentSpread[A](
       directive: Directive[A],
       handler: Position.QueryHandler[QA.InlineFragment, A]
   ): State[SchemaState[F], Position.InlineFragmentSpread[A]] =

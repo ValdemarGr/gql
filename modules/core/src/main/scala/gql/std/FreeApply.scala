@@ -29,7 +29,7 @@ sealed abstract class FreeApply[F[_], +A] extends Product with Serializable {
   // Very cool, we can do non-empty algebras with semigroup with the cool Const Semigroup => Apply[Cost] typeclass impl
   def analyze[M: Semigroup](fk: F ~> λ[α => M]): M =
     foldMap[Const[M, *], A](new (F ~> Const[M, *]) {
-      def apply[A](fa: F[A]): Const[M, A] = Const(fk(fa))
+      def apply[B](fa: F[B]): Const[M, B] = Const(fk(fa))
     }).getConst
 
   @nowarn

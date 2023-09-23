@@ -26,7 +26,7 @@ import gql.EmptyableArg
 import cats.arrow.FunctionK
 
 // For all query algebras this dsl can exist
-abstract class QueryDsl[A <: QueryAlgebra](val algebra: A) { self =>
+abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
   import algebra._
 
   type QueryResult[A] = algebra.QueryResult[A]

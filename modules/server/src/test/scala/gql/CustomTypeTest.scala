@@ -23,17 +23,17 @@ import cats._
 import cats.data._
 import cats.implicits._
 
-final case class TraversableStructure[A](value1: A, value2: A)
+final case class TraversableStructure[B](value1: B, value2: B)
 
 object TraversableStructure {
   implicit val traversableForTraversableStructure: Traverse[TraversableStructure] = new Traverse[TraversableStructure] {
-    override def foldLeft[A, B](fa: TraversableStructure[A], b: B)(f: (B, A) => B): B =
+    override def foldLeft[C, B](fa: TraversableStructure[C], b: B)(f: (B, C) => B): B =
       f(f(b, fa.value1), fa.value2)
 
-    override def foldRight[A, B](fa: TraversableStructure[A], lb: Eval[B])(f: (A, Eval[B]) => Eval[B]): Eval[B] =
+    override def foldRight[C, B](fa: TraversableStructure[C], lb: Eval[B])(f: (C, Eval[B]) => Eval[B]): Eval[B] =
       f(fa.value1, f(fa.value2, lb))
 
-    override def traverse[G[_]: Applicative, A, B](fa: TraversableStructure[A])(f: A => G[B]): G[TraversableStructure[B]] =
+    override def traverse[G[_]: Applicative, C, B](fa: TraversableStructure[C])(f: C => G[B]): G[TraversableStructure[B]] =
       (f(fa.value1), f(fa.value2)).mapN(TraversableStructure.apply)
   }
 }

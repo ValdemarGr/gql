@@ -363,11 +363,11 @@ trait QueryAlgebra {
             val keys = xs.flatMap(_.keySet).toSet
             val grouped = keys.toList.map(k => k -> xs.flatMap(_.get(k))).toMap
             new QueryResult[Q] {
-              def read[G[_], B](tfa: AnyQueryAttribute[G, B]): Option[Either[String, G[B]]] = {
+              def read[H[_], X](tfa: AnyQueryAttribute[H, X]): Option[Either[String, H[X]]] = {
                 val k: K = KImpl(tfa)
-                doneMap.get(k).flatMap { case (done: Done[G, a, ?] @unchecked) =>
+                doneMap.get(k).flatMap { case (done: Done[H, a, ?] @unchecked) =>
                   grouped.get(k).map { ys =>
-                    done.reassoc(ys.asInstanceOf[List[a]]).map(_.asInstanceOf[G[B]])
+                    done.reassoc(ys.asInstanceOf[List[a]]).map(_.asInstanceOf[H[X]])
                   }
                 }
               }
@@ -520,7 +520,7 @@ object QueryAlgebra {
         qsa: QueryState[Decoder, G, A],
         qsb: QueryState[Decoder, H, B]
     ): QueryState[Decoder, λ[X => G[H[X]]], B] = {
-      type N[A] = qsa.T[qsb.T[A]]
+      type N[C] = qsa.T[qsb.T[C]]
       type AK = qsa.Key
       type BK = qsb.Key
 
@@ -532,7 +532,7 @@ object QueryAlgebra {
           )
           .traverse
 
-        override def apply[A](fa: List[((AK, BK), A)]): Either[String, N[List[A]]] = {
+        override def apply[C](fa: List[((AK, BK), C)]): Either[String, N[List[C]]] = {
           val ys = fa.map { case ((ak, bk), a) => (ak, (bk, a)) }
           qsa.reassoc(ys).flatMap { gs =>
             qsa.reassoc.traverse.traverse(gs) { bs =>
@@ -543,7 +543,7 @@ object QueryAlgebra {
       }
 
       val fk = new (λ[X => qsa.T[qsb.T[X]]] ~> λ[X => G[H[X]]]) {
-        def apply[A](fa: qsa.T[qsb.T[A]]): G[H[A]] =
+        def apply[C](fa: qsa.T[qsb.T[C]]): G[H[C]] =
           qsa.fk(qsa.reassoc.traverse.map(fa)(t2 => qsb.fk(t2)))
       }
 
@@ -662,7 +662,7 @@ object Reassociateable extends ReassociateableLowPrio1 {
           instance.foldLeft(Nested(fa), b)(f)
         override def foldRight[A, B](fa: H[A], lb: Eval[B])(f: (A, Eval[B]) => Eval[B]): Eval[B] =
           instance.foldRight(Nested(fa), lb)(f)
-        override def traverse[G[_]: Applicative, A, B](fa: H[A])(f: A => G[B]): G[H[B]] =
+        override def traverse[K[_]: Applicative, A, B](fa: H[A])(f: A => K[B]): K[H[B]] =
           instance.traverse(Nested(fa))(f).map(_.value)
       }
     }

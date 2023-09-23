@@ -44,8 +44,7 @@ object PreparedStep {
       extends AnyRef
       with PreparedStep[F, Set[K], Map[K, V]]
   final case class InlineBatch[F[_], K, V](run: Set[K] => F[Map[K, V]], stableUniqueEdgeName: UniqueEdgeCursor)
-      extends AnyRef
-      with PreparedStep[F, Set[K], Map[K, V]]
+      extends PreparedStep[F, Set[K], Map[K, V]]
   final case class Choose[F[_], A, B, C, D](
       fac: PreparedStep[F, A, C],
       fbc: PreparedStep[F, B, D]
@@ -79,8 +78,8 @@ final case class PreparedDataField[+F[_], A, B](
 ) extends PreparedField[F, A] {
   lazy val outputName = alias.getOrElse(name)
 
-  def arg[A](a: Arg[A]): Option[A] =
-    parsedArgs.get(a).asInstanceOf[Option[A]]
+  def arg[C](a: Arg[C]): Option[C] =
+    parsedArgs.get(a).asInstanceOf[Option[C]]
 }
 
 sealed trait Specialization[F[_], A, B] {

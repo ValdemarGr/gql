@@ -13,13 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package gql.dsl
+package gql.dslutil
 
 import gql.resolver._
 import gql.ast._
 import gql._
 import cats.data._
 import cats._
+import Aliases._
 
 trait FieldDsl[F[_]] {
   def fields[A](hd: (String, Field[F, A, ?]), tl: (String, Field[F, A, ?])*): Fields[F, A] =

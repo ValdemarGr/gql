@@ -104,7 +104,7 @@ object GraphqlParser {
     s("null")
 
   lazy val enumValue: P[String] =
-    (!(booleanValue | nullValue)).with1 *> name
+    (!(booleanValue.void | nullValue)).with1 *> name
 
   def listValue[A <: AnyValue](vp: P[Value[A, Caret]]): P[List[Value[A, Caret]]] =
     vp.rep0.with1.between(t('['), t(']'))
@@ -141,7 +141,7 @@ object GraphqlParser {
   }.map(_.mkString_(""))
 
   lazy val stringCharacter: P[String] =
-    ((!(P.charIn('"', '\\') | lineTerminator)).with1 *> sourceCharacter.map(_.toString())) |
+    ((!(P.charIn('"', '\\').void | lineTerminator)).with1 *> sourceCharacter.map(_.toString())) |
       (P.string("\\u").as("\\u") ~ escapedUnicode).map { case (x, y) =>
         x + y
       } |

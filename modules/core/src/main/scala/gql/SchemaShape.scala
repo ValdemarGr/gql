@@ -23,6 +23,8 @@ import gql.ast._
 import org.typelevel.paiges.Doc
 import gql.parser.{Value => V, AnyValue}
 import gql.util.SchemaUtil
+import gql.dsl._
+import gql.dsl.value
 
 /** The underlying graph that compiles into a GraphQL schema. Provides a plethora of methods to derive information, perform validation,
   * render, introspect and generate stub implementations.
@@ -164,7 +166,7 @@ object SchemaShape {
   def visit[F[_], G[_]: Monad: Parallel, A](
       root: SchemaShape[F, ?, ?, ?]
   )(pf: PartialFunction[VisitNode[F], G[A] => G[A]])(implicit D0: Defer[G], M: Monoid[A]): G[A] = {
-    type H[A] = Kleisli[G, Set[String], A]
+    type H[B] = Kleisli[G, Set[String], B]
     val H = Monad[H]
     val L = Local[H, Set[String]]
     val D = Defer[H]
@@ -238,7 +240,7 @@ object SchemaShape {
   def visitOnce[F[_], G[_]: Monad: Defer, A](
       root: SchemaShape[F, ?, ?, ?]
   )(pf: PartialFunction[VisitNode[F], G[A]])(implicit A: Monoid[A]): G[A] = {
-    type H[A] = StateT[G, Set[String], A]
+    type H[B] = StateT[G, Set[String], B]
     val S = Stateful[H, Set[String]]
     val H = Monad[H]
     implicit lazy val parForState: Parallel[H] = Parallel.identity[H]
@@ -456,7 +458,7 @@ object SchemaShape {
   }
 
   def introspect[F[_]](ss: SchemaShape[F, ?, ?, ?]): NonEmptyList[(String, Field[F, Unit, ?])] = {
-    import dsl._
+    
 
     // We do a little lazy evaluation trick to include the introspection schema in itself
     lazy val d = {

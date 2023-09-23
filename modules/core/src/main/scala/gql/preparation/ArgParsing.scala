@@ -212,8 +212,8 @@ object ArgParsing {
         else raise(s"Too many fields provided, unknown fields are ${tooMuch.toList.map(x => s"'$x'").mkString_(", ")}.", context)
 
       val fv = arg.impl.foldMap[F, ValidatedNec[String, A]](new (Arg.Impl ~> F) {
-        def apply[A](fa: Arg.Impl[A]): F[A] = fa match {
-          case fa: ArgDecoder[a, A] =>
+        def apply[B](fa: Arg.Impl[B]): F[B] = fa match {
+          case fa: ArgDecoder[a, B] =>
             ambientField(fa.av.name) {
               def compileWith(x: V[AnyValue, List[C]], default: Boolean) =
                 decodeIn[a](fa.av.input.value, x, ambigiousEnum)
