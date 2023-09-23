@@ -203,7 +203,7 @@ object ArgParsing {
     }
 
     override def decodeArg[A](arg: Arg[A], values: Map[String, V[AnyValue, List[C]]], ambigiousEnum: Boolean, context: List[C]): F[A] = {
-      val expected = arg.impl.enumerate.toList.map(_.av.name).toSet
+      val expected = arg.entries.toList.map(_.name).toSet
       val provided = values.keySet
 
       val tooMuch = provided -- expected

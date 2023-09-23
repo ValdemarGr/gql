@@ -138,10 +138,12 @@ object Query {
   def queryDecoder[A](ss: SelectionSet[A]): Decoder[A] =
     Decoder.instance(_.get[A]("data")(Dec.decoderForSelectionSet(ss)))
 
-  def findFragments(ss: SelectionSet[?]): List[Fragment[?]] =
-    ss.impl.enumerate.toList.flatMap {
-      case f: Fragment[?] => f :: findFragments(f.subSelection)
-      case f: Field[?] =>
+  def findFragments(ss: SelectionSet[?]): List[Fragment[?]] = {
+    val xs = ss.impl.enumerate.toList
+    xs.flatMap { case sel: Selection[a] => 
+      sel match {
+      case f: Fragment[a] => f :: findFragments(f.subSelection)
+      case f: Field[a] =>
         def unpackSubQuery(q: SubQuery[?]): List[Fragment[?]] =
           q match {
             case Terminal(_)              => Nil
@@ -152,7 +154,8 @@ object Query {
 
         unpackSubQuery(f.subQuery)
       case f: InlineFragment[?] => findFragments(f.subSelection)
-    }
+    }}
+  }
 
   object Dec {
     def decoderForSubQuery[A](sq: SubQuery[A]): Decoder[A] = sq match {

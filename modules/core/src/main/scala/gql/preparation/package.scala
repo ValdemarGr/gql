@@ -16,7 +16,6 @@
 package gql
 
 import cats.data._
-import gql.Arg
 import gql.parser.AnyValue
 import gql.parser.{Value => V}
 import gql.resolver._

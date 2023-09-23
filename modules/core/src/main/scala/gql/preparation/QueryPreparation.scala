@@ -87,11 +87,6 @@ object QueryPreparation {
   ) = {
     import EA._
 
-    final case class FoundImplementation[A, B](
-        tpe: Type[G, B],
-        specify: A => Option[B]
-    )
-
     def findImplementations2[A](
         s: Selectable[G, A]
     ): List[Specialization[G, A, ?]] = s match {
