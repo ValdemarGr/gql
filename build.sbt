@@ -37,11 +37,11 @@ ThisBuild / githubWorkflowAddedJobs ++= Seq(
     id = "compile-docs",
     name = "Verify that the docs compile",
     scalas = List(scala213Version),
-    steps = dbStep :: WorkflowStep.Use(
+    steps = WorkflowStep.Use(
       UseRef.Public("actions", "checkout", "v3"),
       name = Some("Checkout current branch (fast)"),
       params = Map("fetch-depth" -> "0")
-    ) ::
+    ) :: dbStep ::
       WorkflowStep.SetupJava(githubWorkflowJavaVersions.value.toList) ++
       githubWorkflowGeneratedCacheSteps.value ++
       List(
