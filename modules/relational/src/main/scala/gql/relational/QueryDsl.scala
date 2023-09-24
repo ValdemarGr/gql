@@ -16,7 +16,7 @@
 package gql.relational
 
 import gql.ast._
-import gql.dsl._
+import gql.dsl.all._
 import cats.implicits._
 import cats._
 import gql.resolver.Resolver
@@ -261,7 +261,7 @@ abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
 
   final class RelationalFieldBuilder[F[_], A](@unused private val dummy: Boolean = false) {
     def tpe(name: String, hd: (String, Field[F, QueryResult[A], ?]), tl: (String, Field[F, QueryResult[A], ?])*): Type[F, QueryResult[A]] =
-      gql.dsl.tpe[F, QueryResult[A]](name, hd, tl: _*)
+      gql.dsl.all.tpe[F, QueryResult[A]](name, hd, tl: _*)
 
     def union(name: String) = new PartiallyAppliedRelationalUnion0[F, A](name)
 

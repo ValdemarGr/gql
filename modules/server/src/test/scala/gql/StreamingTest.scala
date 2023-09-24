@@ -22,7 +22,7 @@ import fs2.{Stream, Pull}
 import munit.CatsEffectSuite
 import gql._
 import gql.ast._
-import gql.dsl._
+import gql.dsl.all._
 import cats.effect._
 import scala.concurrent.duration._
 

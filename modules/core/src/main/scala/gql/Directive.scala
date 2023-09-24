@@ -29,7 +29,7 @@ final case class Directive[A](
 /** Consider taking a look at the skip and include directives as an example.
   */
 object Directive {
-  val skipDirective = Directive("skip", EmptyableArg.Lift(gql.dsl.arg[Boolean]("if")))
+  val skipDirective = Directive("skip", EmptyableArg.Lift(gql.dsl.input.arg[Boolean]("if")))
 
   def skipPositions[F[_]]: List[Position[F, ?]] = {
     val field = Position.Field(
@@ -61,7 +61,7 @@ object Directive {
     List(field, fragmentSpread, inlineFragmentSpread)
   }
 
-  val includeDirective = Directive("include", EmptyableArg.Lift(gql.dsl.arg[Boolean]("if")))
+  val includeDirective = Directive("include", EmptyableArg.Lift(gql.dsl.input.arg[Boolean]("if")))
 
   def includePositions[F[_]]: List[Position[F, ?]] = {
     val field = Position.Field(

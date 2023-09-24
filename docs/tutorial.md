@@ -68,7 +68,7 @@ Before doing working with gql, let us import everything into scope.
 To construct the schema, we need some imports.
 ```scala mdoc
 import gql._
-import gql.dsl._
+import gql.dsl.all._
 import gql.ast._
 import cats.effect._
 import cats.implicits._

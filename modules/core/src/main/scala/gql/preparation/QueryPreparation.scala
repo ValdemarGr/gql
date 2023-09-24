@@ -353,7 +353,7 @@ object QueryPreparation {
             fields.toNonEmptyList
               .parTraverse { f =>
                 if (f.name === "__typename")
-                  F.pure(PairedFieldSelection[G, b, C](f, gql.dsl.lift[b](_ => t.name)))
+                  F.pure(PairedFieldSelection[G, b, C](f, gql.dsl.field.lift[b](_ => t.name)))
                 else {
                   t.fieldMap.get(f.name) match {
                     case None =>

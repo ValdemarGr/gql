@@ -13,12 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package gql.dslutil
+package gql.dsl
 
 import gql.ast._
 import cats.data._
 import cats._
-import Aliases._
+import gql.dsl.aliases._
 
 trait InterfaceDsl[F[_]] {
   def interfaceNel[A](

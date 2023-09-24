@@ -10,7 +10,7 @@ We can emulate context by using a `ReaderT`/`Kleisli` monad transformer from `ca
 Writing `ReaderT`/`Kleisli` everywhere is tedious, instead consider opting for `cats.mtl.Ask`:
 ```scala mdoc
 import gql._
-import gql.dsl._
+import gql.dsl.all._
 import gql.ast._
 import cats.mtl.Ask
 import cats._

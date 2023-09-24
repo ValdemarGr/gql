@@ -24,7 +24,7 @@ import cats.data._
 import cats._
 import gql.SchemaShape
 import gql.resolver.Resolver
-import gql.dsl._
+import gql.dsl.all._
 import cats.mtl._
 
 trait Node {

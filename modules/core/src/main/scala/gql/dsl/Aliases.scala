@@ -13,6 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package gql
+package gql.dsl
 
-object dsl extends gql.dslutil.GqlDslFull
+import cats.data._
+import gql.ast._
+
+trait Aliases {
+  type Fields[F[_], -A] = NonEmptyList[(String, Field[F, A, ?])]
+
+  type AbstractFields[F[_]] = NonEmptyList[(String, AbstractField[F, ?])]
+
+  type AnyFields[F[_], -A] = NonEmptyList[(String, AnyField[F, A, ?])]
+}

@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package gql.dslutil
+package gql.dsl
 
 import cats.data._
 import gql.parser.{QueryAst => QA}

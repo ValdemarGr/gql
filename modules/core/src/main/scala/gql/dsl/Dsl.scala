@@ -13,17 +13,28 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package gql.dslutil
+package gql.dsl
 
-import cats.data._
-import gql.ast._
+trait GqlDslFull
+    extends DirectiveDslFull
+    with EnumDslFull
+    with FieldDslFull
+    with InputDslFull
+    with InterfaceDslFull
+    with TypeDslFull
+    with UnionDslFull
+    with Aliases
 
-trait Aliases {
-  type Fields[F[_], -A] = NonEmptyList[(String, Field[F, A, ?])]
+trait GqlDsl[F[_]]
+    extends DirectiveDsl[F]
+    with EnumDslFull
+    with FieldDsl[F]
+    with InputDslFull
+    with InterfaceDsl[F]
+    with TypeDsl[F]
+    with UnionDsl[F]
+    with Aliases
 
-  type AbstractFields[F[_]] = NonEmptyList[(String, AbstractField[F, ?])]
-
-  type AnyFields[F[_], -A] = NonEmptyList[(String, AnyField[F, A, ?])]
+object GqlDsl extends GqlDslFull {
+  def apply[F[_]]: GqlDsl[F] = new GqlDsl[F] {}
 }
-
-object Aliases extends Aliases

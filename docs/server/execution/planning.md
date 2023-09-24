@@ -85,7 +85,7 @@ Every field that is traversed in a query is expanded to all the resolvers it con
 As an example, consider the following instance:
 ```scala mdoc:silent
 import gql._
-import gql.dsl._
+import gql.dsl.all._
 import gql.ast._
 import gql.server.planner._
 import gql.resolver._

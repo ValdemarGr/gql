@@ -9,7 +9,7 @@ Lets start off with some imports.
 import cats.data._
 import cats.effect._
 import cats.implicits._
-import gql.dsl._
+import gql.dsl.all._
 import gql.ast._
 import gql.resolver._
 ```
@@ -45,6 +45,7 @@ Complex structures may require many special resolver compositions.
 The dsl also introduces a somethink akin to a builder pattern.
 The `build` function from the previous section, in fact, creates a builder that has many more options than just `from` and `apply`.
 ```scala mdoc:silent
+import gql.dsl.FieldBuilder
 val b: FieldBuilder[IO, Int] = build[IO, Int]
 ```
 Often a builder is only relevant within a scope, thus one can end up having many unused builders in scope.
@@ -185,7 +186,7 @@ trait Pet {
 
 case class Dog(name: String, age: Int, weight: Double) extends Pet
 
-implicit lazy val pet = interface[IO, Pet](
+implicit lazy val pet: Interface[IO, Pet] = interface[IO, Pet](
   "Pet",
   "name" -> lift(_.name),
   "age" -> lift(_.age),
@@ -194,7 +195,7 @@ implicit lazy val pet = interface[IO, Pet](
 
 lazy val overwirttenName = lift[Dog](_.name)
 
-implicit lazy val dog = tpe[IO, Dog](
+implicit lazy val dog: Type[IO, Dog] = tpe[IO, Dog](
   "Dog",
   "bark" -> lift(_ => "woof!"),
   "name" -> overwirttenName
@@ -208,7 +209,7 @@ dog.fields.exists{ case (_, v) => v == overwirttenName }
 
 To showcase the inheritance a bit further, consider the following invalid schema.
 ```scala mdoc:nest
-implicit lazy val pet = interface[IO, Pet](
+implicit lazy val pet: Interface[IO, Pet] = interface[IO, Pet](
   "Pet",
   "name" -> lift(_.name),
   "age" -> lift(_.age),
@@ -216,7 +217,7 @@ implicit lazy val pet = interface[IO, Pet](
   "weight" -> abst[IO, Double]
 )
 
-implicit lazy val dog = tpe[IO, Dog](
+implicit lazy val dog: Type[IO, Dog] = tpe[IO, Dog](
   "Dog",
   "bark" -> lift(_ => "woof!")
 ).subtypeImpl[Pet]
@@ -244,7 +245,7 @@ final case class Entity(
 )
 
 object Entity {
-  implicit lazy val gqlType = tpe[fs2.Pure, Entity](
+  implicit lazy val gqlType: Type[fs2.Pure, Entity] = tpe[fs2.Pure, Entity](
     "Entity",
     "name" -> lift(_.name),
     "age" -> lift(_.age)

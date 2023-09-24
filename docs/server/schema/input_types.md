@@ -17,14 +17,14 @@ The arg type has a couple of uses.
 The first and simplest way of using args is for, well, arguments.
 The dsl has a smart constructor for arguments that summons the `In[A]` type from the implicit scope, for the argument.
 ```scala mdoc:silent
-import gql.dsl._
+import gql.dsl.all._
 import gql.ast._
 
 arg[Int]("superCoolArg")
 ```
 Args can also have default values that can be constructed with the smart constructors from the value dsl `gql.dsl.value`.
 ```scala mdoc:silent
-import gql.dsl.value._
+import gql.dsl.all.value._
 
 arg[Int]("superCoolArg", scalar(42))
 ```
@@ -95,7 +95,7 @@ final case class SomeInput(
   d: Option[Int]
 )
 
-implicit lazy val someInput = input[SomeInput](
+implicit lazy val someInput: Input[SomeInput] = input[SomeInput](
   "SomeInput",
   (
     arg[Int]("a", scalar(42)),

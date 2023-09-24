@@ -13,28 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package gql.dslutil
+package gql
 
-trait GqlDslFull
-    extends DirectiveDslFull
-    with EnumDslFull
-    with FieldDslFull
-    with InputDslFull
-    with InterfaceDslFull
-    with TypeDslFull
-    with UnionDslFull
-    with Aliases
-
-trait GqlDsl[F[_]]
-    extends DirectiveDsl[F]
-    with EnumDslFull
-    with FieldDsl[F]
-    with InputDslFull
-    with InterfaceDsl[F]
-    with TypeDsl[F]
-    with UnionDsl[F]
-    with Aliases
-
-object GqlDsl extends GqlDslFull {
-  def apply[F[_]]: GqlDsl[F] = new GqlDsl[F] {}
+package object dsl {
+  object all extends GqlDslFull
+  object aliases extends Aliases
+  object directive extends DirectiveDslFull
+  object enumType extends EnumDslFull
+  object field extends FieldDslFull
+  object input extends InputDslFull
+  object interface extends InterfaceDslFull
+  object tpe extends TypeDslFull
+  object union extends UnionDslFull
 }

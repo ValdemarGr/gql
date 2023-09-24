@@ -13,7 +13,7 @@ When gql executes a query it first constructs a tree of continueations from your
 Lets start off with some imports:
 ```scala mdoc
 import gql._
-import gql.dsl._
+import gql.dsl.all._
 import gql.resolver._
 import gql.ast._
 import cats.effect._

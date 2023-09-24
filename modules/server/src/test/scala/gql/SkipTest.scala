@@ -20,7 +20,7 @@ import gql.ast._
 import cats.effect.IO
 import io.circe._
 import io.circe.syntax._
-import gql.dsl._
+import gql.dsl.all._
 
 class SkipTest extends CatsEffectSuite {
   val effectState = IO.ref(Option.empty[Int]).unsafeRunSync()

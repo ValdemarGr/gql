@@ -13,14 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package gql.dslutil
+package gql.dsl
 
 import gql.ast._
 import cats.data._
 import cats._
 import cats.implicits._
 import scala.reflect.ClassTag
-import Aliases._
+import gql.dsl.aliases._
 
 trait TypeDsl[F[_]] {
   def tpe[A](name: String, hd: (String, Field[F, A, ?]), tl: (String, Field[F, A, ?])*) =

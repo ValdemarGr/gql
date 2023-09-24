@@ -9,7 +9,7 @@ Integrations that use schema extensions are the [goi](../integrations/goi) and [
 Lets get some imports ready before we start.
 ```scala mdoc
 import gql._
-import gql.dsl._
+import gql.dsl.all._
 import gql.ast._
 import gql.resolver._
 import cats.effect._
@@ -52,7 +52,7 @@ def authed[A, B](perms: String*)(field: Field[IO, A, B]): Field[IO, A, B] = {
 We can now use our authorization function.
 ```scala mdoc
 case class Person(name: String, age: Int)
-implicit lazy val person = tpe[IO, Person](
+implicit lazy val person: Type[IO, Person] = tpe[IO, Person](
   "Person",
   "name" -> authed("read:name") {
     lift(_.name)

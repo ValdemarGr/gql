@@ -23,7 +23,7 @@ import skunk._
 import skunk.codec.all._
 import skunk.implicits._
 import gql.ast._
-import gql.dsl._
+import gql.dsl.all._
 import gql.relational._
 import gql.relational.skunk.dsl._
 import cats._

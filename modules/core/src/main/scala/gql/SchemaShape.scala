@@ -23,8 +23,8 @@ import gql.ast._
 import org.typelevel.paiges.Doc
 import gql.parser.{Value => V, AnyValue}
 import gql.util.SchemaUtil
-import gql.dsl._
-import gql.dsl.value
+import gql.dsl.all._
+import gql.dsl.all.value
 
 /** The underlying graph that compiles into a GraphQL schema. Provides a plethora of methods to derive information, perform validation,
   * render, introspect and generate stub implementations.
@@ -77,9 +77,9 @@ object SchemaShape {
         inputTypes: List[InToplevel[?]] = Nil
     ): SchemaShape[F, Q, M, S] =
       SchemaShape(
-        gql.dsl.tpe("Query", query.head, query.tail: _*),
-        mutation.map(x => gql.dsl.tpe("Mutation", x.head, x.tail: _*)),
-        subscription.map(x => gql.dsl.tpe("Subscription", x.head, x.tail: _*)),
+        tpe("Query", query.head, query.tail: _*),
+        mutation.map(x => tpe("Mutation", x.head, x.tail: _*)),
+        subscription.map(x => tpe("Subscription", x.head, x.tail: _*)),
         outputTypes,
         inputTypes
       )

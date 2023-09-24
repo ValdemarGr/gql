@@ -19,7 +19,7 @@ import cats.implicits._
 import munit.CatsEffectSuite
 import gql._
 import gql.ast._
-import gql.dsl._
+import gql.dsl.all._
 import cats.effect._
 
 class PerformanceTest extends CatsEffectSuite {

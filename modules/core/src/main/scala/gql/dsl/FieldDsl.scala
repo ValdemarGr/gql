@@ -13,14 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package gql.dslutil
+package gql.dsl
 
 import gql.resolver._
 import gql.ast._
 import gql._
 import cats.data._
 import cats._
-import Aliases._
+import gql.dsl.aliases._
 
 trait FieldDsl[F[_]] {
   def fields[A](hd: (String, Field[F, A, ?]), tl: (String, Field[F, A, ?])*): Fields[F, A] =
@@ -110,8 +110,6 @@ trait FieldDslFull {
 }
 
 object FieldDsl extends FieldDslFull {
-  def apply[F[_]] = new FieldDsl[F] {}
-
   final class PartiallyAppliedEff[I](private val dummy: Boolean = false) extends AnyVal {
     def apply[F[_], T, A](arg: Arg[A])(resolver: (A, I) => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
       Field(Resolver.liftF[F, (A, I)] { case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
