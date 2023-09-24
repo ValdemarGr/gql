@@ -25,19 +25,19 @@ ThisBuild / mimaFailOnProblem := false
 ThisBuild / mimaPreviousArtifacts := Set.empty
 //ThisBuild / tlFatalWarnings := false
 
-ThisBuild / githubWorkflowJobSetup ++= Seq(
-  WorkflowStep.Run(
-    commands = List("docker-compose up -d"),
-    name = Some("Start services")
-  )
+val dbStep = WorkflowStep.Run(
+  commands = List("docker-compose up -d"),
+  name = Some("Start services")
 )
+
+ThisBuild / githubWorkflowJobSetup += dbStep
 
 ThisBuild / githubWorkflowAddedJobs ++= Seq(
   WorkflowJob(
     id = "compile-docs",
     name = "Verify that the docs compile",
     scalas = List(scala213Version),
-    steps = WorkflowStep.Use(
+    steps = dbStep :: WorkflowStep.Use(
       UseRef.Public("actions", "checkout", "v3"),
       name = Some("Checkout current branch (fast)"),
       params = Map("fetch-depth" -> "0")
