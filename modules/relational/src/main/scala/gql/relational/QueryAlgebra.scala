@@ -136,7 +136,7 @@ trait QueryAlgebra {
     def mapK[H[_]](fk: G ~> H): Query[H, A] =
       Query.LiftEffect(compile[A].map(_.mapK(fk)))
 
-    def widen[B >: A]: Query[G, B] = this.map(a => a)
+    def widen[B >: A]: Query[G, B] = map(a => a)
 
     def compile[B >: A]: Effect[QueryState[G, B]] = collapseQuery(this)
   }
@@ -170,23 +170,17 @@ trait QueryAlgebra {
       liftEffect(fa.map(QueryAlgebra.QueryState.pure[Decoder, A](_)))
   }
 
-  type Discard[A] = Any
-
   trait Table {
     def alias: String
 
     def table: Frag
 
-    def tableKeys: (Chain[Frag], Decoder[Unit])
+    def tableKey: Query.Select[?]
 
     def aliasedFrag(x: Frag): Frag =
       stringToFrag(alias) |+| stringToFrag(".") |+| x
 
-    def keys[A](cols: (Frag, Decoder[A])*) =
-      Chain.fromSeq(cols.map { case (f, _) => aliasedFrag(f) }) ->
-        cols.traverse { case (_, d) => d.widen[Any] }.void
-
-    def select[A](name: Frag, dec: Decoder[A]): Query.Select[A] =
+    def aliasedSelect[A](name: Frag, dec: Decoder[A]): Query.Select[A] =
       Query.Select(Chain(aliasedFrag(name)), dec)
   }
 

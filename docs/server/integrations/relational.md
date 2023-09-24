@@ -54,14 +54,13 @@ case class HomeTable(
   // We can declare how this table is referenced in sql (or some other query language)
   def table = void"home"
 
-  // Set of columns that uniquely identify a row
-  // The dsl will add the table alias to all column related methods
-  def tableKeys = keys(void"id" -> int4)
-
   // The SkunkTable trait gives some convinience methods for declaring columns
   val (idCol, id) = sel("id", int4)
   val (nameCol, name) = sel("name", text)
   val (addressCol, address) = sel("address", text)
+
+  // The projection that uniquely identifies a row in the table
+  def tableKey = id
 }
 // We get some methods if show how given an alias we can get a table
 val homeTable = skunkTable(HomeTable)
@@ -72,22 +71,23 @@ We will also need to declare the other two tables, this time with less comments.
 case class PersonTable(alias: String) extends SkunkTable {
   def table = void"person"
 
-  def tableKeys = keys(void"id" -> int4)
-
   val (idCol, id) = sel("id", int4)
   val (nameCol, name) = sel("name", text)
   val (ageCol, age) = sel("age", int4)
+
+  def tableKey = id
 }
 val personTable = skunkTable(PersonTable)
 
 case class PetTable(alias: String) extends SkunkTable {
   def table = void"pet"
 
-  def tableKeys = keys(void"id" -> int4)
-
+  val (idCol, id) = sel("id", int4)
   val (nameCol, name) = sel("name", text)
   val (ageCol, age) = sel("age", int4)
   val (ownerCol, owner) = sel("owner", int4)
+
+  def tableKey = id
 }
 val petTable = skunkTable(PetTable)
 ```
@@ -97,52 +97,52 @@ Since `Home` and `Person` have a many to many relationship, we will have to go t
 case class HomePersonTable(alias: String) extends SkunkTable {
   def table = void"home_person"
 
-  def tableKeys = keys(
-    void"home_id" -> int4,
-    void"person_id" -> int4
-  )
-
   val (homeCol, home) = sel("home_id", int4)
   val (personCol, person) = sel("person_id", int4)
+
+  def tableKey = (home, person).tupled
 }
 val homePersonTable = skunkTable(HomePersonTable)
 ```
 
 Now we can start declaring our graphql schema.
 ```scala mdoc:silent
-implicit lazy val pet = tpe[IO, QueryResult[PetTable]](
-  "PetTable",
-  "name" -> query(_.name), // query is a method that compiles to a projection in the query language (sql)
-  "age" -> query(_.age)
-)
+implicit lazy val pet: Type[IO, QueryResult[PetTable]] = 
+  tpe[IO, QueryResult[PetTable]](
+    "PetTable",
+    "name" -> query(_.name), // query is a method that compiles to a projection in the query language (sql)
+    "age" -> query(_.age)
+  )
 
-implicit lazy val person = tpe[IO, QueryResult[PersonTable]](
-  "PersonTable",
-  "name" -> query(_.name),
-  "age" -> query(_.age),
-  "pets" -> cont{ person => // cont is a continuation that will create a new table from the current one
-    // The join method takes a type parameter that declares the multiplicity of the join
-    // If no type parameter is given, the join is assumed to be one to one
-    petTable.join[List]{ pet =>
-      // Given an instance of the pet table, we can declare a join predicate
-      sql"${pet.ownerCol} = ${person.idCol}"
+implicit lazy val person: Type[IO, QueryResult[PersonTable]] = 
+  tpe[IO, QueryResult[PersonTable]](
+    "PersonTable",
+    "name" -> query(_.name),
+    "age" -> query(_.age),
+    "pets" -> cont{ person => // cont is a continuation that will create a new table from the current one
+      // The join method takes a type parameter that declares the multiplicity of the join
+      // If no type parameter is given, the join is assumed to be one to one
+      petTable.join[List]{ pet =>
+        // Given an instance of the pet table, we can declare a join predicate
+        sql"${pet.ownerCol} = ${person.idCol}"
+      }
     }
-  }
-)
+  )
 
-implicit lazy val home = tpe[IO, QueryResult[HomeTable]](
-  "HomeTable",
-  "name" -> query(_.name),
-  "address" -> query(_.address),
-  "caption" -> query(h => (h.name, h.address).mapN(_ + " at " + _)), // projections form an applicative
-  "people" -> cont{ home =>
-    // Tables can be flatmapped together
-    for {
-      hp <- homePersonTable.join[List](hp => sql"${home.idCol} = ${hp.homeCol}")
-      p <- personTable.join(p => sql"${hp.personCol} = ${p.idCol}")
-    } yield p
-  }
-)
+implicit lazy val home: Type[IO, QueryResult[HomeTable]] = 
+  tpe[IO, QueryResult[HomeTable]](
+    "HomeTable",
+    "name" -> query(_.name),
+    "address" -> query(_.address),
+    "caption" -> query(h => (h.name, h.address).mapN(_ + " at " + _)), // projections form an applicative
+    "people" -> cont{ home =>
+      // Tables can be flatmapped together
+      for {
+        hp <- homePersonTable.join[List](hp => sql"${home.idCol} = ${hp.homeCol}")
+        p <- personTable.join(p => sql"${hp.personCol} = ${p.idCol}")
+      } yield p
+    }
+  )
 ```
 Now we are done declaring our schema.
 
@@ -150,7 +150,7 @@ Before querying it we will need our database up and running.
 ```scala mdoc:silent
 import cats.effect.unsafe.implicits.global
 import natchez.noop._ // needed for skunk connection
-implicit val trace = NoopTrace[IO]()
+implicit val trace: natchez.Trace[IO] = NoopTrace[IO]()
 
 def connection = Session.single[IO](
   host = "127.0.0.1",
@@ -278,11 +278,11 @@ The join between `home` and `person` can be a bit daunting, since you have to ke
 Instead we can use the database to handle some of the multiplicity for us by generalizing the person table.
 ```scala mdoc:silent
 case class SharedPersonTable(alias: String, table: AppliedFragment) extends SkunkTable {
-  def tableKeys = keys(void"id" -> int4)
-
   val (idCol, id) = sel("id", int4)
   val (nameCol, name) = sel("name", text)
   val (ageCol, age) = sel("age", int4)
+
+  def tableKey = id
 }
 
 val sharedPersonTable = skunkTable(SharedPersonTable(_, void"person"))
@@ -317,13 +317,13 @@ Consider the following example that joins a table more explicitly.
 ```scala mdoc
 val q1 = for {
   ht <- homeTable.simpleJoin(_ => void"true")
-  _ <- reassociate[List](ht.tableKeys._2, ht.tableKeys._1.toList: _*)
+  _ <- reassociate[List](ht.tableKey)
   // some other reassociation criteria
-  _ <- reassociate[Option](int4, void"42")
+  _ <- reassociate[Option](select(int4, void"42"))
 } yield ht
 
 // we can even perform them before the join
-val q2 = reassociate[Option](text, void"'john doe'").flatMap(_ => q1)
+val q2 = reassociate[Option](select(text, void"'john doe'")).flatMap(_ => q1)
 
 // we can also change the result structure after reassociation
 q2.mapK[List](new (λ[X => Option[List[Option[X]]]] ~> List) {
@@ -445,8 +445,8 @@ case class Cat(owner: String, name: String, age: Int) extends Animal
 
 trait OwnerTable extends SkunkTable {
   def table = void"owner"
-  def tableKeys = keys(void"id" -> int4)
   val (idCol, id) = sel("id", int4)
+  def tableKey = id
 }
 case class OwnerTableUnion(alias: String) extends OwnerTable
 case class OwnerTableInterface(alias: String) extends OwnerTable
@@ -455,21 +455,25 @@ val ownerTableInterface = skunkTable(OwnerTableInterface)
 
 case class DogTable(alias: String) extends SkunkTable {
   def table = void"dog"
-  def tableKeys = keys(void"id" -> int4)
-  
+
+  val (idCol, id) = sel("id", int4)
   val (ownerCol, owner) = sel("owner_id", int4)
   val (nameCol, name) = sel("name", text)
   val (ageCol, age) = sel("age", int4)
+
+  def tableKey = id
 }
 val dogTable = skunkTable(DogTable)
 
 case class CatTable(alias: String) extends SkunkTable {
   def table = void"cat"
-  def tableKeys = keys(void"id" -> int4)
-  
+
+  val (idCol, id) = sel("id", int4)
   val (ownerCol, owner) = sel("owner_id", int4)
   val (nameCol, name) = sel("name", text)
   val (ageCol, age) = sel("age", int4)
+
+  def tableKey = id
 }
 val catTable = skunkTable(CatTable)
 
@@ -559,11 +563,11 @@ Sometimes your tables must have complex filtering, limiting, ordering and so on.
 The most obvious way to declare such parameters is simply to use a subquery.
 ```scala mdoc:silent
 case class ParameterizedPersonTable(alias: String, table: AppliedFragment) extends SkunkTable {
-  def tableKeys = keys(void"id" -> int4)
-
   val (idCol, id) = sel("id", int4)
   val (nameCol, name) = sel("name", text)
   val (ageCol, age) = sel("age", int4)
+  
+  def tableKey = id
 }
 def parameterizedPersonTable(
   limitOffset: Option[(Int, Int)],
@@ -618,10 +622,12 @@ tpe[IO, QueryResult[HomeTable]](
 There is no restriction on how you can implement a table, so you can choose your own strategy.
 For instance say we just wanted to declare everything up-front and select fields ad-hoc.
 ```scala mdoc:silent
+import gql.relational.skunk.SkunkIntegration.Query.Select
+
 case class AdHocTable(
   alias: String, 
   table: AppliedFragment,
-  tableKeys: (Chain[AppliedFragment], Decoder[?]),
+  tableKey: Select[?],
 ) extends SkunkTable
 
 tpe[IO, QueryResult[HomeTable]](
@@ -629,7 +635,15 @@ tpe[IO, QueryResult[HomeTable]](
   "people" -> cont(arg[List[Int]]("ids")) { (home, ids) =>
     for {
       hp <- skunkTable(alias => 
-          AdHocTable(alias, void"home_person", Chain(sql"#${alias}.home_id", sql"#${alias}.person_id").map(_.apply(Void)) -> int4 ~ int4)
+          AdHocTable(
+            alias, 
+            sql"#${alias}.home_person".apply(Void), 
+            select(
+              int4 ~ int4,
+              sql"#${alias}.home_id".apply(Void), 
+              sql"#${alias}.person_id".apply(Void)
+            )
+          )
         ).join[List](hp => sql"${home.idCol} = ${hp.aliased(sql"home_id")}")
       p <- personTable.join(p => sql"${hp.aliased(sql".person_id")} = ${p.idCol} and ${p.idCol} in (${int4.list(ids)})".apply(ids))
     } yield p

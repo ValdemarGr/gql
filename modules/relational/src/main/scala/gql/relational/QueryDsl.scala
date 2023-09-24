@@ -32,6 +32,9 @@ abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
 
   type QueryResult[A] = algebra.QueryResult[A]
 
+  def select[A](decoder: algebra.Decoder[A], colHd: Frag, colTl: Frag*): Query.Select[A] =
+    Query.Select(Chain(colHd) ++ Chain.fromSeq(colTl), decoder)
+
   def query[F[_], G[_], A, B](f: A => Query[G, Query.Select[B]])(implicit
       tpe: => Out[F, G[B]]
   ): Field[F, QueryResult[A], G[B]] =
@@ -103,14 +106,14 @@ abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
       }
     )
 
-  def reassociate[G[_]: QueryAlgebra.JoinType, B](dec: algebra.Decoder[B], cols: Frag*) = {
-    def go[A](dec: algebra.Decoder[A]) =
-      reassociateFull[G, Option[A]](
-        QueryAlgebra.ReassocOpt(implicitly[QueryAlgebra.JoinType[G]].reassoc[A]),
-        algebra.optDecoder(dec),
-        cols: _*
+  def reassociate[G[_]: QueryAlgebra.JoinType](sel: Query.Select[?]) = {
+    def go[B](sel: Query.Select[B]) =
+      reassociateFull[G, Option[B]](
+        QueryAlgebra.ReassocOpt(implicitly[QueryAlgebra.JoinType[G]].reassoc[B]),
+        algebra.optDecoder(sel.decoder),
+        sel.cols.toList: _*
       )
-    go(dec)
+    go(sel)
   }
 
   trait TableAlg[T <: Table] {
@@ -122,8 +125,7 @@ abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
     def join[G[_]: QueryAlgebra.JoinType](joinPred: T => Frag): algebra.Query[G, T] =
       for {
         t <- simpleJoin(joinPred)
-        (cols, dec) = t.tableKeys
-        _ <- reassociate(dec, cols.toList: _*)
+        _ <- reassociate[G](t.tableKey)
       } yield t
   }
 

@@ -52,8 +52,6 @@ object dsl extends QueryDsl(SkunkIntegration) {
       val col = aliased(sql"#${x}")
       col -> Query.Select(Chain(col.apply(Void)), d)
     }
-
-    def tableKeys = keys(void"id" -> skunk.codec.all.int4)
   }
 
   trait SkunkTableAlg[T <: Table] extends TableAlg[T] {

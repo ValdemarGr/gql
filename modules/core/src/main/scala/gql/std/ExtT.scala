@@ -15,9 +15,15 @@
  */
 package gql.std
 
+/** A datatype to circumvent https://github.com/lampepfl/dotty/issues/14790#issuecomment-1079965993
+  */
 trait ExtT[F[_]] {
   type A
   def fa: F[A]
+}
+
+object ExtT {
+  def liftF[F[_], A0](fa0: F[A0]): ExtT[F] = ExtTImpl(fa0)
 }
 
 final case class ExtTImpl[F[_], A0](fa: F[A0]) extends ExtT[F] {
