@@ -25,6 +25,13 @@ ThisBuild / mimaFailOnProblem := false
 ThisBuild / mimaPreviousArtifacts := Set.empty
 //ThisBuild / tlFatalWarnings := false
 
+ThisBuild / githubWorkflowJobSetup ++= Seq(
+  WorkflowStep.Run(
+    commands = List("docker-compose up -d"),
+    name = Some("Start services")
+  )
+)
+
 ThisBuild / githubWorkflowAddedJobs ++= Seq(
   WorkflowJob(
     id = "compile-docs",
@@ -99,7 +106,7 @@ lazy val sharedSettings = Seq(
         "-Wconf:cat=unused-nowarn:s",
         "-Ywarn-unused:-nowarn"
       )
-    } else Seq.empty //Seq("-explain")
+    } else Seq.empty // Seq("-explain")
   },
   libraryDependencies ++= Seq(
     "org.typelevel" %% "cats-effect" % "3.5.1",
