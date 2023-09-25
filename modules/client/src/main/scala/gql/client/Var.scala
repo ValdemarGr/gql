@@ -22,14 +22,14 @@ import io.circe._
 import cats.Contravariant
 import gql.parser.{Value => V, AnyValue}
 
-final case class VariableClosure[A, V](
-    variables: Var.Impl[V],
+final case class VariableClosure[A, Vars](
+    variables: Var.Impl[Vars],
     query: SelectionSet[A]
 ) {
-  def ~[C, D](that: VariableClosure[C, D]): VariableClosure[(A, C), (V, D)] =
+  def ~[C, D](that: VariableClosure[C, D]): VariableClosure[(A, C), (Vars, D)] =
     VariableClosure(Var.Impl.product(variables, that.variables), (query, that.query).tupled)
 
-  def modify[B](f: SelectionSet[A] => SelectionSet[B]): VariableClosure[B, V] =
+  def modify[B](f: SelectionSet[A] => SelectionSet[B]): VariableClosure[B, Vars] =
     VariableClosure(variables, f(query))
 }
 
@@ -48,20 +48,20 @@ final case class VariableName[A](name: String) extends AnyVal {
   def asValue: V[AnyValue, Unit] = V.VariableValue(name)
 }
 
-final case class Var[V, B](
-    impl: Var.Impl[V],
+final case class Var[Vars, B](
+    impl: Var.Impl[Vars],
     variableNames: B
 ) {
-  def ~[C, D](that: Var[C, D]): Var[(V, C), (B, D)] =
+  def ~[C, D](that: Var[C, D]): Var[(Vars, C), (B, D)] =
     Var(Var.Impl.product(impl, that.impl), (variableNames, that.variableNames))
 
-  def contramap[C](f: C => V): Var[C, B] =
+  def contramap[C](f: C => Vars): Var[C, B] =
     Var(impl.map(_.contramapObject(f)), variableNames)
 
-  def introduce[A](f: B => SelectionSet[A]): VariableClosure[A, V] =
+  def introduce[A](f: B => SelectionSet[A]): VariableClosure[A, Vars] =
     VariableClosure(impl, f(variableNames))
 
-  def flatIntroduce[A, V2](f: B => VariableClosure[A, V2]): VariableClosure[A, (V, V2)] = {
+  def flatIntroduce[A, V2](f: B => VariableClosure[A, V2]): VariableClosure[A, (Vars, V2)] = {
     val vc = f(variableNames)
     VariableClosure(Var.Impl.product(impl, vc.variables), vc.query)
   }

@@ -15,13 +15,14 @@
  */
 package gql
 
-import cats.data._
-import gql.ast._
-
-package object dsl extends GqlDslFull {
-  type Fields[F[_], -A] = NonEmptyList[(String, Field[F, A, ?])]
-
-  type AbstractFields[F[_]] = NonEmptyList[(String, AbstractField[F, ?])]
-
-  type AnyFields[F[_], -A] = NonEmptyList[(String, AnyField[F, A, ?])]
+package object dsl {
+  object all extends GqlDslFull
+  object aliases extends Aliases
+  object directive extends DirectiveDslFull
+  object enumType extends EnumDslFull
+  object field extends FieldDslFull
+  object input extends InputDslFull
+  object interface extends InterfaceDslFull
+  object tpe extends TypeDslFull
+  object union extends UnionDslFull
 }

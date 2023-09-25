@@ -24,18 +24,18 @@ trait DirectiveDsl[F[_]] {
     Directive(name)
 
   def directive[A](name: String, arg: Arg[A]): Directive[A] =
-    Directive(name, DirectiveArg.WithArg(arg))
+    Directive(name, EmptyableArg.Lift(arg))
 
   def onField[A](directive: Directive[A], handler: Position.FieldHandler[F, A]): State[SchemaState[F], Position.Field[F, A]] =
     DirectiveDsl.onField(directive, handler)
 
-  def onFragmentSpread[F[_], A](
+  def onFragmentSpread[A](
       directive: Directive[A],
       handler: Position.QueryHandler[QA.FragmentSpread, A]
   ): State[SchemaState[F], Position.FragmentSpread[A]] =
     DirectiveDsl.onFragmentSpread(directive, handler)
 
-  def onInlineFragmentSpread[F[_], A](
+  def onInlineFragmentSpread[A](
       directive: Directive[A],
       handler: Position.QueryHandler[QA.InlineFragment, A]
   ): State[SchemaState[F], Position.InlineFragmentSpread[A]] =
@@ -50,7 +50,7 @@ trait DirectiveDslFull {
     Directive(name)
 
   def directive[A](name: String, arg: Arg[A]): Directive[A] =
-    Directive(name, DirectiveArg.WithArg(arg))
+    Directive(name, EmptyableArg.Lift(arg))
 
   def onField[F[_], A](directive: Directive[A], handler: Position.FieldHandler[F, A]): State[SchemaState[F], Position.Field[F, A]] =
     addPosition[F, A, Position.Field[F, A]](Position.Field(directive, handler))

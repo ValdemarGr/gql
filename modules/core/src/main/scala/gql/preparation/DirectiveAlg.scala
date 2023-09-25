@@ -16,10 +16,9 @@
 package gql.preparation
 
 import gql.parser._
-import gql.Position
 import cats._
 import cats.implicits._
-import gql.DirectiveArg
+import gql._
 
 trait DirectiveAlg[F[_], G[_], C] {
   def parseArg[P[x] <: Position[G, x], A](p: P[A], args: Option[QueryAst.Arguments[C, AnyValue]], context: List[C]): F[A]
@@ -46,12 +45,12 @@ object DirectiveAlg {
     new DirectiveAlg[F, G, C] {
       override def parseArg[P[x] <: Position[G, x], A](p: P[A], args: Option[QueryAst.Arguments[C, AnyValue]], context: List[C]): F[A] = {
         p.directive.arg match {
-          case DirectiveArg.Empty =>
+          case EmptyableArg.Empty =>
             args match {
               case Some(_) => raise(s"Directive '${p.directive.name}' does not expect arguments", context)
               case None    => F.unit
             }
-          case DirectiveArg.WithArg(a) =>
+          case EmptyableArg.Lift(a) =>
             val argFields = args.toList.flatMap(_.nel.toList).map(a => a.name -> a.value.map(List(_))).toMap
             AP.decodeArg(a, argFields, ambigiousEnum = false, context)
         }

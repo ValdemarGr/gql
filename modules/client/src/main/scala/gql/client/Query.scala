@@ -138,21 +138,23 @@ object Query {
   def queryDecoder[A](ss: SelectionSet[A]): Decoder[A] =
     Decoder.instance(_.get[A]("data")(Dec.decoderForSelectionSet(ss)))
 
-  def findFragments(ss: SelectionSet[?]): List[Fragment[?]] =
-    ss.impl.enumerate.toList.flatMap {
-      case f: Fragment[?] => f :: findFragments(f.subSelection)
-      case f: Field[?] =>
-        def unpackSubQuery(q: SubQuery[?]): List[Fragment[?]] =
-          q match {
-            case Terminal(_)              => Nil
-            case ListModifier(subQuery)   => unpackSubQuery(subQuery)
-            case OptionModifier(subQuery) => unpackSubQuery(subQuery)
-            case ss: SelectionSet[?]      => findFragments(ss)
-          }
+  def findSelectionFragments[A](selection: Selection[A]) = selection match {
+    case f: Fragment[a] => f :: findFragments(f.subSelection)
+    case f: Field[a] =>
+      def unpackSubQuery(q: SubQuery[?]): List[Fragment[?]] =
+        q match {
+          case Terminal(_)              => Nil
+          case ListModifier(subQuery)   => unpackSubQuery(subQuery)
+          case OptionModifier(subQuery) => unpackSubQuery(subQuery)
+          case ss: SelectionSet[?]      => findFragments(ss)
+        }
 
-        unpackSubQuery(f.subQuery)
-      case f: InlineFragment[?] => findFragments(f.subSelection)
-    }
+      unpackSubQuery(f.subQuery)
+    case f: InlineFragment[a] => findFragments(f.subSelection)
+  }
+
+  def findFragments(ss: SelectionSet[?]): List[Fragment[?]] =
+    ss.impl.enumerate.toList.flatMap(findSelectionFragments)
 
   object Dec {
     def decoderForSubQuery[A](sq: SubQuery[A]): Decoder[A] = sq match {
@@ -172,7 +174,7 @@ object Query {
 
     def decoderForSelectionSet[A](ss: SelectionSet[A]): Decoder[A] = {
       val compiler = new (Selection ~> Decoder) {
-        override def apply[A](fa: Selection[A]): Decoder[A] = {
+        override def apply[B](fa: Selection[B]): Decoder[B] = {
           fa match {
             case f: Selection.Field[a] =>
               val name = f.alias.getOrElse(f.fieldName)
@@ -209,37 +211,39 @@ object Query {
     def matchTypename(on: String): SelectionSet[String] =
       dsl.sel[String]("__typename", matchAlias(on))
 
+    def renderSelection[A](selection: Selection[A]) = selection match {
+      // Fragments are floated to the top level and handled separately
+      case f: Fragment[a] =>
+        Doc.text(s"...${f.name}")
+      case InlineFragment(on, subSelection) =>
+        Doc.text(s"... on $on") + Doc.space + renderSelectionSet(subSelection <* matchTypename(on))
+      case Selection.Field(name, alias, args, sq) =>
+        val aliased = alias match {
+          case None    => Doc.empty
+          case Some(a) => Doc.text(a) + Doc.char(':') + Doc.space
+        }
+
+        val lhs = aliased + Doc.text(name)
+
+        val argsDoc = args.toNel match {
+          case None => Doc.empty
+          case Some(args) =>
+            Doc.intercalate(Doc.comma + Doc.line, args.map(renderArg).toList).bracketBy(Doc.char('('), Doc.char(')'))
+        }
+
+        def renderSubQuery(sq: SubQuery[?]): Doc = sq match {
+          case Terminal(_)              => Doc.empty
+          case ss: SelectionSet[?]      => Doc.space + renderSelectionSet(ss)
+          case ListModifier(subQuery)   => renderSubQuery(subQuery)
+          case OptionModifier(subQuery) => renderSubQuery(subQuery)
+        }
+        val rhs = renderSubQuery(sq)
+
+        lhs + argsDoc + rhs
+    }
+
     def renderSelectionSet(ss: SelectionSet[?]): Doc = {
-      val docs = ss.impl.enumerate.toList.map {
-        // Fragments are floated to the top level and handled separately
-        case f: Fragment[?] =>
-          Doc.text(s"...${f.name}")
-        case InlineFragment(on, subSelection) =>
-          Doc.text(s"... on $on") + Doc.space + renderSelectionSet(subSelection <* matchTypename(on))
-        case Selection.Field(name, alias, args, sq) =>
-          val aliased = alias match {
-            case None    => Doc.empty
-            case Some(a) => Doc.text(a) + Doc.char(':') + Doc.space
-          }
-
-          val lhs = aliased + Doc.text(name)
-
-          val argsDoc = args.toNel match {
-            case None => Doc.empty
-            case Some(args) =>
-              Doc.intercalate(Doc.comma + Doc.line, args.map(renderArg).toList).bracketBy(Doc.char('('), Doc.char(')'))
-          }
-
-          def renderSubQuery(sq: SubQuery[?]): Doc = sq match {
-            case Terminal(_)              => Doc.empty
-            case ss: SelectionSet[?]      => Doc.space + renderSelectionSet(ss)
-            case ListModifier(subQuery)   => renderSubQuery(subQuery)
-            case OptionModifier(subQuery) => renderSubQuery(subQuery)
-          }
-          val rhs = renderSubQuery(sq)
-
-          lhs + argsDoc + rhs
-      }
+      val docs = ss.impl.enumerate.toList.map(renderSelection)
       Doc.intercalate(Doc.comma + Doc.line, docs).bracketBy(Doc.char('{'), Doc.char('}'))
     }
 

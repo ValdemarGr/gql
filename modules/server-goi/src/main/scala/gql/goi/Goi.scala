@@ -24,7 +24,7 @@ import cats.data._
 import cats._
 import gql.SchemaShape
 import gql.resolver.Resolver
-import gql.dsl._
+import gql.dsl.all._
 import cats.mtl._
 
 trait Node {
@@ -50,7 +50,7 @@ object Goi {
     F.delay(new String(Base64.getEncoder.encode(s"$typename:$id".getBytes()), StandardCharsets.UTF_8))
 
   def makeImpl[A](specify: Node => Option[A]) =
-    gql.ast.Implementation(Eval.now(Node.nodeInterface))(specify)
+    gql.ast.Implementation(Eval.now(Node.nodeInterface))(specify.andThen(_.rightIor))
 
   def addIdWith[F[_], A, B](
       t: Type[F, A],
@@ -145,8 +145,9 @@ object Goi {
   )(implicit F: Sync[F]): IorT[F, String, G[Option[Node]]] =
     decodeIds[F, G](ids, lookup, schemaTypes)
       .semiflatMap(_.parFlatTraverse { case di: DecodedIds[F, v, k] =>
-        val reverseMapping: Map[k, String] = di.keys.map { case (id, key: k) => key -> id }.toList.toMap
-        val resultsF: F[Map[k, v]] = di.gid.attribute.fromIds(di.keys.map { case (_, key: k) => key })
+        val ks = (di.keys: NonEmptyList[(String, k)])
+        val reverseMapping: Map[k, String] = ks.map { case (id, key) => key -> id }.toList.toMap
+        val resultsF: F[Map[k, v]] = di.gid.attribute.fromIds(ks.map { case (_, key) => key })
         resultsF.map(_.toList.mapFilter { case (k, v) => reverseMapping.get(k) tupleRight Node(v, di.gid.typename) })
       })
       .map(_.toMap)

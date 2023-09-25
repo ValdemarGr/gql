@@ -23,13 +23,13 @@ import gql.parser.QueryAst
   */
 final case class Directive[A](
     name: String,
-    arg: DirectiveArg[A] = DirectiveArg.Empty
+    arg: EmptyableArg[A] = EmptyableArg.Empty
 )
 
 /** Consider taking a look at the skip and include directives as an example.
   */
 object Directive {
-  val skipDirective = Directive("skip", DirectiveArg.WithArg(gql.dsl.arg[Boolean]("if")))
+  val skipDirective = Directive("skip", EmptyableArg.Lift(gql.dsl.input.arg[Boolean]("if")))
 
   def skipPositions[F[_]]: List[Position[F, ?]] = {
     val field = Position.Field(
@@ -61,7 +61,7 @@ object Directive {
     List(field, fragmentSpread, inlineFragmentSpread)
   }
 
-  val includeDirective = Directive("include", DirectiveArg.WithArg(gql.dsl.arg[Boolean]("if")))
+  val includeDirective = Directive("include", EmptyableArg.Lift(gql.dsl.input.arg[Boolean]("if")))
 
   def includePositions[F[_]]: List[Position[F, ?]] = {
     val field = Position.Field(
@@ -92,13 +92,6 @@ object Directive {
 
     List(field, fragmentSpread, inlineFragmentSpread)
   }
-}
-
-// Ad-hoc Applicative (pure, empty structure) from Apply
-sealed trait DirectiveArg[A]
-object DirectiveArg {
-  final case class WithArg[A](arg: Arg[A]) extends DirectiveArg[A]
-  case object Empty extends DirectiveArg[Unit]
 }
 
 // Add as necessary

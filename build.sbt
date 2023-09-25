@@ -1,7 +1,7 @@
 val scala213Version = "2.13.12"
 
 ThisBuild / scalaVersion := scala213Version
-ThisBuild / crossScalaVersions := Seq(scala213Version, "3.2.2", "3.3.0")
+ThisBuild / crossScalaVersions := Seq(scala213Version, "3.3.0")
 ThisBuild / organization := "io.github.valdemargr"
 
 ThisBuild / tlBaseVersion := "0.2"
@@ -23,7 +23,14 @@ ThisBuild / tlMimaPreviousVersions := Set.empty
 ThisBuild / mimaReportSignatureProblems := false
 ThisBuild / mimaFailOnProblem := false
 ThisBuild / mimaPreviousArtifacts := Set.empty
-//ThisBuild / tlFatalWarnings := true
+//ThisBuild / tlFatalWarnings := false
+
+val dbStep = WorkflowStep.Run(
+  commands = List("docker-compose up -d"),
+  name = Some("Start services")
+)
+
+ThisBuild / githubWorkflowJobSetup += dbStep
 
 ThisBuild / githubWorkflowAddedJobs ++= Seq(
   WorkflowJob(
@@ -34,7 +41,7 @@ ThisBuild / githubWorkflowAddedJobs ++= Seq(
       UseRef.Public("actions", "checkout", "v3"),
       name = Some("Checkout current branch (fast)"),
       params = Map("fetch-depth" -> "0")
-    ) ::
+    ) :: dbStep ::
       WorkflowStep.SetupJava(githubWorkflowJavaVersions.value.toList) ++
       githubWorkflowGeneratedCacheSteps.value ++
       List(
@@ -99,7 +106,7 @@ lazy val sharedSettings = Seq(
         "-Wconf:cat=unused-nowarn:s",
         "-Ywarn-unused:-nowarn"
       )
-    } else Seq.empty
+    } else Seq.empty // Seq("-explain")
   },
   libraryDependencies ++= Seq(
     "org.typelevel" %% "cats-effect" % "3.5.1",
@@ -185,7 +192,6 @@ lazy val testCodeGen = project
   .dependsOn(serverHttp4s % "test->test")
   .settings(
     tlFatalWarnings := false,
-    tlFatalWarningsInCi := false,
     codeGenForTest := {
       Def.taskDyn {
         val sp = file("./modules/client-codegen-test/src/main/resources/schema.graphql").absolutePath.replace("\\", "\\\\")
@@ -280,6 +286,34 @@ lazy val serverHttp4s = project
   )
   .dependsOn(server)
 
+lazy val relational = project
+  .in(file("modules/relational"))
+  .settings(sharedSettings)
+  .dependsOn(server)
+  .settings(
+    name := "gql-relational"
+  )
+
+lazy val relationalSkunk = project
+  .in(file("modules/relational-skunk"))
+  .settings(sharedSettings)
+  .dependsOn(server)
+  .dependsOn(relational)
+  .settings(
+    name := "gql-relational-skunk",
+    libraryDependencies ++= Seq("org.tpolecat" %% "skunk-core" % "0.6.0")
+  )
+
+lazy val relationalDoobie = project
+  .in(file("modules/relational-doobie"))
+  .settings(sharedSettings)
+  .dependsOn(server)
+  .dependsOn(relational)
+  .settings(
+    name := "gql-relational-doobie",
+    libraryDependencies ++= Seq("org.tpolecat" %% "doobie-core" % "1.0.0-RC4")
+  )
+
 lazy val mdocExt = project
   .in(file("modules/mdoc-ext"))
   .settings(sharedSettings)
@@ -318,7 +352,8 @@ lazy val docs = project
       "VERSION" -> tlLatestVersion.value.getOrElse(version.value)
     ),
     libraryDependencies ++= Seq(
-      "com.47deg" %% "fetch" % "3.1.2"
+      "com.47deg" %% "fetch" % "3.1.2",
+      "org.tpolecat" %% "natchez-noop" % "0.3.2"
     ),
     tlFatalWarnings := false
   )
@@ -326,6 +361,9 @@ lazy val docs = project
   .dependsOn(core % "compile->compile;compile->test")
   .dependsOn(serverHttp4s)
   .dependsOn(serverGraphqlWs)
+  .dependsOn(relational)
+  .dependsOn(relationalSkunk)
+  .dependsOn(relationalDoobie)
   .dependsOn(serverNatchez)
   .dependsOn(clientCodegen)
   .dependsOn(clientCodegenCli)

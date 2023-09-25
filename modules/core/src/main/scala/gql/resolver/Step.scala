@@ -41,11 +41,13 @@ object Step {
 
     final case class Choose[F[_], A, B, C, D](fac: Step[F, A, C], fab: Step[F, B, D]) extends Step[F, Either[A, B], Either[C, D]]
 
-    final case class GetMeta[I]() extends Step[Nothing, I, FieldMeta]
+    final case class GetMeta[F[_], I]() extends Step[Nothing, I, FieldMeta[F]]
 
     final case class First[F[_], A, B, C](step: Step[F, A, B]) extends Step[F, (A, C), (B, C)]
 
     final case class Batch[F[_], K, V](id: BatchKey[K, V]) extends Step[F, Set[K], Map[K, V]]
+
+    final case class InlineBatch[F[_], K, V](run: Set[K] => F[Map[K, V]]) extends Step[F, Set[K], Map[K, V]]
   }
 
   def lift[F[_], I, O](f: I => O): Step[F, I, O] =
@@ -72,7 +74,7 @@ object Step {
   def choose[F[_], A, B, C, D](fac: Step[F, A, C], fab: Step[F, B, D]): Step[F, Either[A, B], Either[C, D]] =
     Alg.Choose(fac, fab)
 
-  def getMeta[F[_]]: Step[F, Any, FieldMeta] =
+  def getMeta[F[_]]: Step[F, Any, FieldMeta[F]] =
     Alg.GetMeta()
 
   def first[F[_], A, B, C](step: Step[F, A, B]): Step[F, (A, C), (B, C)] =
@@ -86,6 +88,9 @@ object Step {
       val k = BatchKey[K, V](id)
       (s.copy(nextId = id + 1, batchFunctions = s.batchFunctions + (k -> SchemaState.BatchFunction(f))), Alg.Batch(k))
     }
+
+  def inlineBatch[F[_], K, V](f: Set[K] => F[Map[K, V]]): Step[F, Set[K], Map[K, V]] =
+    Alg.InlineBatch(f)
 
   import cats.arrow._
   implicit def arrowChoiceForStep[F[_]]: ArrowChoice[Step[F, *, *]] = new ArrowChoice[Step[F, *, *]] {

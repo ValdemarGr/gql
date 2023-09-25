@@ -55,6 +55,7 @@ const sidebars = {
             "server/schema/context",
             "server/schema/error_handling",
             "server/schema/compiler",
+            "server/schema/extending",
           ]
         },
         {
@@ -75,6 +76,7 @@ const sidebars = {
             "server/integrations/graphqlws",
             "server/integrations/natchez",
             "server/integrations/goi",
+            "server/integrations/relational",
           ]
         }
       ]

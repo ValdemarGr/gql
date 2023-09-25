@@ -203,7 +203,7 @@ object ArgParsing {
     }
 
     override def decodeArg[A](arg: Arg[A], values: Map[String, V[AnyValue, List[C]]], ambigiousEnum: Boolean, context: List[C]): F[A] = {
-      val expected = arg.impl.enumerate.toList.map(_.av.name).toSet
+      val expected = arg.entries.toList.map(_.name).toSet
       val provided = values.keySet
 
       val tooMuch = provided -- expected
@@ -212,8 +212,8 @@ object ArgParsing {
         else raise(s"Too many fields provided, unknown fields are ${tooMuch.toList.map(x => s"'$x'").mkString_(", ")}.", context)
 
       val fv = arg.impl.foldMap[F, ValidatedNec[String, A]](new (Arg.Impl ~> F) {
-        def apply[A](fa: Arg.Impl[A]): F[A] = fa match {
-          case fa: ArgDecoder[a, A] =>
+        def apply[B](fa: Arg.Impl[B]): F[B] = fa match {
+          case fa: ArgDecoder[a, B] =>
             ambientField(fa.av.name) {
               def compileWith(x: V[AnyValue, List[C]], default: Boolean) =
                 decodeIn[a](fa.av.input.value, x, ambigiousEnum)

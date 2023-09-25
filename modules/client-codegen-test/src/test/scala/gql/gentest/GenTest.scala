@@ -19,7 +19,7 @@ import cats.effect._
 import cats.implicits._
 import gql.client.generated._
 import gql._
-import gql.dsl._
+import gql.dsl.all._
 import gql.ast._
 import munit.CatsEffectSuite
 import org.http4s.client.Client

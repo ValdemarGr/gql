@@ -58,8 +58,8 @@ final class Resolver[+F[_], -I, +O](private[gql] val underlying: Step[F, I, O]) 
   def contraArg[A, I2](arg: Arg[A])(implicit ev: (A, I2) <:< I): Resolver[F, I2, O] =
     Resolver.id[F, I2].arg(arg) andThen this.contramap(ev.apply)
 
-  def meta: Resolver[F, I, (FieldMeta, O)] =
-    this andThen Resolver.meta[F, O].tupleIn
+  def meta[F2[x] >: F[x]]: Resolver[F2, I, (FieldMeta[F2], O)] =
+    this andThen Resolver.meta[F2, O].tupleIn
 
   def streamMap[F2[x] >: F[x], O2](f: O => fs2.Stream[F2, O2]): Resolver[F2, I, O2] =
     this.map(f).embedStream
@@ -97,7 +97,7 @@ object Resolver extends ResolverInstances {
   def argument[F[_], I <: Any, A](arg: Arg[A]): Resolver[F, I, A] =
     new Resolver(Step.argument(arg))
 
-  def meta[F[_], I <: Any]: Resolver[F, I, FieldMeta] =
+  def meta[F[_], I <: Any]: Resolver[F, I, FieldMeta[F]] =
     new Resolver(Step.getMeta)
 
   def streamFull[F[_], I, O](f: I => fs2.Stream[F, O]): Resolver[F, I, O] =
@@ -111,6 +111,9 @@ object Resolver extends ResolverInstances {
 
   def batch[F[_], K, V](f: Set[K] => F[Map[K, V]]): State[gql.SchemaState[F], Resolver[F, Set[K], Map[K, V]]] =
     Step.batch[F, K, V](f).map(new Resolver(_))
+
+  def inlineBatch[F[_], K, V](f: Set[K] => F[Map[K, V]]): Resolver[F, Set[K], Map[K, V]] =
+    new Resolver(Step.inlineBatch(f))
 
   implicit class RethrowOps[F[_], I, O](private val self: Resolver[F, I, Ior[String, O]]) extends AnyVal {
     def rethrow: Resolver[F, I, O] =

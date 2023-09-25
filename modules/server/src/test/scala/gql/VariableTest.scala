@@ -16,7 +16,7 @@
 package gql
 
 import gql.ast._
-import gql.dsl._
+import gql.dsl.all._
 import cats.effect._
 import munit.CatsEffectSuite
 

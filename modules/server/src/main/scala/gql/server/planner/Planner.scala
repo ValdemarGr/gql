@@ -18,8 +18,6 @@ package gql.server.planner
 import fs2.{Pure, Stream}
 import cats.implicits._
 import cats._
-import gql.server.planner.PlanEnumeration
-import gql.server.planner.OptimizedDAG
 
 trait Planner[F[_]] { self =>
   def plan(naive: NodeTree): F[OptimizedDAG]

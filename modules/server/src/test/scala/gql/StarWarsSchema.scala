@@ -18,7 +18,7 @@ package gql
 import cats.implicits._
 import cats.effect._
 import gql.ast._
-import gql.dsl._
+import gql.dsl.all._
 
 // https://github.com/graphql/graphql-js/blob/main/src/__tests__/starWarsData.ts
 object StarWarsSchema {
