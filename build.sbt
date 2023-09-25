@@ -58,7 +58,7 @@ ThisBuild / githubWorkflowAddedJobs ++= Seq(
       UseRef.Public("actions", "checkout", "v3"),
       name = Some("Checkout current branch (fast)"),
       params = Map("fetch-depth" -> "0")
-    ) ::
+    ) :: dbStep ::
       WorkflowStep.SetupJava(githubWorkflowJavaVersions.value.toList) ++
       githubWorkflowGeneratedCacheSteps.value ++
       // We need all commits to track down the tag for the VERSION variable
