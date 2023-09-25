@@ -23,6 +23,7 @@ ThisBuild / tlMimaPreviousVersions := Set.empty
 ThisBuild / mimaReportSignatureProblems := false
 ThisBuild / mimaFailOnProblem := false
 ThisBuild / mimaPreviousArtifacts := Set.empty
+ThisBuild / tlSonatypeUseLegacyHost := true
 //ThisBuild / tlFatalWarnings := false
 
 val dbStep = WorkflowStep.Run(
