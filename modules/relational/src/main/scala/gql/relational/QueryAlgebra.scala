@@ -572,8 +572,8 @@ object QueryAlgebra {
     def groups[A](fa: List[List[A]]): Either[String, G[List[A]]]
 
     def apply[A](fa: List[(Key, A)]): Either[String, G[List[A]]] = {
-      val m = fa.groupMap { case (k, _) => k } { case (_, v) => v }
-      groups(fa.map { case (k, _) => k }.distinct.map(k => m(k)))
+      val m = fa.zipWithIndex.groupMap { case ((k, _), _) => k } { case ((_, v), i) => (v, i) }
+      groups(fa.map { case (k, _) => k }.distinct.map(k => m(k).sortBy { case (_, i) => i }.map { case (v, _) => v }))
     }
   }
   case class ReassocOpt[G[_], Key](reassoc: Reassoc[G, Key]) extends Reassoc[G, Option[Key]] {
