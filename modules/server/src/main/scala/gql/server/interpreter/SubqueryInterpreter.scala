@@ -58,6 +58,8 @@ trait SubqueryInterpreter[F[_]] {
 }
 
 object SubqueryInterpreter {
+  //sealed trait Task[F[_], A]
+
   def apply[F[_]](
       ss: SignalScopes[F, StreamingData[F, ?, ?]],
       batchAccumulator: BatchAccumulator[F],
