@@ -238,6 +238,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Start services
+        run: docker-compose up -d
+
       - name: Setup Java (temurin@8)
         id: setup-java-temurin-8
         if: matrix.java == 'temurin@8'
