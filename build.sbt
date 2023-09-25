@@ -4,7 +4,7 @@ ThisBuild / scalaVersion := scala213Version
 ThisBuild / crossScalaVersions := Seq(scala213Version, "3.3.0")
 ThisBuild / organization := "io.github.valdemargr"
 
-ThisBuild / tlBaseVersion := "0.2"
+ThisBuild / tlBaseVersion := "0.3"
 ThisBuild / tlCiHeaderCheck := false
 ThisBuild / tlCiDocCheck := false
 ThisBuild / tlCiScalafmtCheck := false
