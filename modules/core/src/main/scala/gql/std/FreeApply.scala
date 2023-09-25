@@ -35,7 +35,7 @@ sealed abstract class FreeApply[F[_], +A] extends Product with Serializable {
   @nowarn
   def analyze_[M: Semigroup](fold: F[Any] => M): M =
     foldMap[Const[M, *], A](new (F ~> Const[M, *]) {
-      def apply[A](fa: F[A]): Const[M, A] = Const(fold(fa.asInstanceOf[F[Any]] /* grr scala 3 no wildcard in abstract kinds */))
+      def apply[A](fa: F[A]): Const[M, A] = Const(fold(fa.asInstanceOf[F[Any]]))
     }).getConst
 
   @nowarn

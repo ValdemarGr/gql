@@ -13,17 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package gql.dslutil
+package gql.std
 
-import cats.data._
-import gql.ast._
-
-trait Aliases {
-  type Fields[F[_], -A] = NonEmptyList[(String, Field[F, A, ?])]
-
-  type AbstractFields[F[_]] = NonEmptyList[(String, AbstractField[F, ?])]
-
-  type AnyFields[F[_], -A] = NonEmptyList[(String, AnyField[F, A, ?])]
+trait ExtT[F[_]] {
+  type A
+  def fa: F[A]
 }
 
-object Aliases extends Aliases
+final case class ExtTImpl[F[_], A0](fa: F[A0]) extends ExtT[F] {
+  type A = A0
+}

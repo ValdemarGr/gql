@@ -23,7 +23,7 @@ ThisBuild / tlMimaPreviousVersions := Set.empty
 ThisBuild / mimaReportSignatureProblems := false
 ThisBuild / mimaFailOnProblem := false
 ThisBuild / mimaPreviousArtifacts := Set.empty
-ThisBuild / tlFatalWarnings := false
+ThisBuild / tlFatalWarnings := true
 
 ThisBuild / githubWorkflowAddedJobs ++= Seq(
   WorkflowJob(

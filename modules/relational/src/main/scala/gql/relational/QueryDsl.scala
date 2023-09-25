@@ -24,6 +24,7 @@ import cats.data._
 import gql.Arg
 import gql.EmptyableArg
 import cats.arrow.FunctionK
+import org.typelevel.scalaccompat.annotation._
 
 // For all query algebras this dsl can exist
 abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
@@ -256,7 +257,7 @@ abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
   implicit def relationalTypeDslOps0[F[_], A](tpe: Type[F, A]): RelationalTypeOps0[F, A] =
     new RelationalTypeOps0(tpe)
 
-  final class RelationalFieldBuilder[F[_], A](private val dummy: Boolean = false) {
+  final class RelationalFieldBuilder[F[_], A](@unused private val dummy: Boolean = false) {
     def tpe(name: String, hd: (String, Field[F, QueryResult[A], ?]), tl: (String, Field[F, QueryResult[A], ?])*): Type[F, QueryResult[A]] =
       gql.dsl.tpe[F, QueryResult[A]](name, hd, tl: _*)
 

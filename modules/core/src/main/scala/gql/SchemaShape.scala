@@ -289,21 +289,24 @@ object SchemaShape {
       }
     }
 
+    def visitOutputTopelvel[B](t: OutToplevel[F, B]) =
+      t match {
+        case ol: ObjectLike[F, B] =>
+          val values: List[(Interface[F, ?], InterfaceImpl[F, ?])] = ol match {
+            case t: Type[F, B] =>
+              t.implementations.map(x => x.implementation.value -> InterfaceImpl.TypeImpl(t, x))
+            case i: Interface[F, B] =>
+              i.implementations.map(x => x.value -> InterfaceImpl.OtherInterface(i))
+          }
+          addValues(values.map { case (i, ii) => i.name -> ii })
+        case _ => modify(identity)
+      }
+
     val program = shape.visitOnce[Effect, Unit] {
       case VisitNode.InNode(t: InToplevel[?]) => modify(_.addToplevel(t.name, t))
-      case VisitNode.OutNode(t: OutToplevel[F, ?]) =>
+      case VisitNode.OutNode(t: OutToplevel[F, a]) =>
         val modF = modify(_.addToplevel(t.name, t))
-        val fa = t match {
-          case ol: ObjectLike[F, ?] =>
-            val values: List[(Interface[F, ?], InterfaceImpl[F, ?])] = ol match {
-              case t: Type[F, a] =>
-                t.implementations.map(x => x.implementation.value -> InterfaceImpl.TypeImpl(t, x))
-              case i: Interface[F, ?] =>
-                i.implementations.map(x => x.value -> InterfaceImpl.OtherInterface(i))
-            }
-            addValues(values.map { case (i, ii) => i.name -> ii })
-          case _ => modify(identity)
-        }
+        val fa = visitOutputTopelvel(t)
         modF >> fa
     }
 
@@ -458,7 +461,6 @@ object SchemaShape {
   }
 
   def introspect[F[_]](ss: SchemaShape[F, ?, ?, ?]): NonEmptyList[(String, Field[F, Unit, ?])] = {
-    
 
     // We do a little lazy evaluation trick to include the introspection schema in itself
     lazy val d = {

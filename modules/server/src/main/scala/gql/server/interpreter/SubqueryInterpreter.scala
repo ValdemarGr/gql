@@ -28,6 +28,7 @@ import cats.effect.implicits._
 import gql.resolver._
 import io.circe.syntax._
 import gql._
+import org.typelevel.scalaccompat.annotation._
 
 /** The [[SubqueryInterpreter]] recursively runs through the AST and performs a multitude of tasks:
   *   - Runs the [[gql.resolver.Resolver]]/[[gql.resolver.Step]]s defined in the query.
@@ -119,7 +120,8 @@ object SubqueryInterpreter {
             }
           }
 
-        step match {
+        @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
+        val result: W[Chain[(Int, Json)]] = step match {
           case Lift(f) => runNext(inputs.map(_.map(f)))
           case alg: EmbedEffect[?, i] =>
             val cursor = alg.stableUniqueEdgeName
@@ -130,9 +132,8 @@ object SubqueryInterpreter {
                 }
 
                 runF.map(Chain.fromOption(_))
-              }
-              .flatMap(runEdgeCont(_, cont))
-          case alg: InlineBatch[F, k, o]  =>
+              } >>= runNext
+          case alg: InlineBatch[F, k, o] =>
             val cursor = alg.stableUniqueEdgeName
             val keys: Set[k] = inputs.toList.flatMap(_.node.value.toList).toSet
 
@@ -145,8 +146,7 @@ object SubqueryInterpreter {
                 }
               }
             }
-              .map(xs => Chain.fromOption(xs).flatten)
-              .flatMap(runEdgeCont(_, cont))
+              .map(xs => Chain.fromOption(xs).flatten) >>= runNext
           case EmbedError() =>
             (inputs: Chain[IndexedData[F, Ior[String, C]]])
               .flatTraverse { id =>
@@ -227,7 +227,9 @@ object SubqueryInterpreter {
             val theCompilerNeedsHelp = (inputs: Chain[IndexedData[F, (i2, c2)]])
             val inputMap: Map[Int, c2] =
               theCompilerNeedsHelp
-                .map(in => in.index -> (in.map { case (_, c2) => c2 }.node.value)).toIterable.toMap
+                .map(in => in.index -> (in.map { case (_, c2) => c2 }.node.value))
+                .toIterable
+                .toMap
 
             val base: StepCont[F, C, O] = cont
             val contR = StepCont.TupleWith[F, o2, c2, O](
@@ -248,8 +250,10 @@ object SubqueryInterpreter {
                     }
                   }
               }
-            }.flatMap(runEdgeCont(_, cont))
+            } >>= runNext
         }
+
+        result
       }
 
       def runEdge[I, O](
@@ -281,6 +285,7 @@ object SubqueryInterpreter {
       def unflatten[A](ns: Vector[Int], dat: Vector[A]): Vector[Vector[A]] =
         ns.mapAccumulate(dat)((ds, n) => ds.splitAt(n).swap)._2
 
+      @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
       def runFields[I](dfs: List[PreparedField[F, I]], in: Chain[EvalNode[F, I]]): W[Chain[Map[String, Json]]] = {
         Chain
           .fromSeq(dfs.toList)
@@ -324,6 +329,7 @@ object SubqueryInterpreter {
           .map(Chain.fromIterableOnce)
       }
 
+      @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
       def startNext[I](s: Prepared[F, I], in: Chain[EvalNode[F, I]]): W[Chain[Json]] = W.defer {
         s match {
           case PreparedLeaf(_, enc) => W.pure(in.map(x => enc(x.value)))

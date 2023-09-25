@@ -21,6 +21,7 @@ import cats._
 import cats.mtl._
 import gql.Statistics
 import cats.implicits._
+import org.typelevel.scalaccompat.annotation._
 
 trait Analyzer[F[_]] {
   def analyzeStep[G[_]](step: PreparedStep[G, ?, ?]): F[Unit]
@@ -72,6 +73,7 @@ object Analyzer {
       }
 
     new Analyzer[F] {
+      @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
       def analyzeStep[G[_]](step: PreparedStep[G, ?, ?]): F[Unit] = {
         def goParallel(l: PreparedStep[G, ?, ?], r: PreparedStep[G, ?, ?]): F[Unit] = {
           // A parallel op is disjunctive so the parent must be the same for both branches
@@ -141,6 +143,7 @@ object Analyzer {
           }
         }
 
+      @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
       def analyzePrepared[G[_]](p: Prepared[G, ?]): F[Unit] = p match {
         case PreparedLeaf(_, _)          => F.unit
         case Selection(fields, _)        => analyzeFields[G](fields)
