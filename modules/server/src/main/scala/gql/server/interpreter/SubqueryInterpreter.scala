@@ -58,7 +58,11 @@ trait SubqueryInterpreter[F[_]] {
 }
 
 object SubqueryInterpreter {
-  //sealed trait Task[F[_], A]
+  //case class Task[F[_]](fa: Either[Json, F[Task[F]]])
+  sealed trait Task[F[_]]
+  object Task {
+    //case class 
+  }
 
   def apply[F[_]](
       ss: SignalScopes[F, StreamingData[F, ?, ?]],
