@@ -15,7 +15,7 @@ Lets import the things we need:
 ```scala mdoc
 import gql.ast._
 import gql.resolver._
-import gql.dsl._
+import gql.dsl.all._
 import gql._
 import cats._
 import cats.data._
@@ -131,12 +131,12 @@ sealed trait Animal
 final case class Dog(name: String) extends Animal
 final case class Cat(name: String) extends Animal
 
-implicit lazy val dog = tpe[IO, Dog](
+implicit lazy val dog: Type[IO, Dog] = tpe[IO, Dog](
   "Dog",
   "name" -> lift(_.name)
 )
 
-implicit lazy val cat = tpe[IO, Cat](
+implicit lazy val cat: Type[IO, Cat] = tpe[IO, Cat](
   "Cat",
   "name" -> lift(_.name)
 )
@@ -209,7 +209,7 @@ final case class Company(
   id: String
 ) extends Node
   
-implicit lazy val node = interface[IO, Node](
+implicit lazy val node: Interface[IO, Node] = interface[IO, Node](
   "Node",
   "id" -> abst[IO, ID[String]]
 )
@@ -249,4 +249,19 @@ def withCompany = shape.addOutputTypes(company)
 println(withCompany.render)
 
 println(withCompany.addOutputTypes(person).render)
+```
+
+## Variance of the Out type
+The `Out[F[_], A]` is invariant in `A`.
+It might seem convinient to let `A` be contravariant (`-A`) but this causes ambiguity when trying to find implicits/givens.
+```scala mdoc:fail:nest
+trait Typeclass[-A]
+
+trait Animal
+trait Dog extends Animal
+
+implicit object AnimalTC extends Typeclass[Animal]
+implicit object DogTC extends Typeclass[Dog]
+
+implicitly[Typeclass[Dog]]
 ```

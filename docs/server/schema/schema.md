@@ -12,7 +12,7 @@ import cats.effect._
 import cats.implicits._
 import gql._
 import gql.ast._
-import gql.dsl._
+import gql.dsl.all._
 
 def ss = SchemaShape.unit[IO](
   fields(

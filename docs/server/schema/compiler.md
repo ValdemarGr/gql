@@ -20,7 +20,7 @@ For most non-trivial applications a compiler will usually be a bit more complex 
 For instance production deployments do usually implement additional features such as caching, logging, metrics, tracing, authorization, to name a few.
 The parts of `gql` that the compiler utility composes (parsing, preparing and assembling an application), are exposed as seperate functions such that any need can be composed with ease.
 
-For instance, say that we would like to modify a phase in query compilation, such that the final executable logs queries that are too slow:
+For instance, say that we would like to modify a phase in query compilation, such that the final executable logs queries that are too slow.
 ```scala mdoc
 import gql._
 import cats.implicits._
@@ -41,6 +41,24 @@ def logSlowQueries(query: String, app: Application[IO]): Application[IO] = app m
         if (dur > 1.second) lg.warn(s"Slow query: $query") as a
         else IO.pure(a)
       }
+    }
+  case x => x
+}
+```
+
+Or another example, we have a cache that we wish to clear between subscription events.
+```scala mdoc
+
+trait Cache[F[_]] {
+  def clear: F[Unit]
+  // other cache related functions ...
+}
+
+def addCacheClearing(cache: Cache[IO], app: Application[IO]): Application[IO] = app match {
+  case Application.Subscription(stream) => 
+    Application.Subscription {
+      // gql doesnt not evaluate the next event before the previous has been consumed
+      stream.evalTap(_ => cache.clear)
     }
   case x => x
 }

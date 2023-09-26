@@ -18,6 +18,7 @@ package gql.dsl
 import gql.ast._
 import cats.data._
 import cats._
+import gql.dsl.aliases._
 
 trait InterfaceDsl[F[_]] {
   def interfaceNel[A](
@@ -25,13 +26,13 @@ trait InterfaceDsl[F[_]] {
       fields: AnyFields[F, A]
   ): Interface[F, A] = InterfaceDsl.interfaceNel(name, fields)
 
-  def interface[F[_], A](
+  def interface[A](
       name: String,
       hd: (String, AnyField[F, A, ?]),
       tl: (String, AnyField[F, A, ?])*
   ): Interface[F, A] = InterfaceDsl.interface(name, hd, tl: _*)
 
-  implicit def interfaceDslInterfaceOps[F[_], A](tpe: Interface[F, A]): InterfaceDsl.InterfaceOps[F, A] =
+  implicit def interfaceDslInterfaceOps[A](tpe: Interface[F, A]): InterfaceDsl.InterfaceOps[F, A] =
     InterfaceDsl.interfaceDslFullInterfaceOps[F, A](tpe)
 }
 

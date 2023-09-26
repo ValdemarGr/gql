@@ -21,6 +21,7 @@ import cats._
 import cats.mtl._
 import gql.Statistics
 import cats.implicits._
+import org.typelevel.scalaccompat.annotation._
 
 trait Analyzer[F[_]] {
   def analyzeStep[G[_]](step: PreparedStep[G, ?, ?]): F[Unit]
@@ -72,6 +73,7 @@ object Analyzer {
       }
 
     new Analyzer[F] {
+      @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
       def analyzeStep[G[_]](step: PreparedStep[G, ?, ?]): F[Unit] = {
         def goParallel(l: PreparedStep[G, ?, ?], r: PreparedStep[G, ?, ?]): F[Unit] = {
           // A parallel op is disjunctive so the parent must be the same for both branches
@@ -96,11 +98,12 @@ object Analyzer {
           case Compose(l, r)                       => analyzeStep[G](l) *> analyzeStep[G](r)
           case alg: Choose[G, ?, ?, ?, ?]          => goParallel(alg.fac, alg.fbc)
           case alg: First[G, ?, ?, ?]              => analyzeStep[G](alg.step)
-          case Batch(_, _) | EmbedEffect(_) | EmbedStream(_, _) =>
+          case Batch(_, _) | EmbedEffect(_) | EmbedStream(_, _) | InlineBatch(_, _) =>
             val name = step match {
               case Batch(id, _)           => s"batch_${id.id}"
               case EmbedEffect(cursor)    => cursor.asString
               case EmbedStream(_, cursor) => cursor.asString
+              case InlineBatch(_, cursor) => cursor.asString
               case _                      => ???
             }
 
@@ -134,15 +137,16 @@ object Analyzer {
         prepared.traverse_ { p =>
           resetParents {
             p match {
-              case PreparedDataField(_, _, cont)          => analyzeCont[G](cont.edges, cont.cont)
-              case PreparedSpecification(_, _, selection) => analyzeFields[G](selection)
+              case PreparedDataField(_, _, cont, _, _) => analyzeCont[G](cont.edges, cont.cont)
+              case PreparedSpecification(_, selection) => analyzeFields[G](selection)
             }
           }
         }
 
+      @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
       def analyzePrepared[G[_]](p: Prepared[G, ?]): F[Unit] = p match {
         case PreparedLeaf(_, _)          => F.unit
-        case Selection(fields)           => analyzeFields[G](fields)
+        case Selection(fields, _)        => analyzeFields[G](fields)
         case l: PreparedList[G, ?, ?, ?] => analyzeCont[G](l.of.edges, l.of.cont)
         case o: PreparedOption[G, ?, ?]  => analyzeCont[G](o.of.edges, o.of.cont)
       }

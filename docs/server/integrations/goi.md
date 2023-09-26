@@ -64,7 +64,7 @@ To add goi to a `Type[F, A]` you must provide:
 * A function `NonEmptyList[B] => F[Map[B, A]]` that can fetch items if requested through the `node` field.
 ```scala mdoc:silent
 import gql.ast._
-import gql.dsl._
+import gql.dsl.all._
 import gql.goi.dsl._
 import cats.effect._
 import cats.data._

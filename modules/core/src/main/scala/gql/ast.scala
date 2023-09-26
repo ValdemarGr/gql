@@ -55,9 +55,11 @@ object ast extends AstImplicits.Implicits {
     def abstractFieldsNel: NonEmptyList[(String, AbstractField[F, ?])]
   }
 
-  final case class Implementation[+F[_], A, B](implementation: Eval[Interface[F, B]])(implicit
-      val specify: B => Option[A]
-  )
+  trait ImplementationAttribute[+F[_]]
+  final case class Implementation[+F[_], A, B](
+      implementation: Eval[Interface[F, B]],
+      attributes: List[ImplementationAttribute[F]] = Nil
+  )(val specify: B => Ior[String, Option[A]])
 
   trait TypeAttribute[+F[_], A]
   final case class Type[+F[_], A](
@@ -95,9 +97,13 @@ object ast extends AstImplicits.Implicits {
     def document(description: String): Input[A] = copy(description = Some(description))
   }
 
-  final case class Variant[+F[_], A, B](tpe: Eval[Type[F, B]])(implicit val specify: A => Option[B]) {
+  trait VariantAttribute[+F[_]]
+  final case class Variant[+F[_], A, B](
+      tpe: Eval[Type[F, B]],
+      attributes: List[VariantAttribute[F]] = Nil
+  )(val specify: A => Ior[String, Option[B]]) {
     def contramap[C](g: C => A): Variant[F, C, B] =
-      Variant[F, C, B](tpe)(c => specify(g(c)))
+      Variant[F, C, B](tpe, attributes)(c => specify(g(c)))
   }
 
   final case class Union[+F[_], A](
@@ -177,12 +183,12 @@ object ast extends AstImplicits.Implicits {
     def asAbstract: AbstractField[F, B]
   }
 
-  trait FieldAttribute[+F[_], -A, B]
+  trait FieldAttribute[+F[_]]
   final case class Field[+F[_], -A, B](
       resolve: Resolver[F, A, B],
       output: Eval[Out[F, B]],
       description: Option[String] = None,
-      attributes: List[FieldAttribute[F, A, B]] = Nil
+      attributes: List[FieldAttribute[F]] = Nil
   ) extends AnyField[F, A, B] {
     def document(description: String): Field[F, A, B] = copy(description = Some(description))
 
@@ -206,12 +212,12 @@ object ast extends AstImplicits.Implicits {
       )
 
     def compose[F2[x] >: F[x], A2](r: Resolver[F2, A2, A]): Field[F2, A2, B] =
-      Field(r.andThen(resolve), output, description)
+      copy[F2, A2, B](r.andThen(resolve))
 
     def contramap[F2[x] >: F[x], A2](f: A2 => A): Field[F2, A2, B] =
       compose[F2, A2](Resolver.lift[F2, A2](f))
 
-    def addAttributes[F2[x] >: F[x], A2 <: A](attrs: FieldAttribute[F2, A2, B]*): Field[F2, A2, B] =
+    def addAttributes[F2[x] >: F[x]](attrs: FieldAttribute[F2]*): Field[F2, A, B] =
       copy(attributes = attributes ++ attrs.toList)
   }
 

@@ -23,6 +23,7 @@ trait GqlDslFull
     with InterfaceDslFull
     with TypeDslFull
     with UnionDslFull
+    with Aliases
 
 trait GqlDsl[F[_]]
     extends DirectiveDsl[F]
@@ -32,6 +33,7 @@ trait GqlDsl[F[_]]
     with InterfaceDsl[F]
     with TypeDsl[F]
     with UnionDsl[F]
+    with Aliases
 
 object GqlDsl extends GqlDslFull {
   def apply[F[_]]: GqlDsl[F] = new GqlDsl[F] {}

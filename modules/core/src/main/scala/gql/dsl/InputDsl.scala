@@ -42,6 +42,8 @@ trait InputDslFull {
       name: String,
       fields: Arg[A]
   ): Input[A] = Input(name, fields)
+
+  object value extends ValueDsl
 }
 
 object InputDsl extends InputDslFull {
@@ -53,7 +55,7 @@ object InputDsl extends InputDslFull {
   }
 }
 
-object value {
+trait ValueDsl {
   def scalar[A](value: A)(implicit tpe: => Scalar[A]) =
     tpe.encoder(value)
 

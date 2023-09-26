@@ -17,7 +17,7 @@ package gql
 
 import munit.CatsEffectSuite
 import gql.ast._
-import gql.dsl._
+import gql.dsl.all._
 import cats.effect._
 import cats.implicits._
 
@@ -81,7 +81,7 @@ class ValidationTest extends CatsEffectSuite {
     .variant { case x: MutuallyRecursive1 => x }
     .variant { case x: MutuallyRecursive2 => x }
 
-  def sharedFields[A] = fields[IO, A](
+  def sharedFields[B] = fields[IO, B](
     "one" -> lift(_ => "heya"),
     "two" -> lift(arg[String]("x")) { case _ => "heya" },
     "three" -> lift(arg[Int]("x", value.scalar(42))) { case _ => "heya" },

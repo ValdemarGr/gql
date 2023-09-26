@@ -15,8 +15,8 @@ Error handling in gql can be performed in two ways, it can be returned explicitl
 Let's setup the scene:
 ```scala mdoc
 import gql.ast._
-import gql.dsl._
-import gql.dsl.value._
+import gql.dsl.all._
+import gql.dsl.all.value._
 import gql._
 import cats.implicits._
 import cats.data._

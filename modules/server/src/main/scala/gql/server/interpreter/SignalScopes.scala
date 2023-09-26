@@ -65,7 +65,7 @@ object SignalScopes {
       def reserveDebugMapping(id: Unique.Token, name: Eval[String]): Resource[F, Unit] =
         Resource.make(debugState.update(_ + (id -> name)))(_ => debugState.update(_ - id))
 
-      def reserveShowMapping[A: Show](id: Unique.Token, a: => A): Resource[F, Unit] =
+      def reserveShowMapping[B: Show](id: Unique.Token, a: => B): Resource[F, Unit] =
         reserveDebugMapping(id, Eval.later(a.show))
 
       val getPrintState = debugState.get.map(_.fmap(_.value))

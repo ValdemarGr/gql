@@ -16,10 +16,16 @@ libraryDependencies += "io.github.valdemargr" %% "gql-server-http4s" % "@VERSION
 libraryDependencies += "io.github.valdemargr" %% "gql-natchez" % "@VERSION@",
 libraryDependencies += "io.github.valdemargr" %% "gql-server-graphqlws" % "@VERSION@",
 libraryDependencies += "io.github.valdemargr" %% "gql-server-goi" % "@VERSION@",
+libraryDependencies += "io.github.valdemargr" %% "gql-relational" % "@VERSION@",
+libraryDependencies += "io.github.valdemargr" %% "gql-relational-skunk" % "@VERSION@",
+libraryDependencies += "io.github.valdemargr" %% "gql-relational-doobie" % "@VERSION@",
 
 // client
 libraryDependencies += "io.github.valdemargr" %% "gql-client" % "@VERSION@",
 libraryDependencies += "io.github.valdemargr" %% "gql-client-http4s" % "@VERSION@",
+
+// shared
+libraryDependencies += "io.github.valdemargr" %% "gql-graphqlws" % "@VERSION@",
 
 // project/plugins.sbt
 addSbtPlugin("io.github.valdemargr" % "gql-client-codegen-sbt" % "@VERSION@")

@@ -16,18 +16,11 @@
 package gql
 
 import cats.data._
-import gql.Arg
 import gql.parser.AnyValue
-import gql.parser.Const
 import gql.parser.{Value => V}
 import gql.resolver._
-import io.circe._
 
 package object preparation {
-  final case class Variable[C](
-      tpe: gql.parser.Type,
-      value: Either[Json, V[Const, C]]
-  )
   type VariableMap[C] = Map[String, Variable[C]]
 
   def pValueName(v: V[AnyValue, ?]): String = {

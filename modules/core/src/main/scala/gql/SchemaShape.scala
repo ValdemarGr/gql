@@ -23,6 +23,8 @@ import gql.ast._
 import org.typelevel.paiges.Doc
 import gql.parser.{Value => V, AnyValue}
 import gql.util.SchemaUtil
+import gql.dsl.all._
+import gql.dsl.all.value
 
 /** The underlying graph that compiles into a GraphQL schema. Provides a plethora of methods to derive information, perform validation,
   * render, introspect and generate stub implementations.
@@ -75,9 +77,9 @@ object SchemaShape {
         inputTypes: List[InToplevel[?]] = Nil
     ): SchemaShape[F, Q, M, S] =
       SchemaShape(
-        gql.dsl.tpe("Query", query.head, query.tail: _*),
-        mutation.map(x => gql.dsl.tpe("Mutation", x.head, x.tail: _*)),
-        subscription.map(x => gql.dsl.tpe("Subscription", x.head, x.tail: _*)),
+        tpe("Query", query.head, query.tail: _*),
+        mutation.map(x => tpe("Mutation", x.head, x.tail: _*)),
+        subscription.map(x => tpe("Subscription", x.head, x.tail: _*)),
         outputTypes,
         inputTypes
       )
@@ -96,7 +98,9 @@ object SchemaShape {
   sealed trait InterfaceImpl[+F[_], A]
   object InterfaceImpl {
     final case class OtherInterface[F[_], A](i: Interface[F, A]) extends InterfaceImpl[F, A]
-    final case class TypeImpl[F[_], A, B](t: Type[F, B], specify: A => Option[B]) extends InterfaceImpl[F, A]
+    final case class TypeImpl[F[_], A, B](t: Type[F, B], impl: Implementation[F, B, A]) extends InterfaceImpl[F, A] {
+      def specify = impl.specify
+    }
   }
 
   // Key is the interface
@@ -162,7 +166,7 @@ object SchemaShape {
   def visit[F[_], G[_]: Monad: Parallel, A](
       root: SchemaShape[F, ?, ?, ?]
   )(pf: PartialFunction[VisitNode[F], G[A] => G[A]])(implicit D0: Defer[G], M: Monoid[A]): G[A] = {
-    type H[A] = Kleisli[G, Set[String], A]
+    type H[B] = Kleisli[G, Set[String], B]
     val H = Monad[H]
     val L = Local[H, Set[String]]
     val D = Defer[H]
@@ -184,11 +188,19 @@ object SchemaShape {
           nextIfNotSeen(t) {
             lazy val nextF = t match {
               case ol: ObjectLike[F, ?] =>
-                ol.anyFields.parFoldMapA { case (name, af) =>
-                  (goOutput(af.output.value) >>
-                    af.asAbstract.arg.parFoldMapA(_.entries.parFoldMapA(x => goInput(x.input.value))))
-                    .mapF(runPf(VisitNode.FieldNode(name, af)))
-                } >> ol.implementsMap.values.toList.map(_.value).parFoldMapA(goOutput)
+                val fieldEffects = ol.anyFields.parFoldMapA { case (name, af) =>
+                  val effect = (
+                    goOutput(af.output.value),
+                    af.asAbstract.arg.parFoldMapA(_.entries.parFoldMapA(x => goInput(x.input.value)))
+                  ).parMapN(_ |+| _)
+
+                  effect.mapF(runPf(VisitNode.FieldNode(name, af)))
+                }
+
+                (
+                  ol.implementsMap.values.toList.map(_.value).parFoldMapA(goOutput),
+                  fieldEffects
+                ).parMapN(_ |+| _)
               case Union(_, instances, _) =>
                 instances.parFoldMapA(inst => goOutput(inst.tpe.value))
               case _ => H.pure(M.empty)
@@ -228,7 +240,7 @@ object SchemaShape {
   def visitOnce[F[_], G[_]: Monad: Defer, A](
       root: SchemaShape[F, ?, ?, ?]
   )(pf: PartialFunction[VisitNode[F], G[A]])(implicit A: Monoid[A]): G[A] = {
-    type H[A] = StateT[G, Set[String], A]
+    type H[B] = StateT[G, Set[String], B]
     val S = Stateful[H, Set[String]]
     val H = Monad[H]
     implicit lazy val parForState: Parallel[H] = Parallel.identity[H]
@@ -277,21 +289,24 @@ object SchemaShape {
       }
     }
 
+    def visitOutputTopelvel[B](t: OutToplevel[F, B]) =
+      t match {
+        case ol: ObjectLike[F, B] =>
+          val values: List[(Interface[F, ?], InterfaceImpl[F, ?])] = ol match {
+            case t: Type[F, B] =>
+              t.implementations.map(x => x.implementation.value -> InterfaceImpl.TypeImpl(t, x))
+            case i: Interface[F, B] =>
+              i.implementations.map(x => x.value -> InterfaceImpl.OtherInterface(i))
+          }
+          addValues(values.map { case (i, ii) => i.name -> ii })
+        case _ => modify(identity)
+      }
+
     val program = shape.visitOnce[Effect, Unit] {
       case VisitNode.InNode(t: InToplevel[?]) => modify(_.addToplevel(t.name, t))
-      case VisitNode.OutNode(t: OutToplevel[F, ?]) =>
+      case VisitNode.OutNode(t: OutToplevel[F, a]) =>
         val modF = modify(_.addToplevel(t.name, t))
-        val fa = t match {
-          case ol: ObjectLike[F, ?] =>
-            val values: List[(Interface[F, ?], InterfaceImpl[F, ?])] = ol match {
-              case t: Type[F, a] =>
-                t.implementations.map(x => x.implementation.value -> InterfaceImpl.TypeImpl(t, x.specify))
-              case i: Interface[F, ?] =>
-                i.implementations.map(x => x.value -> InterfaceImpl.OtherInterface(i))
-            }
-            addValues(values.map { case (i, ii) => i.name -> ii })
-          case _ => modify(identity)
-        }
+        val fa = visitOutputTopelvel(t)
         modF >> fa
     }
 
@@ -446,7 +461,6 @@ object SchemaShape {
   }
 
   def introspect[F[_]](ss: SchemaShape[F, ?, ?, ?]): NonEmptyList[(String, Field[F, Unit, ?])] = {
-    import dsl._
 
     // We do a little lazy evaluation trick to include the introspection schema in itself
     lazy val d = {
@@ -669,8 +683,8 @@ object SchemaShape {
       },
       "args" -> lift(inclDeprecated) { (_, dir) =>
         dir.arg match {
-          case DirectiveArg.Empty      => Nil
-          case DirectiveArg.WithArg(a) => a.entries.toList
+          case EmptyableArg.Empty   => Nil
+          case EmptyableArg.Lift(a) => a.entries.toList
         }
       },
       "isRepeatable" -> lift(_ => false)

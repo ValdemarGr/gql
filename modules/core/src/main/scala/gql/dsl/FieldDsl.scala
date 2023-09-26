@@ -20,6 +20,7 @@ import gql.ast._
 import gql._
 import cats.data._
 import cats._
+import gql.dsl.aliases._
 
 trait FieldDsl[F[_]] {
   def fields[A](hd: (String, Field[F, A, ?]), tl: (String, Field[F, A, ?])*): Fields[F, A] =
@@ -73,7 +74,7 @@ trait FieldDslFull {
 
   def lift[I] = new FieldDsl.PartiallyAppliedLift[I]
 
-  def build[F[_], I] = new FieldBuilder[F, I]
+  def build[F[_], I] = new FieldBuilder[F, I] {}
 
   def builder[F[_], I] = new FieldDsl.PartiallyAppliedFieldBuilder[F, I]
 
@@ -109,8 +110,6 @@ trait FieldDslFull {
 }
 
 object FieldDsl extends FieldDslFull {
-  def apply[F[_]] = new FieldDsl[F] {}
-
   final class PartiallyAppliedEff[I](private val dummy: Boolean = false) extends AnyVal {
     def apply[F[_], T, A](arg: Arg[A])(resolver: (A, I) => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
       Field(Resolver.liftF[F, (A, I)] { case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
@@ -149,7 +148,7 @@ object FieldDsl extends FieldDslFull {
   }
 }
 
-final class FieldBuilder[F[_], I](private val dummy: Boolean = false) extends AnyVal {
+trait FieldBuilder[F[_], I] {
   def tpe(
       name: String,
       hd: (String, Field[F, I, ?]),

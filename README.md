@@ -13,7 +13,7 @@ To learn more, check out the [docs.](https://valdemargr.github.io/gql/)
 
 # Example
 ```scala
-import gql.dsl._
+import gql.dsl.all._
 import gql.ast._
 import cats.effect._
 import cats.implicits._

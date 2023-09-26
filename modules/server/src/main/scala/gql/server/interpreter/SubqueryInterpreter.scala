@@ -28,6 +28,7 @@ import cats.effect.implicits._
 import gql.resolver._
 import io.circe.syntax._
 import gql._
+import org.typelevel.scalaccompat.annotation._
 
 /** The [[SubqueryInterpreter]] recursively runs through the AST and performs a multitude of tasks:
   *   - Runs the [[gql.resolver.Resolver]]/[[gql.resolver.Step]]s defined in the query.
@@ -53,7 +54,7 @@ trait SubqueryInterpreter[F[_]] {
 
   def startNext[I](s: Prepared[F, I], in: Chain[EvalNode[F, I]]): W[Chain[Json]]
 
-  def runDataField[I](df: PreparedDataField[F, I], input: Chain[EvalNode[F, I]]): W[Chain[Json]]
+  def runDataField[I](df: PreparedDataField[F, I, ?], input: Chain[EvalNode[F, I]]): W[Chain[Json]]
 }
 
 object SubqueryInterpreter {
@@ -65,6 +66,11 @@ object SubqueryInterpreter {
     new SubqueryInterpreter[F] {
       val W = Async[W]
       val lift: F ~> W = WriterT.liftK[F, Chain[EvalFailure]]
+
+      def liftIor[A](cursor: Cursor, ior: Ior[String, A]): W[Option[A]] =
+        WriterT.put[F, Chain[EvalFailure], Option[A]](ior.right)(
+          Chain.fromOption(ior.left.map(e => EvalFailure.Raised(cursor, e)))
+        )
 
       def submit(name: String, duration: FiniteDuration, size: Int): F[Unit] =
         sup.supervise(stats.updateStats(name, duration, size)).void
@@ -107,14 +113,15 @@ object SubqueryInterpreter {
             case Right(o) => W.pure(Some(o))
           }
 
-        def attemptTimed[A](cursor: UniqueEdgeCursor, constructor: Throwable => EvalFailure)(fo: F[A]): W[Option[A]] =
+        def attemptTimed[A](cursor: UniqueEdgeCursor, constructor: Throwable => EvalFailure, n: Int = 1)(fo: F[A]): W[Option[A]] =
           attemptEffect(constructor) {
             fo.timed.flatMap { case (dur, x) =>
-              submit(cursor.asString, dur, 1) as x
+              submit(cursor.asString, dur, n) as x
             }
           }
 
-        step match {
+        @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
+        val result: W[Chain[(Int, Json)]] = step match {
           case Lift(f) => runNext(inputs.map(_.map(f)))
           case alg: EmbedEffect[?, i] =>
             val cursor = alg.stableUniqueEdgeName
@@ -125,17 +132,25 @@ object SubqueryInterpreter {
                 }
 
                 runF.map(Chain.fromOption(_))
+              } >>= runNext
+          case alg: InlineBatch[F, k, o] =>
+            val cursor = alg.stableUniqueEdgeName
+            val keys: Set[k] = inputs.toList.flatMap(_.node.value.toList).toSet
+
+            attemptTimed(cursor, e => EvalFailure.BatchResolution(inputs.map(_.node.cursor), e), keys.size) {
+              alg.run(keys).map { m =>
+                inputs.map { id =>
+                  id.map { keys =>
+                    Chain.fromIterableOnce[k](keys).mapFilter(k => m.get(k) tupleLeft k).iterator.toMap
+                  }
+                }
               }
-              .flatMap(runEdgeCont(_, cont))
+            }
+              .map(xs => Chain.fromOption(xs).flatten) >>= runNext
           case EmbedError() =>
             (inputs: Chain[IndexedData[F, Ior[String, C]]])
               .flatTraverse { id =>
-                val ior = id.sequence
-                WriterT.put[F, Chain[EvalFailure], Chain[IndexedData[F, C]]](
-                  Chain.fromOption(ior.right)
-                )(
-                  Chain.fromOption(ior.left.map(e => EvalFailure.Raised(id.node.cursor, e)))
-                )
+                liftIor(id.node.cursor, id.sequence).map(Chain.fromOption(_))
               }
               .flatMap(runEdgeCont(_, cont))
           case alg: Compose[F, ?, a, ?] =>
@@ -146,7 +161,7 @@ object SubqueryInterpreter {
               // We modify the cont for the next stream emission
               // We need to get rid of the skips since they are a part of THIS evaluation, not the next
               val ridded = StepCont.visit(cont)(new StepCont.Visitor[F] {
-                override def visitJoin[I, O](cont: StepCont.Join[F, I, O]): StepCont[F, I, O] =
+                override def visitJoin[I2, O2](cont: StepCont.Join[F, I2, O2]): StepCont[F, I2, O2] =
                   cont.next
               })
 
@@ -161,7 +176,7 @@ object SubqueryInterpreter {
                           signal = alg.signal,
                           cursor = id.node.cursor
                         )
-                        .map { case (s, sd) => sd.value.map { case i: i @unchecked => (i, s) } }
+                        .map { case (s, sd) => sd.value.map { x => (x.asInstanceOf[i], s) } }
                         .rethrow
                     }
                 }
@@ -199,20 +214,29 @@ object SubqueryInterpreter {
 
               (leftF, rightF).parMapN(_ ++ _)
             }
-          case GetMeta(pm) =>
-            runNext(inputs.map(in => in as FieldMeta(QueryMeta(in.node.cursor, pm.variables), pm.args, pm.alias)))
+          case GetMeta(pm0) =>
+            val pm = pm0.value
+            runNext {
+              inputs.map { in =>
+                in as FieldMeta(QueryMeta(in.node.cursor, pm.variables), pm.args, pm.pdf)
+              }
+            }
           case alg: First[F @unchecked, i2, o2, c2] =>
             // (o2, c2) <:< C
             // (i2, c2) <:< I
+            val theCompilerNeedsHelp = (inputs: Chain[IndexedData[F, (i2, c2)]])
             val inputMap: Map[Int, c2] =
-              inputs.map(in => in.index -> (in.map { case (_, c2) => c2 }.node.value)).toIterable.toMap
+              theCompilerNeedsHelp
+                .map(in => in.index -> (in.map { case (_, c2) => c2 }.node.value))
+                .toIterable
+                .toMap
 
             val base: StepCont[F, C, O] = cont
             val contR = StepCont.TupleWith[F, o2, c2, O](
               inputMap,
               base
             )
-            runStep[i2, o2, O](inputs.map(_.map { case (i2, _) => i2 }), alg.step, contR)
+            runStep[i2, o2, O](theCompilerNeedsHelp.map(_.map { case (i2, _) => i2 }), alg.step, contR)
           case alg: Batch[F @unchecked, k, v] =>
             val keys: Chain[(Cursor, Set[k])] = inputs.map(id => id.node.cursor -> id.node.value)
 
@@ -226,8 +250,10 @@ object SubqueryInterpreter {
                     }
                   }
               }
-            }.flatMap(runEdgeCont(_, cont))
+            } >>= runNext
         }
+
+        result
       }
 
       def runEdge[I, O](
@@ -243,7 +269,7 @@ object SubqueryInterpreter {
           }
       }
 
-      def runDataField[I](df: PreparedDataField[F, I], in: Chain[EvalNode[F, I]]): W[Chain[Json]] = {
+      def runDataField[I](df: PreparedDataField[F, I, ?], in: Chain[EvalNode[F, I]]): W[Chain[Json]] = {
         df.cont match {
           case cont: PreparedCont[F, i, a] =>
             runEdge[i, a](
@@ -259,27 +285,36 @@ object SubqueryInterpreter {
       def unflatten[A](ns: Vector[Int], dat: Vector[A]): Vector[Vector[A]] =
         ns.mapAccumulate(dat)((ds, n) => ds.splitAt(n).swap)._2
 
+      @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
       def runFields[I](dfs: List[PreparedField[F, I]], in: Chain[EvalNode[F, I]]): W[Chain[Map[String, Json]]] = {
         Chain
           .fromSeq(dfs.toList)
           .parFlatTraverse {
-            case PreparedSpecification(_, _, Nil)             => W.pure(Chain(in.as(Map.empty[String, Json])))
-            case PreparedSpecification(_, specify, selection) =>
-              // Partition into what inputs satisfy the fragment and what don't
-              // Run the ones that do
-              // Then re-build an output, padding every empty output
-              val parted = in.map(x => x.setValue(specify(x.value)))
-              val somes = parted.collect { case EvalNode(c, Some(x), s) => EvalNode(c, x, s) }
-              val fa = selection.parTraverse { df =>
-                runDataField(df, somes).map(_.map(j => Map(df.outputName -> j)))
-              }
-              fa.map(_.toList.map { ys =>
-                Chain.fromSeq {
-                  unflatten(parted.map(_.value.size.toInt).toVector, ys.toVector)
-                    .map(_.foldLeft(Map.empty[String, Json])(_ ++ _))
+            case PreparedSpecification(_, Nil)      => W.pure(Chain(in.as(Map.empty[String, Json])))
+            case ps: PreparedSpecification[F, I, a] =>
+              // Invariant specified.length == in.length
+              val specified: W[Chain[EvalNode[F, Option[a]]]] =
+                in
+                  .traverse(x => liftIor(x.cursor, ps.specialization.specify(x.value)).map(_.flatten).map(x.setValue))
+
+              specified.flatMap { parted =>
+                // Partition into what inputs satisfy the fragment and what don't
+                // Run the ones that do
+                // Then re-build an output, padding every empty output
+                val somes = parted.collect { case EvalNode(c, Some(x), s) => EvalNode(c, x, s) }
+                // Run the somes
+                val fa = ps.selection.parTraverse { df =>
+                  runDataField(df, somes).map(_.map(j => Map(df.outputName -> j)))
                 }
-              }).map(Chain.fromSeq)
-            case df @ PreparedDataField(_, _, _) =>
+                // Reassociate the somes and nones
+                fa.map(_.toList.map { ys =>
+                  Chain.fromSeq {
+                    unflatten(parted.map(_.value.size.toInt).toVector, ys.toVector)
+                      .map(_.foldLeft(Map.empty[String, Json])(_ ++ _))
+                  }
+                }).map(Chain.fromSeq)
+              }
+            case df @ PreparedDataField(_, _, _, _, _) =>
               runDataField(df, in)
                 .map(_.map(j => Map(df.outputName -> j)))
                 .map(Chain(_))
@@ -294,11 +329,12 @@ object SubqueryInterpreter {
           .map(Chain.fromIterableOnce)
       }
 
+      @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
       def startNext[I](s: Prepared[F, I], in: Chain[EvalNode[F, I]]): W[Chain[Json]] = W.defer {
         s match {
           case PreparedLeaf(_, enc) => W.pure(in.map(x => enc(x.value)))
-          case Selection(Nil)       => W.pure(in.as(Json.obj()))
-          case Selection(fields)    => runFields(fields, in).map(_.map(JsonObject.fromMap(_).asJson))
+          case Selection(Nil, _)    => W.pure(in.as(Json.obj()))
+          case Selection(fields, _) => runFields(fields, in).map(_.map(JsonObject.fromMap(_).asJson))
           case s: PreparedList[F, a, ?, b] =>
             val of = s.of
             val toSeq = s.toSeq

@@ -15,10 +15,9 @@
  */
 package gql.resolver
 
-import gql.parser.{QueryAst => P}
-import gql.Cursor
-import gql.preparation.VariableMap
-import gql.parser.AnyValue
+import gql.parser.{QueryAst => P, AnyValue}
+import gql.preparation._
+import gql._
 
 /** Meta information about the current query.
   */
@@ -29,8 +28,10 @@ final case class QueryMeta(
 
 /** A more specialized version of [[QueryMeta]] that also carries field specific information.
   */
-final case class FieldMeta(
+final case class FieldMeta[+F[_]](
     queryMeta: QueryMeta,
     args: Option[P.Arguments[Unit, AnyValue]],
-    alias: Option[String]
-)
+    astNode: PreparedDataField[F, ?, ?]
+) {
+  def alias: Option[String] = astNode.alias
+}

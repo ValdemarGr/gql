@@ -18,7 +18,9 @@ package gql.dsl
 import gql.ast._
 import cats.data._
 import cats._
+import cats.implicits._
 import scala.reflect.ClassTag
+import gql.dsl.aliases._
 
 trait TypeDsl[F[_]] {
   def tpe[A](name: String, hd: (String, Field[F, A, ?]), tl: (String, Field[F, A, ?])*) =
@@ -45,7 +47,7 @@ object TypeDsl extends TypeDslFull {
 
   final class TypeOps[F[_], A](private val tpe: Type[F, A]) extends AnyVal {
     def implements[B](pf: PartialFunction[B, A])(implicit interface: => Interface[F, B]): Type[F, A] =
-      tpe.copy(implementations = Implementation(Eval.later(interface))(pf.lift) :: tpe.implementations)
+      tpe.copy(implementations = Implementation(Eval.later(interface))(pf.lift.andThen(_.rightIor)) :: tpe.implementations)
 
     def subtypeOf[B](implicit ev: A <:< B, tag: ClassTag[A], interface: => Interface[F, B]): Type[F, A] =
       implements[B] { case a: A => a }(interface)

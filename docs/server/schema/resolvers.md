@@ -13,7 +13,7 @@ When gql executes a query it first constructs a tree of continueations from your
 Lets start off with some imports:
 ```scala mdoc
 import gql._
-import gql.dsl._
+import gql.dsl.all._
 import gql.resolver._
 import gql.ast._
 import cats.effect._
@@ -62,6 +62,13 @@ r.map{ case (age, name) => s"$name is $age years old" }
 
 ### Meta
 The `meta` resolver provides metadata regarding query execution, such as the position of query execution, field aliasing and the provided arguments.
+
+It also allows the caller to inspect the query algebra ast such that more exotic operations become possible.
+For instance, arguments can dynamically be inspected.
+```scala mdoc
+lazy val a = arg[Int]("age")
+Resolver.meta[IO, String].map(meta => meta.astNode.arg(a))
+```
 
 ### Errors
 Well formed errors are returned in an `cats.data.Ior`.
@@ -273,6 +280,18 @@ Resolver
   .batch[IO, PersonId, Person](_.toList.toNel.traverse(People.source.batch).map(_.getOrElse(Map.empty)))
 ```
 
+### Inline batch
+A batch resolver can also be defined inline with some notable differences to the regular batch resolver:
+* It does not need to be defined in state.
+* It is not subject to global query planning, and is only ever called with inputs from the same selection.
+
+The inline batch resolver has the same signature as a regular batch resolver; `Set[K] => F[Map[K, V]]`.
+```scala mdoc
+Resolver.inlineBatch[IO, PersonId, Person](
+  _.toList.toNel.traverse(People.source.batch).map(_.getOrElse(Map.empty))
+)
+```
+
 ### Choice
 Resolvers also implement `Choice` via `(Resolver[F, A, C], Resolver[F, B, D]) => Resolver[F, Either[A, B], Either[C, D]]`.
 On the surface, this combinator may have limited uses, but with a bit of composition we can perform tasks such as caching.
@@ -350,7 +369,7 @@ If your stream is sequential, gql will only pull elements when they are needed.
 The interpreter performs a global re-interpretation of your schema, when one or more streams emit.
 That is, the interpreter cycles through the following two phases:
 * Interpret for the current values.
-* Await new values (and values that arrived furing the previous step).
+* Await new values (and values that arrived during the previous step).
 
 Here is an example of some streams in action:
 ```scala mdoc
