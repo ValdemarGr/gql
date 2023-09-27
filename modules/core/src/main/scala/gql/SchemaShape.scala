@@ -15,7 +15,7 @@
  */
 package gql
 
-import cats._
+import cats.{Monad, Parallel, Monoid, Defer}
 import cats.implicits._
 import cats.mtl._
 import cats.data._
