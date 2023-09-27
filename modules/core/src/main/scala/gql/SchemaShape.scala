@@ -15,7 +15,7 @@
  */
 package gql
 
-import cats.{Monad, Parallel, Monoid, Defer}
+import cats.{Defer, Monad, Monoid, Parallel}
 import cats.implicits._
 import cats.mtl._
 import cats.data._
@@ -271,7 +271,7 @@ object SchemaShape {
       State.modify[DiscoveryState[F]](f)
 
     type InterfaceName = String
-    def addValues(values: List[(InterfaceName, InterfaceImpl[F, ?])]): Effect[Unit] = {
+    def addValues(values: List[(InterfaceName, InterfaceImpl[F, ?])]): Effect[Unit] =
       modify { s =>
         val withNew = values.foldLeft(s.implementations) { case (accum, (interfaceName, next)) =>
           val name = next match {
@@ -287,7 +287,6 @@ object SchemaShape {
 
         s.copy(implementations = withNew)
       }
-    }
 
     def visitOutputTopelvel[B](t: OutToplevel[F, B]) =
       t match {
@@ -369,7 +368,9 @@ object SchemaShape {
       val args = field.arg
         .map(_.entries)
         .map(nec =>
-          Doc.intercalate(Doc.comma + Doc.lineOrSpace, nec.toList.map(renderArgValueDoc)).tightBracketBy(Doc.char('('), Doc.char(')'))
+          Doc
+            .intercalate(Doc.comma + Doc.lineOrSpace, nec.toList.map(renderArgValueDoc))
+            .tightBracketBy(Doc.char('('), Doc.char(')'))
         )
         .getOrElse(Doc.empty)
 
@@ -412,7 +413,7 @@ object SchemaShape {
                 .indent(2)
 
               val interfaces = ol.implementsMap.keySet.toList.toNel
-                .map { nel => Doc.text(" implements ") + Doc.intercalate(Doc.text(" & "), nel.toList.map(Doc.text)) }
+                .map(nel => Doc.text(" implements ") + Doc.intercalate(Doc.text(" & "), nel.toList.map(Doc.text)))
                 .getOrElse(Doc.empty)
 
               doc(desc) +
@@ -428,7 +429,7 @@ object SchemaShape {
                 .indent(2)
 
               val interfaces = ol.implementsMap.keySet.toList.toNel
-                .map { nel => Doc.text(" implements ") + Doc.intercalate(Doc.text(" & "), nel.toList.map(Doc.text)) }
+                .map(nel => Doc.text(" implements ") + Doc.intercalate(Doc.text(" & "), nel.toList.map(Doc.text)))
                 .getOrElse(Doc.empty)
 
               doc(desc) +
@@ -594,7 +595,8 @@ object SchemaShape {
       "interfaces" -> lift {
         case oi: TypeInfo.OutInfo =>
           oi.t match {
-            case Type(_, _, impls, _, _)   => impls.map[TypeInfo](impl => TypeInfo.OutInfo(impl.implementation.value)).some
+            case Type(_, _, impls, _, _) =>
+              impls.map[TypeInfo](impl => TypeInfo.OutInfo(impl.implementation.value)).some
             case Interface(_, _, impls, _) => impls.map[TypeInfo](impl => TypeInfo.OutInfo(impl.value)).some
             case _                         => None
           }
