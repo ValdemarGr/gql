@@ -37,7 +37,7 @@ import org.typelevel.scalaccompat.annotation._
   *   - Batches computations that have been marked as batchable.
   */
 trait SubqueryInterpreter[F[_]] {
-  type W[A] = SubqueryInterpreter.W[F, A]
+  type W[A] = WriterT[F, Chain[EvalFailure], A]
 
   def runStep[I, C, O](
       inputs: Chain[IndexedData[F, I]],
@@ -58,8 +58,6 @@ trait SubqueryInterpreter[F[_]] {
 }
 
 object SubqueryInterpreter {
-  type W[F[_], A] = WriterT[F, Chain[EvalFailure], A]
-
   def apply[F[_]](
       ss: SignalScopes[F, StreamingData[F, ?, ?]],
       batchAccumulator: BatchAccumulator[F],
