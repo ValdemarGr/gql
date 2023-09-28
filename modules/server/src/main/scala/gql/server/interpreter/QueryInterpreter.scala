@@ -54,12 +54,13 @@ object QueryInterpreter {
 
   def apply[F[_]: Async: Statistics](
       schemaState: SchemaState[F],
-      ss: SignalScopes[F, StreamingData[F, ?, ?]]
+      ss: SignalScopes[F, StreamingData[F, ?, ?]],
+      throttle: F ~> F
   )(implicit planner: Planner[F]) =
     new QueryInterpreter[F] {
       def interpretOne[A, B](input: Input[F, A, B], batching: BatchAccumulator[F]): F[Result[F]] =
         Supervisor[F].use { sup =>
-          SubqueryInterpreter[F](ss, batching, sup)
+          SubqueryInterpreter[F](ss, batching, sup, throttle)
             .runEdgeCont(Chain(input.data), input.cont)
             .run
             .map { case (fails, succs) =>
@@ -72,7 +73,7 @@ object QueryInterpreter {
         for {
           costTree <- analyzeCost[F](inputs)
           planned <- planner.plan(costTree)
-          accumulator <- BatchAccumulator[F](schemaState, planned)
+          accumulator <- BatchAccumulator[F](schemaState, planned, throttle)
           results <- inputs.parTraverse(interpretOne(_, accumulator))
           batchErrors <- accumulator.getErrors
           allErrors = Chain.fromSeq(results.toList).flatMap(_.errors) ++ Chain.fromSeq(batchErrors)

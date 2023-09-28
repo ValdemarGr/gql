@@ -37,7 +37,7 @@ import org.typelevel.scalaccompat.annotation._
   *   - Batches computations that have been marked as batchable.
   */
 trait SubqueryInterpreter[F[_]] {
-  type W[A] = WriterT[F, Chain[EvalFailure], A]
+  type W[A] = SubqueryInterpreter.W[F, A]
 
   def runStep[I, C, O](
       inputs: Chain[IndexedData[F, I]],
@@ -58,16 +58,13 @@ trait SubqueryInterpreter[F[_]] {
 }
 
 object SubqueryInterpreter {
-  //case class Task[F[_]](fa: Either[Json, F[Task[F]]])
-  sealed trait Task[F[_]]
-  object Task {
-    //case class 
-  }
+  type W[F[_], A] = WriterT[F, Chain[EvalFailure], A]
 
   def apply[F[_]](
       ss: SignalScopes[F, StreamingData[F, ?, ?]],
       batchAccumulator: BatchAccumulator[F],
-      sup: Supervisor[F]
+      sup: Supervisor[F],
+      throttle: F ~> F
   )(implicit F: Async[F], stats: Statistics[F]) =
     new SubqueryInterpreter[F] {
       val W = Async[W]
@@ -114,7 +111,7 @@ object SubqueryInterpreter {
           WriterT.put(a)(Chain(constructor(e)))
 
         def attemptEffect[A](constructor: Throwable => EvalFailure)(fo: F[A]): W[Option[A]] =
-          lift(fo.attempt).flatMap {
+          lift(throttle(fo).attempt).flatMap {
             case Left(ex) => liftError[Option[A]](None, ex, constructor)
             case Right(o) => W.pure(Some(o))
           }
@@ -131,14 +128,11 @@ object SubqueryInterpreter {
           case Lift(f) => runNext(inputs.map(_.map(f)))
           case alg: EmbedEffect[?, i] =>
             val cursor = alg.stableUniqueEdgeName
-            inputs
-              .flatTraverse { id =>
-                val runF = attemptTimed(cursor, e => EvalFailure.EffectResolution(id.node.cursor, Left(e))) {
-                  id.sequence[F, i]
-                }
-
-                runF.map(Chain.fromOption(_))
-              } >>= runNext
+            inputs.flatTraverse { id =>
+              attemptTimed(cursor, e => EvalFailure.EffectResolution(id.node.cursor, Left(e))) {
+                id.sequence[F, i]
+              }.map(Chain.fromOption(_))
+            } >>= runNext
           case alg: InlineBatch[F, k, o] =>
             val cursor = alg.stableUniqueEdgeName
             val keys: Set[k] = inputs.toList.flatMap(_.node.value.toList).toSet
@@ -193,7 +187,7 @@ object SubqueryInterpreter {
                   id.copy(node = id.node.setScope(s).setValue(i))
                 })
             } >>= runNext
-          case alg: Choose[F @unchecked, a, b, c, d] =>
+          case alg: Choose[F, a, b, c, d] =>
             val (lefts, rights) = (inputs: Chain[IndexedData[F, Either[a, b]]]).partitionEither { in =>
               in.node.value match {
                 case Left(a)  => Left(in as a)
@@ -227,7 +221,7 @@ object SubqueryInterpreter {
                 in as FieldMeta(QueryMeta(in.node.cursor, pm.variables), pm.args, pm.pdf)
               }
             }
-          case alg: First[F @unchecked, i2, o2, c2] =>
+          case alg: First[F, i2, o2, c2] =>
             // (o2, c2) <:< C
             // (i2, c2) <:< I
             val theCompilerNeedsHelp = (inputs: Chain[IndexedData[F, (i2, c2)]])
@@ -243,7 +237,7 @@ object SubqueryInterpreter {
               base
             )
             runStep[i2, o2, O](theCompilerNeedsHelp.map(_.map { case (i2, _) => i2 }), alg.step, contR)
-          case alg: Batch[F @unchecked, k, v] =>
+          case alg: Batch[F, k, v] =>
             val keys: Chain[(Cursor, Set[k])] = inputs.map(id => id.node.cursor -> id.node.value)
 
             lift {
