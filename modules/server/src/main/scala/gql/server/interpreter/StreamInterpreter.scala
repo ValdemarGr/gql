@@ -15,6 +15,7 @@
  */
 package gql.server.interpreter
 
+import cats._
 import io.circe.syntax._
 import cats.effect._
 import cats.implicits._
@@ -25,6 +26,7 @@ import gql._
 import gql.preparation._
 import fs2.Stream
 import scala.concurrent.duration.FiniteDuration
+import cats.arrow.FunctionK
 
 /** The [[StreamInterpreter]] is resposible for:
   *   - Wireing together results for a query.
@@ -36,9 +38,14 @@ import scala.concurrent.duration.FiniteDuration
 trait StreamInterpreter[F[_]] {
   import StreamInterpreter._
 
-  def interpretStream[A](root: A, selection: Selection[F, A], takeOne: Boolean = false): Stream[F, Result]
+  def interpretStream[A](
+      root: A,
+      selection: Selection[F, A],
+      takeOne: Boolean = false,
+      throttle: F ~> F = FunctionK.id[F]
+  ): Stream[F, Result]
 
-  def interpretSync[A](root: A, selection: Selection[F, A]): F[Result]
+  def interpretSync[A](root: A, selection: Selection[F, A], throttle: F ~> F): F[Result]
 }
 
 object StreamInterpreter {
@@ -53,22 +60,27 @@ object StreamInterpreter {
       schemaState: SchemaState[F],
       debug: DebugPrinter[F],
       accumulate: Option[FiniteDuration]
-  ): StreamInterpreter[F] = fromMakeInterpreter[F](ss => QueryInterpreter[F](schemaState, ss), debug, accumulate)
+  ): StreamInterpreter[F] = fromMakeInterpreter[F](QueryInterpreter[F](schemaState, _, _), debug, accumulate)
 
   def fromMakeInterpreter[F[_]: Temporal](
-      makeInterpreter: SignalScopes[F, StreamingData[F, ?, ?]] => QueryInterpreter[F],
+      makeInterpreter: (SignalScopes[F, StreamingData[F, ?, ?]], F ~> F) => QueryInterpreter[F],
       debug: DebugPrinter[F],
       accumulate: Option[FiniteDuration]
   ): StreamInterpreter[F] = new StreamInterpreter[F] {
-    override def interpretSync[A](root: A, selection: Selection[F, A]): F[Result] =
-      interpretStream(root, selection, takeOne = true).take(1).compile.lastOrError
+    override def interpretSync[A](root: A, selection: Selection[F, A], throttle: F ~> F): F[Result] =
+      interpretStream(root, selection, takeOne = true, throttle).take(1).compile.lastOrError
 
-    override def interpretStream[A](root: A, selection: Selection[F, A], takeOne: Boolean): Stream[F, Result] =
+    override def interpretStream[A](
+        root: A,
+        selection: Selection[F, A],
+        takeOne: Boolean = false,
+        throttle: F ~> F = FunctionK.id[F]
+    ): Stream[F, Result] =
       Stream.resource(Scope[F](None)).flatMap { rootScope =>
         Stream
           .eval(SignalScopes[F, StreamingData[F, ?, ?]](takeOne = takeOne, debug, accumulate, rootScope))
           .flatMap { ss =>
-            val interpreter = makeInterpreter(ss)
+            val interpreter = makeInterpreter(ss, throttle)
 
             val changeStream = Stream.repeatEval(ss.unconsRelevantEvents)
 

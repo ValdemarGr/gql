@@ -2,7 +2,7 @@
 title: The DSL
 ---
 The DSL consists of a series of smart constructors for the ast nodes of gql.
-The source code for the DSL is very easy to follow and as such, the best documentation is the source code itself :-).
+The source code for the DSL is not too difficult to follow and as such, the best documentation is the source code itself :-).
 
 Lets start off with some imports.
 ```scala mdoc
@@ -42,7 +42,7 @@ build[IO, Int](_.map(i => i * 2).evalMap(i => IO(i))): Field[IO, Int, Int]
 
 ### Builders
 Complex structures may require many special resolver compositions.
-The dsl also introduces a somethink akin to a builder pattern.
+The dsl also introduces a something akin to a builder pattern.
 The `build` function from the previous section, in fact, creates a builder that has many more options than just `from` and `apply`.
 ```scala mdoc:silent
 import gql.dsl.FieldBuilder

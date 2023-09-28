@@ -23,6 +23,7 @@ import cats.data._
 import gql.server.planner._
 import gql.resolver.Step
 import gql.preparation._
+import cats._
 
 trait BatchAccumulator[F[_]] {
   // Emits the whole result of the batch, so the calle must filter
@@ -32,10 +33,11 @@ trait BatchAccumulator[F[_]] {
 }
 
 object BatchAccumulator {
-  def apply[F[_]](schemaState: SchemaState[F], plan: OptimizedDAG)(implicit
-      F: Async[F],
-      stats: Statistics[F]
-  ): F[BatchAccumulator[F]] = {
+  def apply[F[_]](
+      schemaState: SchemaState[F],
+      plan: OptimizedDAG,
+      throttle: F ~> F
+  )(implicit F: Async[F], stats: Statistics[F]): F[BatchAccumulator[F]] = {
     val batches: Chain[(Step.BatchKey[?, ?], NonEmptyChain[BatchRef[?, ?]])] = Chain.fromSeq {
       plan.plan.values.toList.mapFilter { case (bs, _) =>
         plan.tree.lookup(bs.head).batchId.map(_.batcherId).map { bk =>
@@ -112,10 +114,7 @@ object BatchAccumulator {
 
                     val allKeysSet: Set[K] = Set.from(allKeys.iterator)
 
-                    resolver
-                      .f(allKeysSet)
-                      .timed
-                      .attempt
+                    throttle(resolver.f(allKeysSet)).timed.attempt
                       .flatMap[Option[Map[K, V]]] {
                         case Left(err) =>
                           val allCursors: Chain[Cursor] =

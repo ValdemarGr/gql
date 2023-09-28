@@ -25,6 +25,8 @@ import scala.concurrent.duration._
 import io.circe.syntax._
 import gql.preparation._
 import cats.parse.Caret
+import cats.arrow.FunctionK
+import cats.effect.std.Mutex
 
 sealed trait CompilationError
 object CompilationError {
@@ -155,15 +157,19 @@ object Compiler {
       ps match {
         case PreparedRoot.Query(ps) =>
           Application.Query {
-            queryInput.flatMap(interpreter.interpretSync(_, ps).map(_.asQueryResult))
+            queryInput.flatMap(interpreter.interpretSync(_, ps, FunctionK.id[F]).map(_.asQueryResult))
           }
         case PreparedRoot.Mutation(ps) =>
           Application.Mutation {
-            mutationInput.flatMap(interpreter.interpretSync(_, ps).map(_.asQueryResult))
+            Mutex[F].flatMap { m =>
+              mutationInput.flatMap(interpreter.interpretSync(_, ps, m.lock.surroundK).map(_.asQueryResult))
+            }
           }
         case PreparedRoot.Subscription(ps) =>
           Application.Subscription {
-            fs2.Stream.eval(subscriptionInput).flatMap(interpreter.interpretStream(_, ps).map(_.asQueryResult))
+            fs2.Stream
+              .eval(subscriptionInput)
+              .flatMap(interpreter.interpretStream(_, ps, throttle = FunctionK.id[F]).map(_.asQueryResult))
           }
       }
   }
