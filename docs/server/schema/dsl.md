@@ -2,7 +2,7 @@
 title: The DSL
 ---
 The DSL consists of a series of smart constructors for the ast nodes of gql.
-The source code for the DSL is very easy to follow and as such, the best documentation is the source code itself :-).
+The source code for the DSL is not too difficult to follow and as such, the best documentation is the source code itself :-).
 
 Lets start off with some imports.
 ```scala mdoc
