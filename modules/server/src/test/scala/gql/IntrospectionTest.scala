@@ -19,7 +19,6 @@ import munit.CatsEffectSuite
 import cats.effect._
 import io.circe._
 import io.circe.syntax._
-import cats.effect.std.Semaphore
 
 class IntrospectionTest extends CatsEffectSuite {
   val schema = StarWarsSchema.schema.unsafeRunSync()
@@ -108,53 +107,5 @@ class IntrospectionTest extends CatsEffectSuite {
     """
 
     query(q)
-  }
-
-  test("fail") {
-    import cats.effect._
-    import cats.effect.implicits._
-    import cats.implicits._
-    val realLog = (a: String) => println(a)
-    var log = (_: String) => ()
-    def go =
-      IO((0 to 100000).toList.map(_ * 2)).timed.map { case (d, _) =>
-        println("normal map")
-        println(d.toMillis)
-      } >>
-         IO.defer((0 to 100000).toList.traverse(x => IO(x * 2))).timed.map { case (d, _) =>
-          println("normal traverse (suspended effect)")
-          println(d.toMillis)
-        } >> 
-       IO.defer((0 to 100000).toList.traverse(x => IO.pure(x * 2))).timed.map { case (d, _) =>
-          println("normal traverse (pure)")
-          println(d.toMillis)
-        } >> Semaphore[IO](1).flatMap { sem =>
-          IO.defer((0 to 100000).toList.traverse(x => sem.permit surround IO(x * 2))).timed.map { case (d, _) =>
-            println("sem overhead")
-            println(d.toMillis)
-          }
-        } >> Semaphore[IO](16).flatMap { sem =>
-          IO.defer(
-            (0 to 100000).toList
-              .traverse(x => (sem.permit surround IO(x * 2)).start)
-              .flatMap(_.traverse(_.join))
-          ).timed
-            .map { case (d, _) =>
-              println("manual parallel")
-              println(d.toMillis)
-            }
-        } >>
-        IO.defer((0 to 100000).toList.parTraverse(x => IO(x * 2))).timed.map { case (d, _) =>
-          println("parTraverse")
-          println(d.toMillis)
-        } >>
-        IO.defer((0 to 100000).toList.parTraverseN(16)(x => IO(x * 2))).timed.map { case (d, _) =>
-          println("parTraverseN(16)")
-          println(d.toMillis)
-        } >> IO(fail("oolol i fail"): Unit)
-
-    import scala.concurrent.duration._
-    (0 to 40).toList.traverse_(_ => go) >>
-      IO { log = realLog } >> IO(System.gc()) >> IO.sleep(1.second) >> go
   }
 }
