@@ -52,7 +52,11 @@ object Validation {
         s"Invalid field name '$name', the field name must match /[_A-Za-z][_0-9A-Za-z]*/"
     }
     final case class DuplicateArg(conflict: String) extends Error {
-      def message: String = s"Duplicate arg `$conflict`."
+      def message: String =
+        s"""|Duplicate arg with different structure `$conflict`.
+            |Duplicate args are allowed but they must be equal (==).
+            |Otherwise two args of same name and type may cause ambiguity if for instance two args have different (potentially mutually exclusive) parsers, or different descriptions.
+            |Define your arg as `val` or `lazy val` to get rid of this error.""".stripMargin
     }
     final case class DuplicateField(conflict: String) extends Error {
       def message: String = s"Duplicate field `$conflict`."
@@ -301,7 +305,11 @@ object Validation {
       G: Monad[G],
       S: Stateful[G, ValidationState[F]]
   ): G[Unit] =
-    allUnique[F, G](DuplicateArg.apply, arg.entries.toList.map(_.name)) >> {
+    allUnique[F, G](
+      DuplicateArg.apply,
+      // We abuse scala universal equals here
+      arg.entries.toList.distinct.map(_.name)
+    ) >> {
 
       // A trick;
       // We check the arg like we would in a user-supplied query

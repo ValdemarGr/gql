@@ -97,6 +97,9 @@ object InverseModifier {
   * explicitly declares the opposite; [[InverseModifier.Optional]].
   */
 final case class InverseModifierStack[+T](modifiers: List[InverseModifier], inner: T) {
+  def map[B](f: T => B): InverseModifierStack[B] =
+    InverseModifierStack(modifiers, f(inner))
+
   def set[B](t: B): InverseModifierStack[B] =
     InverseModifierStack(modifiers, t)
 
