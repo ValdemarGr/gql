@@ -305,10 +305,13 @@ tpe[IO, QueryResult[HomeTable]](
 ```
 
 ## Runtime semantics
-SQL is a language that works on flat arrays of rows, but for it to map well to graphql some work must be performed.
-Most use-cases should be covered by simply invoking the `join` method with the proper multiplicity parameter, so this section is more of a technical reference.
+:::info
+This section is a technical reference, and not necessary to use the library.
+:::
+Data emitted by SQL is not hierarchical, but instead flat; for it to map well to graphql, which is hierarchical some work must be performed.
+Most use-cases are covered by simply invoking the `join` method with the proper multiplicity parameter.
 
-When your AST is inspected to build the query, the recursive AST walk also composes a big reassociation function that can translate a list of flat query results into the proper nested structure.
+When your AST is inspected to build a query, a recursive AST walk composes a big reassociation function that can translate flat query results into the proper hierarchical structure.
 This composed function also tracks the visited columns and their decoders.
 
 The query algebra has a special operation that lets the caller modify the state however they wish.
@@ -322,7 +325,7 @@ val q1 = for {
   _ <- reassociate[Option](select(int4, void"42"))
 } yield ht
 
-// we can even perform them before the join
+// we can perform reassociation before out join also
 val q2 = reassociate[Option](select(text, void"'john doe'")).flatMap(_ => q1)
 
 // we can also change the result structure after reassociation
