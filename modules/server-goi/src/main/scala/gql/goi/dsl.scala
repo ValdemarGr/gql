@@ -19,6 +19,7 @@ import gql.ast._
 import cats.effect._
 import gql.resolver._
 import cats.data._
+import cats.implicits._
 
 object dsl {
   final class TypeGoiOps[F[_], A](private val tpe: Type[F, A]) extends AnyVal {
@@ -28,11 +29,17 @@ object dsl {
     ): Type[F, A] =
       Goi.addId[F, A, B](tpe, resolver, fromIds)
 
-    def goi[B](f: A => B)(fromIds: NonEmptyList[B] => IorT[F, String, Map[B, Ior[String, A]]])(implicit
+    def goiRaise[B](f: A => B)(fromIds: NonEmptyList[B] => IorT[F, String, Map[B, Ior[String, A]]])(implicit
         codec: IDCodec[B],
         F: Sync[F]
     ): Type[F, A] =
       goiFull[B](Resolver.lift[F, A](f))(fromIds)
+
+    def goi[B](f: A => B)(fromIds: NonEmptyList[B] => F[Map[B, A]])(implicit
+        codec: IDCodec[B],
+        F: Sync[F]
+    ): Type[F, A] =
+      goiRaise[B](f)(fromIds.andThen(IorT.liftF(_).map(_.fmap(_.rightIor))))
   }
 
   implicit def typeGoiOps[F[_], A](tpe: Type[F, A]): TypeGoiOps[F, A] =
