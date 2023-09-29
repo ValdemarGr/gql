@@ -55,7 +55,7 @@ object Goi {
   def addIdWith[F[_], A, B](
       t: Type[F, A],
       resolver: Resolver[F, A, B],
-      fromIds: NonEmptyList[B] => F[Map[B, A]],
+      fromIds: NonEmptyList[B] => IorT[F, String, Map[B, Ior[String, A]]],
       specify: Node => Option[A]
   )(implicit F: Sync[F], idCodec: IDCodec[B]): Type[F, A] =
     t
@@ -68,7 +68,7 @@ object Goi {
   def addId[F[_], A, B](
       t: Type[F, A],
       resolver: Resolver[F, A, B],
-      fromIds: NonEmptyList[B] => F[Map[B, A]]
+      fromIds: NonEmptyList[B] => IorT[F, String, Map[B, Ior[String, A]]]
   )(implicit
       F: Sync[F],
       idCodec: IDCodec[B]
@@ -142,13 +142,13 @@ object Goi {
       ids: G[String],
       lookup: Map[String, CollectedAttribute[F, ?, ?]],
       schemaTypes: Set[String]
-  )(implicit F: Sync[F]): IorT[F, String, G[Option[Node]]] =
+  )(implicit F: Sync[F]): IorT[F, String, G[Option[Ior[String, Node]]]] =
     decodeIds[F, G](ids, lookup, schemaTypes)
-      .semiflatMap(_.parFlatTraverse { case di: DecodedIds[F, v, k] =>
+      .flatMap(_.parFlatTraverse { case di: DecodedIds[F, v, k] =>
         val ks = (di.keys: NonEmptyList[(String, k)])
         val reverseMapping: Map[k, String] = ks.map { case (id, key) => key -> id }.toList.toMap
-        val resultsF: F[Map[k, v]] = di.gid.attribute.fromIds(ks.map { case (_, key) => key })
-        resultsF.map(_.toList.mapFilter { case (k, v) => reverseMapping.get(k) tupleRight Node(v, di.gid.typename) })
+        val resultsF: IorT[F, String, Map[k, Ior[String, v]]] = di.gid.attribute.fromIds(ks.map { case (_, key) => key })
+        resultsF.map(_.toList.mapFilter { case (k, v) => reverseMapping.get(k) tupleRight v.map(Node(_, di.gid.typename)) })
       })
       .map(_.toMap)
       .map(lookup => ids.map(lookup.get))
@@ -159,11 +159,20 @@ object Goi {
     val lookup = xs.map(x => x.typename -> x).toMap
     val sts = shape.discover.toplevels.keySet
     builder[F, Q] { b =>
-      def nodeField[G[_]: NonEmptyTraverse](implicit a: In[G[ID[String]]]) = b.from(
-        arged(arg[G[ID[String]]]("id"))
-          .evalMap(id => runIds[F, G](id.map(_.value), lookup, sts).value)
-          .rethrow
-      )
+      implicit lazy val optIorNode: Out[F, Option[Ior[String, Node]]] =
+        OutOpt[F, Ior[String, Node], Node](Node.nodeInterface, Resolver.id[F, Ior[String, Node]].rethrow)
+
+      def nodeField[G[_]](implicit
+          a: In[G[ID[String]]],
+          G: NonEmptyTraverse[G]
+      ): Field[F, Q, G[Option[Ior[String, Node]]]] = {
+        val ev = gql.ast.gqlOutArrForTraversable(G, optIorNode)
+        b.from(
+          arged(arg[G[ID[String]]]("id"))
+            .evalMap(id => runIds[F, G](id.map(_.value), lookup, sts).value)
+            .rethrow
+        )(ev)
+      }
 
       shape.copy(query =
         shape.query.copy(

@@ -20,5 +20,5 @@ import cats.data._
 
 final case class GoiAttribute[F[_], A, Id](
     codec: IDCodec[Id],
-    fromIds: NonEmptyList[Id] => F[Map[Id, A]]
+    fromIds: NonEmptyList[Id] => IorT[F, String, Map[Id, Ior[String, A]]]
 ) extends TypeAttribute[F, A]

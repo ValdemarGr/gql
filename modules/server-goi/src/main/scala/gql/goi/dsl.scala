@@ -22,13 +22,13 @@ import cats.data._
 
 object dsl {
   final class TypeGoiOps[F[_], A](private val tpe: Type[F, A]) extends AnyVal {
-    def goiFull[B](resolver: Resolver[F, A, B])(fromIds: NonEmptyList[B] => F[Map[B, A]])(implicit
+    def goiFull[B](resolver: Resolver[F, A, B])(fromIds: NonEmptyList[B] => IorT[F, String, Map[B, Ior[String, A]]])(implicit
         codec: IDCodec[B],
         F: Sync[F]
     ): Type[F, A] =
       Goi.addId[F, A, B](tpe, resolver, fromIds)
 
-    def goi[B](f: A => B)(fromIds: NonEmptyList[B] => F[Map[B, A]])(implicit
+    def goi[B](f: A => B)(fromIds: NonEmptyList[B] => IorT[F, String, Map[B, Ior[String, A]]])(implicit
         codec: IDCodec[B],
         F: Sync[F]
     ): Type[F, A] =
