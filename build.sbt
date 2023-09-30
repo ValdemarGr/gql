@@ -312,10 +312,13 @@ lazy val relationalDoobie = project
   .in(file("modules/relational-doobie"))
   .settings(sharedSettings)
   .dependsOn(server)
-  .dependsOn(relational)
+  .dependsOn(relational % "compile->compile;compile->test")
   .settings(
     name := "gql-relational-doobie",
-    libraryDependencies ++= Seq("org.tpolecat" %% "doobie-core" % "1.0.0-RC4")
+    libraryDependencies ++= Seq(
+      "org.tpolecat" %% "doobie-core" % "1.0.0-RC4",
+      "org.tpolecat" %% "doobie-postgres" % "1.0.0-RC4" % Test
+    )
   )
 
 lazy val mdocExt = project

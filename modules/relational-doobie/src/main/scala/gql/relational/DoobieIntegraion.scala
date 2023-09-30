@@ -16,7 +16,6 @@
 package gql.relational.doobie
 
 import cats.effect._
-import cats.implicits._
 import cats._
 import cats.data._
 import doobie._
@@ -25,20 +24,23 @@ import gql.relational.{QueryAlgebra, QueryDsl}
 
 object DoobieIntegraion extends QueryAlgebra {
   type Frag = doobie.Fragment
-  def stringToFrag(s: String): Frag = doobie.Fragment.const(s)
+  def stringToFrag(s: String): Frag = doobie.Fragment.const0(s)
   implicit def appliedFragmentMonoid: Monoid[Frag] = doobie.Fragment.FragmentMonoid
 
   type Decoder[A] = doobie.Read[A]
   type Encoder[A] = doobie.Write[A]
 
-  def optDecoder[A](d: Decoder[A]): Decoder[Option[A]] =
+  def optDecoder[A](d: Decoder[A]): Decoder[Option[A]] = {
+    import cats.implicits._
+    val ys = d.gets.traverse { case (g, _) => doobie.Read.fromGetOption(g.map(x => x: Any)) }
     new doobie.Read(
-      d.gets.map { case (ev, _) => (ev, doobie.enumerated.Nullability.Nullable) },
+      ys.gets,
       { (rs, n) =>
-        val xs = d.gets.zipWithIndex.traverse { case ((ev, _), i) => ev.unsafeGetNullable(rs, n + i) }
-        xs.as(d.unsafeGet(rs, n))
+        if (ys.unsafeGet(rs, n).forall(_.isEmpty)) None
+        else Some(d.unsafeGet(rs, n))
       }
     )
+  }
 
   implicit def applicativeForDecoder: Applicative[Decoder] = doobie.Read.ReadApply
 

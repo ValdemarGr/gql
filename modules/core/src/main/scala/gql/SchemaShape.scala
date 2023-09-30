@@ -26,17 +26,16 @@ import gql.util.SchemaUtil
 import gql.dsl.all._
 import gql.dsl.all.value
 
-/**
- * The underlying graph that compiles into a GraphQL schema. Provides a plethora of methods to derive information, perform validation,
- * render, introspect and generate stub implementations.
- */
+/** The underlying graph that compiles into a GraphQL schema. Provides a plethora of methods to derive information, perform validation,
+  * render, introspect and generate stub implementations.
+  */
 final case class SchemaShape[F[_], Q, M, S](
-  query: Type[F, Q],
-  mutation: Option[Type[F, M]] = Option.empty[Type[F, Unit]],
-  subscription: Option[Type[F, S]] = Option.empty[Type[F, Unit]],
-  outputTypes: List[OutToplevel[F, ?]] = Nil,
-  inputTypes: List[InToplevel[?]] = Nil,
-  positions: List[Position[F, ?]] = Directive.skipPositions[F] ++ Directive.includePositions[F]
+    query: Type[F, Q],
+    mutation: Option[Type[F, M]] = Option.empty[Type[F, Unit]],
+    subscription: Option[Type[F, S]] = Option.empty[Type[F, Unit]],
+    outputTypes: List[OutToplevel[F, ?]] = Nil,
+    inputTypes: List[InToplevel[?]] = Nil,
+    positions: List[Position[F, ?]] = Directive.skipPositions[F] ++ Directive.includePositions[F]
 ) {
   def addOutputTypes(t: OutToplevel[F, ?]*): SchemaShape[F, Q, M, S] =
     copy(outputTypes = t.toList ++ outputTypes)
@@ -45,11 +44,11 @@ final case class SchemaShape[F[_], Q, M, S](
     copy(inputTypes = t.toList ++ inputTypes)
 
   def visit[G[_]: Monad: Parallel: Defer, A: Monoid](
-    pf: PartialFunction[SchemaShape.VisitNode[F], G[A] => G[A]]
+      pf: PartialFunction[SchemaShape.VisitNode[F], G[A] => G[A]]
   ): G[A] = SchemaShape.visit[F, G, A](this)(pf)
 
   def visitOnce[G[_]: Monad: Defer, A: Monoid](
-    pf: PartialFunction[SchemaShape.VisitNode[F], G[A]]
+      pf: PartialFunction[SchemaShape.VisitNode[F], G[A]]
   ): G[A] = SchemaShape.visitOnce[F, G, A](this)(pf)
 
   lazy val discover = SchemaShape.discover[F](this)
@@ -71,11 +70,11 @@ final case class SchemaShape[F[_], Q, M, S](
 object SchemaShape {
   final class PartiallyAppliedSchemaShape[F[_]](val dummy: Boolean = false) extends AnyVal {
     def apply[Q, M, S](
-      query: NonEmptyList[(String, Field[F, Q, ?])],
-      mutation: Option[NonEmptyList[(String, Field[F, M, ?])]] = None,
-      subscription: Option[NonEmptyList[(String, Field[F, S, ?])]] = None,
-      outputTypes: List[OutToplevel[F, ?]] = Nil,
-      inputTypes: List[InToplevel[?]] = Nil
+        query: NonEmptyList[(String, Field[F, Q, ?])],
+        mutation: Option[NonEmptyList[(String, Field[F, M, ?])]] = None,
+        subscription: Option[NonEmptyList[(String, Field[F, S, ?])]] = None,
+        outputTypes: List[OutToplevel[F, ?]] = Nil,
+        inputTypes: List[InToplevel[?]] = Nil
     ): SchemaShape[F, Q, M, S] =
       SchemaShape(
         tpe("Query", query.head, query.tail: _*),
@@ -89,11 +88,11 @@ object SchemaShape {
   def make[F[_]] = new PartiallyAppliedSchemaShape[F]
 
   def unit[F[_]](
-    query: NonEmptyList[(String, Field[F, Unit, ?])],
-    mutation: Option[NonEmptyList[(String, Field[F, Unit, ?])]] = None,
-    subscription: Option[NonEmptyList[(String, Field[F, Unit, ?])]] = None,
-    outputTypes: List[OutToplevel[F, ?]] = Nil,
-    inputTypes: List[InToplevel[?]] = Nil
+      query: NonEmptyList[(String, Field[F, Unit, ?])],
+      mutation: Option[NonEmptyList[(String, Field[F, Unit, ?])]] = None,
+      subscription: Option[NonEmptyList[(String, Field[F, Unit, ?])]] = None,
+      outputTypes: List[OutToplevel[F, ?]] = Nil,
+      inputTypes: List[InToplevel[?]] = Nil
   ) = make[F](query, mutation, subscription, outputTypes, inputTypes)
 
   sealed trait InterfaceImpl[+F[_], A]
@@ -116,9 +115,9 @@ object SchemaShape {
   type Implementations[F[_]] = Map[String, Map[String, InterfaceImpl[F, ?]]]
 
   final case class DiscoveryState[F[_]](
-    toplevels: Map[String, Toplevel[F, ?]],
-    implementations: Implementations[F],
-    positions: Map[String, List[Position[F, ?]]]
+      toplevels: Map[String, Toplevel[F, ?]],
+      implementations: Implementations[F],
+      positions: Map[String, List[Position[F, ?]]]
   ) {
     lazy val inputs: Map[String, InToplevel[?]] = toplevels.collect { case (k, v: InToplevel[?]) => k -> v }
 
@@ -140,35 +139,34 @@ object SchemaShape {
     final case class Implementations[F[_]](i: Interface[F, ?]) extends VisitNode[F]
   }
 
-  /**
-   * A powerful fold over the schema. This functions lets the caller choose how to handle recursion explicitly, which allows Kleisli
-   * algebras (Local) to be possible.
-   *
-   * For instance, counting the number of fields from parent to leaf:
-   * {{{
-   *    case class State(leaf: String, fields: Int)
-   *    type G[A] = Kleisli[WriterT[Eval, List[State], *], Int, A]
-   *    val G = Monad[G]
-   *    val L = Local[G, Int]
-   *    val T = Tell[G, List[State]]
-   *
-   *    object & {
-   *      def unapply[A](a: A): Option[(A, A)] = Some((a, a))
-   *    }
-   *
-   *    val states: List[State] = ScheamShape.visit[F, G](schema) {
-   *      case VisitNode.FieldNode(_, _) => (rec: G[Unit]) => L.local(rec)(_ + 1)
-   *      case VisitNode.OutNode((_: Scalar[?] | _: Enum[?]) & tl: Toplevel[F, ?]) => rec =>
-   *        L.ask[Int].flatMap(i => T.tell(List(State(tl.name, i)))) >> rec
-   *    }.run(0).run.written.value
-   * }}}
-   *
-   * Consider that if we used state without being explicit about the recursion, we wouldn't be able to "pop" the field count.
-   *
-   * An idiomatic combinator name may be `parRecFoldMapM`
-   */
+  /** A powerful fold over the schema. This functions lets the caller choose how to handle recursion explicitly, which allows Kleisli
+    * algebras (Local) to be possible.
+    *
+    * For instance, counting the number of fields from parent to leaf:
+    * {{{
+    *    case class State(leaf: String, fields: Int)
+    *    type G[A] = Kleisli[WriterT[Eval, List[State], *], Int, A]
+    *    val G = Monad[G]
+    *    val L = Local[G, Int]
+    *    val T = Tell[G, List[State]]
+    *
+    *    object & {
+    *      def unapply[A](a: A): Option[(A, A)] = Some((a, a))
+    *    }
+    *
+    *    val states: List[State] = ScheamShape.visit[F, G](schema) {
+    *      case VisitNode.FieldNode(_, _) => (rec: G[Unit]) => L.local(rec)(_ + 1)
+    *      case VisitNode.OutNode((_: Scalar[?] | _: Enum[?]) & tl: Toplevel[F, ?]) => rec =>
+    *        L.ask[Int].flatMap(i => T.tell(List(State(tl.name, i)))) >> rec
+    *    }.run(0).run.written.value
+    * }}}
+    *
+    * Consider that if we used state without being explicit about the recursion, we wouldn't be able to "pop" the field count.
+    *
+    * An idiomatic combinator name may be `parRecFoldMapM`
+    */
   def visit[F[_], G[_]: Monad: Parallel, A](
-    root: SchemaShape[F, ?, ?, ?]
+      root: SchemaShape[F, ?, ?, ?]
   )(pf: PartialFunction[VisitNode[F], G[A] => G[A]])(implicit D0: Defer[G], M: Monoid[A]): G[A] = {
     type H[B] = Kleisli[G, Set[String], B]
     val H = Monad[H]
@@ -261,7 +259,7 @@ object SchemaShape {
   }
 
   def visitOnce[F[_], G[_]: Monad: Defer, A](
-    root: SchemaShape[F, ?, ?, ?]
+      root: SchemaShape[F, ?, ?, ?]
   )(pf: PartialFunction[VisitNode[F], G[A]])(implicit A: Monoid[A]): G[A] = {
     type H[B] = StateT[G, Set[String], B]
     val S = Stateful[H, Set[String]]
@@ -526,8 +524,8 @@ object SchemaShape {
     )
 
     final case class NamedField(
-      name: String,
-      field: AbstractField[F, ?]
+        name: String,
+        field: AbstractField[F, ?]
     )
 
     def inclDeprecated = arg[Boolean]("includeDeprecated", value.scalar(false))
@@ -662,8 +660,8 @@ object SchemaShape {
     )
 
     final case class NamedEnumValue(
-      name: String,
-      value: EnumValue[?]
+        name: String,
+        value: EnumValue[?]
     )
     implicit lazy val enumValue: Type[F, NamedEnumValue] = tpe[F, NamedEnumValue](
       "__EnumValue",

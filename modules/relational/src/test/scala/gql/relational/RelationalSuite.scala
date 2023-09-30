@@ -1,3 +1,18 @@
+/*
+ * Copyright 2023 Valdemar Grange
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package gql.relational
 
 import cats.effect._
@@ -6,8 +21,10 @@ import cats.implicits._
 import gql.Schema
 import gql.dsl.all._
 import gql.ast
+import munit.CatsEffectSuite
+import gql.Application
 
-abstract class RelationalSuiteTables[QA <: QueryAlgebra](val algebra: QA) {
+abstract class RelationalSuiteTables[QA <: QueryAlgebra](val algebra: QA) extends CatsEffectSuite {
   val dsl = new QueryDsl[QA](algebra) {}
   import dsl.algebra._
   import dsl._
@@ -23,25 +40,25 @@ abstract class RelationalSuiteTables[QA <: QueryAlgebra](val algebra: QA) {
     case object NewHope extends Episode
     case object Empire extends Episode
     case object Jedi extends Episode
-    
+
     implicit lazy val out: ast.Enum[Episode] = enumType(
-        "Episode",
-        "NEW_HOPE" -> enumVal(Episode.NewHope),
-        "EMPIRE" -> enumVal(Episode.Empire),
-        "JEDI" -> enumVal(Episode.Jedi)
+      "Episode",
+      "NEW_HOPE" -> enumVal(Episode.NewHope),
+      "EMPIRE" -> enumVal(Episode.Empire),
+      "JEDI" -> enumVal(Episode.Jedi)
     )
 
     def fromString(str: String): Episode = str match {
-        case "new_hope" => Episode.NewHope
-          case "empire"   => Episode.Empire
-          case "jedi"     => Episode.Jedi
-          case _          => throw new Exception(s"got unexpected string $str")
+      case "new_hope" => Episode.NewHope
+      case "empire"   => Episode.Empire
+      case "jedi"     => Episode.Jedi
+      case _          => throw new Exception(s"got unexpected string $str")
     }
 
     def asString(ep: Episode): String = ep match {
-        case Episode.NewHope => "new_hope"
-          case Episode.Empire   => "empire"
-          case Episode.Jedi     => "jedi"
+      case Episode.NewHope => "new_hope"
+      case Episode.Empire  => "empire"
+      case Episode.Jedi    => "jedi"
     }
   }
 
@@ -81,7 +98,7 @@ abstract class RelationalSuiteTables[QA <: QueryAlgebra](val algebra: QA) {
         .join[List](a => a.characterIdCol |+| stringToFrag(" = ") |+| idCol)
         .map(_.episodeId)
 
-    def friends: Query[List,UnknownCharacter] =
+    def friends: Query[List, UnknownCharacter] =
       dsl
         .table(FriendTable)
         .join[List](_.characterId1Col |+| stringToFrag(" = ") |+| idCol)
@@ -89,12 +106,12 @@ abstract class RelationalSuiteTables[QA <: QueryAlgebra](val algebra: QA) {
 
     def tableKey: Query.Select[String] = id
   }
-  
+
   case class HumanTable(alias: String) extends CharacterTable {
     def table = stringToFrag("human")
     val (homePlanetCol, homePlanet) = sel[Option[String]]("home_planet", optDecoder(textDecoder))
   }
-val humanTable = table(HumanTable)
+  val humanTable = table(HumanTable)
 
   case class DroidTable(alias: String) extends CharacterTable {
     def table = stringToFrag("droid")
@@ -110,57 +127,119 @@ val humanTable = table(HumanTable)
   }
   val heroTable = table(HeroTable)
 
-  def schema[F[_]: Concurrent: Queryable](conn: Connection[F]): F[Schema[F,Unit,Unit,Unit]] = {
-    implicit lazy val unknownCharacter: ast.Interface[F, QueryResult[UnknownCharacter]] = 
-        interface[F, QueryResult[UnknownCharacter]](
-            "Character",
-            "id" -> abst[F, String],
-            "name" -> abst[F, Option[Episode]],
-            "friends" -> abst[F, List[QueryResult[UnknownCharacter]]],
-            "appearsIn" -> abst[F, List[Episode]]
-        )
+  def schema[F[_]: Concurrent: Queryable](conn: Connection[F]): F[Schema[F, Unit, Unit, Unit]] = {
+    implicit lazy val unknownCharacter: ast.Interface[F, QueryResult[UnknownCharacter]] =
+      interface[F, QueryResult[UnknownCharacter]](
+        "Character",
+        "id" -> abst[F, String],
+        "name" -> abst[F, Option[Episode]],
+        "friends" -> abst[F, List[QueryResult[UnknownCharacter]]],
+        "appearsIn" -> abst[F, List[Episode]]
+      )
 
-    implicit lazy val human: ast.Type[F, QueryResult[HumanTable]] = 
-        tpe[F, QueryResult[HumanTable]](
-            "Human",
-            "id" -> query(_.id),
-            "name" -> query(_.name),
-            "friends" -> cont(_.friends),
-            "appearsIn" -> query(_.appearsIn),
-            "homePlanet" -> query(_.homePlanet)
-        ).contImplements[UnknownCharacter]{ u =>
-            humanTable.join[Option](_.idCol |+| stringToFrag(" = ") |+| u.id)
-        }
+    implicit lazy val human: ast.Type[F, QueryResult[HumanTable]] =
+      tpe[F, QueryResult[HumanTable]](
+        "Human",
+        "id" -> query(_.id),
+        "name" -> query(_.name),
+        "friends" -> cont(_.friends),
+        "appearsIn" -> query(_.appearsIn),
+        "homePlanet" -> query(_.homePlanet)
+      ).contImplements[UnknownCharacter] { u =>
+        humanTable.join[Option](_.idCol |+| stringToFrag(" = ") |+| u.id)
+      }
 
     implicit lazy val droid: ast.Type[F, QueryResult[DroidTable]] =
-        tpe[F, QueryResult[DroidTable]](
-            "Droid",
-            "id" -> query(_.id),
-            "name" -> query(_.name),
-            "friends" -> cont(_.friends),
-            "appearsIn" -> query(_.appearsIn),
-            "primaryFunction" -> query(_.primaryFunction)
-        ).contImplements[UnknownCharacter]{ u =>
-            droidTable.join[Option](_.idCol |+| stringToFrag(" = ") |+| u.id)
-        }
+      tpe[F, QueryResult[DroidTable]](
+        "Droid",
+        "id" -> query(_.id),
+        "name" -> query(_.name),
+        "friends" -> cont(_.friends),
+        "appearsIn" -> query(_.appearsIn),
+        "primaryFunction" -> query(_.primaryFunction)
+      ).contImplements[UnknownCharacter] { u =>
+        droidTable.join[Option](_.idCol |+| stringToFrag(" = ") |+| u.id)
+      }
 
     Schema.query(
-        tpe[F, Unit](
-            "Query",
-            "hero" -> runFieldSingle(conn, arg[Episode]("episode")){ (_, ep) =>
-                heroTable
-                    .join(_.episodeCol |+| stringToFrag(" = ") |+| encodeText(Episode.asString(ep)))
-                    .map(t => UnknownCharacter(t.characterIdCol))
-            },
-            "human" -> runFieldSingle(conn, arg[String]("id")){ (_, id) =>
-                humanTable.join(_.idCol |+| stringToFrag(" = ") |+| encodeText(id))
-            },
-            "droid" -> runFieldSingle(conn, arg[String]("id")){ (_, id) =>
-                droidTable.join(_.idCol |+| stringToFrag(" = ") |+| encodeText(id))
-            }
-        )
+      tpe[F, Unit](
+        "Query",
+        "hero" -> runFieldSingle(conn, arg[Episode]("episode")) { (_, ep) =>
+          heroTable
+            .join(_.episodeCol |+| stringToFrag(" = ") |+| encodeText(Episode.asString(ep)))
+            .map(t => UnknownCharacter(t.characterIdCol))
+        },
+        "human" -> runFieldSingle(conn, arg[String]("id")) { (_, id) =>
+          humanTable.join(_.idCol |+| stringToFrag(" = ") |+| encodeText(id))
+        },
+        "droid" -> runFieldSingle(conn, arg[String]("id")) { (_, id) =>
+          droidTable.join(_.idCol |+| stringToFrag(" = ") |+| encodeText(id))
+        }
+      )
     )
-}
+  }
+
+  def tests(conn: => Connection[IO])(implicit Q: Queryable[IO]) = {
+    test("run query") {
+      schema[IO](conn)
+        .map { schema =>
+          gql
+            .Compiler[IO]
+            .compile(
+              schema,
+              """
+        query {
+          hero(episode: NEW_HOPE) {
+            name
+          }
+          human(id: "1000") {
+            name
+            appearsIn
+            friends {
+              name
+            }
+            ... on Character {
+              charTypename: __typename
+              ... on Droid {
+                doidTypename: __typename
+                primaryFunction
+              }
+            }
+          }
+          droid(id: "2001") {
+            name
+            appearsIn
+            friends {
+              appearsIn
+              name
+            }
+            ... on Character {
+              charTypename: __typename
+              ... on Human {
+                humanTypename: __typename
+                homePlanet
+              }
+            }
+          }
+        }
+        """
+            )
+        }
+        .flatMap {
+          case Right(Application.Query(fa)) =>
+            fa.map(_.handleErrors(_.getMessage())).map { qr =>
+              assert(clue(qr.errors).isEmpty)
+              assertEquals(qr.data("hero").get.asObject.get("name").get.asString.get, "R2-D2")
+              assertEquals(qr.data("human").get.asObject.get("name").get.asString.get, "Luke Skywalker")
+              assertEquals(
+                qr.data("human").get.asObject.get("friends").get.asArray.get.map(_.asObject.get("name").get.asString.get).toSet,
+                Set("Han Solo", "Leia Organa", "C-3PO", "R2-D2")
+              )
+            }
+          case _ => ???
+        }
+    }
+  }
 
   val ddlQueries = List(
     "drop table if exists human",

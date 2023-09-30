@@ -67,12 +67,12 @@ abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
 
   def runFieldSingle[F[_]: Queryable: Applicative, G[_], I, B, ArgType](connection: Connection[F], arg: Arg[ArgType])(
       q: (I, ArgType) => Query[G, B]
-  )(implicit tpe: => Out[F, G[QueryResult[B]]]): Field[F,I,G[QueryResult[B]]] =
+  )(implicit tpe: => Out[F, G[QueryResult[B]]]): Field[F, I, G[QueryResult[B]]] =
     Field(resolveQuerySingle(EmptyableArg.Lift(arg), q, connection), Eval.later(tpe))
 
   def runFieldSingle[F[_]: Queryable: Applicative, G[_], I, B](connection: Connection[F])(
       q: I => Query[G, B]
-  )(implicit tpe: => Out[F, G[QueryResult[B]]]): Field[F,I,G[QueryResult[B]]] =
+  )(implicit tpe: => Out[F, G[QueryResult[B]]]): Field[F, I, G[QueryResult[B]]] =
     Field(resolveQuerySingle[F, G, I, B, Unit](EmptyableArg.Empty, (i, _) => q(i), connection), Eval.later(tpe))
 
   final class BuildWithBuilder[F[_], A] {

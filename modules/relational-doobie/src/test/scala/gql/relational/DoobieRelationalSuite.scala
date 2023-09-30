@@ -13,43 +13,41 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package gql.relational.skunk
+package gql.relational.doobie
 
 import gql.relational.RelationalSuiteTables
-import skunk._
-import skunk.implicits._
-import skunk.codec.all._
 import cats.effect._
 import cats.implicits._
-import skunk.util.Typer
 import cats.effect.std.UUIDGen
 import munit.AnyFixture
+import doobie._
+import doobie.implicits._
 
-class SkunkRelationalSuite extends RelationalSuiteTables(SkunkIntegration) {
-  def intDecoder: Decoder[Int] = int4
-  def textDecoder: Decoder[String] = text
-  def encodeText(str: String): AppliedFragment = sql"${text}".apply(str)
+class DoobieRelationalSuite extends RelationalSuiteTables(DoobieIntegraion) {
+  def intDecoder: Read[Int] = Read[Int]
+  def textDecoder: Read[String] = Read[String]
+  def encodeText(str: String): Fragment = sql"$str"
 
-  implicit val t = natchez.noop.NoopTrace[IO]()
+  def connect(db: String) = Transactor.fromDriverManager[IO](
+    driver = "org.postgresql.Driver",
+    url = s"jdbc:postgresql://127.0.0.1:5432/$db?user=postgres&password=1234",
+    logHandler = None
+  )
 
   val connF = ResourceSuiteLocalFixture(
     "setup",
     Resource.unit[IO] >> {
-      def connect(db: String) = Session.single[IO](
-        host = "127.0.0.1",
-        port = 5432,
-        user = "postgres",
-        database = db,
-        password = Some("1234"),
-        strategy = Typer.Strategy.SearchPath
+
+      def postgres = Transactor.after.set(
+        Transactor.before.set(connect("postgres"), FC.setAutoCommit(true)),
+        FC.unit
       )
 
-      def postgres = connect("postgres")
-
-      Resource.eval(UUIDGen.randomString[IO]).flatMap { dbid =>
+      Resource.eval(UUIDGen.randomString[IO]).map(_.replace("-", "")).flatMap { dbid =>
+        val d = Fragment.const0(dbid)
         Resource
-          .make(postgres.use(_.execute(sql"""create database "#$dbid"""".command)))(_ =>
-            postgres.use(_.execute(sql"""drop database "#$dbid"""".command).void)
+          .make(sql"""create database "$d"""".update.run.transact(postgres))(_ =>
+            sql"""drop database "$d"""".update.run.transact(postgres).void
           )
           .as(connect(dbid))
       }
@@ -61,9 +59,7 @@ class SkunkRelationalSuite extends RelationalSuiteTables(SkunkIntegration) {
   lazy val conn = connF.apply()
 
   test("setup") {
-    conn.use { ses =>
-      (ddlQueries ++ dataQueries).traverse_(x => ses.execute(sql"#$x".command))
-    }
+    (ddlQueries ++ dataQueries).traverse_(x => Fragment.const0(x).update.run.transact(conn))
   }
 
   tests(conn)
