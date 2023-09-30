@@ -92,7 +92,7 @@ object Statistics {
       extraElementCost: Double
   )
 
-  def apply[F[_]](implicit F: Async[F]): F[Statistics[F]] =
+  def apply[F[_]](implicit F: Concurrent[F]): F[Statistics[F]] =
     F.ref(Map.empty[String, Ref[F, Either[NonEmptyList[Point], CovVarRegression]]])
       .map { state =>
         new Statistics[F] {

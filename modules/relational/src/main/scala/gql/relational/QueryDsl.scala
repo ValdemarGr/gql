@@ -30,7 +30,7 @@ import org.typelevel.scalaccompat.annotation._
 abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
   import algebra._
 
-  type QueryResult[A] = algebra.QueryResult[A]
+  private type QueryResult[A] = algebra.QueryResult[A]
 
   def select[A](decoder: algebra.Decoder[A], colHd: Frag, colTl: Frag*): Query.Select[A] =
     Query.Select(Chain(colHd) ++ Chain.fromSeq(colTl), decoder)
@@ -67,12 +67,12 @@ abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
 
   def runFieldSingle[F[_]: Queryable: Applicative, G[_], I, B, ArgType](connection: Connection[F], arg: Arg[ArgType])(
       q: (I, ArgType) => Query[G, B]
-  )(implicit tpe: => Out[F, G[QueryResult[B]]]) =
+  )(implicit tpe: => Out[F, G[QueryResult[B]]]): Field[F,I,G[QueryResult[B]]] =
     Field(resolveQuerySingle(EmptyableArg.Lift(arg), q, connection), Eval.later(tpe))
 
   def runFieldSingle[F[_]: Queryable: Applicative, G[_], I, B](connection: Connection[F])(
       q: I => Query[G, B]
-  )(implicit tpe: => Out[F, G[QueryResult[B]]]) =
+  )(implicit tpe: => Out[F, G[QueryResult[B]]]): Field[F,I,G[QueryResult[B]]] =
     Field(resolveQuerySingle[F, G, I, B, Unit](EmptyableArg.Empty, (i, _) => q(i), connection), Eval.later(tpe))
 
   final class BuildWithBuilder[F[_], A] {

@@ -43,16 +43,16 @@ object Schema {
     Schema(shape.copy(positions = shape.positions ++ state.positions), state, statistics, Planner[F])
   }
 
-  def stateful[F[_]: Async, Q, M, S](fa: State[SchemaState[F], SchemaShape[F, Q, M, S]]): F[Schema[F, Q, M, S]] =
+  def stateful[F[_]: Concurrent, Q, M, S](fa: State[SchemaState[F], SchemaShape[F, Q, M, S]]): F[Schema[F, Q, M, S]] =
     Statistics[F].map(stateful(_)(fa))
 
   def query[F[_]: Applicative, Q](statistics: Statistics[F])(query: Type[F, Q]): Schema[F, Q, Unit, Unit] =
     stateful(statistics)(State.pure(SchemaShape(query, None, None)))
 
-  def query[F[_]: Async, Q](query: Type[F, Q]): F[Schema[F, Q, Unit, Unit]] =
+  def query[F[_]: Concurrent, Q](query: Type[F, Q]): F[Schema[F, Q, Unit, Unit]] =
     stateful(State.pure(SchemaShape(query, None, None)))
 
-  def simple[F[_]: Async, Q, M, S](shape: SchemaShape[F, Q, M, S]): F[Schema[F, Q, M, S]] =
+  def simple[F[_]: Concurrent, Q, M, S](shape: SchemaShape[F, Q, M, S]): F[Schema[F, Q, M, S]] =
     Statistics[F].map(Schema(shape, SchemaState.empty[F], _, Planner[F]))
 
   def simple[F[_]: Applicative, Q, M, S](statistics: Statistics[F])(shape: SchemaShape[F, Q, M, S]): Schema[F, Q, M, S] =
