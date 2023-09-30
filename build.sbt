@@ -299,10 +299,13 @@ lazy val relationalSkunk = project
   .in(file("modules/relational-skunk"))
   .settings(sharedSettings)
   .dependsOn(server)
-  .dependsOn(relational)
+  .dependsOn(relational % "compile->compile;compile->test")
   .settings(
     name := "gql-relational-skunk",
-    libraryDependencies ++= Seq("org.tpolecat" %% "skunk-core" % "0.6.0")
+    libraryDependencies ++= Seq(
+      "org.tpolecat" %% "skunk-core" % "0.6.0",
+      "org.tpolecat" %% "natchez-noop" % "0.3.2" % Test
+    )
   )
 
 lazy val relationalDoobie = project

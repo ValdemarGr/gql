@@ -1,6 +1,5 @@
 package gql.relational
 
-import munit.CatsEffectSuite
 import cats.effect._
 import cats.data._
 import cats.implicits._
@@ -36,7 +35,7 @@ abstract class RelationalSuiteTables[QA <: QueryAlgebra](val algebra: QA) {
         case "new_hope" => Episode.NewHope
           case "empire"   => Episode.Empire
           case "jedi"     => Episode.Jedi
-          case _          => ???
+          case _          => throw new Exception(s"got unexpected string $str")
     }
 
     def asString(ep: Episode): String = ep match {
@@ -71,10 +70,10 @@ abstract class RelationalSuiteTables[QA <: QueryAlgebra](val algebra: QA) {
     def tableKey = (characterId1, characterId2).tupled
   }
 
-  case class UnknownCharacter(id: Query.Select[String])
+  case class UnknownCharacter(id: Frag)
   trait CharacterTable extends SuiteTable {
     val (idCol, id) = sel[String]("id", textDecoder)
-    val (nameCol, name) = sel[Option[Episode]]("name", optDecoder(textDecoder.fmap(Episode.fromString)))
+    val (nameCol, name) = sel[Option[String]]("name", optDecoder(textDecoder))
 
     def appearsIn: Query[List, Query.Select[Episode]] =
       dsl
@@ -86,7 +85,7 @@ abstract class RelationalSuiteTables[QA <: QueryAlgebra](val algebra: QA) {
       dsl
         .table(FriendTable)
         .join[List](_.characterId1Col |+| stringToFrag(" = ") |+| idCol)
-        .map(x => UnknownCharacter(x.characterId2))
+        .map(x => UnknownCharacter(x.characterId2Col))
 
     def tableKey: Query.Select[String] = id
   }
@@ -129,7 +128,9 @@ val humanTable = table(HumanTable)
             "friends" -> cont(_.friends),
             "appearsIn" -> query(_.appearsIn),
             "homePlanet" -> query(_.homePlanet)
-        )
+        ).contImplements[UnknownCharacter]{ u =>
+            humanTable.join[Option](_.idCol |+| stringToFrag(" = ") |+| u.id)
+        }
 
     implicit lazy val droid: ast.Type[F, QueryResult[DroidTable]] =
         tpe[F, QueryResult[DroidTable]](
@@ -139,7 +140,9 @@ val humanTable = table(HumanTable)
             "friends" -> cont(_.friends),
             "appearsIn" -> query(_.appearsIn),
             "primaryFunction" -> query(_.primaryFunction)
-        )
+        ).contImplements[UnknownCharacter]{ u =>
+            droidTable.join[Option](_.idCol |+| stringToFrag(" = ") |+| u.id)
+        }
 
     Schema.query(
         tpe[F, Unit](
@@ -147,7 +150,7 @@ val humanTable = table(HumanTable)
             "hero" -> runFieldSingle(conn, arg[Episode]("episode")){ (_, ep) =>
                 heroTable
                     .join(_.episodeCol |+| stringToFrag(" = ") |+| encodeText(Episode.asString(ep)))
-                    .map(t => UnknownCharacter(t.characterId))
+                    .map(t => UnknownCharacter(t.characterIdCol))
             },
             "human" -> runFieldSingle(conn, arg[String]("id")){ (_, id) =>
                 humanTable.join(_.idCol |+| stringToFrag(" = ") |+| encodeText(id))
