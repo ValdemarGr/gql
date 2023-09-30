@@ -26,6 +26,7 @@ import gql.ast._
 import gql.dsl.all._
 import gql.relational._
 import gql.relational.skunk.dsl._
+import gql.relational.skunk.dsl.algebra.QueryContext
 import cats._
 import cats.data._
 import cats.arrow._
@@ -107,15 +108,15 @@ val homePersonTable = skunkTable(HomePersonTable)
 
 Now we can start declaring our graphql schema.
 ```scala mdoc:silent
-implicit lazy val pet: Type[IO, QueryResult[PetTable]] = 
-  tpe[IO, QueryResult[PetTable]](
+implicit lazy val pet: Type[IO, QueryContext[PetTable]] = 
+  tpe[IO, QueryContext[PetTable]](
     "PetTable",
     "name" -> query(_.name), // query is a method that compiles to a projection in the query language (sql)
     "age" -> query(_.age)
   )
 
-implicit lazy val person: Type[IO, QueryResult[PersonTable]] = 
-  tpe[IO, QueryResult[PersonTable]](
+implicit lazy val person: Type[IO, QueryContext[PersonTable]] = 
+  tpe[IO, QueryContext[PersonTable]](
     "PersonTable",
     "name" -> query(_.name),
     "age" -> query(_.age),
@@ -129,8 +130,8 @@ implicit lazy val person: Type[IO, QueryResult[PersonTable]] =
     }
   )
 
-implicit lazy val home: Type[IO, QueryResult[HomeTable]] = 
-  tpe[IO, QueryResult[HomeTable]](
+implicit lazy val home: Type[IO, QueryContext[HomeTable]] = 
+  tpe[IO, QueryContext[HomeTable]](
     "HomeTable",
     "name" -> query(_.name),
     "address" -> query(_.address),
@@ -291,9 +292,9 @@ val homePersonQuery = void"(select * from home_person inner join person on home_
 val sharedHomePersonTable = skunkTable(SharedPersonTable(_, homePersonQuery))
 
 // And now using our subquery we can simplify the join.
-implicit lazy val person: Type[IO, QueryResult[SharedPersonTable]] = ???
+implicit lazy val person: Type[IO, QueryContext[SharedPersonTable]] = ???
 
-tpe[IO, QueryResult[HomeTable]](
+tpe[IO, QueryContext[HomeTable]](
   "HomeTable",
   "name" -> query(_.name),
   "address" -> query(_.address),
@@ -386,9 +387,9 @@ object myDsl extends QueryDsl(MyIntegration) {
 ## Adding arguments
 All field combinators allow arguments to be provided naturally, regardless of where the field is in the query.
 ```scala mdoc:silent
-implicit lazy val pt: Type[IO, QueryResult[PersonTable]] = ???
+implicit lazy val pt: Type[IO, QueryContext[PersonTable]] = ???
 
-tpe[IO, QueryResult[HomeTable]](
+tpe[IO, QueryContext[HomeTable]](
   "HomeTable",
   "people" -> cont(arg[List[Int]]("ids")) { (home, ids) =>
     for {
@@ -480,12 +481,12 @@ case class CatTable(alias: String) extends SkunkTable {
 }
 val catTable = skunkTable(CatTable)
 
-implicit lazy val animalInterface = interface[IO, QueryResult[OwnerTableInterface]](
+implicit lazy val animalInterface = interface[IO, QueryContext[OwnerTableInterface]](
   "AnimalInterface",
   "owner" -> abst[IO, String]
 )
 
-implicit lazy val cat = tpe[IO, QueryResult[CatTable]](
+implicit lazy val cat = tpe[IO, QueryContext[CatTable]](
   "Cat",
   "owner" -> query(_.owner),
   "name" -> query(_.name),
@@ -494,7 +495,7 @@ implicit lazy val cat = tpe[IO, QueryResult[CatTable]](
   catTable.join[Option](cat => sql"${owner.idCol} = ${cat.ownerCol}")
 }
 
-implicit lazy val dog = tpe[IO, QueryResult[DogTable]](
+implicit lazy val dog = tpe[IO, QueryContext[DogTable]](
   "Dog",
   "owner" -> query(_.owner),
   "name" -> query(_.name),
@@ -595,7 +596,7 @@ def parameterizedPersonTable(
 ```
 And now we can use our new table.
 ```scala mdoc:silent
-implicit lazy val ppt: Type[IO, QueryResult[ParameterizedPersonTable]] = ???
+implicit lazy val ppt: Type[IO, QueryContext[ParameterizedPersonTable]] = ???
 
 val personQueryArgs = (
   arg[Option[Int]]("limit"),
@@ -603,7 +604,7 @@ val personQueryArgs = (
   arg[Option[Boolean]]("order"),
   arg[Option[Int]]("ageFilter")
 ).tupled
-tpe[IO, QueryResult[HomeTable]](
+tpe[IO, QueryContext[HomeTable]](
   "HomeTable",
   "people" -> cont(personQueryArgs) { case (home, (lim, off, ord, af)) =>
     for {
@@ -633,7 +634,7 @@ case class AdHocTable(
   tableKey: Select[?],
 ) extends SkunkTable
 
-tpe[IO, QueryResult[HomeTable]](
+tpe[IO, QueryContext[HomeTable]](
   "HomeTable",
   "people" -> cont(arg[List[Int]]("ids")) { (home, ids) =>
     for {
@@ -690,7 +691,7 @@ def lazyConnection: Resource[IO, LazyResource[IO, Session[IO]]] =
 
 // We define our schema as requiring a connection
 def myQuery(ctx: SessionContext): Type[IO, Unit] = {
-  implicit lazy val homeTableTpe: Out[IO, QueryResult[HomeTable]] = ???
+  implicit lazy val homeTableTpe: Out[IO, QueryContext[HomeTable]] = ???
   tpe[IO, Unit](
     "Query",
     "homes" -> runFieldSingle(ctx.getSession) { (_: Unit) => 
@@ -754,7 +755,7 @@ def makeConn[F[_]](conn: GetConn[F]): Resource[F, Session[F]] =
 
 // We define our schema as requiring a connection
 def myQuery[F[_]: Async](conn: GetConn[F]): Type[F, Unit] = {
-  implicit lazy val homeTableTpe: Type[F, QueryResult[HomeTable]] = ???
+  implicit lazy val homeTableTpe: Type[F, QueryContext[HomeTable]] = ???
   tpe[F, Unit](
     "Query",
     "homes" -> runFieldSingle(makeConn(conn)) { (_: Unit) => 

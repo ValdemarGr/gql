@@ -128,17 +128,17 @@ abstract class RelationalSuiteTables[QA <: QueryAlgebra](val algebra: QA) extend
   val heroTable = table(HeroTable)
 
   def schema[F[_]: Concurrent: Queryable](conn: Connection[F]): F[Schema[F, Unit, Unit, Unit]] = {
-    implicit lazy val unknownCharacter: ast.Interface[F, QueryResult[UnknownCharacter]] =
-      interface[F, QueryResult[UnknownCharacter]](
+    implicit lazy val unknownCharacter: ast.Interface[F, QueryContext[UnknownCharacter]] =
+      interface[F, QueryContext[UnknownCharacter]](
         "Character",
         "id" -> abst[F, String],
         "name" -> abst[F, Option[Episode]],
-        "friends" -> abst[F, List[QueryResult[UnknownCharacter]]],
+        "friends" -> abst[F, List[QueryContext[UnknownCharacter]]],
         "appearsIn" -> abst[F, List[Episode]]
       )
 
-    implicit lazy val human: ast.Type[F, QueryResult[HumanTable]] =
-      tpe[F, QueryResult[HumanTable]](
+    implicit lazy val human: ast.Type[F, QueryContext[HumanTable]] =
+      tpe[F, QueryContext[HumanTable]](
         "Human",
         "id" -> query(_.id),
         "name" -> query(_.name),
@@ -149,8 +149,8 @@ abstract class RelationalSuiteTables[QA <: QueryAlgebra](val algebra: QA) extend
         humanTable.join[Option](_.idCol |+| stringToFrag(" = ") |+| u.id)
       }
 
-    implicit lazy val droid: ast.Type[F, QueryResult[DroidTable]] =
-      tpe[F, QueryResult[DroidTable]](
+    implicit lazy val droid: ast.Type[F, QueryContext[DroidTable]] =
+      tpe[F, QueryContext[DroidTable]](
         "Droid",
         "id" -> query(_.id),
         "name" -> query(_.name),

@@ -30,49 +30,49 @@ import org.typelevel.scalaccompat.annotation._
 abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
   import algebra._
 
-  private type QueryResult[A] = algebra.QueryResult[A]
+  private type QueryContext[A] = algebra.QueryContext[A]
 
   def select[A](decoder: algebra.Decoder[A], colHd: Frag, colTl: Frag*): Query.Select[A] =
     Query.Select(Chain(colHd) ++ Chain.fromSeq(colTl), decoder)
 
   def query[F[_], G[_], A, B](f: A => Query[G, Query.Select[B]])(implicit
       tpe: => Out[F, G[B]]
-  ): Field[F, QueryResult[A], G[B]] =
+  ): Field[F, QueryContext[A], G[B]] =
     queryFull[F, G, A, B, Unit, G[B]](EmptyableArg.Empty)((a, _) => f(a), Resolver.id[F, G[B]])(tpe)
 
   def query[F[_], G[_], A, B, C](a: Arg[C])(f: (A, C) => Query[G, Query.Select[B]])(implicit
       tpe: => Out[F, G[B]]
-  ): Field[F, QueryResult[A], G[B]] =
+  ): Field[F, QueryContext[A], G[B]] =
     queryFull[F, G, A, B, C, G[B]](EmptyableArg.Lift(a))((a, c) => f(a, c), Resolver.id[F, G[B]])(tpe)
 
   def cont[F[_], G[_], A, B](f: A => Query[G, B])(implicit
-      tpe: => Out[F, G[QueryResult[B]]]
-  ): Field[F, QueryResult[A], G[QueryResult[B]]] =
+      tpe: => Out[F, G[QueryContext[B]]]
+  ): Field[F, QueryContext[A], G[QueryContext[B]]] =
     contFull[F, G, A, B, Unit](EmptyableArg.Empty)((a, _) => f(a))(tpe)
 
   def cont[F[_], G[_], A, B, C](a: Arg[C])(f: (A, C) => Query[G, B])(implicit
-      tpe: => Out[F, G[QueryResult[B]]]
-  ): Field[F, QueryResult[A], G[QueryResult[B]]] =
+      tpe: => Out[F, G[QueryContext[B]]]
+  ): Field[F, QueryContext[A], G[QueryContext[B]]] =
     contFull[F, G, A, B, C](EmptyableArg.Lift(a))((a, c) => f(a, c))(tpe)
 
   def runField[F[_]: Queryable: Applicative, G[_], I, B, ArgType](connection: Connection[F], arg: Arg[ArgType])(
       q: (NonEmptyList[I], ArgType) => Query[G, (Query.Select[I], B)]
-  )(implicit tpe: => Out[F, G[QueryResult[B]]]) =
+  )(implicit tpe: => Out[F, G[QueryContext[B]]]) =
     Field(resolveQuery(EmptyableArg.Lift(arg), q, connection), Eval.later(tpe))
 
   def runField[F[_]: Queryable: Applicative, G[_], I, B](connection: Connection[F])(
       q: NonEmptyList[I] => Query[G, (Query.Select[I], B)]
-  )(implicit tpe: => Out[F, G[QueryResult[B]]]) =
+  )(implicit tpe: => Out[F, G[QueryContext[B]]]) =
     Field(resolveQuery[F, G, I, B, Unit](EmptyableArg.Empty, (i, _) => q(i), connection), Eval.later(tpe))
 
   def runFieldSingle[F[_]: Queryable: Applicative, G[_], I, B, ArgType](connection: Connection[F], arg: Arg[ArgType])(
       q: (I, ArgType) => Query[G, B]
-  )(implicit tpe: => Out[F, G[QueryResult[B]]]): Field[F, I, G[QueryResult[B]]] =
+  )(implicit tpe: => Out[F, G[QueryContext[B]]]): Field[F, I, G[QueryContext[B]]] =
     Field(resolveQuerySingle(EmptyableArg.Lift(arg), q, connection), Eval.later(tpe))
 
   def runFieldSingle[F[_]: Queryable: Applicative, G[_], I, B](connection: Connection[F])(
       q: I => Query[G, B]
-  )(implicit tpe: => Out[F, G[QueryResult[B]]]): Field[F, I, G[QueryResult[B]]] =
+  )(implicit tpe: => Out[F, G[QueryContext[B]]]): Field[F, I, G[QueryContext[B]]] =
     Field(resolveQuerySingle[F, G, I, B, Unit](EmptyableArg.Empty, (i, _) => q(i), connection), Eval.later(tpe))
 
   final class BuildWithBuilder[F[_], A] {
@@ -135,7 +135,7 @@ abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
 
   def queryFull[F[_], G[_], A, B, C, D](a: EmptyableArg[C])(f: (A, C) => Query[G, Query.Select[B]], resolverCont: Resolver[F, G[B], D])(
       implicit tpe: => Out[F, D]
-  ): Field[F, QueryResult[A], D] = {
+  ): Field[F, QueryContext[A], D] = {
     val tfa: TableFieldAttribute[G, A, B, C, Query.Select[B]] = new TableFieldAttribute[G, A, B, C, Query.Select[B]] {
       def arg = a
       def query(value: A, argument: C): Query[G, Query.Select[B]] = f(value, argument)
@@ -145,7 +145,7 @@ abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
     build
       .from(
         Resolver
-          .id[F, QueryResult[A]]
+          .id[F, QueryContext[A]]
           .emap { qa =>
             qa.read(tfa).toRight("internal query association error, could not read result from query result").flatten.toIor
           }
@@ -155,33 +155,33 @@ abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
   }
 
   def contFull[F[_], G[_], A, B, C](a: EmptyableArg[C])(f: (A, C) => Query[G, B])(implicit
-      tpe: => Out[F, G[QueryResult[B]]]
-  ): Field[F, QueryResult[A], G[QueryResult[B]]] = {
+      tpe: => Out[F, G[QueryContext[B]]]
+  ): Field[F, QueryContext[A], G[QueryContext[B]]] = {
     def addArg[I2] = a match {
       case EmptyableArg.Empty   => Resolver.id[F, I2]
       case EmptyableArg.Lift(y) => Resolver.id[F, I2].arg(y).map { case (_, i2) => i2 }
     }
 
-    val tfa: TableFieldAttribute[G, A, QueryResult[B], C, B] =
-      new TableFieldAttribute[G, A, QueryResult[B], C, B] {
+    val tfa: TableFieldAttribute[G, A, QueryContext[B], C, B] =
+      new TableFieldAttribute[G, A, QueryContext[B], C, B] {
         def arg = a
         def query(value: A, argument: C): Query[G, B] = f(value, argument)
         def fieldVariant = FieldVariant.SubSelection()
       }
 
     build
-      .from(Resolver.id[F, QueryResult[A]].andThen(addArg).emap { qa =>
+      .from(Resolver.id[F, QueryContext[A]].andThen(addArg).emap { qa =>
         qa.read(tfa).toRight("internal query association error, could not read result from query result").flatten.toIor
       })(tpe)
       .addAttributes(tfa)
   }
 
-  def contVariant[F[_], A, B](f: A => Query[Option, B])(implicit tpe: => Type[F, QueryResult[B]]) = {
-    val attr = new UnificationQueryAttribute[A, B, QueryResult[B]] {
-      def fieldVariant: FieldVariant[B, QueryResult[B]] = FieldVariant.SubSelection[B]()
+  def contVariant[F[_], A, B](f: A => Query[Option, B])(implicit tpe: => Type[F, QueryContext[B]]) = {
+    val attr = new UnificationQueryAttribute[A, B, QueryContext[B]] {
+      def fieldVariant: FieldVariant[B, QueryContext[B]] = FieldVariant.SubSelection[B]()
       def query(value: A): Query[Option, B] = f(value)
     }
-    gql.ast.Variant[F, QueryResult[A], QueryResult[B]](Eval.later(tpe), List(attr)) { qr =>
+    gql.ast.Variant[F, QueryContext[A], QueryContext[B]](Eval.later(tpe), List(attr)) { qr =>
       qr.read(attr).sequence.map(_.flatten).toIor
     }
   }
@@ -191,68 +191,68 @@ abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
       def fieldVariant: FieldVariant[Query.Select[B], B] = FieldVariant.Selection[B]()
       def query(value: A): Query[Option, Query.Select[B]] = f(value)
     }
-    gql.ast.Variant[F, QueryResult[A], B](Eval.later(tpe), List(attr)) { qr =>
+    gql.ast.Variant[F, QueryContext[A], B](Eval.later(tpe), List(attr)) { qr =>
       qr.read(attr).sequence.map(_.flatten).toIor
     }
   }
 
   final class PartiallyAppliedRelationalUnion0[F[_], A](private val name: String) {
-    def contVariant[B](f: A => Query[Option, B])(implicit tpe: => Type[F, QueryResult[B]]) =
+    def contVariant[B](f: A => Query[Option, B])(implicit tpe: => Type[F, QueryContext[B]]) =
       new PartiallyAppliedRelationalUnion1(name, self.contVariant[F, A, B](f)(tpe))
 
     def queryVariant[B](f: A => Query[Option, Query.Select[B]])(implicit tpe: => Type[F, B]) =
       new PartiallyAppliedRelationalUnion1(name, self.queryVariant[F, A, B](f)(tpe))
   }
 
-  final class PartiallyAppliedRelationalUnion1[F[_], A](private val name: String, hd: Variant[F, QueryResult[A], ?]) {
-    def contVariant[B](f: A => Query[Option, B])(implicit tpe: => Type[F, QueryResult[B]]) =
-      Union[F, QueryResult[A]](name, NonEmptyList.of(hd, self.contVariant[F, A, B](f)(tpe)))
+  final class PartiallyAppliedRelationalUnion1[F[_], A](private val name: String, hd: Variant[F, QueryContext[A], ?]) {
+    def contVariant[B](f: A => Query[Option, B])(implicit tpe: => Type[F, QueryContext[B]]) =
+      Union[F, QueryContext[A]](name, NonEmptyList.of(hd, self.contVariant[F, A, B](f)(tpe)))
 
     def queryVariant[B](f: A => Query[Option, Query.Select[B]])(implicit tpe: => Type[F, B]) =
-      Union[F, QueryResult[A]](name, NonEmptyList.of(hd, self.queryVariant[F, A, B](f)(tpe)))
+      Union[F, QueryContext[A]](name, NonEmptyList.of(hd, self.queryVariant[F, A, B](f)(tpe)))
   }
 
-  final class RelationalUnionOps[F[_], A](private val u: Union[F, QueryResult[A]]) {
-    def contVariant[B](f: A => Query[Option, B])(implicit tpe: => Type[F, QueryResult[B]]): Union[F, QueryResult[A]] =
+  final class RelationalUnionOps[F[_], A](private val u: Union[F, QueryContext[A]]) {
+    def contVariant[B](f: A => Query[Option, B])(implicit tpe: => Type[F, QueryContext[B]]): Union[F, QueryContext[A]] =
       u.copy(types = u.types :+ self.contVariant[F, A, B](f)(tpe))
 
-    def queryVariant[B](f: A => Query[Option, Query.Select[B]])(implicit tpe: => Type[F, B]): Union[F, QueryResult[A]] =
+    def queryVariant[B](f: A => Query[Option, Query.Select[B]])(implicit tpe: => Type[F, B]): Union[F, QueryContext[A]] =
       u.copy(types = u.types :+ self.queryVariant[F, A, B](f)(tpe))
   }
 
-  implicit def relationalUnionDslOps[F[_], A](u: Union[F, QueryResult[A]]): RelationalUnionOps[F, A] =
+  implicit def relationalUnionDslOps[F[_], A](u: Union[F, QueryContext[A]]): RelationalUnionOps[F, A] =
     new RelationalUnionOps(u)
 
-  def contImplementation[F[_], A, B](f: B => Query[Option, A])(implicit interface: => Interface[F, QueryResult[B]]) = {
-    val attr = new UnificationQueryAttribute[B, A, QueryResult[A]] {
-      def fieldVariant: FieldVariant[A, QueryResult[A]] = FieldVariant.SubSelection[A]()
+  def contImplementation[F[_], A, B](f: B => Query[Option, A])(implicit interface: => Interface[F, QueryContext[B]]) = {
+    val attr = new UnificationQueryAttribute[B, A, QueryContext[A]] {
+      def fieldVariant: FieldVariant[A, QueryContext[A]] = FieldVariant.SubSelection[A]()
       def query(value: B): Query[Option, A] = f(value)
     }
-    gql.ast.Implementation[F, QueryResult[A], QueryResult[B]](Eval.later(interface), List(attr)) { qr =>
+    gql.ast.Implementation[F, QueryContext[A], QueryContext[B]](Eval.later(interface), List(attr)) { qr =>
       qr.read(attr).sequence.map(_.flatten).toIor
     }
   }
 
-  def queryImplementation[F[_], A, B](f: B => Query[Option, Query.Select[A]])(implicit interface: => Interface[F, QueryResult[B]]) = {
+  def queryImplementation[F[_], A, B](f: B => Query[Option, Query.Select[A]])(implicit interface: => Interface[F, QueryContext[B]]) = {
     val attr = new UnificationQueryAttribute[B, Query.Select[A], A] {
       def fieldVariant: FieldVariant[Query.Select[A], A] = FieldVariant.Selection[A]()
       def query(value: B): Query[Option, Query.Select[A]] = f(value)
     }
-    gql.ast.Implementation[F, A, QueryResult[B]](Eval.later(interface), List(attr)) { qr =>
+    gql.ast.Implementation[F, A, QueryContext[B]](Eval.later(interface), List(attr)) { qr =>
       qr.read(attr).sequence.map(_.flatten).toIor
     }
   }
 
-  final class RelationalTypeOps1[F[_], A](private val tpe: Type[F, QueryResult[A]]) {
-    def contImplements[B](f: B => Query[Option, A])(implicit interface: => Interface[F, QueryResult[B]]): Type[F, QueryResult[A]] =
+  final class RelationalTypeOps1[F[_], A](private val tpe: Type[F, QueryContext[A]]) {
+    def contImplements[B](f: B => Query[Option, A])(implicit interface: => Interface[F, QueryContext[B]]): Type[F, QueryContext[A]] =
       tpe.copy(implementations = self.contImplementation[F, A, B](f)(interface) :: tpe.implementations)
   }
 
-  implicit def relationalTypeDslOps1[F[_], A](tpe: Type[F, QueryResult[A]]): RelationalTypeOps1[F, A] =
+  implicit def relationalTypeDslOps1[F[_], A](tpe: Type[F, QueryContext[A]]): RelationalTypeOps1[F, A] =
     new RelationalTypeOps1(tpe)
 
   final class RelationalTypeOps0[F[_], A](private val tpe: Type[F, A]) {
-    def queryImplements[B](f: B => Query[Option, Query.Select[A]])(implicit interface: => Interface[F, QueryResult[B]]): Type[F, A] =
+    def queryImplements[B](f: B => Query[Option, Query.Select[A]])(implicit interface: => Interface[F, QueryContext[B]]): Type[F, A] =
       tpe.copy(implementations = self.queryImplementation[F, A, B](f)(interface) :: tpe.implementations)
   }
 
@@ -260,21 +260,21 @@ abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
     new RelationalTypeOps0(tpe)
 
   final class RelationalFieldBuilder[F[_], A](@unused private val dummy: Boolean = false) {
-    def tpe(name: String, hd: (String, Field[F, QueryResult[A], ?]), tl: (String, Field[F, QueryResult[A], ?])*): Type[F, QueryResult[A]] =
-      gql.dsl.all.tpe[F, QueryResult[A]](name, hd, tl: _*)
+    def tpe(name: String, hd: (String, Field[F, QueryContext[A], ?]), tl: (String, Field[F, QueryContext[A], ?])*): Type[F, QueryContext[A]] =
+      gql.dsl.all.tpe[F, QueryContext[A]](name, hd, tl: _*)
 
     def union(name: String) = new PartiallyAppliedRelationalUnion0[F, A](name)
 
     def queryAndThen[G[_], B, C](f: A => Query[G, Query.Select[B]])(g: Resolver[F, G[B], G[B]] => Resolver[F, G[B], C])(
         tpe: => Out[F, C]
-    ): Field[F, QueryResult[A], C] =
+    ): Field[F, QueryContext[A], C] =
       queryFull[F, G, A, B, Unit, C](EmptyableArg.Empty)((a, _) => f(a), g(Resolver.id[F, G[B]]))(tpe)
 
     def queryAndThen[G[_], B, C, D](
         a: Arg[C]
     )(f: (A, C) => Query[G, Query.Select[B]])(g: Resolver[F, G[B], G[B]] => Resolver[F, G[B], D])(implicit
         tpe: => Out[F, D]
-    ): Field[F, QueryResult[A], D] =
+    ): Field[F, QueryContext[A], D] =
       queryFull[F, G, A, B, C, D](EmptyableArg.Lift(a))((a, c) => f(a, c), g(Resolver.id[F, G[B]]))(tpe)
 
     def contBoundaryFull[G[_]: Reassociateable, H[_], B, C, D, Arg1, Arg2](ea1: EmptyableArg[Arg1], connection: Connection[F])(
@@ -282,9 +282,9 @@ abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
     )(ea2: EmptyableArg[Arg2])(continue: (NonEmptyList[B], Arg2) => Query[H, (Query.Select[B], C)])(implicit
         F: Applicative[F],
         Q: Queryable[F],
-        tpe: => Out[F, G[H[QueryResult[C]]]]
+        tpe: => Out[F, G[H[QueryContext[C]]]]
     ) =
-      queryFull[F, G, A, B, Arg1, G[H[QueryResult[C]]]](ea1)(
+      queryFull[F, G, A, B, Arg1, G[H[QueryContext[C]]]](ea1)(
         f,
         Resolver
           .id[F, G[B]]
@@ -298,7 +298,7 @@ abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
     )(continue: (NonEmptyList[B], ArgType) => Query[H, (Query.Select[B], C)])(implicit
         F: Applicative[F],
         Q: Queryable[F],
-        tpe: => Out[F, G[H[QueryResult[C]]]]
+        tpe: => Out[F, G[H[QueryContext[C]]]]
     ) =
       contBoundaryFull[G, H, B, C, D, ArgType, ArgType](EmptyableArg.Lift(a), connection)(f)(EmptyableArg.Lift(a))(continue)(
         implicitly,
@@ -312,7 +312,7 @@ abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
     )(continue: NonEmptyList[B] => Query[H, (Query.Select[B], C)])(implicit
         F: Applicative[F],
         Q: Queryable[F],
-        tpe: => Out[F, G[H[QueryResult[C]]]]
+        tpe: => Out[F, G[H[QueryContext[C]]]]
     ) =
       contBoundaryFull[G, H, B, C, D, Unit, Unit](EmptyableArg.Empty, connection)((i, _) => f(i))(EmptyableArg.Empty)((i, _) =>
         continue(i)
@@ -325,42 +325,42 @@ abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
 
     def query[G[_], B](f: A => Query[G, Query.Select[B]])(implicit
         tpe: => Out[F, G[B]]
-    ): Field[F, QueryResult[A], G[B]] =
+    ): Field[F, QueryContext[A], G[B]] =
       self.query(f)(tpe)
 
     def query[G[_], B, C](a: Arg[C])(f: (A, C) => Query[G, Query.Select[B]])(implicit
         tpe: => Out[F, G[B]]
-    ): Field[F, QueryResult[A], G[B]] =
+    ): Field[F, QueryContext[A], G[B]] =
       self.query(a)(f)(tpe)
 
     def cont[G[_], B](f: A => Query[G, B])(implicit
-        tpe: => Out[F, G[QueryResult[B]]]
-    ): Field[F, QueryResult[A], G[QueryResult[B]]] =
+        tpe: => Out[F, G[QueryContext[B]]]
+    ): Field[F, QueryContext[A], G[QueryContext[B]]] =
       self.cont(f)(tpe)
 
     def cont[G[_], B, C](a: Arg[C])(f: (A, C) => Query[G, B])(implicit
-        tpe: => Out[F, G[QueryResult[B]]]
-    ): Field[F, QueryResult[A], G[QueryResult[B]]] =
+        tpe: => Out[F, G[QueryContext[B]]]
+    ): Field[F, QueryContext[A], G[QueryContext[B]]] =
       self.cont(a)(f)(tpe)
 
     def runField[G[_], I, B, ArgType](connection: Connection[F], arg: Arg[ArgType])(
         q: (NonEmptyList[I], ArgType) => Query[G, (Query.Select[I], B)]
-    )(implicit F: Applicative[F], Q: Queryable[F], tpe: => Out[F, G[QueryResult[B]]]) =
+    )(implicit F: Applicative[F], Q: Queryable[F], tpe: => Out[F, G[QueryContext[B]]]) =
       self.runField(connection, arg)(q)(Q, F, tpe)
 
     def runField[G[_], I, B](connection: Connection[F])(
         q: NonEmptyList[I] => Query[G, (Query.Select[I], B)]
-    )(implicit F: Applicative[F], Q: Queryable[F], tpe: => Out[F, G[QueryResult[B]]]) =
+    )(implicit F: Applicative[F], Q: Queryable[F], tpe: => Out[F, G[QueryContext[B]]]) =
       self.runField(connection)(q)(Q, F, tpe)
 
     def runFieldSingle[G[_], I, B, ArgType](connection: Connection[F], arg: Arg[ArgType])(
         q: (I, ArgType) => Query[G, B]
-    )(implicit F: Applicative[F], Q: Queryable[F], tpe: => Out[F, G[QueryResult[B]]]) =
+    )(implicit F: Applicative[F], Q: Queryable[F], tpe: => Out[F, G[QueryContext[B]]]) =
       self.runFieldSingle(connection, arg)(q)(Q, F, tpe)
 
     def runFieldSingle[G[_], I, B](connection: Connection[F])(
         q: I => Query[G, B]
-    )(implicit F: Applicative[F], Q: Queryable[F], tpe: => Out[F, G[QueryResult[B]]]) =
+    )(implicit F: Applicative[F], Q: Queryable[F], tpe: => Out[F, G[QueryContext[B]]]) =
       self.runFieldSingle(connection)(q)(Q, F, tpe)
   }
 }

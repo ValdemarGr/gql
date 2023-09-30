@@ -46,9 +46,9 @@ trait QueryAlgebra {
       toplevelArg: EmptyableArg[ArgType],
       q: (NonEmptyList[I], ArgType) => Query[G, (Query.Select[I], B)],
       connection: Connection[F]
-  )(implicit F: Applicative[F], H: Reassociateable[H]): Resolver[F, H[I], H[G[QueryResult[B]]]] = {
+  )(implicit F: Applicative[F], H: Reassociateable[H]): Resolver[F, H[I], H[G[QueryContext[B]]]] = {
     implicit val T: Traverse[H] = H.traverse
-    compileToResolver[F, G, H, I, ArgType, Either[String, G[QueryResult[B]]]](toplevelArg) { (xs, at, fm) =>
+    compileToResolver[F, G, H, I, ArgType, Either[String, G[QueryContext[B]]]](toplevelArg) { (xs, at, fm) =>
       evalQuery(xs, fm, q(xs, at), connection)
     }.emap(_.traverse(_.toIor))
   }
@@ -57,15 +57,15 @@ trait QueryAlgebra {
       toplevelArg: EmptyableArg[ArgType],
       q: (NonEmptyList[I], ArgType) => Query[G, (Query.Select[I], B)],
       connection: Connection[F]
-  ): Resolver[F, I, G[QueryResult[B]]] =
+  ): Resolver[F, I, G[QueryContext[B]]] =
     resolveQueryFull[F, G, Id, I, B, ArgType](toplevelArg, q, connection)
 
   def resolveQuerySingle[F[_]: Queryable, G[_], I, B, ArgType](
       toplevelArg: EmptyableArg[ArgType],
       q: (I, ArgType) => Query[G, B],
       connection: Connection[F]
-  )(implicit F: Applicative[F]): Resolver[F, I, G[QueryResult[B]]] =
-    compileToResolver[F, G, Id, I, ArgType, Either[String, G[QueryResult[B]]]](toplevelArg) { (xs, at, fm) =>
+  )(implicit F: Applicative[F]): Resolver[F, I, G[QueryContext[B]]] =
+    compileToResolver[F, G, Id, I, ArgType, Either[String, G[QueryContext[B]]]](toplevelArg) { (xs, at, fm) =>
       xs.toList
         .traverse { x =>
           val baseQuery = q(x, at)
@@ -80,7 +80,7 @@ trait QueryAlgebra {
       fm: FieldMeta[F],
       query: Query[G, (Query.Select[I], B)],
       connection: Connection[F]
-  )(implicit F: Applicative[F], queryable: Queryable[F]): F[Map[I, Either[String, G[QueryResult[B]]]]] = {
+  )(implicit F: Applicative[F], queryable: Queryable[F]): F[Map[I, Either[String, G[QueryContext[B]]]]] = {
     val eff = collapseQuery(query).flatMap { qs =>
       val out = compileQueryState(qs.map { case (_, b) => b }, FieldVariant.SubSelection[B](), Eval.later(getNextAttributes(fm.astNode)))
       out tupleLeft qs.map { case (sel, _) => sel }.value
@@ -90,7 +90,7 @@ trait QueryAlgebra {
 
     e match {
       case Left(e) => F.pure(xs.toList.tupleRight(Left(e)).toMap)
-      case Right((sel, done: Done[G, a, QueryResult[B]])) =>
+      case Right((sel, done: Done[G, a, QueryContext[B]])) =>
         val decoder = (sel.decoder, done.dec).tupled
         val qc2 = QueryContent(sel.cols ++ qc.selections, qc.joins)
         val frag = renderQuery(qc2)
@@ -104,7 +104,7 @@ trait QueryAlgebra {
   sealed trait FieldVariant[Q, A]
   object FieldVariant {
     case class Selection[A]() extends FieldVariant[Query.Select[A], A]
-    case class SubSelection[A]() extends FieldVariant[A, QueryResult[A]]
+    case class SubSelection[A]() extends FieldVariant[A, QueryContext[A]]
   }
 
   trait AnyQueryAttribute[G[_], A]
@@ -123,7 +123,7 @@ trait QueryAlgebra {
     def fieldVariant: FieldVariant[Q, B]
   }
 
-  trait QueryResult[A] {
+  trait QueryContext[A] {
     def read[G[_], B](tfa: AnyQueryAttribute[G, B]): Option[Either[String, G[B]]]
   }
 
@@ -356,7 +356,7 @@ trait QueryAlgebra {
           val reassocNext = { (xs: List[Map[K, Any]]) =>
             val keys = xs.flatMap(_.keySet).toSet
             val grouped = keys.toList.map(k => k -> xs.flatMap(_.get(k))).toMap
-            new QueryResult[Q] {
+            new QueryContext[Q] {
               def read[H[_], X](tfa: AnyQueryAttribute[H, X]): Option[Either[String, H[X]]] = {
                 val k: K = KImpl(tfa)
                 doneMap.get(k).flatMap { case (done: Done[H, a, ?] @unchecked) =>
@@ -368,7 +368,7 @@ trait QueryAlgebra {
             }
           }
 
-          Done[G, (qs.Key, Map[K, Any]), QueryResult[Q]](
+          Done[G, (qs.Key, Map[K, Any]), QueryContext[Q]](
             (qs.decoder, decs).tupled,
             { (xs: List[(qs.Key, Map[K, Any])]) =>
               qs.reassoc(xs)
@@ -387,7 +387,7 @@ trait QueryAlgebra {
   sealed trait QueryTask[F[_], A]
   object QueryTask {
     case class Field[F[_], G[_], A](
-        v: prep.PreparedDataField[F, QueryResult[A], ?],
+        v: prep.PreparedDataField[F, QueryContext[A], ?],
         attr: TableFieldAttribute[G, A, ?, ?, ?]
     ) extends QueryTask[F, A]
     case class Unification[F[_], A, B](
@@ -407,7 +407,7 @@ trait QueryAlgebra {
     pdf.source.attributes
       .collectFirst { case a: TableFieldAttribute[g, a, ?, ?, ?] @unchecked => a }
       .map { case tfa: TableFieldAttribute[g, a, ?, ?, ?] =>
-        PDFFieldImpl(QueryTask.Field(pdf.asInstanceOf[prep.PreparedDataField[F, QueryResult[a], ?]], tfa))
+        PDFFieldImpl(QueryTask.Field(pdf.asInstanceOf[prep.PreparedDataField[F, QueryContext[a], ?]], tfa))
       }
 
   def makeTasks[F[_], A, B](ps: prep.PreparedSpecification[F, A, B]): List[QueryTask[F, ?]] =
