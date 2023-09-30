@@ -260,7 +260,11 @@ abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
     new RelationalTypeOps0(tpe)
 
   final class RelationalFieldBuilder[F[_], A](@unused private val dummy: Boolean = false) {
-    def tpe(name: String, hd: (String, Field[F, QueryContext[A], ?]), tl: (String, Field[F, QueryContext[A], ?])*): Type[F, QueryContext[A]] =
+    def tpe(
+        name: String,
+        hd: (String, Field[F, QueryContext[A], ?]),
+        tl: (String, Field[F, QueryContext[A], ?])*
+    ): Type[F, QueryContext[A]] =
       gql.dsl.all.tpe[F, QueryContext[A]](name, hd, tl: _*)
 
     def union(name: String) = new PartiallyAppliedRelationalUnion0[F, A](name)
