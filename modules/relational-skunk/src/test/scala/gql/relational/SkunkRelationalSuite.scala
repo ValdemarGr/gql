@@ -30,7 +30,7 @@ class SkunkRelationalSuite extends RelationalSuiteTables(SkunkIntegration) {
   def textDecoder: Decoder[String] = text
   def encodeText(str: String): AppliedFragment = sql"${text}".apply(str)
 
-  implicit val t = natchez.noop.NoopTrace[IO]()
+  implicit val t: natchez.Trace[IO] = natchez.noop.NoopTrace[IO]()
 
   val connF = ResourceSuiteLocalFixture(
     "setup",

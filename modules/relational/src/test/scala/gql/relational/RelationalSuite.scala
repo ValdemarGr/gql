@@ -94,13 +94,13 @@ abstract class RelationalSuiteTables[QA <: QueryAlgebra](val algebra: QA) extend
 
     def appearsIn: Query[List, Query.Select[Episode]] =
       dsl
-        .table(AppearsInTable)
+        .table(AppearsInTable(_))
         .join[List](a => a.characterIdCol |+| stringToFrag(" = ") |+| idCol)
         .map(_.episodeId)
 
     def friends: Query[List, UnknownCharacter] =
       dsl
-        .table(FriendTable)
+        .table(FriendTable(_))
         .join[List](_.characterId1Col |+| stringToFrag(" = ") |+| idCol)
         .map(x => UnknownCharacter(x.characterId2Col))
 
@@ -111,13 +111,13 @@ abstract class RelationalSuiteTables[QA <: QueryAlgebra](val algebra: QA) extend
     def table = stringToFrag("human")
     val (homePlanetCol, homePlanet) = sel[Option[String]]("home_planet", optDecoder(textDecoder))
   }
-  val humanTable = table(HumanTable)
+  val humanTable = table(HumanTable(_))
 
   case class DroidTable(alias: String) extends CharacterTable {
     def table = stringToFrag("droid")
     val (primaryFunctionCol, primaryFunction) = sel[Option[String]]("primary_function", optDecoder(textDecoder))
   }
-  val droidTable = table(DroidTable)
+  val droidTable = table(DroidTable(_))
 
   case class HeroTable(alias: String) extends SuiteTable {
     def table = stringToFrag("hero")
@@ -125,7 +125,7 @@ abstract class RelationalSuiteTables[QA <: QueryAlgebra](val algebra: QA) extend
     val (characterIdCol, characterId) = sel[String]("character_id", textDecoder)
     def tableKey = episode
   }
-  val heroTable = table(HeroTable)
+  val heroTable = table(HeroTable(_))
 
   def schema[F[_]: Concurrent: Queryable](conn: Connection[F]): F[Schema[F, Unit, Unit, Unit]] = {
     implicit lazy val unknownCharacter: ast.Interface[F, QueryContext[UnknownCharacter]] =
