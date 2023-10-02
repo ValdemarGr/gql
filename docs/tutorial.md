@@ -4,10 +4,13 @@ title: Tutorial
 
 For this showcase, Star Wars will be our domain of choice.
 
-We'll go through setting up a simple GraphQL schema by first defining idiomatic scala types and then constructing the relevant schema.
+We'll go through setting up a GraphQL sevrver that represents our Star Wars datatypes by:
+1. Defining idiomatic scala types for the Star Wars domain.
+2. Introducing GraphQL.
+3. Defining a gql schema for our datatypes.
 ## Setup
 We'll have to introduce some dependencies first.
-For this tutorial, we'll be pulling everything needed to construct a "server".
+For this tutorial, we'll be pulling everything needed to construct a server.
 ```scala
 libraryDependencies ++= Seq(
   "io.github.valdemargr" %% "gql-server" % "@VERSION@",
@@ -64,8 +67,7 @@ The respository is abstract and as such, we can implement it in any way we want.
 
 These types will be the foundation of our GraphQL implementation.
 
-Before doing working with gql, let us import everything into scope.
-To construct the schema, we need some imports.
+To construct the schema later on, we need some imports.
 ```scala mdoc
 import gql._
 import gql.dsl.all._
@@ -113,9 +115,9 @@ The above defined schema looks like some of our Scala types, and we will in fact
 Notice that the `friends` field on the `Human` type is a list of `Human`s, that is, it is a recursive type.
 In graphql recursive types are allowed.
 
-Now that we have defined our "type system", we would like to query it also.
+Now that we have defined our type system, we would like to query it also.
 The [GraphQL specification](https://spec.graphql.org/draft/) states that the schema should expose a `Query` type.
-Let us query all humans names by constructing the following query:
+We'll query all human names by constructing the following query:
 ```graphql
 # we specify that we'd like to query the api
 query {
@@ -135,7 +137,7 @@ query {
 GraphQL also features interfaces, unions and a variant of pattern matching.
 We'll take a look at these features later on, but for now let's try to implement the above schema.
 
-### A simple gql schema
+### gql schema
 We'll start by defining the enum `Episode` and `Human` type.
 ```scala mdoc:silent
 // We let gql know how to use the scala type `Episode` in our schema
@@ -153,11 +155,11 @@ implicit val episode: Enum[Episode] = enumType[Episode](
 // such that the `Human` type can use it wihtout having to reference it directly
 
 implicit lazy val human: Type[IO, Human] = tpe[IO, Human](
+  // The typename that will appear in our schema
   "Human",
-  // We define the fields of the type
-  // Fields are functions that go from the type to the field type
-  // In the case of `name` it is `Human => Option[String]`
-  // lift can be used to lift any function into a type
+  // Now we can start defining the fields of our type.
+  // Fields in gql are more or less regular functions with some extra information attached to them
+  // Here the "id" field is defined as a function `Human => Option[String]` which is lifted into a field
   "id" -> lift(_.id),
   "name" -> lift(_.name),
 
@@ -168,8 +170,6 @@ implicit lazy val human: Type[IO, Human] = tpe[IO, Human](
   // If we were to remove the implicit `episode` from scope
   // we would get a "missing implicit" compiler error
   "appearsIn" -> lift(_.appearsIn),
-  // However if we wanted to, we could provide the implicit `episode` explicitly
-  // This requires a bit of machinery since the 'appearsIn' field is wrapped up in a list type
 
   "homePlanet" -> lift(_.homePlanet)
 )
@@ -185,13 +185,12 @@ SchemaShape.unit[IO](
 ```
 
 Very cool! We have defined our first gql schema.
-Now let's try to add the rest of the types.
+Now let's try to add the rest of the types into a neat package.
 
 ## Schema
 Let's define a schema for our whole Star Wars API:
 ```scala mdoc
-// We define a schema as a class since we want some dependencies
-// in production, you'll likely have one instance of your schema
+// We define a schema as a class since we want some dependencies.
 final class StarWarsSchema[F[_]](repo: Repository[F])(implicit F: Async[F]) {
   implicit lazy val episode: Enum[Episode] = enumType[Episode](
     "Episode",
@@ -223,13 +222,15 @@ final class StarWarsSchema[F[_]](repo: Repository[F])(implicit F: Async[F]) {
     "primaryFunction" -> lift(_.primaryFunction)
   ).subtypeImpl[Character]
 
-  // Arguments can be defined as values as well
+  // Arguments types can be defined as values as well
   val episodeArg = arg[Option[Episode]]("episode")
   val idArg = arg[String]("id")
 
   val makeSchema = Schema.query(
     tpe[F, Unit](
       "Query",
+      // There are various ways to define fields depending on how unorthodox a usecase is
+      // `build` is a more explicit way of defining a field
       "hero" -> build.from(arged(episodeArg).evalMap(repo.getHero)),
       "human" -> build.from(arged(idArg).evalMap(repo.getHuman)),
       "droid" -> eff(idArg){ case (id, _) => repo.getDroid(id) }
@@ -322,7 +323,7 @@ def repo: Repository[IO] = new Repository[IO] {
 }
 ```
 
-And now a GraphQL query:
+The following GraphQL query will be used to test our schema:
 ```graphql
 query {
   # 1
@@ -391,7 +392,7 @@ def query = """
 """
 ```
 
-Now we can parse, plan and evaluate the query:
+Finally we can parse, plan and evaluate the query:
 
 ```scala mdoc:passthrough
 import io.circe.syntax._
@@ -408,3 +409,5 @@ import io.circe.syntax._
   .flatMap { case Right(Application.Query(run)) => run.map(_.asJson) }
 """)
 ```
+And that's the end of this tutorial!
+The docs contain more examples and information about the library, so be sure to check them out.

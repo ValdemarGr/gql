@@ -2,9 +2,11 @@
 title: The DSL
 ---
 The DSL consists of a series of smart constructors for the ast nodes of gql.
-The source code for the DSL is not too difficult to follow and as such, the best documentation is the source code itself :-).
 
-Lets start off with some imports.
+gql's dsl is a lightweight set of smart-constructors.
+If you have a particular usecase or even coding style that conflicts with the dsl, you can always introduce your own schema definition syntax.
+
+Lets begin by importing what we need.
 ```scala mdoc
 import cats.data._
 import cats.effect._
@@ -73,7 +75,7 @@ builder[IO, Int]{ fb =>
 
 ### Value resolution
 Wrapping every field in a `build` smart constructor and then defining the resolver seperately is a bit verbose.
-There are smart constructors for two common variants of field resolvers that lift the resolver function directly to a `Field`.
+There are smart constructors for two common variants of field resolvers, that lift a resolver function directly to a `Field`.
 
 We must decide if the field is pure or effectful:
 :::note
@@ -222,6 +224,7 @@ implicit lazy val dog: Type[IO, Dog] = tpe[IO, Dog](
   "bark" -> lift(_ => "woof!")
 ).subtypeImpl[Pet]
 
+// We are missing the weight field
 dog.fields.map{ case (k, _) => k}.mkString_(", ")
 ```
 :::tip
@@ -237,7 +240,8 @@ Examples of other structures can be in the [Output types](output_types.md) secti
 ### Covariant effects
 Output types in gql are covariant in `F`, such that output types written in different effects seamlessly weave together.
 `fs2` provides a type that we can reuse for pure effects defined as `type Pure[A] <: Nothing`.
-Consider the following:
+
+With this trick, we can define gql types for trivial cases of our domain:
 ```scala mdoc:silent
 final case class Entity(
   name: String,
