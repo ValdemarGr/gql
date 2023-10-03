@@ -1,10 +1,8 @@
 ---
 title: The DSL
 ---
-The DSL consists of a series of smart constructors for the ast nodes of gql.
-
 gql's dsl is a lightweight set of smart-constructors.
-If you have a particular usecase or even coding style that conflicts with the dsl, you can always introduce your own schema definition syntax.
+If you have a particular usecase or even coding style that conflicts with the dsl, you can always introduce your own schema definition syntax or build on top of the existing dsl.
 
 Lets begin by importing what we need.
 ```scala mdoc
@@ -37,7 +35,7 @@ build.from(Resolver.liftF((i: Int) => IO(i.toString())))
 ```
 
 For most non-trivial fields, there is an even more concise syntax.
-Invoking the `apply` method of `build`, takes a higher order function that goes from the identity resolver to some output:
+Invoking the `apply` method of `build`, takes a higher order function that goes from the identity resolver (`Resolver[F, A, A]`) to some output.
 ```scala mdoc:silent
 build[IO, Int](_.map(i => i * 2).evalMap(i => IO(i))): Field[IO, Int, Int]
 ```
@@ -45,7 +43,7 @@ build[IO, Int](_.map(i => i * 2).evalMap(i => IO(i))): Field[IO, Int, Int]
 ### Builders
 Complex structures may require many special resolver compositions.
 The dsl also introduces a something akin to a builder pattern.
-The `build` function from the previous section, in fact, creates a builder that has many more options than just `from` and `apply`.
+The `build` function from the previous section, creates a builder that has more constructors than just `from` and `apply`.
 ```scala mdoc:silent
 import gql.dsl.FieldBuilder
 val b: FieldBuilder[IO, Int] = build[IO, Int]

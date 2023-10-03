@@ -4,7 +4,7 @@ title: Tutorial
 
 For this showcase, Star Wars will be our domain of choice.
 
-We'll go through setting up a GraphQL sevrver that represents our Star Wars datatypes by:
+We'll go through setting up a GraphQL server that represents our Star Wars datatypes by:
 1. Defining idiomatic scala types for the Star Wars domain.
 2. Introducing GraphQL.
 3. Defining a gql schema for our datatypes.

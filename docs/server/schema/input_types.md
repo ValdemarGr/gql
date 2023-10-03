@@ -15,7 +15,7 @@ More information can be found in the [output types](output_types.md#enum) sectio
 ## Arg
 The arg type has a couple of uses.
 The first and simplest way of using args is for, well, arguments.
-The dsl has a smart constructor for arguments that summons the `In[A]` type from the implicit scope, for the argument.
+The dsl contains smart constructors that will find the correct implicit `In` type for the argument.
 ```scala mdoc:silent
 import gql.dsl.all._
 import gql.ast._
@@ -38,7 +38,7 @@ arg[Int]("superCoolArg", "This is a super cool argument")
 Default values are not type-safe, so you can pass any value you want.
 The default value will however be checked during schema validation, and again during query evaluation, so you will get an error if you pass a value of the wrong type.
 
-Input objects makes it impossibly difficult to construct a type-safe default value dsl, since input objects might have default values themselves that allow uses of them to only supply a subset of fields.
+Input objects makes it difficult to construct a type-safe default value dsl, since input objects might have default values themselves that allow uses of them to only supply a subset of fields.
 Consult the [Default values for input objects](#default-values-for-input-objects) subsection for more information.
 :::
 
@@ -86,7 +86,7 @@ input[InputData](
 ```
 ### Default values for input objects
 For input objects however, a default value cannot be properly type checked at compile time, since the default value might be partial.
-For instance, cosider the following input type:
+For instance, cosider the following input type.
 ```scala mdoc:silent
 final case class SomeInput(
   a: Int,

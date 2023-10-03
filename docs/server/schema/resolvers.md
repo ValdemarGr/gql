@@ -63,7 +63,7 @@ r.map{ case (age, name) => s"$name is $age years old" }
 ### Meta
 The `meta` resolver provides metadata regarding query execution, such as the position of query execution, field aliasing and the provided arguments.
 
-It also allows the caller to inspect the query algebra ast such that more exotic operations become possible.
+It also allows the caller to inspect the query ast such that more exotic operations become possible.
 For instance, arguments can dynamically be inspected.
 ```scala mdoc
 lazy val a = arg[Int]("age")
@@ -93,14 +93,12 @@ val r = Resolver.id[IO, Int].emap(i => Ior.Both("I will be in the errors :)", i)
 ```
 
 ### First
-A `Resolver` also implements `first` (`Resolver[F, A, B] => Resolver[F, (A, C), (B, C)]`) which is very convinient since some `Resolver`s are constant functions (they throw away their inputs `I`).
+A `Resolver` also implements `first` (`Resolver[F, A, B] => Resolver[F, (A, C), (B, C)]`) which can be convinient for situations where one would usually have to trace a value through an entire computation.
 
 Since a `Resolver` does not form a `Monad`, `first` is necessary to implement non-trivial resolver compositions.
 In general, this allows us to trace a value through another resolver composition.
 
-For instance, resolving an argument will ignore the input of the resolver, which is not always the desired semantics.
-
-Or maybe your program contains some a general resolver compositon that is used many places, like say verifying credentials, but you'd like to trace a value through it without having to keep track of tupling output with input.
+For instance, maybe your program contains a general resolver compositon that is used many places, like say verifying credentials, but you'd like to trace a value through it without having to keep track of tupling output with input.
 
 Assume we'd like to implement a resolver, that when given a name, can get a list of friends of the person with that name.
 ```scala mdoc

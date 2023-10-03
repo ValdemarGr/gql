@@ -26,7 +26,7 @@ import cats.effect._
 ## Scalar
 `Scalar` types contain a name, an encoder and a decoder.
 The `Scalar` type can encode `A => Value` and decode `Value => Either[Error, A]`.
-A `Value` is a graphql value, which is a superset of json.
+GraphQL `Value`s have the same structure with the addition of enums.
 
 gql comes with a few predefined scalars, such as:
 * `String`
@@ -57,7 +57,7 @@ object ID {
 ```
 
 ## Enum
-`Enum` types, like `Scalar` types, are terminal types that consist of a name and non-empty bi-directional mapping from a scala type to a `String`:
+`Enum` types, like `Scalar` types, are types that consist of a name and non-empty bi-directional mapping from a Scala type to a `String`:
 ```scala mdoc:silent
 sealed trait Color
 object Color {
