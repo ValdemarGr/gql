@@ -126,7 +126,6 @@ arg[SomeInput](
 ```
 
 ## Input validation
-Naturally input can also be validated.
 A function `emap` exists on arg, that maps the input to `Either[String, B]` for some `B`.
 ```scala mdoc:silent
 import cats.data._

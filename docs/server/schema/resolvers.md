@@ -27,7 +27,7 @@ import cats.data._
 If you are familiar with the relationship between `fs2.Stream` and `fs2.Pull`, then the relationship between `Resolver` and `Step` should be familiar.
 :::
 ### Lift
-The simplest `Resolver` type is `lift` which simply lifts a function `I => O` into `Resolver[F, I, O]`.
+`Resolver.lift` lifts a function `I => O` into `Resolver[F, I, O]`.
 `lift`'s method form is `map`, which for any resolver `Resolver[F, I, O]` produces a new resolver `Resolver[F, I, O2]` given a function `O => O2`.
 ```scala mdoc:nest
 val r = Resolver.lift[IO, Int](_.toLong)
@@ -35,8 +35,8 @@ r.map(_.toString())
 ```
 
 ### LiftF
-Another simple resolver is `liftF` which lifts a function `I => F[O]` into `Resolver[F, I, O]`.
-`liftF`'s method form is `evalMap`.
+`liftF` like `lift` also lifts a function, but instead an effectful one like `I => F[O]` into `Resolver[F, I, O]`.
+`liftF`'s method form is `evalMap` (like `Resource` and `fs2.Stream`).
 ```scala mdoc:nest
 val r = Resolver.liftF[IO, Int](i => IO(i.toLong))
 r.evalMap(l => IO(l.toString()))
@@ -52,7 +52,7 @@ val r2 = r.arg(ageArg)
 r2.map{ case (age, name) => s"$name is $age years old" }
 ```
 
-`Arg` also has an applicative defined for it, so multi-argument resolution can be simplified to:
+`Arg` also has an applicative defined for it, so multi-argument resolution can be simplified to.
 ```scala mdoc:nest
 val r = Resolver.argument[IO, Nothing, (String, Int)](
   (arg[String]("name"), arg[Int]("age")).tupled
@@ -69,16 +69,17 @@ For instance, arguments can dynamically be inspected.
 lazy val a = arg[Int]("age")
 Resolver.meta[IO, String].map(meta => meta.astNode.arg(a))
 ```
+The [relational](../integrations/relational.md) integration makes heavy use of this feature.
 
 ### Errors
-Well formed errors are returned in an `cats.data.Ior`.
+Errors are reported in `cats.data.Ior`.
 
 :::info
 An `Ior` is a non-exclusive `Either`.
 :::
 
 The `Ior` datatype's left side must be `String` and acts as an optional error that will be present in the query result.
-gql can return an error and a result for the same path, given that `Ior` has both left and right side defined.
+gql can return an error and a result for the same path, given that `Ior` has both it's left and right side defined.
 
 Errors are embedded into resolvers via `rethrow`.
 The extension method `rethrow` is present on any resolver of type `Resolver[F, I, Ior[String, O]]`:
@@ -93,14 +94,13 @@ val r = Resolver.id[IO, Int].emap(i => Ior.Both("I will be in the errors :)", i)
 ```
 
 ### First
-A `Resolver` also implements `first` (`Resolver[F, A, B] => Resolver[F, (A, C), (B, C)]`) which can be convinient for situations where one would usually have to trace a value through an entire computation.
+`Resolver` also implements `first` (`Resolver[F, A, B] => Resolver[F, (A, C), (B, C)]`) which can be convinient for situations where one would usually have to trace a value through an entire computation.
 
 Since a `Resolver` does not form a `Monad`, `first` is necessary to implement non-trivial resolver compositions.
-In general, this allows us to trace a value through another resolver composition.
 
 For instance, maybe your program contains a general resolver compositon that is used many places, like say verifying credentials, but you'd like to trace a value through it without having to keep track of tupling output with input.
 
-Assume we'd like to implement a resolver, that when given a name, can get a list of friends of the person with that name.
+Assume we'd like to implement a resolver, that when given a person's name, can get a list of the person's friends.
 ```scala mdoc
 case class PersonId(value: Int)
 
@@ -159,7 +159,7 @@ Even if your field doesn't benefit from batching, batching can still do duplicat
 
 #### Batch resolver syntax
 When a resolver in a very specific form `Resolver[F, Set[K], Map[K, V]]`, then the gql dsl provides some helper methods.
-For instance, it is very likely that a batcher is embedded in a singular context (`K => V`).
+For instance, a batcher may be embedded in a singular context (`K => V`).
 Here is a showcase of some of the helper methods:
 ```scala mdoc
 def pb: Resolver[IO, Set[Int], Map[Int, Person]] = 
@@ -187,8 +187,8 @@ pb.optionals[cats.Id]
 // There is always one value for one key
 pb.forceOne
 
-// Same as force but for non-empty containers
-pb.forceNE[NonEmptyList]
+// Force works for any traversable
+pb.force[NonEmptyList]
 ```
 
 :::tip
@@ -212,10 +212,12 @@ This `Person` object also exists in a remote api.
 This remote api can tell you, the friends of a `Person` given the object's id and name.
 
 ```scala mdoc:nest:silent
+// We have a trivial id field for our person id
 def pureFields = fields[IO, PersonId](
   "id" -> lift(id => id)
 )
 
+// If we query our database with a person id, we get a person database object
 case class PersonDB(
   id: PersonId, 
   name: String, 
@@ -225,11 +227,13 @@ case class PersonDB(
 // SELECT id, name, remote_api_id FROM person WHERE id in (...)
 def dbBatchResolver: Resolver[IO, PersonId, PersonDB] = ???
 
+// From the db we can get the name and the remote api id
 def dbFields = fields[IO, PersonDB](
   "name" -> lift(_.name),
   "apiId" -> lift(_.remoteApiId)
 )
 
+// The remote api data can be found given the result of a db query
 case class PersonRemoteAPI(
   id: PersonId, 
   friends: List[PersonId]
@@ -238,11 +242,14 @@ case class PersonRemoteAPI(
 // Given a PersonDB we can call the api (via a batched GET or something)
 def personBatchResolver: Resolver[IO, PersonDB, PersonRemoteAPI] = ???
 
+// We can get the friends from the remote api
 def remoteApiFields = fields[IO, PersonRemoteAPI](
   "friends" -> lift(_.friends)
 )
 
-// Given a PersonDB object we have the following fields
+// Now we can start composing our fields
+// We can align the types of the db and remote api data to the PersonDB type
+// by composing the remote api resolver on the remote api fields
 def dbFields2: Fields[IO, PersonDB] = 
   remoteApiFields.compose(personBatchResolver) ::: dbFields
 
@@ -259,7 +266,7 @@ implicit def person: Type[IO, PersonId] = tpeNel[IO, PersonId](
 The general pattern for this decomposition revolves around figuring out what the most basic description of your object is.
 In this example, every fields can (eventually through various side-effects) be resolved from just `PersonId`.
 
-Notice that even if we had many more fields, the composition overhead remains constant.
+Notice that even if we had many more fields, we would only still need three decompositions to solve this problem.
 :::
 
 #### Batchers from elsewhere

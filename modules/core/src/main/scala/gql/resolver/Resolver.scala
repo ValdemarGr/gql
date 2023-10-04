@@ -175,15 +175,14 @@ object Resolver extends ResolverInstances {
     def values[G[_]: Foldable: FunctorFilter: Functor]: Resolver[F, G[K], G[V]] =
       optionals[G].map(_.collect { case Some(v) => v })
 
-    def force[G[_]: Foldable: FunctorFilter: Functor](implicit
+    def force[G[_]: Traverse](implicit
         S: ShowMissingKeys[K]
     ): Resolver[F, G[K], G[V]] =
-      r.contramap[G[K]](_.toList.toSet).tupleIn.map { case (m, g) => g.map(k => (k, m.get(k))) }.emap { gov =>
-        val errs = gov.collect { case (k, None) => k }
-        errs.toList.toNel match {
-          case None     => gov.collect { case (_, Some(v)) => v }.rightIor[String]
-          case Some(xs) => S.showMissingKeys(xs).leftIor[G[V]]
-        }
+      r.contramap[G[K]](_.toList.toSet).tupleIn.emap { case (m, gks) =>
+        gks
+          .traverse(k => m.get(k).toValidNel(k))
+          .leftMap(S.showMissingKeys(_))
+          .toIor
       }
 
     def optional: Resolver[F, K, Option[V]] =
@@ -194,15 +193,6 @@ object Resolver extends ResolverInstances {
         case (Some(v), _) => v.rightIor[String]
         case (None, k)    => S.showMissingKeys(NonEmptyList.one(k)).leftIor[V]
       }
-
-    def forceNE[G[_]: NonEmptyTraverse](implicit S: ShowMissingKeys[K]): Resolver[F, G[K], G[V]] =
-      force[List]
-        .contramap[G[K]](_.toList)
-        .tupleIn
-        .emap { case (v, ks) =>
-          val varr = v.toVector
-          ks.mapWithIndex { case (_, i) => varr(i) }.rightIor
-        }
   }
 }
 
