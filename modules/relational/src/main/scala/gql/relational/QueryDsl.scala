@@ -106,7 +106,7 @@ abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
       }
     )
 
-  def reassociate[G[_]: QueryAlgebra.JoinType](sel: Query.Select[?]) = {
+  def reassociate[G[_]: QueryAlgebra.JoinType](sel: Query.Select[?]): Query[G, Unit] = {
     def go[B](sel: Query.Select[B]) =
       reassociateFull[G, Option[B]](
         QueryAlgebra.ReassocOpt(implicitly[QueryAlgebra.JoinType[G]].reassoc[B]),

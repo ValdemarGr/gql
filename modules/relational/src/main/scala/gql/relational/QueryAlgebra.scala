@@ -197,10 +197,8 @@ trait QueryAlgebra {
       .meta[F, H[I]]
       .andThen(toplevelArg.addArg)
       .tupleIn
-      .andThen(
-        Resolver
-          .id[F, K[H]]
-          .map { case (k, h) => (h.toList tupleLeft k).toSet }
+      .through(
+        _.map { case (k, h) => (h.toList tupleLeft k).toSet }
           .andThen(Resolver.inlineBatch[F, K[Id], O] { xs =>
             val lst = xs.toList
             lst.toNel
