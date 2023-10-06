@@ -34,7 +34,7 @@ class SkipTest extends CatsEffectSuite {
               case None    => IO(Left(20))
               case Some(i) => IO.pure(Right(i))
             }
-          }.skipThatWith(_.evalMap(i => effectState.modify(_ => (Some(i), i))))
+          }.leftThrough(_.evalMap(i => effectState.modify(_ => (Some(i), i)))).map(_.merge)
         )
       )
     }

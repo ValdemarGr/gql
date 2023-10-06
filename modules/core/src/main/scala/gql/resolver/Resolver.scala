@@ -41,10 +41,7 @@ final class Resolver[+F[_], -I, +O](private[gql] val underlying: Step[F, I, O]) 
     this andThen Resolver.lift(f)
 
   def evalMap[F2[x] >: F[x], O2](f: O => F2[O2]): Resolver[F2, I, O2] =
-    this andThen Resolver.liftF(f)
-
-  def evalContramap[F2[x] >: F[x], I1 <: I, I2](f: I2 => F2[I1]): Resolver[F2, I2, O] =
-    Resolver.liftF(f) andThen this
+    this andThen Resolver.effect(f)
 
   def emap[O2](f: O => Ior[String, O2]): Resolver[F, I, O2] =
     this.map(f) andThen (new Resolver(Step.embedError))
@@ -85,14 +82,14 @@ object Resolver extends ResolverInstances {
   def id[F[_], I]: Resolver[F, I, I] =
     lift(identity)
 
-  def liftFFull[F[_], I, O](f: I => F[O]): Resolver[F, I, O] =
+  def effectFull[F[_], I, O](f: I => F[O]): Resolver[F, I, O] =
     liftFull(f).andThen(new Resolver(Step.embedEffect))
 
-  final class PartiallAppliedLiftF[F[_], I](private val dummy: Boolean = true) extends AnyVal {
-    def apply[O](f: I => F[O]): Resolver[F, I, O] = liftFFull(f)
+  final class PartiallAppliedEffect[F[_], I](private val dummy: Boolean = true) extends AnyVal {
+    def apply[O](f: I => F[O]): Resolver[F, I, O] = effectFull(f)
   }
 
-  def liftF[F[_], I]: PartiallAppliedLiftF[F, I] = new PartiallAppliedLiftF[F, I]
+  def effect[F[_], I]: PartiallAppliedEffect[F, I] = new PartiallAppliedEffect[F, I]
 
   def argument[F[_], I <: Any, A](arg: Arg[A]): Resolver[F, I, A] =
     new Resolver(Step.argument(arg))
@@ -115,12 +112,7 @@ object Resolver extends ResolverInstances {
   def inlineBatch[F[_], K, V](f: Set[K] => F[Map[K, V]]): Resolver[F, Set[K], Map[K, V]] =
     new Resolver(Step.inlineBatch(f))
 
-  implicit class RethrowOps[F[_], I, O](private val self: Resolver[F, I, Ior[String, O]]) extends AnyVal {
-    def rethrow: Resolver[F, I, O] =
-      self andThen (new Resolver(Step.embedError))
-  }
-
-  implicit class InvariantOps[F[_], I, O](private val self: Resolver[F, I, O]) extends AnyVal {
+  implicit class ResolverInvariantOps[F[_], I, O](private val self: Resolver[F, I, O]) extends AnyVal {
     def choose[I2, O2](that: Resolver[F, I2, O2]): Resolver[F, Either[I, I2], Either[O, O2]] =
       new Resolver(Step.choose(self.underlying, that.underlying))
 
@@ -130,37 +122,31 @@ object Resolver extends ResolverInstances {
     def skippable: Resolver[F, Either[I, O], O] =
       this.choice(Resolver.id[F, O])
 
-    def skipThis[I2](verify: Resolver[F, I2, Either[I, O]]): Resolver[F, I2, O] =
-      verify andThen self.skippable
-
-    def skipThisWith[I2](f: Resolver[F, I2, I2] => Resolver[F, I2, Either[I, O]]): Resolver[F, I2, O] =
-      skipThis[I2](f(Resolver.id[F, I2]))
-
-    def continue[O2](f: Resolver[F, O, O] => Resolver[F, O, O2]): Resolver[F, I, O2] =
+    def through[O2](f: Resolver[F, O, O] => Resolver[F, O, O2]): Resolver[F, I, O2] =
       self andThen f(Resolver.id[F, O])
 
     def contramap[I2](f: I2 => I): Resolver[F, I2, O] =
       Resolver.lift(f) andThen self
 
-    def evalContramap[I2](f: I2 => F[I]): Resolver[F, I2, O] =
-      Resolver.liftF(f) andThen self
-
-    def econtraMap[I2](f: I2 => Ior[String, I]): Resolver[F, I2, O] =
-      (new Resolver(Step.embedError[F, I])).contramap[I2](f) andThen self
-
     def tupleIn: Resolver[F, I, (O, I)] =
       self.first[I].contramap[I](i => (i, i))
+
+    def batch[K, V](implicit ev: Set[K] =:= I, ev2: O =:= Map[K, V]): ResolverBatchOps[F, K, V] =
+      new ResolverBatchOps[F, K, V](self.contramap(ev.apply(_)).map(ev2.apply(_)))
+
+    def rethrow[O2](implicit ev: O <:< Ior[String, O2]): Resolver[F, I, O2] =
+      self.map(ev.apply(_)) andThen (new Resolver(Step.embedError))
   }
 
-  implicit class SkipThatInvariantOps[F[_], I, I2, O](private val self: Resolver[F, I, Either[I2, O]]) extends AnyVal {
-    def skipThat(compute: Resolver[F, I2, O]): Resolver[F, I, O] =
-      compute skipThis self
+  implicit class ResolverEitherOps[F[_], I, L, R](private val self: Resolver[F, I, Either[L, R]]) extends AnyVal {
+    def leftThrough[O2](f: Resolver[F, L, L] => Resolver[F, L, O2]): Resolver[F, I, Either[O2, R]] =
+      self andThen f(Resolver.id[F, L]).choose(Resolver.id[F, R])
 
-    def skipThatWith(f: Resolver[F, I2, I2] => Resolver[F, I2, O]): Resolver[F, I, O] =
-      skipThat(f(Resolver.id[F, I2]))
+    def rightThrough[O2](f: Resolver[F, R, R] => Resolver[F, R, O2]): Resolver[F, I, Either[L, O2]] =
+      self andThen Resolver.id[F, L].choose(f(Resolver.id[F, R]))
   }
 
-  implicit class StreamOps[F[_], I, O](private val self: Resolver[F, I, fs2.Stream[F, O]]) extends AnyVal {
+  implicit class ResolverStreamOps[F[_], I, O](private val self: Resolver[F, I, fs2.Stream[F, O]]) extends AnyVal {
     def embedStream: Resolver[F, I, O] =
       self andThen new Resolver(Step.embedStream)
 
@@ -169,13 +155,10 @@ object Resolver extends ResolverInstances {
   }
 
   implicit class ResolverBatchOps[F[_], K, V](private val r: Resolver[F, Set[K], Map[K, V]]) extends AnyVal {
-    def optionals[G[_]: Foldable: Functor]: Resolver[F, G[K], G[Option[V]]] =
+    def all[G[_]: Foldable: Functor]: Resolver[F, G[K], G[Option[V]]] =
       r.contramap[G[K]](_.toList.toSet).tupleIn.map { case (m, g) => g.map(m.get) }
 
-    def values[G[_]: Foldable: FunctorFilter: Functor]: Resolver[F, G[K], G[V]] =
-      optionals[G].map(_.collect { case Some(v) => v })
-
-    def force[G[_]: Traverse](implicit
+    def traversable[G[_]: Traverse](implicit
         S: ShowMissingKeys[K]
     ): Resolver[F, G[K], G[V]] =
       r.contramap[G[K]](_.toList.toSet).tupleIn.emap { case (m, gks) =>
@@ -185,14 +168,10 @@ object Resolver extends ResolverInstances {
           .toIor
       }
 
-    def optional: Resolver[F, K, Option[V]] =
-      optionals[Id]
+    def opt: Resolver[F, K, Option[V]] = all[Id]
 
-    def forceOne(implicit S: ShowMissingKeys[K]): Resolver[F, K, V] =
-      optional.tupleIn.emap {
-        case (Some(v), _) => v.rightIor[String]
-        case (None, k)    => S.showMissingKeys(NonEmptyList.one(k)).leftIor[V]
-      }
+    def one(implicit S: ShowMissingKeys[K]): Resolver[F, K, V] =
+      traversable[Id]
   }
 }
 

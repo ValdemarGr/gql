@@ -34,11 +34,11 @@ val r = Resolver.lift[IO, Int](_.toLong)
 r.map(_.toString())
 ```
 
-### LiftF
-`liftF` like `lift` also lifts a function, but instead an effectful one like `I => F[O]` into `Resolver[F, I, O]`.
-`liftF`'s method form is `evalMap` (like `Resource` and `fs2.Stream`).
+### Effect
+`effect` like `lift` lifts a function, but instead an effectful one like `I => F[O]` into `Resolver[F, I, O]`.
+`effect`'s method form is `evalMap` (like `Resource` and `fs2.Stream`).
 ```scala mdoc:nest
-val r = Resolver.liftF[IO, Int](i => IO(i.toLong))
+val r = Resolver.effect[IO, Int](i => IO(i.toLong))
 r.evalMap(l => IO(l.toString()))
 ```
 
@@ -110,12 +110,13 @@ def getFriends(id: PersonId, limit: Int): IO[List[Person]] = ???
 
 def getPerson(name: String): IO[Person] = ???
 
-def getPersonResolver = Resolver.liftF[IO, String](getPerson)
+def getPersonResolver = Resolver.effect[IO, String](getPerson)
 
 def limitResolver = Resolver.argument[IO, Person, Int](arg[Int]("limit"))
 
 def limitArg = arg[Int]("limit")
 getPersonResolver
+  // 'arg' tuples the input with the argument value
   .arg(limitArg)
   .evalMap{ case (limit, p) => getFriends(p.id, limit) }
 ```
@@ -167,28 +168,29 @@ def pb: Resolver[IO, Set[Int], Map[Int, Person]] =
   Resolver.lift(_ => Map.empty)
 
 // None if a key is missing
-pb.optionals[List]
-
-// Emits all values
-pb.values[List]
+pb.all[List]
 
 // Every key must have an associated value
 // or else raise an error via a custom show-like typeclass
 implicit lazy val showMissingPersonId =
   ShowMissingKeys.showForKey[Int]("not all people could be found")
-pb.force[List]
+pb.traversable[List]
 
 // Maybe there is one value for one key?
-pb.optional
+pb.opt
 
-// Same as optional
-pb.optionals[cats.Id]
+// Same as opt
+pb.all[cats.Id]
 
 // There is always one value for one key
-pb.forceOne
+pb.one
 
-// Force works for any traversable
-pb.force[NonEmptyList]
+// You can be more explicit via the `batch` method
+pb.batch.all[NonEmptyList]
+```
+Using `batch` aids with better compiler error messages.
+```scala mdoc:fail
+Resolver.lift[IO, Int](_.toString()).batch.all
 ```
 
 :::tip
@@ -210,7 +212,13 @@ Sometimes you have multiple groups of fields in the same object where each group
 Say you had a `Person` object in your database.
 This `Person` object also exists in a remote api.
 This remote api can tell you, the friends of a `Person` given the object's id and name.
+Written out a bit more structured we have that:
+* `PersonId => PersonId` (identity)
+* `PersonId => PersonDB` (database query)
+* `PersonDB => PersonRemoteAPI` (remote api call)
+* `PersonId => PersonRemoteAPI` (composition of database query and remote api call)
 
+And now put into code:
 ```scala mdoc:nest:silent
 // We have a trivial id field for our person id
 def pureFields = fields[IO, PersonId](
@@ -265,8 +273,6 @@ implicit def person: Type[IO, PersonId] = tpeNel[IO, PersonId](
 
 The general pattern for this decomposition revolves around figuring out what the most basic description of your object is.
 In this example, every fields can (eventually through various side-effects) be resolved from just `PersonId`.
-
-Notice that even if we had many more fields, we would only still need three decompositions to solve this problem.
 :::
 
 #### Batchers from elsewhere
@@ -304,15 +310,18 @@ On the surface, this combinator may have limited uses, but with a bit of composi
 For instance, a combinator derived from `Choice` is `skippable: Resolver[F, I, O] => Resolver[F, Either[I, O], O]`, which acts as a variant of "caching".
 If the right side is present we skip the underlying resolver (`Resolver[F, I, O]`) altogether.
 
-More refined variants of this combinator also exist:
+For any resolver in the form `Resolver[F, I, Either[L, R]]` we modify the left side with `leftThrough` and the right with `rightThrough`.
+
+For Instance we can implement caching.
 ```scala mdoc:nest
-def getPersonForId: Resolver[IO, PersonId, Person] = ???
+def getPersonForId(id: PersonId): IO[Person] = ???
 
 type CachedPerson = Either[PersonId, Person]
 def cachedPerson = tpe[IO, CachedPerson](
   "Person",
   "id" -> lift(_.map(_.id).merge.value),
-  "name" -> build[IO, CachedPerson](_.skipThat(getPersonForId).map(_.name))
+  // We'll align the left and right side of the choice and then merge the `Either`
+  "name" -> build[IO, CachedPerson](_.leftThrough(_.evalMap(getPersonForId)).map(_.merge.name))
 )
 ```
 

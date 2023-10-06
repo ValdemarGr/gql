@@ -112,10 +112,10 @@ trait FieldDslFull {
 object FieldDsl extends FieldDslFull {
   final class PartiallyAppliedEff[I](private val dummy: Boolean = false) extends AnyVal {
     def apply[F[_], T, A](arg: Arg[A])(resolver: (A, I) => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field(Resolver.liftF[F, (A, I)] { case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
+      Field(Resolver.effect[F, (A, I)] { case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
 
     def apply[F[_], T](resolver: I => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field(Resolver.liftF(resolver), Eval.later(tpe))
+      Field(Resolver.effect(resolver), Eval.later(tpe))
   }
 
   final class FieldsOps[F[_], A](private val fields: Fields[F, A]) extends AnyVal {
@@ -169,5 +169,5 @@ trait FieldBuilder[F[_], I] {
   def lift = new FieldDsl.PartiallyAppliedLift[I]
 
   def eff[T](resolver: I => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-    Field(Resolver.liftF(resolver), Eval.later(tpe))
+    Field(Resolver.effect(resolver), Eval.later(tpe))
 }

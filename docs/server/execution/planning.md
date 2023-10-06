@@ -96,7 +96,7 @@ import cats.effect.unsafe.implicits.global
 
 case object Child
 
-def wait[I](ms: Int) = Resolver.liftF[IO, I](_ => IO.sleep(50.millis))
+def wait[I](ms: Int) = Resolver.effect[IO, I](_ => IO.sleep(50.millis))
 
 val schem = Schema.stateful{
   Resolver.batch[IO, Unit, Int](_ => IO.sleep(10.millis) as Map(() -> 42)).flatMap{ b1 =>
@@ -104,8 +104,8 @@ val schem = Schema.stateful{
       implicit lazy val child: Type[IO, Child.type] = builder[IO, Child.type]{ b =>
         b.tpe(
           "Child",
-          "b1" -> b.from(wait(50) andThen b1.optional map (_.get)),
-          "b2" -> b.from(wait(100) andThen b2.optional map (_.get)),
+          "b1" -> b.from(wait(50) andThen b1.opt map (_.get)),
+          "b2" -> b.from(wait(100) andThen b2.opt map (_.get)),
         )
       }
 
@@ -113,7 +113,7 @@ val schem = Schema.stateful{
         builder[IO, Unit]{ b =>
           b.fields(
             "child" -> b.from(wait(42) as Child),
-            "b2" -> b.from(wait(25) andThen b2.optional map (_.get))
+            "b2" -> b.from(wait(25) andThen b2.opt map (_.get))
           )
         }
       )
