@@ -16,9 +16,9 @@ object Application {
 }
 ```
 
-For most non-trivial applications a compiler will usually be a bit more complex than only performing query execution related tasks.
-For instance production deployments do usually implement additional features such as caching, logging, metrics, tracing, authorization, to name a few.
-The parts of `gql` that the compiler utility composes (parsing, preparing and assembling an application), are exposed as seperate functions such that any need can be composed with ease.
+For most applications there is need for more steps than just preparing the query.
+For instance production deployments can implement features such as caching, logging, metrics, tracing, authorization, to name a few.
+The compiler utility consists of methods for (parsing, preparing and assembling an application) and can be composed to solve sophisticated use cases.
 
 For instance, say that we would like to modify a phase in query compilation, such that the final executable logs queries that are too slow.
 ```scala mdoc

@@ -58,7 +58,7 @@ final case class NamedQuery[A](name: String, query: SimpleQuery[A]) extends Quer
   )
 }
 
-final case class ParameterizedQuery[A, V](
+final case class ParameterizedQuery[V, A](
     name: String,
     query: SimpleQuery[A],
     variables: Var.Impl[V]
@@ -114,8 +114,8 @@ object Query {
   def parameterized[A, V](
       operationType: P.OperationType,
       name: String,
-      vc: VariableClosure[A, V]
-  ): ParameterizedQuery[A, V] =
+      vc: VariableClosure[V, A]
+  ): ParameterizedQuery[V, A] =
     ParameterizedQuery(name, simple(operationType, vc.query), vc.variables)
 
   def renderQuery(sq: SimpleQuery[?], name: Option[String] = None, variables: List[Var.One[?]] = Nil): String = {

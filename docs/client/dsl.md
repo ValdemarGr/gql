@@ -90,14 +90,15 @@ Variables can be combined with the `~` operator:
 variable[String]("name") ~ variable[Int]("age")
 ```
 Variables can also be declared as omittable, optionally with a default value:
-```scala mdoc:silent
+```scala mdoc
 omittableVariable[String]("name", value("John")) ~
     omittableVariable[Int]("age")
 ```
 
 Variables can be "materialized" into a `VariableClosure` by introducing them to a query:
 ```scala mdoc:silent
-val queryWithVariable: VariableClosure[Int, String] = 
+// Given a variable of type String, we can construct a query that returns an Int
+val queryWithVariable: VariableClosure[String, Int] = 
     variable[String]("name").introduce{ name: VariableName[String] =>
         sel[Int]("id", arg("name", name))
     }
@@ -105,15 +106,18 @@ val queryWithVariable: VariableClosure[Int, String] =
 
 `VariableClosure` can be combined via `~` and have their selections modified via `modify`:
 ```scala mdoc:silent
-def subQuery1: VariableClosure[Int, String] = queryWithVariable
+def subQuery1: VariableClosure[String, Int] = queryWithVariable
 
-def subQuery2: VariableClosure[Int, String] = 
+def subQuery2: VariableClosure[String, Int] = 
     variable[String]("name2").introduce{ name: VariableName[String] =>
         sel[Int]("id2", arg("name", name))
     }
 
-def combined: VariableClosure[Int, (String, String)] = 
+def combined: VariableClosure[(String, String), Int] = 
  (subQuery1 ~ subQuery2).modify(_.map{ case (v1, v2) => v1 + v2 })
+
+// VariableClosure also forms a profunctor so we can also use rmap
+(subQuery1 ~ subQuery2).rmap{ case (v1, v2) => v1 + v2 }
 ```
 
 ## Execution

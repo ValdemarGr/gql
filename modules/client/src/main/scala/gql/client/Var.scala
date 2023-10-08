@@ -19,27 +19,24 @@ import io.circe.syntax._
 import cats.implicits._
 import cats.data._
 import io.circe._
-import cats.Contravariant
 import gql.parser.{Value => V, AnyValue}
+import cats.arrow.Profunctor
 
-final case class VariableClosure[A, Vars](
+final case class VariableClosure[Vars, A](
     variables: Var.Impl[Vars],
     query: SelectionSet[A]
 ) {
-  def ~[C, D](that: VariableClosure[C, D]): VariableClosure[(A, C), (Vars, D)] =
+  def ~[C, D](that: VariableClosure[D, C]): VariableClosure[(Vars, D), (A, C)] =
     VariableClosure(Var.Impl.product(variables, that.variables), (query, that.query).tupled)
 
-  def modify[B](f: SelectionSet[A] => SelectionSet[B]): VariableClosure[B, Vars] =
+  def modify[B](f: SelectionSet[A] => SelectionSet[B]): VariableClosure[Vars, B] =
     VariableClosure(variables, f(query))
 }
 
 object VariableClosure {
-  implicit def contravariantForVaiableClosure[A]: Contravariant[VariableClosure[A, *]] = {
-    type G[B] = VariableClosure[A, B]
-    new Contravariant[G] {
-      override def contramap[B, C](fa: G[B])(f: C => B): G[C] =
-        VariableClosure(fa.variables.map(_.contramapObject(f)), fa.query)
-    }
+  implicit lazy val profunctorForVariableClosure: Profunctor[VariableClosure] = new Profunctor[VariableClosure] {
+    override def dimap[A, B, C, D](fab: VariableClosure[A, B])(f: C => A)(g: B => D): VariableClosure[C, D] =
+      VariableClosure(fab.variables.map(_.contramapObject(f)), fab.query.map(g))
   }
 }
 
@@ -58,10 +55,10 @@ final case class Var[Vars, B](
   def contramap[C](f: C => Vars): Var[C, B] =
     Var(impl.map(_.contramapObject(f)), variableNames)
 
-  def introduce[A](f: B => SelectionSet[A]): VariableClosure[A, Vars] =
+  def introduce[A](f: B => SelectionSet[A]): VariableClosure[Vars, A] =
     VariableClosure(impl, f(variableNames))
 
-  def flatIntroduce[A, V2](f: B => VariableClosure[A, V2]): VariableClosure[A, (Vars, V2)] = {
+  def flatIntroduce[A, V2](f: B => VariableClosure[V2, A]): VariableClosure[(Vars, V2), A] = {
     val vc = f(variableNames)
     VariableClosure(Var.Impl.product(impl, vc.variables), vc.query)
   }

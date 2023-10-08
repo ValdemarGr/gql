@@ -34,7 +34,7 @@ build[IO, Int].from(Resolver.effect(i => IO(i.toString())))
 build.from(Resolver.effect((i: Int) => IO(i.toString())))
 ```
 
-For most non-trivial fields, there is an even more concise syntax.
+For some fields, there is an even more concise syntax.
 Invoking the `apply` method of `build`, takes a higher order function that goes from the identity resolver (`Resolver[F, A, A]`) to some output.
 ```scala mdoc:silent
 build[IO, Int](_.map(i => i * 2).evalMap(i => IO(i))): Field[IO, Int, Int]
