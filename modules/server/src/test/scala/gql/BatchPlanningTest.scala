@@ -51,6 +51,6 @@ class BatchPlanningTest extends CatsEffectSuite {
 
     val opt = Planner[Eval].plan(dag).value
 
-    fail(opt.show(ansiColors = true)): Unit
+    assert(clue(opt).plan.values.toList.toSet.size == 1)
   }
 }
