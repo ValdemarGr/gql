@@ -21,8 +21,11 @@ import gql.server.planner._
 import cats.implicits._
 import gql.resolver.Step
 import gql.preparation.UniqueBatchInstance
+import cats.effect._
 import cats.mtl._
 import cats._
+import gql.server.interpreter.BatchAccumulator
+import cats.arrow.FunctionK
 
 class BatchPlanningTest extends CatsEffectSuite {
   test("batch planning test") {
@@ -44,19 +47,29 @@ class BatchPlanningTest extends CatsEffectSuite {
       } <* S.modify(_ + 1)
     }
 
-    val g =
-      for {
-        _ <- node(100, Set.empty, Some(1))
-        _ <- node(100, Set.empty, Some(1))
-        _ <- node(100, Set.empty, Some(1))
-        _ <- node(100, Set.empty, Some(1))
-        _ <- node(100, Set.empty, Some(1))
-      } yield ()
+    val roots = List.fill(5)(0).zipWithIndex.map { case (_, i) => i }
 
-    val dag = NodeTree(g.written.runA(0).value)
+    val g = roots.foldMap { i =>
+      val nodes = node(100, Set.empty, Some(1)).written.runA(0).value
+      NodeTree(nodes).alpha(i)
+    }
 
-    val opt = Planner[Eval].plan(dag).value
+    val ss = SchemaState(
+      0,
+      roots.map(i => Step.BatchKey(i) -> SchemaState.BatchFunction[IO, String, String](_ => IO(Map.empty))).toMap,
+      Nil
+    )
+
+    val opt = Planner[Eval].plan(g).value
 
     assert(clue(opt).plan.values.toList.toSet.size == 1)
+
+    Statistics[IO].flatMap { implicit stats =>
+      BatchAccumulator[IO](ss, opt, FunctionK.id[IO]).flatMap { ba =>
+        roots.traverse { r =>
+          ba.alpha(r).submit(UniqueBatchInstance(NonEmptyList.one(0)), Chain.empty)
+        }
+      }
+    }
   }
 }

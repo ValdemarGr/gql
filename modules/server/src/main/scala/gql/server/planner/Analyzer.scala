@@ -51,7 +51,11 @@ object Analyzer {
       id: Int,
       parents: Set[NodeId],
       nodes: Chain[Node]
-  )
+  ) {
+    def alpha(i: Int) = copy(nodes = nodes.map(_.alpha(i)))
+
+    def resetParents = copy(parents = Set.empty)
+  }
 
   def apply[F[_]](implicit
       stats: Statistics[F],
@@ -67,7 +71,7 @@ object Analyzer {
     def getAndSetParents(parents: Set[NodeId]): F[Set[NodeId]] =
       S.inspect(_.parents) <* S.modify(s => s.copy(parents = parents))
 
-    def resetParents[A](fa: F[A]): F[A] =
+    def local[A](fa: F[A]): F[A] =
       S.inspect(_.parents).flatMap { parents =>
         fa <* S.modify(s => s.copy(parents = parents))
       }
@@ -135,7 +139,7 @@ object Analyzer {
 
       def analyzeFields[G[_]](prepared: List[PreparedField[G, ?]]): F[Unit] =
         prepared.traverse_ { p =>
-          resetParents {
+          local {
             p match {
               case PreparedDataField(_, _, cont, _, _) => analyzeCont[G](cont.edges, cont.cont)
               case PreparedSpecification(_, selection) => analyzeFields[G](selection)

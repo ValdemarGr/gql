@@ -28,7 +28,13 @@ final case class BatchRef[K, V](
   def alpha(i: Int) = copy(uniqueNodeId = uniqueNodeId.alpha(i))
 }
 
-final case class NodeId(id: Int) extends AnyVal
+final case class NodeId(id: NonEmptyList[Int]) extends AnyVal {
+  def alpha(i: Int) = NodeId(i :: id)
+}
+
+object NodeId {
+  def apply(i: Int): NodeId = NodeId(NonEmptyList.one(i))
+}
 
 final case class Node(
     id: NodeId,
@@ -38,7 +44,11 @@ final case class Node(
     parents: Set[NodeId],
     batchId: Option[BatchRef[?, ?]]
 ) {
-  def alpha(i: Int) = copy(batchId = batchId.map(_.alpha(i)))
+  def alpha(i: Int) = copy(
+    id = id.alpha(i),
+    parents = parents.map(_.alpha(i)),
+    batchId = batchId.map(_.alpha(i))
+  )
 }
 
 final case class NodeTree(all: List[Node]) {

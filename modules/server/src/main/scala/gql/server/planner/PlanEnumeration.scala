@@ -17,9 +17,10 @@ package gql.server.planner
 
 import cats.implicits._
 import fs2.{Pure, Stream}
+import cats.data._
 
 object PlanEnumeration {
-  final case class NodeId(id: Int) extends AnyVal
+  final case class NodeId(id: NonEmptyList[Int]) extends AnyVal
   final case class FamilyId(id: Int) extends AnyVal
 
   final case class Family(
