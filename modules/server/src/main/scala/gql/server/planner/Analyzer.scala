@@ -51,11 +51,7 @@ object Analyzer {
       id: Int,
       parents: Set[NodeId],
       nodes: Chain[Node]
-  ) {
-    def alpha(i: Int) = copy(nodes = nodes.map(_.alpha(i)))
-
-    def resetParents = copy(parents = Set.empty)
-  }
+  )
 
   def apply[F[_]](implicit
       stats: Statistics[F],
