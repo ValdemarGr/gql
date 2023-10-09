@@ -25,11 +25,18 @@ import gql.resolver.Step
 import gql.preparation._
 import cats._
 
-trait BatchAccumulator[F[_]] {
+trait BatchAccumulator[F[_]] { self =>
   // Emits the whole result of the batch, so the calle must filter
   def submit[K, V](id: UniqueBatchInstance[K, V], values: Chain[(Cursor, Set[K])]): F[Option[Map[K, V]]]
 
   def getErrors: F[List[EvalFailure.BatchResolution]]
+
+  def alpha(i: Int): BatchAccumulator[F] = new BatchAccumulator[F] {
+    def submit[K, V](id: UniqueBatchInstance[K, V], values: Chain[(Cursor, Set[K])]): F[Option[Map[K, V]]] =
+      self.submit(id.alpha(i), values)
+
+    def getErrors: F[List[EvalFailure.BatchResolution]] = self.getErrors
+  }
 }
 
 object BatchAccumulator {

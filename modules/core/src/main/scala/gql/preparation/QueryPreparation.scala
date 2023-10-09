@@ -155,7 +155,7 @@ object QueryPreparation {
           case _: Step.Alg.GetMeta[?, i] =>
             K(pure((pm: Eval[PreparedMeta[G]]) => PreparedStep.GetMeta[G, I](pm)))
           case alg: Step.Alg.Batch[?, k, v] =>
-            liftK(nextId.map(i => PreparedStep.Batch[G, k, v](alg.id, UniqueBatchInstance(i))))
+            liftK(nextId.map(i => PreparedStep.Batch[G, k, v](alg.id, UniqueBatchInstance(NonEmptyList.one(i)))))
           case alg: Step.Alg.InlineBatch[?, k, v] =>
             askK.map(PreparedStep.InlineBatch[G, k, v](alg.run, _))
           case alg: Step.Alg.First[?, i, o, c] =>

@@ -24,7 +24,9 @@ import scala.io.AnsiColor
 final case class BatchRef[K, V](
     batcherId: gql.resolver.Step.BatchKey[K, V],
     uniqueNodeId: UniqueBatchInstance[K, V]
-)
+) {
+  def alpha(i: Int) = copy(uniqueNodeId = uniqueNodeId.alpha(i))
+}
 
 final case class NodeId(id: Int) extends AnyVal
 
@@ -35,7 +37,9 @@ final case class Node(
     elemCost: Double,
     parents: Set[NodeId],
     batchId: Option[BatchRef[?, ?]]
-)
+) {
+  def alpha(i: Int) = copy(batchId = batchId.map(_.alpha(i)))
+}
 
 final case class NodeTree(all: List[Node]) {
   lazy val lookup = all.map(n => n.id -> n).toMap

@@ -122,7 +122,9 @@ final case class PreparedMeta[+F[_]](
     pdf: PreparedDataField[F, ?, ?]
 )
 
-final case class UniqueBatchInstance[K, V](id: Int) extends AnyVal
+final case class UniqueBatchInstance[K, V](id: NonEmptyList[Int]) extends AnyVal {
+  def alpha(i: Int): UniqueBatchInstance[K, V] = UniqueBatchInstance(i :: id)
+}
 
 final case class UniqueEdgeCursor(path: NonEmptyChain[String]) {
   def append(name: String): UniqueEdgeCursor = UniqueEdgeCursor(path append name)

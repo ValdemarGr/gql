@@ -69,28 +69,33 @@ object QueryInterpreter {
             }
         }
 
-      def interpretAll(inputs: NonEmptyList[Input[F, ?, ?]]): F[Results[F]] =
+      def interpretAll(inputs: NonEmptyList[Input[F, ?, ?]]): F[Results[F]] = {
+        // We perform an alpha renaming for every input to ensure that every node is distinct
+        val indexed = inputs.zipWithIndex
         for {
-          costTree <- analyzeCost[F](inputs)
+          costTree <- Analyzer.analyzeWith[F, Unit] { implicit analyzer =>
+            indexed.traverse_ { case (input, i) => analyzeCost[F](input).modify(_.alpha(i)) }
+          }
           planned <- planner.plan(costTree)
           accumulator <- BatchAccumulator[F](schemaState, planned, throttle)
-          results <- inputs.parTraverse(interpretOne(_, accumulator))
+          results <- indexed.parTraverse { case (input, i) => interpretOne(input, accumulator.alpha(i)) }
           batchErrors <- accumulator.getErrors
           allErrors = Chain.fromSeq(results.toList).flatMap(_.errors) ++ Chain.fromSeq(batchErrors)
         } yield Results(allErrors, results.map(_.rootData))
-    }
-
-  def analyzeCost[F[_]: Monad: Statistics](inputs: NonEmptyList[Input[F, ?, ?]]): F[NodeTree] =
-    Analyzer.analyzeWith[F, Unit] { analyzer =>
-      inputs.toList.traverse_ { ri =>
-        def contCost(step: StepCont[F, ?, ?]): Analyzer.H[F, Unit] =
-          step match {
-            case d: StepCont.Done[F, i]           => analyzer.analyzePrepared(d.prep)
-            case c: StepCont.Continue[F, ?, ?, ?] => analyzer.analyzeStep(c.step) *> contCost(c.next)
-            case StepCont.Join(_, next)           => contCost(next)
-            case StepCont.TupleWith(_, next)      => contCost(next)
-          }
-        contCost(ri.cont)
       }
     }
+
+  def analyzeCost[F[_]: Monad](input: Input[F, ?, ?])(implicit
+      analyzer: Analyzer[Analyzer.H[F, *]]
+  ): Analyzer.H[F, Unit] = {
+    def contCost(step: StepCont[F, ?, ?]): Analyzer.H[F, Unit] =
+      step match {
+        case d: StepCont.Done[F, i]           => analyzer.analyzePrepared(d.prep)
+        case c: StepCont.Continue[F, ?, ?, ?] => analyzer.analyzeStep(c.step) *> contCost(c.next)
+        case StepCont.Join(_, next)           => contCost(next)
+        case StepCont.TupleWith(_, next)      => contCost(next)
+      }
+
+    contCost(input.cont)
+  }
 }

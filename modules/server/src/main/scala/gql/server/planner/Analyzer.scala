@@ -51,7 +51,9 @@ object Analyzer {
       id: Int,
       parents: Set[NodeId],
       nodes: Chain[Node]
-  )
+  ) {
+    def alpha(i: Int): TraversalState = copy(nodes = nodes.map(_.alpha(i)))
+  }
 
   def apply[F[_]](implicit
       stats: Statistics[F],
