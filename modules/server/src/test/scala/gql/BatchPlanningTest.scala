@@ -32,9 +32,15 @@ class BatchPlanningTest extends CatsEffectSuite {
     def node(cost: Double, parents: Set[NodeId], familyId: Option[Int]): Effect[NodeId] = {
       S.get.flatMap { i =>
         val nid = NodeId(i)
-        val node =
-          Node(nid, s"$i", cost, cost, parents, familyId.map(j => BatchRef(Step.BatchKey(j), UniqueBatchInstance(NonEmptyList.one(i)))))
-        T.tell(List(node)) as nid
+        val n = Node(
+          nid,
+          s"$i",
+          cost,
+          cost,
+          parents,
+          familyId.map(j => BatchRef(Step.BatchKey(j), UniqueBatchInstance(NonEmptyList.one(i))))
+        )
+        T.tell(List(n)) as nid
       } <* S.modify(_ + 1)
     }
 

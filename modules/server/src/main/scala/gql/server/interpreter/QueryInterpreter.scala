@@ -73,9 +73,7 @@ object QueryInterpreter {
         // We perform an alpha renaming for every input to ensure that every node is distinct
         val indexed = inputs.zipWithIndex
         for {
-          costTree <- Analyzer.analyzeWith[F, Unit] { implicit analyzer =>
-            indexed.traverse_ { case (input, i) => analyzeCost[F](input).modify(_.alpha(i)) }
-          }
+          costTree <- indexed.foldMapA { case (input, i) => analyzeCost[F](input.cont).map(_.alpha(i)) }
           planned <- planner.plan(costTree)
           accumulator <- BatchAccumulator[F](schemaState, planned, throttle)
           results <- indexed.parTraverse { case (input, i) => interpretOne(input, accumulator.alpha(i)) }
@@ -85,17 +83,17 @@ object QueryInterpreter {
       }
     }
 
-  def analyzeCost[F[_]: Monad](input: Input[F, ?, ?])(implicit
-      analyzer: Analyzer[Analyzer.H[F, *]]
-  ): Analyzer.H[F, Unit] = {
-    def contCost(step: StepCont[F, ?, ?]): Analyzer.H[F, Unit] =
-      step match {
-        case d: StepCont.Done[F, i]           => analyzer.analyzePrepared(d.prep)
-        case c: StepCont.Continue[F, ?, ?, ?] => analyzer.analyzeStep(c.step) *> contCost(c.next)
-        case StepCont.Join(_, next)           => contCost(next)
-        case StepCont.TupleWith(_, next)      => contCost(next)
-      }
+  def analyzeCost[F[_]: Monad: Statistics](cont: StepCont[F, ?, ?]): F[NodeTree] = {
+    Analyzer.analyzeWith[F, Unit] { analyzer =>
+      def contCost(step: StepCont[F, ?, ?]): Analyzer.H[F, Unit] =
+        step match {
+          case d: StepCont.Done[F, i]           => analyzer.analyzePrepared(d.prep)
+          case c: StepCont.Continue[F, ?, ?, ?] => analyzer.analyzeStep(c.step) *> contCost(c.next)
+          case StepCont.Join(_, next)           => contCost(next)
+          case StepCont.TupleWith(_, next)      => contCost(next)
+        }
 
-    contCost(input.cont)
+      contCost(cont)
+    }
   }
 }

@@ -42,6 +42,8 @@ final case class Node(
 }
 
 final case class NodeTree(all: List[Node]) {
+  def alpha(i: Int) = NodeTree(all.map(_.alpha(i)))
+
   lazy val lookup = all.map(n => n.id -> n).toMap
 
   lazy val roots = all.filter(_.parents.isEmpty)
@@ -65,6 +67,13 @@ final case class NodeTree(all: List[Node]) {
       }
 
     all.traverse_(x => go(x.id)).runS(Map.empty).value
+  }
+}
+
+object NodeTree {
+  implicit lazy val monoidForNodeTree: Monoid[NodeTree] = new Monoid[NodeTree] {
+    def empty = NodeTree(Nil)
+    def combine(x: NodeTree, y: NodeTree) = NodeTree(x.all ++ y.all)
   }
 }
 
