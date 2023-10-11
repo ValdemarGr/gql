@@ -11,6 +11,10 @@ It enables succintly exposing and consuming GraphQL APIs in a purely functional 
 
 To learn more, check out the [docs.](https://valdemargr.github.io/gql/)
 
+# Installation
+gql is available for Scala 2.13 and 3.3.
+The available modules are listed on the [modules page](https://valdemargr.github.io/gql/docs/overview/modules).
+
 # Example
 ```scala mdoc:silent
 import gql.dsl.all._
@@ -36,7 +40,7 @@ gql provides descriptive messages in case of query errors.
 ```graphql
 | query MyQuery {
 |     test.,test
-| >>>>>^^^^^^^ line:2, column:16, offset:41, character code code:46
+| >>>>>^^^^^^^ line:2, column:16, offset:41, character code:46
 | }
 ```
 And also when the schema has been defined incorrectly.
