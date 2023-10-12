@@ -31,7 +31,6 @@ object SkunkIntegration extends QueryAlgebra {
   override implicit def applicativeForDecoder: Applicative[Decoder] =
     Decoder.ApplicativeDecoder
 
-  type Encoder[A] = skunk.Encoder[A]
   type Decoder[A] = skunk.Decoder[A]
   def optDecoder[A](d: Decoder[A]): Decoder[Option[A]] = d.opt
 

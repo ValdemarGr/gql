@@ -352,12 +352,11 @@ import _root_.{skunk => sk}
 object MyIntegration extends QueryAlgebra {
   // What is a fragment
   type Frag = sk.AppliedFragment
-  // How do we make a fragment for a string
+  // How do we transform a string into a fragment
   def stringToFrag(s: String): Frag = sql"#${s}".apply(Void)
   // Combine and create empty fragments
   implicit def appliedFragmentMonoid: Monoid[Frag] = sk.AppliedFragment.MonoidAppFragment
-  // How do we decode and encode values
-  type Encoder[A] = sk.Encoder[A]
+  // How do we decode values
   type Decoder[A] = sk.Decoder[A]
   // How can we combine decoders
   implicit def applicativeForDecoder: Applicative[Decoder] = Decoder.ApplicativeDecoder
