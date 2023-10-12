@@ -179,7 +179,6 @@ object Generator {
       contextInfo: Option[ContextInfo],
       companionExtra: List[Doc]
   ) {
-    // Yes yes, it is a fold
     def collapse: Doc = {
       val tpe = caseClass(name, typePart.toList, typeMethods)
 
