@@ -17,9 +17,8 @@ package gql.relational
 
 import cats._
 import cats.implicits._
-import cats.effect.std.Hotswap
-import cats.effect.std.Mutex
 import cats.effect._
+import cats.effect.std._
 
 trait LazyResource[F[_], A] { self =>
   def get: Resource[F, A]
@@ -34,21 +33,74 @@ trait LazyResource[F[_], A] { self =>
 }
 
 object LazyResource {
-  def fromResource[F[_], A](res: Resource[F, A])(implicit F: Concurrent[F]): Resource[F, LazyResource[F, A]] =
-    Hotswap.create[F, A].evalMap { hs =>
-      Mutex[F].map { mtx =>
-        new LazyResource[F, A] {
-          override def forceClose: F[Unit] = hs.clear
+  def fromResource[F[_], A](res: Resource[F, A])(implicit F: Concurrent[F]): Resource[F, LazyResource[F, A]] = {
+    val leases = Long.MaxValue
 
-          override def get: Resource[F, A] =
-            mtx.lock >>
-              hs.get.evalMap {
-                case None      => hs.swap(res)
-                case Some(ses) => F.pure(ses)
-              }
+    case class State(
+        value: A,
+        users: Semaphore[F],
+        clean: F[Unit]
+    )
+
+    Supervisor[F](await = true).flatMap { sup =>
+      Resource.eval(Mutex[F]).flatMap { mtx =>
+        def excl(s: State) = Resource.make(s.users.acquireN(leases))(_ => s.users.releaseN(leases))
+
+        def forceClose0(state: Ref[F, Option[State]]) = {
+          type Ret = F[Either[Throwable, Unit]]
+          val noop: (Option[State], Ret) = (None, F.pure(Right(())))
+          mtx.lock.surround {
+            F.uncancelable { poll =>
+              state
+                .modify[Ret] {
+                  // Nothing in the state, cool it is a noop!
+                  case None => noop
+                  // We found something, let's await that there are no more users
+                  case Some(s) =>
+                    // Since we remove the reference immidiately we must ensure that the cleanup is done
+                    (None, sup.supervise(excl(s).surround(s.clean)).flatMap(fib => poll(fib.joinWithNever)).attempt)
+                }
+                .flatten
+                .rethrow
+            }
+          }
+        }
+
+        val stateR =
+          Resource.make(F.ref[Option[State]](None))(_.get.flatMap(_.traverse_(_.clean)))
+
+        stateR.map { state =>
+          new LazyResource[F, A] {
+            override def forceClose: F[Unit] = forceClose0(state)
+
+            override def get: Resource[F, A] =
+              mtx.lock >>
+                Resource
+                  .eval {
+                    state
+                      .modify[F[State]] {
+                        case Some(s) => (Some(s), F.pure(s))
+                        case None =>
+                          val newStateF = F.uncancelable { poll =>
+                            poll(res.allocated).flatMap { case (value, clean) =>
+                              Semaphore[F](leases).flatMap { users =>
+                                val s = State(value, users, clean)
+                                state.set(Some(s)) as s
+                              }
+                            }
+                          }
+                          (None, newStateF)
+                      }
+                      .flatten
+                  }
+                  .flatTap(_.users.permit)
+                  .map(_.value)
+
+          }
         }
       }
     }
+  }
 
   implicit def functorForLazyResource[F[_]]: Functor[LazyResource[F, *]] = new Functor[LazyResource[F, *]] {
     override def map[A, B](fa: LazyResource[F, A])(f: A => B): LazyResource[F, B] = new LazyResource[F, B] {

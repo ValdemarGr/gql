@@ -43,7 +43,7 @@ object BatchAccumulator {
   def groupBatches(
       plan: OptimizedDAG
   ): Chain[(Step.BatchKey[?, ?], NonEmptyChain[UniqueBatchInstance[?, ?]])] = Chain.fromSeq {
-    plan.plan.values.toList.map{ case (bs, _) => bs }.distinct.mapFilter { bs =>
+    plan.plan.values.toList.map { case (bs, _) => bs }.distinct.mapFilter { bs =>
       plan.tree.lookup(bs.head).batchId.map(_.batcherId).map { bk =>
         val vs = NonEmptyChain
           .fromChainUnsafe(Chain.fromIterableOnce(bs))

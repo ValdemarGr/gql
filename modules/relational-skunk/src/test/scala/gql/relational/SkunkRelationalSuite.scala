@@ -24,6 +24,8 @@ import cats.implicits._
 import skunk.util.Typer
 import cats.effect.std.UUIDGen
 import munit.AnyFixture
+import gql.relational.skunk.dsl._
+import skunk.data.TransactionStatus
 
 class SkunkRelationalSuite extends RelationalSuiteTables(SkunkIntegration) {
   def intDecoder: Decoder[Int] = int4
@@ -46,13 +48,15 @@ class SkunkRelationalSuite extends RelationalSuiteTables(SkunkIntegration) {
 
       def postgres = connect("postgres")
 
-      Resource.eval(UUIDGen.randomString[IO]).flatMap { dbid =>
+      val res = Resource.eval(UUIDGen.randomString[IO]).flatMap { dbid =>
         Resource
           .make(postgres.use(_.execute(sql"""create database "#$dbid"""".command)))(_ =>
             postgres.use(_.execute(sql"""drop database "#$dbid"""".command).void)
           )
           .as(connect(dbid))
       }
+
+      res >>= lazyPool[IO]
     }
   )
 
@@ -60,11 +64,21 @@ class SkunkRelationalSuite extends RelationalSuiteTables(SkunkIntegration) {
 
   lazy val conn = connF.apply()
 
+  lazy val transactionalConn = conn.get.flatTap(_.transaction)
+
   test("setup") {
-    conn.use { ses =>
+    transactionalConn.use { ses =>
       (ddlQueries ++ dataQueries).traverse_(x => ses.execute(sql"#$x".command))
     }
   }
 
-  tests(conn)
+  tests(transactionalConn)
+
+  test("transaction should still be going") {
+    transactionalConn.use { ses =>
+      ses.transactionStatus.get.map { status =>
+        assertEquals(status, TransactionStatus.Active)
+      }
+    }
+  }
 }
