@@ -326,10 +326,10 @@ val q1 = for {
   _ <- reassociate[Option](select(int4, void"42"))
 } yield ht
 
-// we can perform reassociation before out join also
+// we can perform reassociation before performing the actions in 'q1'
 val q2 = reassociate[Option](select(text, void"'john doe'")).flatMap(_ => q1)
 
-// we can also change the result structure after reassociation
+// we can also change the result structure after performing the actions in 'q2'
 q2.mapK[List](new (λ[X => Option[List[Option[X]]]] ~> List) {
   def apply[A](fa: Option[List[Option[A]]]): List[A] = fa.toList.flatten.flatMap(_.toList)
 })
