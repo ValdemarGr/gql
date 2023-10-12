@@ -28,7 +28,6 @@ object DoobieIntegraion extends QueryAlgebra {
   implicit def appliedFragmentMonoid: Monoid[Frag] = doobie.Fragment.FragmentMonoid
 
   type Decoder[A] = doobie.Read[A]
-  type Encoder[A] = doobie.Write[A]
 
   def optDecoder[A](d: Decoder[A]): Decoder[Option[A]] = {
     import cats.implicits._
