@@ -39,7 +39,7 @@ object Analyzer {
     stats.mapK(StateT.liftK[F, TraversalState])
 
   def runCostAnalysisFor[F[_]: Monad, A](f: Statistics[H[F, *]] => H[F, A])(implicit stats: Statistics[F]): F[A] =
-    f(liftStatistics[F](stats)).runA(TraversalState(1, Set.empty, Chain.empty))
+    f(liftStatistics[F](stats)).runA(TraversalState(Set.empty, Chain.empty))
 
   def runCostAnalysis[F[_]: Monad: Statistics, A](f: Statistics[H[F, *]] => H[F, A]): F[NodeTree] =
     runCostAnalysisFor[F, List[Node]](s => f(s).get.map(_.nodes.toList)).map(NodeTree(_))
@@ -48,7 +48,6 @@ object Analyzer {
     runCostAnalysis[F, A](implicit s2 => f(apply))
 
   final case class TraversalState(
-      id: Int,
       parents: Set[NodeId],
       nodes: Chain[Node]
   )
@@ -58,9 +57,6 @@ object Analyzer {
       F: Monad[F],
       S: Stateful[F, TraversalState]
   ) = {
-    def getId: F[NodeId] =
-      S.inspect(x => NodeId(x.id)) <* S.modify(s => s.copy(id = s.id + 1))
-
     def addNode(node: Node): F[Unit] =
       S.modify(s => s.copy(nodes = s.nodes :+ node))
 
@@ -99,12 +95,12 @@ object Analyzer {
           case alg: Choose[G, ?, ?, ?, ?]          => goParallel(alg.fac, alg.fbc)
           case alg: First[G, ?, ?, ?]              => analyzeStep[G](alg.step)
           case Batch(_, _) | EmbedEffect(_) | EmbedStream(_, _) | InlineBatch(_, _) =>
-            val name = step match {
-              case Batch(id, _)           => s"batch_${id.id}"
-              case EmbedEffect(cursor)    => cursor.asString
-              case EmbedStream(_, cursor) => cursor.asString
-              case InlineBatch(_, cursor) => cursor.asString
-              case _                      => ???
+            val (name, id) = step match {
+              case Batch(id, nid)      => (s"batch_${id.id}", nid.id)
+              case EmbedEffect(sei)    => (sei.edgeId.asString, sei.nodeId)
+              case EmbedStream(_, sei) => (sei.edgeId.asString, sei.nodeId)
+              case InlineBatch(_, sei) => (sei.edgeId.asString, sei.nodeId)
+              case _                   => ???
             }
 
             val costF = stats
@@ -112,21 +108,19 @@ object Analyzer {
               .map(_.getOrElse(Statistics.Stats(100d, 5d)))
 
             costF.flatMap { cost =>
-              getId.flatMap { id =>
-                getAndSetParents(Set(id)).flatMap { parentIds =>
-                  addNode {
-                    Node(
-                      id,
-                      name,
-                      cost.initialCost,
-                      cost.extraElementCost,
-                      parentIds,
-                      step match {
-                        case Batch(batcherId, uniqueNodeId) => Some(BatchRef(batcherId, uniqueNodeId))
-                        case _                              => None
-                      }
-                    )
-                  }
+              getAndSetParents(Set(id)).flatMap { parentIds =>
+                addNode {
+                  Node(
+                    id,
+                    name,
+                    cost.initialCost,
+                    cost.extraElementCost,
+                    parentIds,
+                    step match {
+                      case Batch(batcherId, uniqueNodeId) => Some(BatchRef(batcherId, uniqueNodeId))
+                      case _                              => None
+                    }
+                  )
                 }
               }
             }

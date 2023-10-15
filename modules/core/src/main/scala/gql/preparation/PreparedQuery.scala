@@ -27,24 +27,34 @@ import gql.ast
 
 sealed trait PreparedField[+F[_], A] extends Product with Serializable
 
+final case class NodeId(id: NonEmptyList[Int]) extends AnyVal {
+  def alpha(i: Int): NodeId = NodeId(i :: id)
+}
+
+object NodeId {
+  def apply(i: Int): NodeId = NodeId(NonEmptyList.one(i))
+}
+
+final case class StepEffectId(
+    nodeId: NodeId,
+    edgeId: UniqueEdgeCursor
+)
+
 sealed trait PreparedStep[+F[_], -I, +O] extends Product with Serializable
 object PreparedStep {
   final case class Lift[F[_], I, O](f: I => O) extends AnyRef with PreparedStep[F, I, O]
-  final case class EmbedEffect[F[_], I](stableUniqueEdgeName: UniqueEdgeCursor) extends AnyRef with PreparedStep[F, F[I], I]
-  final case class EmbedStream[F[_], I](signal: Boolean, stableUniqueEdgeName: UniqueEdgeCursor)
-      extends AnyRef
-      with PreparedStep[F, fs2.Stream[F, I], I]
+  final case class EmbedEffect[F[_], I](sei: StepEffectId) extends AnyRef with PreparedStep[F, F[I], I]
+  final case class EmbedStream[F[_], I](signal: Boolean, sei: StepEffectId) extends AnyRef with PreparedStep[F, fs2.Stream[F, I], I]
   final case class EmbedError[F[_], I]() extends AnyRef with PreparedStep[F, Ior[String, I], I]
   final case class Compose[F[_], I, A, O](left: PreparedStep[F, I, A], right: PreparedStep[F, A, O])
       extends AnyRef
       with PreparedStep[F, I, O]
   final case class GetMeta[F[_], I](meta: Eval[PreparedMeta[F]]) extends AnyRef with PreparedStep[Nothing, I, FieldMeta[F]]
   final case class First[F[_], I, O, C](step: PreparedStep[F, I, O]) extends AnyRef with PreparedStep[F, (I, C), (O, C)]
-  final case class Batch[F[_], K, V](id: Step.BatchKey[K, V], globalEdgeId: UniqueBatchInstance[K, V])
+  final case class Batch[F[_], K, V](id: Step.BatchKey[K, V], nodeId: UniqueBatchInstance[K, V])
       extends AnyRef
       with PreparedStep[F, Set[K], Map[K, V]]
-  final case class InlineBatch[F[_], K, V](run: Set[K] => F[Map[K, V]], stableUniqueEdgeName: UniqueEdgeCursor)
-      extends PreparedStep[F, Set[K], Map[K, V]]
+  final case class InlineBatch[F[_], K, V](run: Set[K] => F[Map[K, V]], sei: StepEffectId) extends PreparedStep[F, Set[K], Map[K, V]]
   final case class Choose[F[_], A, B, C, D](
       fac: PreparedStep[F, A, C],
       fbc: PreparedStep[F, B, D]
@@ -122,8 +132,8 @@ final case class PreparedMeta[+F[_]](
     pdf: PreparedDataField[F, ?, ?]
 )
 
-final case class UniqueBatchInstance[K, V](id: NonEmptyList[Int]) extends AnyVal {
-  def alpha(i: Int): UniqueBatchInstance[K, V] = UniqueBatchInstance(i :: id)
+final case class UniqueBatchInstance[K, V](id: NodeId) extends AnyRef {
+  def alpha(i: Int): UniqueBatchInstance[K, V] = UniqueBatchInstance(id.alpha(i))
 }
 
 final case class UniqueEdgeCursor(path: NonEmptyChain[String]) {

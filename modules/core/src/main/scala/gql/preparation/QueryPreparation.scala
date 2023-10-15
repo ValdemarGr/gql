@@ -24,6 +24,7 @@ import cats.mtl._
 import cats.data._
 import cats.implicits._
 import io.circe._
+import gql.std.LazyT
 
 trait QueryPreparation[F[_], G[_], C] {
   import QueryPreparation._
@@ -31,13 +32,18 @@ trait QueryPreparation[F[_], G[_], C] {
   def prepareStep[I, O](
       step: Step[G, I, O],
       fieldMeta: PartialFieldMeta[C]
-  ): K[F, G, PreparedStep[G, I, O]]
+  ): Effect[F, G, PreparedStep[G, I, O]]
+  /*
+  def prepareStep2[I, O](
+      step: Step[G, I, O],
+      fieldMeta: PartialFieldMeta[C]
+  ): H[F, PreparedStep[G, I, O]]*/
 
   def prepare[A](
       fi: MergedFieldInfo[G, C],
       t: Out[G, A],
       fieldMeta: PartialFieldMeta[C]
-  ): K[F, G, Prepared[G, A]]
+  ): Effect[F, G, Prepared[G, A]]
 
   def prepareField[I, O](
       fi: MergedFieldInfo[G, C],
@@ -58,22 +64,7 @@ trait QueryPreparation[F[_], G[_], C] {
 
 object QueryPreparation {
   type H[F[_], A] = Kleisli[WriterT[F, List[(Arg[?], Any)], *], UniqueEdgeCursor, A]
-  // Oof this is pretty complicated
-  // Using MTL and returning something that needs itself as an argument (lazy self reference)
-  case class K[F[_], G[_], A](value: H[F, Eval[PreparedMeta[G]] => A])
-  implicit def applicativeForK[F[_], G[_]](implicit F: Parallel[F]): Applicative[K[F, G, *]] = new Applicative[K[F, G, *]] {
-    val P = Parallel[H[F, *]]
-    override def ap[A, B](ff: K[F, G, A => B])(fa: K[F, G, A]): K[F, G, B] = K(
-      P.sequential {
-        P.applicative.map2(P.parallel(ff.value), P.parallel(fa.value))((f, g) => (m: Eval[PreparedMeta[G]]) => f(m)(g(m)))
-      }
-    )
-
-    override def pure[A](x: A): K[F, G, A] = {
-      implicit val F2 = F.monad
-      K(Kleisli.pure(_ => x))
-    }
-  }
+  type Effect[F[_], G[_], A] = LazyT[H[F, *], PreparedMeta[G], A]
 
   def apply[F[_]: Parallel, G[_], C](
       variables: VariableMap[C],
@@ -108,29 +99,35 @@ object QueryPreparation {
           }
     }
 
-    type L[A] = K[F, G, A]
+    type L[A] = Effect[F, G, A]
+    implicit val applicativeForL: Applicative[L] =
+      LazyT.applicativeForParallelLazyT[H[F, *], PreparedMeta[G]]
 
     def lift[A](fa: F[A]): H[F, A] = Kleisli.liftF(WriterT.liftF(fa))
-    def liftK[A](fa: F[A]): L[A] = K(lift(fa).map(a => _ => a))
+    def liftK[A](fa: F[A]): L[A] = LazyT.liftF(lift(fa))
 
     def pure[A](a: A): H[F, A] = lift(F.pure(a))
-    def pureK[A](a: A): L[A] = K(pure(_ => a))
+    def pureK[A](a: A): L[A] = LazyT.liftF(pure(a))
 
     val L = Local[H[F, *], UniqueEdgeCursor]
 
     val W = Tell[H[F, *], List[(Arg[?], Any)]]
 
-    def inK[A](p: String)(fa: L[A]): L[A] = K(L.local(fa.value)(_ append p))
+    def inK[A](p: String)(fa: L[A]): L[A] = LazyT(L.local(fa.fb)(_ append p))
 
-    def askK: L[UniqueEdgeCursor] = K(L.ask[UniqueEdgeCursor].map(x => (_: Eval[PreparedMeta[G]]) => x))
+    // UniqueEdgeCursor => (List[(Arg[?], Any)], Eval[PreparedMeta[G]] => A)
 
-    def nextId = S.get <* S.modify(_ + 1)
+    def askK: L[UniqueEdgeCursor] = LazyT.liftF(L.ask[UniqueEdgeCursor])
 
-    new QueryPreparation[F, G, C] {
-      override def prepareStep[I, O](
+    def nextId = S.get.map(i => NodeId(NonEmptyList.one(i))) <* S.modify(_ + 1)
+
+    def nextSei = (liftK(nextId), askK).mapN(StepEffectId(_, _))
+
+    new QueryPreparation[F, G, C] { /*
+      def prepareStep2[I, O](
           step: Step[G, I, O],
           fieldMeta: PartialFieldMeta[C]
-      ): L[PreparedStep[G, I, O]] = {
+      ): H[F, PreparedStep[G, I, O]] = {
         def rec[I2, O2](
             step: Step[G, I2, O2],
             edge: String
@@ -145,9 +142,9 @@ object QueryPreparation {
             val left = rec[i, a](alg.left, "compose-left")
             val right = rec[a, o](alg.right, "compose-right")
             (left, right).mapN(PreparedStep.Compose[G, i, a, o](_, _))
-          case _: Step.Alg.EmbedEffect[?, i] => askK.map(PreparedStep.EmbedEffect[G, i](_))
+          case _: Step.Alg.EmbedEffect[?, i] => nextSei.map(PreparedStep.EmbedEffect[G, i](_))
           case alg: Step.Alg.EmbedStream[?, i] =>
-            askK.map(PreparedStep.EmbedStream[G, i](alg.signal, _))
+            nextSei.map(PreparedStep.EmbedStream[G, i](alg.signal, _))
           case alg: Step.Alg.Choose[?, a, b, c, d] =>
             val left = rec[a, c](alg.fac, "choice-left")
             val right = rec[b, d](alg.fab, "choice-right")
@@ -155,9 +152,9 @@ object QueryPreparation {
           case _: Step.Alg.GetMeta[?, i] =>
             K(pure((pm: Eval[PreparedMeta[G]]) => PreparedStep.GetMeta[G, I](pm)))
           case alg: Step.Alg.Batch[?, k, v] =>
-            liftK(nextId.map(i => PreparedStep.Batch[G, k, v](alg.id, UniqueBatchInstance(NonEmptyList.one(i)))))
+            liftK(nextId.map(i => PreparedStep.Batch[G, k, v](alg.id, UniqueBatchInstance(i))))
           case alg: Step.Alg.InlineBatch[?, k, v] =>
-            askK.map(PreparedStep.InlineBatch[G, k, v](alg.run, _))
+            nextSei.map(PreparedStep.InlineBatch[G, k, v](alg.run, _))
           case alg: Step.Alg.First[?, i, o, c] =>
             rec[i, o](alg.step, "first").map(PreparedStep.First[G, i, o, c](_))
           case alg: Step.Alg.Argument[?, a] =>
@@ -167,6 +164,51 @@ object QueryPreparation {
               lift(AP.decodeArg(alg.arg, fields.fmap(_.map(List(_))), ambigiousEnum = false, context = Nil))
                 .flatTap(a => W.tell(List(alg.arg -> a)))
                 .map(o => _ => PreparedStep.Lift[G, I, O](_ => o))
+            }
+        }
+      }*/
+
+      override def prepareStep[I, O](
+          step: Step[G, I, O],
+          fieldMeta: PartialFieldMeta[C]
+      ): L[PreparedStep[G, I, O]] = {
+
+        def rec[I2, O2](
+            step: Step[G, I2, O2],
+            edge: String
+        ): L[PreparedStep[G, I2, O2]] = inK(edge) {
+          prepareStep[I2, O2](step, fieldMeta)
+        }
+
+        step match {
+          case Step.Alg.Lift(f)      => pureK(PreparedStep.Lift(f))
+          case Step.Alg.EmbedError() => pureK(PreparedStep.EmbedError[G, O]())
+          case alg: Step.Alg.Compose[?, i, a, o] =>
+            val left = rec[i, a](alg.left, "compose-left")
+            val right = rec[a, o](alg.right, "compose-right")
+            (left, right).mapN(PreparedStep.Compose[G, i, a, o](_, _))
+          case _: Step.Alg.EmbedEffect[?, i] => nextSei.map(PreparedStep.EmbedEffect[G, i](_))
+          case alg: Step.Alg.EmbedStream[?, i] =>
+            nextSei.map(PreparedStep.EmbedStream[G, i](alg.signal, _))
+          case alg: Step.Alg.Choose[?, a, b, c, d] =>
+            val left = rec[a, c](alg.fac, "choice-left")
+            val right = rec[b, d](alg.fab, "choice-right")
+            (left, right).mapN(PreparedStep.Choose[G, a, b, c, d](_, _))
+          case _: Step.Alg.GetMeta[?, i] =>
+            LazyT.lift((pm: Eval[PreparedMeta[G]]) => PreparedStep.GetMeta[G, I](pm))
+          case alg: Step.Alg.Batch[?, k, v] =>
+            liftK(nextId.map(i => PreparedStep.Batch[G, k, v](alg.id, UniqueBatchInstance(i))))
+          case alg: Step.Alg.InlineBatch[?, k, v] =>
+            nextSei.map(PreparedStep.InlineBatch[G, k, v](alg.run, _))
+          case alg: Step.Alg.First[?, i, o, c] =>
+            rec[i, o](alg.step, "first").map(PreparedStep.First[G, i, o, c](_))
+          case alg: Step.Alg.Argument[?, a] =>
+            val expected = alg.arg.entries.toList.map(_.name).toSet
+            val fields = fieldMeta.fields.filter { case (k, _) => expected.contains(k) }
+            LazyT.liftF {
+              lift(AP.decodeArg(alg.arg, fields.fmap(_.map(List(_))), ambigiousEnum = false, context = Nil))
+                .flatTap(a => W.tell(List(alg.arg -> a)))
+                .map(o => PreparedStep.Lift[G, I, O](_ => o))
             }
         }
       }
@@ -246,20 +288,19 @@ object QueryPreparation {
               prepare(fi, field.output.value, meta)
             ).tupled
 
-            val out = preparedF.value.run(rootUniqueName).run.map { case (w, f) =>
-              val g = f.andThen { case (x, y) =>
-                PreparedDataField(fi.name, fi.alias, PreparedCont(x, y), field, w.toMap)
-              }
-              lazy val pdf: PreparedDataField[G, I, ?] = g {
-                Eval.later {
-                  PreparedMeta(
-                    variables.map { case (k, v) => k -> v.copy(value = v.value.map(_.void)) },
-                    meta.args.map(_.map(_ => ())),
-                    pdf
-                  )
+            val pdfF: LazyT[F, PreparedMeta[G], PreparedDataField[G, I, ?]] =
+              preparedF.mapF(_.run(rootUniqueName).run.map { case (w, f) =>
+                f.andThen { case (x, y) =>
+                  PreparedDataField(fi.name, fi.alias, PreparedCont(x, y), field, w.toMap)
                 }
-              }
-              pdf
+              })
+
+            val out = pdfF.runWithValue { pdf =>
+              PreparedMeta(
+                variables.map { case (k, v) => k -> v.copy(value = v.value.map(_.void)) },
+                meta.args.map(_.map(_ => ())),
+                pdf
+              )
             }
 
             verifyTooManyF &> out
