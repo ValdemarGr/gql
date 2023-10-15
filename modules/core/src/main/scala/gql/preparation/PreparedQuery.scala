@@ -36,17 +36,15 @@ object NodeId {
 }
 
 final case class StepEffectId(
-  nodeId: NodeId,
-  edgeId: UniqueEdgeCursor
+    nodeId: NodeId,
+    edgeId: UniqueEdgeCursor
 )
 
 sealed trait PreparedStep[+F[_], -I, +O] extends Product with Serializable
 object PreparedStep {
   final case class Lift[F[_], I, O](f: I => O) extends AnyRef with PreparedStep[F, I, O]
   final case class EmbedEffect[F[_], I](sei: StepEffectId) extends AnyRef with PreparedStep[F, F[I], I]
-  final case class EmbedStream[F[_], I](signal: Boolean, sei: StepEffectId)
-      extends AnyRef
-      with PreparedStep[F, fs2.Stream[F, I], I]
+  final case class EmbedStream[F[_], I](signal: Boolean, sei: StepEffectId) extends AnyRef with PreparedStep[F, fs2.Stream[F, I], I]
   final case class EmbedError[F[_], I]() extends AnyRef with PreparedStep[F, Ior[String, I], I]
   final case class Compose[F[_], I, A, O](left: PreparedStep[F, I, A], right: PreparedStep[F, A, O])
       extends AnyRef
@@ -56,8 +54,7 @@ object PreparedStep {
   final case class Batch[F[_], K, V](id: Step.BatchKey[K, V], nodeId: UniqueBatchInstance[K, V])
       extends AnyRef
       with PreparedStep[F, Set[K], Map[K, V]]
-  final case class InlineBatch[F[_], K, V](run: Set[K] => F[Map[K, V]], sei: StepEffectId)
-      extends PreparedStep[F, Set[K], Map[K, V]]
+  final case class InlineBatch[F[_], K, V](run: Set[K] => F[Map[K, V]], sei: StepEffectId) extends PreparedStep[F, Set[K], Map[K, V]]
   final case class Choose[F[_], A, B, C, D](
       fac: PreparedStep[F, A, C],
       fbc: PreparedStep[F, B, D]

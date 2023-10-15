@@ -96,11 +96,11 @@ object Analyzer {
           case alg: First[G, ?, ?, ?]              => analyzeStep[G](alg.step)
           case Batch(_, _) | EmbedEffect(_) | EmbedStream(_, _) | InlineBatch(_, _) =>
             val (name, id) = step match {
-              case Batch(id, nid)           => (s"batch_${id.id}", nid.id)
+              case Batch(id, nid)      => (s"batch_${id.id}", nid.id)
               case EmbedEffect(sei)    => (sei.edgeId.asString, sei.nodeId)
               case EmbedStream(_, sei) => (sei.edgeId.asString, sei.nodeId)
               case InlineBatch(_, sei) => (sei.edgeId.asString, sei.nodeId)
-              case _                      => ???
+              case _                   => ???
             }
 
             val costF = stats
@@ -108,19 +108,19 @@ object Analyzer {
               .map(_.getOrElse(Statistics.Stats(100d, 5d)))
 
             costF.flatMap { cost =>
-                getAndSetParents(Set(id)).flatMap { parentIds =>
-                  addNode {
-                    Node(
-                      id,
-                      name,
-                      cost.initialCost,
-                      cost.extraElementCost,
-                      parentIds,
-                      step match {
-                        case Batch(batcherId, uniqueNodeId) => Some(BatchRef(batcherId, uniqueNodeId))
-                        case _                              => None
-                      }
-                    )
+              getAndSetParents(Set(id)).flatMap { parentIds =>
+                addNode {
+                  Node(
+                    id,
+                    name,
+                    cost.initialCost,
+                    cost.extraElementCost,
+                    parentIds,
+                    step match {
+                      case Batch(batcherId, uniqueNodeId) => Some(BatchRef(batcherId, uniqueNodeId))
+                      case _                              => None
+                    }
+                  )
                 }
               }
             }
