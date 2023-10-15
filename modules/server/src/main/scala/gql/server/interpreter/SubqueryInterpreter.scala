@@ -125,14 +125,14 @@ object SubqueryInterpreter {
         val result: W[Chain[(Int, Json)]] = step match {
           case Lift(f) => runNext(inputs.map(_.map(f)))
           case alg: EmbedEffect[?, i] =>
-            val cursor = alg.stableUniqueEdgeName
+            val cursor = alg.sei.edgeId
             inputs.flatTraverse { id =>
               attemptTimed(cursor, e => EvalFailure.EffectResolution(id.node.cursor, Left(e))) {
                 id.sequence[F, i]
               }.map(Chain.fromOption(_))
             } >>= runNext
           case alg: InlineBatch[F, k, o] =>
-            val cursor = alg.stableUniqueEdgeName
+            val cursor = alg.sei.edgeId
             val keys: Set[k] = inputs.toList.flatMap(_.node.value.toList).toSet
 
             attemptTimed(cursor, e => EvalFailure.BatchResolution(inputs.map(_.node.cursor), e), keys.size) {
@@ -164,7 +164,7 @@ object SubqueryInterpreter {
               })
 
               val runF =
-                attemptTimed(alg.stableUniqueEdgeName, e => EvalFailure.StreamHeadResolution(id.node.cursor, Left(e))) {
+                attemptTimed(alg.sei.edgeId, e => EvalFailure.StreamHeadResolution(id.node.cursor, Left(e))) {
                   id
                     .traverse { (i: fs2.Stream[F, i]) =>
                       ss
@@ -239,7 +239,7 @@ object SubqueryInterpreter {
             val keys: Chain[(Cursor, Set[k])] = inputs.map(id => id.node.cursor -> id.node.value)
 
             lift {
-              batchAccumulator.submit[k, v](alg.globalEdgeId, keys).map {
+              batchAccumulator.submit[k, v](alg.nodeId, keys).map {
                 case None => Chain.empty
                 case Some(m) =>
                   inputs.map { id =>

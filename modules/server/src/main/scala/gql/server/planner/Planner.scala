@@ -18,6 +18,7 @@ package gql.server.planner
 import fs2.{Pure, Stream}
 import cats.implicits._
 import cats._
+import gql.preparation._
 
 trait Planner[F[_]] { self =>
   def plan(naive: NodeTree): F[OptimizedDAG]
@@ -36,7 +37,7 @@ object Planner {
         .map(plan => (plan, plan.values.toSet.size))
         .take(tree.all.size.toLong)
         .compile
-        .fold(Option.empty[(Map[PlanEnumeration.NodeId, PlanEnumeration.Batch], Int)]) {
+        .fold(Option.empty[(Map[NodeId, PlanEnumeration.Batch], Int)]) {
           case (None, (nextPlan, s))                                                => Some((nextPlan, s))
           case (Some((_, bestSize)), (nextPlan, nextSize)) if (nextSize < bestSize) => Some((nextPlan, nextSize))
           case (best, _)                                                            => best
@@ -49,7 +50,7 @@ object Planner {
     }
   }
 
-  def enumerateAllPlanner[F[_]](tree: NodeTree): Stream[Pure, Map[PlanEnumeration.NodeId, PlanEnumeration.Batch]] = {
+  def enumerateAllPlanner[F[_]](tree: NodeTree): Stream[Pure, Map[NodeId, PlanEnumeration.Batch]] = {
     val all = tree.all
 
     val trivials = all.filter(_.batchId.isEmpty)
@@ -58,16 +59,16 @@ object Planner {
     val grp = batches.groupBy { case (b, _) => b.batcherId }
 
     val trivialFamilies = trivials.map { n =>
-      PlanEnumeration.Family(n.cost, Set(PlanEnumeration.NodeId(n.id.id)))
+      PlanEnumeration.Family(n.cost, Set(n.id))
     }
 
     val batchFamilies = grp.toList.map { case (_, gs) =>
       val (_, hd) = gs.head
-      PlanEnumeration.Family(hd.cost, gs.map { case (_, x) => PlanEnumeration.NodeId(x.id.id) }.toSet)
+      PlanEnumeration.Family(hd.cost, gs.map { case (_, x) => x.id }.toSet)
     }
 
     val rl = tree.reverseLookup.map { case (k, vs) =>
-      PlanEnumeration.NodeId(k.id) -> vs.toList.map(v => PlanEnumeration.NodeId(v.id)).toSet
+      NodeId(k.id) -> vs.toList.toSet
     }
 
     val nodes = (trivialFamilies ++ batchFamilies).toArray

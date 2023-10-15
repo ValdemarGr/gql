@@ -28,14 +28,6 @@ final case class BatchRef[K, V](
   def alpha(i: Int) = copy(uniqueNodeId = uniqueNodeId.alpha(i))
 }
 
-final case class NodeId(id: NonEmptyList[Int]) extends AnyVal {
-  def alpha(i: Int) = NodeId(i :: id)
-}
-
-object NodeId {
-  def apply(i: Int): NodeId = NodeId(NonEmptyList.one(i))
-}
-
 final case class Node(
     id: NodeId,
     name: String,

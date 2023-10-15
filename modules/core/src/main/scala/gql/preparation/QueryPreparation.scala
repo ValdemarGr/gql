@@ -288,20 +288,19 @@ object QueryPreparation {
               prepare(fi, field.output.value, meta)
             ).tupled
 
-            val out = preparedF.fb.run(rootUniqueName).run.map { case (w, f) =>
-              val g = f.andThen { case (x, y) =>
-                PreparedDataField(fi.name, fi.alias, PreparedCont(x, y), field, w.toMap)
-              }
-              lazy val pdf: PreparedDataField[G, I, ?] = g {
-                Eval.later {
-                  PreparedMeta(
-                    variables.map { case (k, v) => k -> v.copy(value = v.value.map(_.void)) },
-                    meta.args.map(_.map(_ => ())),
-                    pdf
-                  )
+            val pdfF: LazyT[F, PreparedMeta[G], PreparedDataField[G, I, ?]] =
+              preparedF.mapF(_.run(rootUniqueName).run.map { case (w, f) =>
+                f.andThen { case (x, y) =>
+                  PreparedDataField(fi.name, fi.alias, PreparedCont(x, y), field, w.toMap)
                 }
-              }
-              pdf
+              })
+
+            val out = pdfF.runWithValue { pdf =>
+              PreparedMeta(
+                variables.map { case (k, v) => k -> v.copy(value = v.value.map(_.void)) },
+                meta.args.map(_.map(_ => ())),
+                pdf
+              )
             }
 
             verifyTooManyF &> out
