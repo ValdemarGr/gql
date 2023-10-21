@@ -249,7 +249,7 @@ object SchemaShape {
       }
     }
 
-    val outs = root.query :: root.mutation.toList ++ root.subscription.toList ++ root.outputTypes
+    val outs = root.outputTypes ++ List(root.query) ++ root.mutation.toList ++ root.subscription.toList
 
     val outsF = outs.parFoldMapA(goOutput)
 
