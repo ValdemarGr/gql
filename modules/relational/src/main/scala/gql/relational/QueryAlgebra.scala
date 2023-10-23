@@ -226,6 +226,7 @@ trait QueryAlgebra {
   val S = Stateful[Effect, Int]
   val T = Tell[Effect, QueryContent]
   val R = Raise[Effect, String]
+
   val nextId: Effect[String] = S.get.map(i => s"t${i.toString()}") <* S.modify(_ + 1)
   def addJoin(tbl: Frag, pred: Frag): Effect[Unit] =
     T.tell(QueryContent(Chain.empty, Chain(QueryJoin(tbl, pred))))
