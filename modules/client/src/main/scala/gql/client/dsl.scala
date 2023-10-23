@@ -20,7 +20,6 @@ import cats.implicits._
 import gql._
 import gql.parser.{Value => V, QueryAst => P, AnyValue, Const}
 import java.util.UUID
-import java.time.LocalDate
 
 object dsl {
   def sel[A](fieldName: String, alias: String)(implicit sq: SubQuery[A]): SelectionSet[A] =
@@ -104,13 +103,19 @@ object dsl {
 
     implicit lazy val typenameForInt: Typename[Int] = typename("Int")
 
+    implicit lazy val typenameForLong: Typename[Long] = typename("Long")
+
+    implicit lazy val typenameForDouble: Typename[Double] = typename("Double")
+
+    implicit lazy val typenameForBigInt: Typename[BigInt] = typename("BigInt")
+
+    implicit lazy val typenameForBigDecimal: Typename[BigDecimal] = typename("BigDecimal")
+
     implicit lazy val typenameForUUID: Typename[UUID] = typename("UUID")
 
     implicit lazy val typenameForFloat: Typename[Float] = typename("Float")
 
     implicit lazy val typenameForBoolean: Typename[Boolean] = typename("Boolean")
-
-    implicit lazy val typenameForLocalDate: Typename[LocalDate] = typename("LocalDate")
   }
 
   implicit class SyntaxForOptionalSelectionSet[A](q: SelectionSet[Option[A]]) {
