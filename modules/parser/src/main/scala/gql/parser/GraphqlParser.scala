@@ -26,18 +26,20 @@ import QueryAst._
 object GraphqlParser {
   val whiteSpace = Rfc5234.wsp
 
+  // if this is slow, use charWhile
+  val sourceCharacter: P[Char] =
+    P.charIn(('\u0020' to '\uFFFF') :+ '\u0009' :+ '\u000A' :+ '\u000D')
+
   val lineTerminator = Rfc5234.lf | Rfc5234.crlf | Rfc5234.cr
 
-  val sep = lineTerminator | whiteSpace | P.char(',')
+  val comment: P[Unit] = (P.char('#') ~ sourceCharacter.repUntil0(lineTerminator)).void
+
+  val sep = lineTerminator | whiteSpace | P.char(',') | comment
   val seps0 = sep.rep0.void
 
   def p[A](p: P[A]): P[A] = p <* sep.rep0.void
   def t(c: Char): P[Unit] = p(P.char(c))
   def s(s: String): P[Unit] = p(P.string(s))
-
-  // if this is slow, use charWhile
-  val sourceCharacter: P[Char] =
-    P.charIn(('\u0020' to '\uFFFF') :+ '\u0009' :+ '\u000A' :+ '\u000D')
 
   lazy val name: P[String] = p {
     val rng = ('a' to 'z') :++ ('A' to 'Z') :+ '_'
