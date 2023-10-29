@@ -49,8 +49,11 @@ object Generator {
   val toPascal: String => String =
     modifyHead(_.toUpper)
 
+  def escapeFieldName(name: String): String = 
+    if (reservedScalaWords.contains(name)) s"`$name`" else name
+
   def scalaField(name: String, tpe: String): Doc =
-    Doc.text(name) + Doc.char(':') + Doc.space + Doc.text(tpe)
+    Doc.text(escapeFieldName(name)) + Doc.char(':') + Doc.space + Doc.text(tpe)
 
   def hardIntercalate(left: Doc, right: Doc, xs: List[Doc], sep: Doc = Doc.empty) = {
     left +
@@ -89,14 +92,16 @@ object Generator {
       tpe: InverseModifierStack[String],
       default: Option[V[AnyValue, Caret]]
   ) {
+    val escapedName = escapeFieldName(name)
+
     val isOmittable = default.isDefined || tpe.modifiers.headOption.contains(InverseModifier.Optional)
 
     val doc: Doc =
-      Doc.text(name) + Doc.char(':') + Doc.space + Doc.text(optUnless(!isOmittable)(tpe.showScala(identity))) +
+      Doc.text(escapedName) + Doc.char(':') + Doc.space + Doc.text(optUnless(!isOmittable)(tpe.showScala(identity))) +
         (if (isOmittable) Doc.text(" = None") else Doc.empty)
 
     def circeEncoderFieldOpt(objectName: String) = {
-      val idx = s"${objectName}.${name}"
+      val idx = s"${objectName}.${escapedName}"
       quoted(name) + Doc.text(" -> ") + (
         if (isOmittable) Doc.text(s"${idx}.map(_.asJson)")
         else Doc.text(s"Some(${idx}.asJson)")
@@ -116,7 +121,7 @@ object Generator {
   ) {
     val doc: Doc = {
       val helpers = fields.filter(_.isOmittable).map { f =>
-        Doc.text(s"def set${toPascal(f.name)}(value: ${f.tpe.showScala(identity)}): ${name} = copy(${f.name} = Some(value))")
+        Doc.text(s"def set${toPascal(f.name)}(value: ${f.tpe.showScala(identity)}): ${name} = copy(${escapeFieldName(f.name)} = Some(value))")
       }
 
       caseClass(name, fields.map(_.doc), helpers)
@@ -924,4 +929,58 @@ object Generator {
     implicit val files: Files[G] = Files.forAsync[G]
     readAndGenerate[G](schemaPath, sharedPath, validate)(data).value.map(_.fold(_.toList, _ => Nil))
   }
+
+  // https://github.com/rgueldem/ScalaPB/blob/5bd28cb38728e29dc3743a695b98709243f89381/compiler-plugin/src/main/scala/scalapb/compiler/DescriptorImplicits.scala#L1106
+  lazy val reservedScalaWords = Set(
+    "abstract",
+    "case",
+    "catch",
+    "class",
+    "def",
+    "do",
+    "else",
+    "enum",
+    "export",
+    "extends",
+    "false",
+    "final",
+    "finally",
+    "for",
+    "forSome",
+    "given",
+    "if",
+    "implicit",
+    "import",
+    "infix",
+    "inline",
+    "lazy",
+    "macro",
+    "match",
+    "ne",
+    "new",
+    "null",
+    "object",
+    "opaque",
+    "open",
+    "override",
+    "package",
+    "private",
+    "protected",
+    "return",
+    "sealed",
+    "super",
+    "then",
+    "this",
+    "throw",
+    "trait",
+    "transparent",
+    "try",
+    "true",
+    "type",
+    "val",
+    "var",
+    "while",
+    "with",
+    "yield"
+  )
 }
