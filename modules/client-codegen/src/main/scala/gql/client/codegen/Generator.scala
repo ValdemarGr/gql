@@ -49,7 +49,7 @@ object Generator {
   val toPascal: String => String =
     modifyHead(_.toUpper)
 
-  def escapeFieldName(name: String): String = 
+  def escapeFieldName(name: String): String =
     if (reservedScalaWords.contains(name)) s"`$name`" else name
 
   def scalaField(name: String, tpe: String): Doc =
@@ -121,7 +121,9 @@ object Generator {
   ) {
     val doc: Doc = {
       val helpers = fields.filter(_.isOmittable).map { f =>
-        Doc.text(s"def set${toPascal(f.name)}(value: ${f.tpe.showScala(identity)}): ${name} = copy(${escapeFieldName(f.name)} = Some(value))")
+        Doc.text(
+          s"def set${toPascal(f.name)}(value: ${f.tpe.showScala(identity)}): ${name} = copy(${escapeFieldName(f.name)} = Some(value))"
+        )
       }
 
       caseClass(name, fields.map(_.doc), helpers)
