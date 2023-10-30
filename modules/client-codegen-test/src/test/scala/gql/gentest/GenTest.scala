@@ -214,7 +214,7 @@ object GenTest {
   final case class Escaping(
       tpe: String
   )
-  implicit lazy val escaping = input[Escaping](
+  implicit lazy val escaping: Input[Escaping] = input[Escaping](
     "Escaping",
     arg[String]("type").map(Escaping.apply)
   )
