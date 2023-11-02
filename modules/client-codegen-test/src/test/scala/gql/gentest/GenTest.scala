@@ -17,7 +17,7 @@ package gql.gentest
 
 import cats.effect._
 import cats.implicits._
-import gql.client.generated._
+import gql.client.gen.test._
 import gql._
 import gql.dsl.all._
 import gql.ast._
