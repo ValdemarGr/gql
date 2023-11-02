@@ -211,6 +211,14 @@ object GenTest {
     ).mapN(FindDogInput.apply)
   )
 
+  final case class Escaping(
+      tpe: String
+  )
+  implicit lazy val escaping: Input[Escaping] = input[Escaping](
+    "Escaping",
+    arg[String]("type").map(Escaping.apply)
+  )
+
   def schema: IO[Schema[IO, Unit, Unit, Unit]] = Schema.simple(
     SchemaShape
       .unit[IO](
@@ -219,7 +227,8 @@ object GenTest {
           "dog" -> lift(_ => dogDatabase("Colt")),
           "findDog" -> lift(arg[Option[FindDogInput]]("searchBy")) { case (x, _) =>
             x.flatMap(y => dogDatabase.get(y.name.getOrElse("Colt")))
-          }
+          },
+          "escaping" -> lift(arg[Option[Escaping]]("x")) { case (x, _) => x.foldMap(_.tpe) }
         )
       )
       .addOutputTypes(cat)

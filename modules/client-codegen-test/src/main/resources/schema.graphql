@@ -2,6 +2,7 @@ type Query {
   dog: Dog
   findDog(searchBy: FindDogInput): Dog
   outputOnly: OutputOnly
+  escaping(x: Escaping): String
 }
 
 enum OutputOnly {
@@ -62,3 +63,6 @@ input FindDogInput {
   owner: String
 }
 
+input Escaping {
+  type: String
+}
