@@ -23,6 +23,13 @@ import java.io.File
 import scala.util.{Failure, Success}
 
 object GqlCodeGenPlugin extends AutoPlugin {
+  def safeListFiles(f: File): List[File] = {
+    if (f.exists()) f.listFiles().toList
+    else {
+      throw new IllegalArgumentException(s"File ${f.getPath()} does not exist.")
+    }
+  }
+
   object autoImport {
     object Gql {
       final case class GroupOptions(
@@ -58,7 +65,7 @@ object GqlCodeGenPlugin extends AutoPlugin {
         CustomResourceGroup(
           name,
           path / "schema.graphql",
-          (path / "queries").listFiles().toList
+          safeListFiles((path / "queries"))
         )
       }
 
@@ -115,7 +122,7 @@ object GqlCodeGenPlugin extends AutoPlugin {
                   |$hint""".stripMargin
             )
             None
-          } else Some(Gql.CustomResourceGroup(rg.name, schema, queries))
+          } else Some(rg)
         }
 
         val customs = rs
@@ -125,7 +132,7 @@ object GqlCodeGenPlugin extends AutoPlugin {
           .collectFirst { case Gql.DefaultResourceGroup(opts) =>
             val r = (Compile / resourceDirectory).value
             val schema = r / "schema.graphql"
-            val queries = Option((r / "queries").listFiles()).toList.flatMap(_.toList)
+            val queries = Option(r / "queries").toList.flatMap(safeListFiles)
             val rg = Gql.CustomResourceGroup("default", schema, queries, opts)
             verifyResourceGroup(rg)
           }
@@ -156,22 +163,22 @@ object GqlCodeGenPlugin extends AutoPlugin {
             val fn = in.name.replaceAll("\\.", "_")
             val outFile = f / s"${fn}.scala"
 
-            CodeGenInput(
-              json = JsonObject(
+            (
+              JsonObject(
                 "query" -> fromString(escapeSlash(in.absolutePath)),
                 "output" -> fromString(escapeSlash(outFile.absolutePath))
-              ).asJson.spaces2,
-              inFiles = Seq(in),
-              outFiles = Seq(outFile)
+              ).asJson,
+              Seq(in),
+              Seq(outFile)
             )
           }
-          val (queries, inFiless, outFiless) = queryInputs.flatMap(CodeGenInput.unapply).unzip3
+          val (queries, inFiless, outFiless) = queryInputs.unzip3
 
           CodeGenInput(
             json = JsonObject(
               "schema" -> fromString(escapeSlash(rg.schemaPath.absolutePath)),
               "shared" -> fromString(escapeSlash(sh.absolutePath)),
-              "queries" -> arr(fromString(queries.mkString(","))),
+              "queries" -> arr(queries: _*),
               "packageName" -> fromString(rg.options.packageName)
             ).asJson.spaces2,
             inFiles = inFiless.flatten :+ rg.schemaPath,
