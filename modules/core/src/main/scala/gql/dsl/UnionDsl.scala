@@ -22,7 +22,7 @@ import cats._
 import scala.reflect.ClassTag
 
 trait UnionDsl[F[_]] {
-  def union[A](name: String): UnionDsl.PartiallyAppliedUnion0[F, A] =
+  def union[A](name: String): UnionDsl.PartiallyAppliedUnion[F, A] =
     UnionDsl.union[F, A](name)
 
   implicit def unionDslUnionOps[A](u: Union[F, A]): UnionDsl.UnionOps[F, A] =
@@ -30,25 +30,17 @@ trait UnionDsl[F[_]] {
 }
 
 trait UnionDslFull {
-  def union[F[_], A](name: String): UnionDsl.PartiallyAppliedUnion0[F, A] =
-    new UnionDsl.PartiallyAppliedUnion0[F, A](name)
+  def union[F[_], A](name: String): UnionDsl.PartiallyAppliedUnion[F, A] =
+    new UnionDsl.PartiallyAppliedUnion[F, A](name)
 
   implicit def unionDslFullUnionOps[F[_], A](u: Union[F, A]): UnionDsl.UnionOps[F, A] =
     new UnionDsl.UnionOps[F, A](u)
 }
 
 object UnionDsl extends UnionDslFull {
-  final class PartiallyAppliedUnion0[F[_], A](private val name: String) extends AnyVal {
-    def variant[B](pf: PartialFunction[A, B])(implicit innerTpe: => Type[F, B]): PartiallyAppliedUnion1[F, A] =
-      new PartiallyAppliedUnion1[F, A](name, Variant[F, A, B](Eval.later(innerTpe))(pf.lift.andThen(_.rightIor)))
-
-    def subtype[B: ClassTag](implicit ev: B <:< A, innerTpe: => Type[F, B]): PartiallyAppliedUnion1[F, A] =
-      variant[B] { case a: B => a }(innerTpe)
-  }
-
-  final class PartiallyAppliedUnion1[F[_], A](private val name: String, private val hd: Variant[F, A, ?]) {
+  final class PartiallyAppliedUnion[F[_], A](private val name: String) {
     def variant[B](pf: PartialFunction[A, B])(implicit innerTpe: => Type[F, B]): Union[F, A] =
-      Union[F, A](name, NonEmptyList.of(hd, Variant[F, A, B](Eval.later(innerTpe))(pf.lift.andThen(_.rightIor))), None)
+      Union[F, A](name, NonEmptyList.of(Variant[F, A, B](Eval.later(innerTpe))(pf.lift.andThen(_.rightIor))), None)
 
     def subtype[B: ClassTag](implicit ev: B <:< A, innerTpe: => Type[F, B]): Union[F, A] =
       variant[B] { case a: B => a }(innerTpe)
