@@ -35,16 +35,27 @@ object GeneratorCli
   final case class Input(
       schema: Path,
       shared: Path,
-      queries: NonEmptyList[Query]
+      queries: NonEmptyList[Query],
+      packageName: Option[String]
   )
   val kvPairs =
     Opts.options[Input](
       "input",
       help = """|Path to the GraphQL schemas and query files, given as json value.
-                |For instance: {"schema": "/my/schema", "shared": "/mp/shared", "queries": [{ "query": "/my/query", "output": "/my/Query.scala" }] }.
+                |For instance: 
+                |{
+                |  "schema": "/my/schema",
+                |  "shared": "/mp/shared",
+                |  "queries": [{ 
+                |    "query": "/my/query",
+                |    "output": "/my/Query.scala" 
+                |  }],
+                |  "packageName": "my.package"
+                |}
                 |"schema" should be the path to your schema
                 |"shared" should be the output file for shared types (graphql input and enum types), note that only inputs and enums used in your queries are generated
                 |"queries" should be the collection of queries that you want to generate code for
+                |"packageName" is the package name for the generated code
                 |Omitting "output" will generate the file beside the input query""".stripMargin
     ) {
       Argument.from[Input]("json-input") { str =>
@@ -63,7 +74,8 @@ object GeneratorCli
           (
             c.get[Path]("schema"),
             c.get[Path]("shared"),
-            c.get[NonEmptyList[Query]]("queries")
+            c.get[NonEmptyList[Query]]("queries"),
+            c.get[Option[String]]("packageName")
           ).mapN(Input.apply)
         }
 
@@ -79,7 +91,7 @@ object GeneratorCli
         .emits(kvs.toList)
         .lift[IO]
         .evalMap { i =>
-          Generator.mainGenerate[IO](i.schema, i.shared, validate) {
+          Generator.mainGenerate[IO](i.schema, i.shared, validate, i.packageName) {
             i.queries.toList.map { q =>
               Generator.Input(
                 q.query,

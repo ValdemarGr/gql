@@ -4,7 +4,7 @@ gql is a functional server and client GraphQL implementation for Scala.
 
 It enables succintly exposing and consuming GraphQL APIs in a purely functional way.
 
-* **Statically typed.** Statically typed through and trough.
+* **Statically typed.** Statically typed through and through.
 * **Purely functional.** Uses the simplest and most precise abstractions.
 * **Extensible.** Ability to add features on top of gql ranging from lightweight utility to spec-compliant schema transformations.
 * **And so much more!**

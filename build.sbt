@@ -177,7 +177,10 @@ lazy val clientCodegenSbt = project
   .settings(
     sbtPlugin := true,
     scalaVersion := "2.12.18",
-    name := "gql-client-codegen-sbt"
+    name := "gql-client-codegen-sbt",
+    libraryDependencies ++= Seq(
+      "io.circe" %% "circe-core" % "0.14.6"
+    )
   )
   .aggregate(clientCodegenCli)
 /* .enablePlugins(NoPublishPlugin) */
@@ -203,7 +206,7 @@ lazy val testCodeGen = project
         val s = s0.absolutePath.replace("\\", "\\\\")
         val outf = f / "query.scala"
         val outs = outf.absolutePath.replace("\\", "\\\\")
-        val input = s""" --validate --input {"schema":"${sp}","shared":"${s}","queries":[{"query":"${qp}","output":"${outs}"}]}"""
+        val input = s""" --validate --input {"schema":"${sp}","shared":"${s}","queries":[{"query":"${qp}","output":"${outs}"}],"packageName":"gql.client.gen.test"}"""
         val ip2: String = input.toString()
         (clientCodegenCli / Compile / run).toTask(ip2).map(_ => Seq(outf, s0))
       }.value

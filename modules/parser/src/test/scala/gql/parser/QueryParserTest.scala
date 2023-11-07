@@ -570,6 +570,29 @@ query ($foo: TestType = { a: 123 }) { id }
   query Test($arg: Data = { a: 1, b: { c: 2 } }) {
     field(arg: { a: 1, b: { c: $arg } })
   }
+  """,
+    """
+  #hey
+  query
+  # i am a query
+  {
+    #whith some comments
+    field
+    # more comments
+    (
+      # even more comments
+      arg: 1
+      # and more
+    ) 
+    # and more
+    {
+      # and more
+      field
+      # and more
+    }
+    # and some more
+  }
+  # and more
   """
   )
 

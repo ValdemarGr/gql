@@ -23,15 +23,40 @@ import java.io.File
 import scala.util.{Failure, Success}
 
 object GqlCodeGenPlugin extends AutoPlugin {
+  def safeListFiles(f: File): List[File] = {
+    if (f.exists()) f.listFiles().toList
+    else {
+      throw new IllegalArgumentException(s"File ${f.getPath()} does not exist.")
+    }
+  }
+
   object autoImport {
     object Gql {
-      sealed trait ResourceGroup
+      final case class GroupOptions(
+          packageName: String = "gql.client.generated"
+      ) {
+        def addPackageSuffix(suffix: String): GroupOptions =
+          copy(packageName = packageName + "." + suffix)
+      }
+
+      sealed trait ResourceGroup {
+        def modifyOptions(f: GroupOptions => GroupOptions): ResourceGroup
+      }
       final case class CustomResourceGroup(
           name: String,
           schemaPath: File,
-          files: Seq[File]
-      ) extends ResourceGroup
-      case object DefaultResourceGroup extends ResourceGroup
+          files: Seq[File],
+          options: GroupOptions = GroupOptions()
+      ) extends ResourceGroup {
+        def modifyOptions(f: GroupOptions => GroupOptions): CustomResourceGroup =
+          copy(options = f(options))
+      }
+      final case class DefaultResourceGroup(
+          options: GroupOptions = GroupOptions()
+      ) extends ResourceGroup {
+        def modifyOptions(f: GroupOptions => GroupOptions): DefaultResourceGroup =
+          copy(options = f(options))
+      }
 
       def resourceGroup(name: String, schema: File, files: File*): ResourceGroup =
         CustomResourceGroup(name, schema, files)
@@ -40,7 +65,7 @@ object GqlCodeGenPlugin extends AutoPlugin {
         CustomResourceGroup(
           name,
           path / "schema.graphql",
-          (path / "queries").listFiles().toList
+          safeListFiles((path / "queries"))
         )
       }
 
@@ -70,7 +95,7 @@ object GqlCodeGenPlugin extends AutoPlugin {
     List(
       ivyConfigurations += GqlCliConfig,
       Gql.validate := true,
-      Gql.resourceGroups := Seq(Gql.DefaultResourceGroup),
+      Gql.resourceGroups := Seq(Gql.DefaultResourceGroup()),
       Gql.findResources := {
         val rs = Gql.resourceGroups.value
 
@@ -97,18 +122,18 @@ object GqlCodeGenPlugin extends AutoPlugin {
                   |$hint""".stripMargin
             )
             None
-          } else Some(Gql.CustomResourceGroup(rg.name, schema, queries))
+          } else Some(rg)
         }
 
         val customs = rs
           .collect { case rg: Gql.CustomResourceGroup => verifyResourceGroup(rg) }
           .collect { case Some(rg) => rg }
         val default = rs
-          .collectFirst { case Gql.DefaultResourceGroup =>
+          .collectFirst { case Gql.DefaultResourceGroup(opts) =>
             val r = (Compile / resourceDirectory).value
             val schema = r / "schema.graphql"
-            val queries = Option((r / "queries").listFiles()).toList.flatMap(_.toList)
-            val rg = Gql.CustomResourceGroup("default", schema, queries)
+            val queries = Option(r / "queries").toList.flatMap(safeListFiles)
+            val rg = Gql.CustomResourceGroup("default", schema, queries, opts)
             verifyResourceGroup(rg)
           }
           .flatten
@@ -130,22 +155,32 @@ object GqlCodeGenPlugin extends AutoPlugin {
 
           def escapeSlash(s: String) = s.replace("\\", "\\\\")
 
+          import _root_.io.circe._
+          import _root_.io.circe.syntax._
+          import Json._
+
           val queryInputs = rg.files.map { in =>
             val fn = in.name.replaceAll("\\.", "_")
             val outFile = f / s"${fn}.scala"
 
-            CodeGenInput(
-              json = s"""{"query": "${escapeSlash(in.absolutePath)}", "output": "${escapeSlash(outFile.absolutePath)}"}""",
-              inFiles = Seq(in),
-              outFiles = Seq(outFile)
+            (
+              JsonObject(
+                "query" -> fromString(escapeSlash(in.absolutePath)),
+                "output" -> fromString(escapeSlash(outFile.absolutePath))
+              ).asJson,
+              Seq(in),
+              Seq(outFile)
             )
           }
-          val (queries, inFiless, outFiless) = queryInputs.flatMap(CodeGenInput.unapply).unzip3
+          val (queries, inFiless, outFiless) = queryInputs.unzip3
 
           CodeGenInput(
-            json =
-              s"""{"schema":"${escapeSlash(rg.schemaPath.absolutePath)}","shared":"${escapeSlash(sh.absolutePath)}","queries":[${queries
-                  .mkString(",")}]}""",
+            json = JsonObject(
+              "schema" -> fromString(escapeSlash(rg.schemaPath.absolutePath)),
+              "shared" -> fromString(escapeSlash(sh.absolutePath)),
+              "queries" -> arr(queries: _*),
+              "packageName" -> fromString(rg.options.packageName)
+            ).asJson.spaces2,
             inFiles = inFiless.flatten :+ rg.schemaPath,
             outFiles = outFiless.flatten ++ Seq(sh)
           )

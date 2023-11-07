@@ -49,8 +49,11 @@ object Generator {
   val toPascal: String => String =
     modifyHead(_.toUpper)
 
+  def escapeFieldName(name: String): String =
+    if (reservedScalaWords.contains(name)) s"`$name`" else name
+
   def scalaField(name: String, tpe: String): Doc =
-    Doc.text(name) + Doc.char(':') + Doc.space + Doc.text(tpe)
+    Doc.text(escapeFieldName(name)) + Doc.char(':') + Doc.space + Doc.text(tpe)
 
   def hardIntercalate(left: Doc, right: Doc, xs: List[Doc], sep: Doc = Doc.empty) = {
     left +
@@ -89,14 +92,16 @@ object Generator {
       tpe: InverseModifierStack[String],
       default: Option[V[AnyValue, Caret]]
   ) {
+    val escapedName = escapeFieldName(name)
+
     val isOmittable = default.isDefined || tpe.modifiers.headOption.contains(InverseModifier.Optional)
 
     val doc: Doc =
-      Doc.text(name) + Doc.char(':') + Doc.space + Doc.text(optUnless(!isOmittable)(tpe.showScala(identity))) +
+      Doc.text(escapedName) + Doc.char(':') + Doc.space + Doc.text(optUnless(!isOmittable)(tpe.showScala(identity))) +
         (if (isOmittable) Doc.text(" = None") else Doc.empty)
 
     def circeEncoderFieldOpt(objectName: String) = {
-      val idx = s"${objectName}.${name}"
+      val idx = s"${objectName}.${escapedName}"
       quoted(name) + Doc.text(" -> ") + (
         if (isOmittable) Doc.text(s"${idx}.map(_.asJson)")
         else Doc.text(s"Some(${idx}.asJson)")
@@ -116,7 +121,9 @@ object Generator {
   ) {
     val doc: Doc = {
       val helpers = fields.filter(_.isOmittable).map { f =>
-        Doc.text(s"def set${toPascal(f.name)}(value: ${f.tpe.showScala(identity)}): ${name} = copy(${f.name} = Some(value))")
+        Doc.text(
+          s"def set${toPascal(f.name)}(value: ${f.tpe.showScala(identity)}): ${name} = copy(${escapeFieldName(f.name)} = Some(value))"
+        )
       }
 
       caseClass(name, fields.map(_.doc), helpers)
@@ -599,7 +606,8 @@ object Generator {
 
   def generateExecutableDefs[F[_]: Parallel](
       env: Env,
-      query: NonEmptyList[ExecutableDefinition[Caret]]
+      query: NonEmptyList[ExecutableDefinition[Caret]],
+      packageName: String
   )(implicit
       P: CurrentPath[F],
       U: UsedInputTypes[F],
@@ -651,7 +659,7 @@ object Generator {
       Doc.intercalate(
         Doc.hardLine,
         List(
-          Doc.text("package gql.client.generated"),
+          Doc.text(s"package $packageName"),
           Doc.empty,
           imp("_root_.gql.client._"),
           imp("_root_.gql.client.dsl._"),
@@ -718,7 +726,7 @@ object Generator {
       case Right(x) => generateInputType(x)
     }
 
-  def generateInputs(env: Env, uis: List[UsedInput]): Doc = {
+  def generateInputs(env: Env, uis: List[UsedInput], packageName: String): Doc = {
     def walkObject[F[_]](
         x: TypeDefinition.InputObjectTypeDefinition
     )(implicit F: Monad[F], S: Stateful[F, Map[String, UsedInput]]): F[Unit] =
@@ -747,7 +755,7 @@ object Generator {
     Doc.intercalate(
       Doc.hardLine + Doc.hardLine,
       List(
-        Doc.text("package gql.client.generated"),
+        Doc.text(s"package $packageName"),
         Doc.intercalate(
           Doc.hardLine,
           List(
@@ -795,10 +803,11 @@ object Generator {
 
   def generateFor[F[_]](
       env: Env,
-      query: NonEmptyList[ExecutableDefinition[Caret]]
+      query: NonEmptyList[ExecutableDefinition[Caret]],
+      packageName: String
   )(implicit E: Err[F], F: Applicative[F]): F[(Set[UsedInput], Doc)] = {
     type F[A] = WriterT[EitherT[Kleisli[Eval, Chain[String], *], NonEmptyChain[String], *], Set[UsedInput], A]
-    generateExecutableDefs[F](env, query).run.value.run(Chain.empty).value.fold(E.raise, F.pure)
+    generateExecutableDefs[F](env, query, packageName).run.value.run(Chain.empty).value.fold(E.raise, F.pure)
   }
 
   def getSchemaFrom(s: String): Either[String, Map[String, TypeDefinition]] =
@@ -831,10 +840,11 @@ object Generator {
 
   def generateForInput[F[_]: Async: Err: Files](
       env: Env,
-      i: Input
+      i: Input,
+      packageName: String
   ): F[(String, Set[UsedInput], Output, NonEmptyList[ExecutableDefinition[Caret]])] =
     readInputData[F](i)
-      .flatMap { case (q, eds) => generateFor(env, eds) tupleLeft ((q, eds)) }
+      .flatMap { case (q, eds) => generateFor(env, eds, packageName) tupleLeft ((q, eds)) }
       .map { case ((q, eds), (usedInputs, doc)) => (q, usedInputs, Output(i.output, doc), eds) }
 
   def gatherFragInfo[F[_]: Async: Err: Files](i: Input): F[List[FragmentInfo]] =
@@ -868,12 +878,12 @@ object Generator {
       sourceQuery: String
   )
 
-  def readAndGenerate[F[_]: Files](schemaPath: Path, sharedPath: Path, validate: Boolean)(
+  def readAndGenerate[F[_]: Files](schemaPath: Path, sharedPath: Path, validate: Boolean, packageName: String)(
       data: List[Input]
   )(implicit F: Async[F], E: Err[F]): F[Unit] =
     readEnv[F](schemaPath)(data).flatMap { e =>
       data
-        .traverse(d => generateForInput[F](e, d) tupleLeft d)
+        .traverse(d => generateForInput[F](e, d, packageName) tupleLeft d)
         .flatMap { xs =>
           val translated: List[ExecutableDefinition[PositionalInfo]] = xs.flatMap { case (i, (q, _, _, eds)) =>
             eds.toList.map(_.map(c => PositionalInfo(c, i, q)))
@@ -913,15 +923,77 @@ object Generator {
           val writeF: F[Unit] =
             xs.flatTraverse { case (_, (_, used, x, _)) =>
               writeStream[F](x.path, x.doc).compile.drain.as(used.toList)
-            }.flatMap(_.distinct.toNel.traverse_(nel => writeStream[F](sharedPath, generateInputs(e, nel.toList)).compile.drain))
+            }.flatMap(_.distinct.toNel.traverse_ { nel =>
+              writeStream[F](sharedPath, generateInputs(e, nel.toList, packageName)).compile.drain
+            })
 
           F.whenA(validate)(validateF) *> writeF
         }
     }
 
-  def mainGenerate[F[_]: Async](schemaPath: Path, sharedPath: Path, validate: Boolean)(data: List[Input]): F[List[String]] = {
+  def mainGenerate[F[_]: Async](
+      schemaPath: Path,
+      sharedPath: Path,
+      validate: Boolean,
+      packageName: Option[String]
+  )(data: List[Input]): F[List[String]] = {
     type G[A] = EitherT[F, NonEmptyChain[String], A]
     implicit val files: Files[G] = Files.forAsync[G]
-    readAndGenerate[G](schemaPath, sharedPath, validate)(data).value.map(_.fold(_.toList, _ => Nil))
+    readAndGenerate[G](schemaPath, sharedPath, validate, packageName.getOrElse("gql.client.generated"))(data).value
+      .map(_.fold(_.toList, _ => Nil))
   }
+
+  // https://github.com/rgueldem/ScalaPB/blob/5bd28cb38728e29dc3743a695b98709243f89381/compiler-plugin/src/main/scala/scalapb/compiler/DescriptorImplicits.scala#L1106
+  lazy val reservedScalaWords = Set(
+    "abstract",
+    "case",
+    "catch",
+    "class",
+    "def",
+    "do",
+    "else",
+    "enum",
+    "export",
+    "extends",
+    "false",
+    "final",
+    "finally",
+    "for",
+    "forSome",
+    "given",
+    "if",
+    "implicit",
+    "import",
+    "infix",
+    "inline",
+    "lazy",
+    "macro",
+    "match",
+    "ne",
+    "new",
+    "null",
+    "object",
+    "opaque",
+    "open",
+    "override",
+    "package",
+    "private",
+    "protected",
+    "return",
+    "sealed",
+    "super",
+    "then",
+    "this",
+    "throw",
+    "trait",
+    "transparent",
+    "try",
+    "true",
+    "type",
+    "val",
+    "var",
+    "while",
+    "with",
+    "yield"
+  )
 }
