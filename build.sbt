@@ -206,7 +206,8 @@ lazy val testCodeGen = project
         val s = s0.absolutePath.replace("\\", "\\\\")
         val outf = f / "query.scala"
         val outs = outf.absolutePath.replace("\\", "\\\\")
-        val input = s""" --validate --input {"schema":"${sp}","shared":"${s}","queries":[{"query":"${qp}","output":"${outs}"}],"packageName":"gql.client.gen.test"}"""
+        val input =
+          s""" --validate --input {"schema":"${sp}","shared":"${s}","queries":[{"query":"${qp}","output":"${outs}"}],"packageName":"gql.client.gen.test"}"""
         val ip2: String = input.toString()
         (clientCodegenCli / Compile / run).toTask(ip2).map(_ => Seq(outf, s0))
       }.value
@@ -240,7 +241,7 @@ lazy val serverNatchez = project
   .settings(
     name := "gql-natchez",
     libraryDependencies ++= Seq(
-      "org.tpolecat" %% "natchez-core" % "0.3.2"
+      "org.tpolecat" %% "natchez-core" % "0.3.4"
     )
   )
   .dependsOn(core)
@@ -307,7 +308,7 @@ lazy val relationalSkunk = project
     name := "gql-relational-skunk",
     libraryDependencies ++= Seq(
       "org.tpolecat" %% "skunk-core" % "0.6.0",
-      "org.tpolecat" %% "natchez-noop" % "0.3.2" % Test
+      "org.tpolecat" %% "natchez-noop" % "0.3.4" % Test
     )
   )
 
@@ -363,7 +364,7 @@ lazy val docs = project
     ),
     libraryDependencies ++= Seq(
       "com.47deg" %% "fetch" % "3.1.2",
-      "org.tpolecat" %% "natchez-noop" % "0.3.2"
+      "org.tpolecat" %% "natchez-noop" % "0.3.4"
     ),
     tlFatalWarnings := false
   )
