@@ -114,8 +114,8 @@ lazy val sharedSettings = Seq(
     "org.typelevel" %% "cats-mtl" % "1.3.1",
     "org.typelevel" %% "cats-core" % "2.9.0",
     "org.typelevel" %% "cats-free" % "2.9.0",
-    "co.fs2" %% "fs2-core" % "3.7.0",
-    "co.fs2" %% "fs2-io" % "3.7.0",
+    "co.fs2" %% "fs2-core" % "3.9.3",
+    "co.fs2" %% "fs2-io" % "3.9.3",
     "org.typelevel" %% "cats-parse" % "0.3.8",
     "io.circe" %% "circe-core" % "0.14.6",
     "io.circe" %% "circe-parser" % "0.14.6",
@@ -206,7 +206,8 @@ lazy val testCodeGen = project
         val s = s0.absolutePath.replace("\\", "\\\\")
         val outf = f / "query.scala"
         val outs = outf.absolutePath.replace("\\", "\\\\")
-        val input = s""" --validate --input {"schema":"${sp}","shared":"${s}","queries":[{"query":"${qp}","output":"${outs}"}],"packageName":"gql.client.gen.test"}"""
+        val input =
+          s""" --validate --input {"schema":"${sp}","shared":"${s}","queries":[{"query":"${qp}","output":"${outs}"}],"packageName":"gql.client.gen.test"}"""
         val ip2: String = input.toString()
         (clientCodegenCli / Compile / run).toTask(ip2).map(_ => Seq(outf, s0))
       }.value
