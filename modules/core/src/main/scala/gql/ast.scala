@@ -22,6 +22,7 @@ import cats.data._
 import gql.resolver._
 import java.util.UUID
 import gql.parser.{Value => V, Const}
+import scala.collection.immutable._
 
 /** A tree-like structure representing a GraphQL schema, akin to most schema builders.
   */

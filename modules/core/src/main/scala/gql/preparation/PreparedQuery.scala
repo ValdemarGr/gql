@@ -24,6 +24,7 @@ import gql.parser.AnyValue
 import gql.Arg
 import cats.Eval
 import gql.ast
+import scala.collection.immutable._
 
 sealed trait PreparedField[+F[_], A] extends Product with Serializable
 

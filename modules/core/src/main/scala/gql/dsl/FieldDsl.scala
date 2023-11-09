@@ -21,6 +21,7 @@ import gql._
 import cats.data._
 import cats._
 import gql.dsl.aliases._
+import scala.collection.immutable._
 
 trait FieldDsl[F[_]] {
   def fields[A](hd: (String, Field[F, A, ?]), tl: (String, Field[F, A, ?])*): Fields[F, A] =
