@@ -1,6 +1,6 @@
-query AlienQuery($name: String!, $struct: FindDogInput, $dogCommand: DogCommand! = DOWN, $x: Escaping = {type: "foo"}) {
+query AlienQuery($name: String!, $struct: FindDogInput, $dogCommand: DogCommand! = DOWN, $case: Escaping = {type: "foo"}) {
   outputOnly
-  escaping(x: $x)
+  escaping(x: $case)
   dog {
     ... DogFragment
     ... on Dog {

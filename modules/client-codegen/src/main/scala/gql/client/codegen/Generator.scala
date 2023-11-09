@@ -238,9 +238,10 @@ object Generator {
               val decls = vars.toList.map(_.variableDecl)
 
               val (contraPart, contraType) = if (vars.size > 1) {
-                val tupleApply = ("(" * vars.size) + vars.map(_.name).toList.mkString("), ") + ")"
+                val escapedNames = vars.map(x => "var_" + x.name)
+                val tupleApply = ("(" * vars.size) + escapedNames.toList.mkString("), ") + ")"
 
-                val unapplyPart = verticalApply("Variables", vars.toList.map(x => Doc.text(x.name)))
+                val unapplyPart = verticalApply("Variables", escapedNames.toList.map(x => Doc.text(x)))
 
                 val contra = Doc.text(s".contramap[Variables]") +
                   hardIntercalate(
