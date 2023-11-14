@@ -107,7 +107,7 @@ lazy val sharedSettings = Seq(
         "-Wconf:cat=unused-nowarn:s",
         "-Ywarn-unused:-nowarn",
         "-Xmigration",
-        "-Xsource:3",
+        "-Xsource:3"
       )
     } else Seq.empty // Seq("-explain")
   },
@@ -124,7 +124,7 @@ lazy val sharedSettings = Seq(
     "org.tpolecat" %% "sourcepos" % "1.1.0",
     "org.typelevel" %% "paiges-core" % "0.4.2",
     "org.scalameta" %% "munit" % "1.0.0-M10" % Test,
-    "org.typelevel" %% "munit-cats-effect" % "2.0.0-M3" % Test
+    "org.typelevel" %% "munit-cats-effect" % "2.0.0-M4" % Test
   )
 )
 
