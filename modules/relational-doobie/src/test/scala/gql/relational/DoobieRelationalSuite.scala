@@ -22,6 +22,7 @@ import cats.effect.std.UUIDGen
 import munit.AnyFixture
 import doobie._
 import doobie.implicits._
+import scala.collection.immutable._
 
 class DoobieRelationalSuite extends RelationalSuiteTables(DoobieIntegraion) {
   def intDecoder: Read[Int] = Read[Int]

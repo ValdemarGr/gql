@@ -26,6 +26,7 @@ import cats.effect.std.UUIDGen
 import munit.AnyFixture
 import gql.relational.skunk.dsl._
 import skunk.data.TransactionStatus
+import scala.collection.immutable._
 
 class SkunkRelationalSuite extends RelationalSuiteTables(SkunkIntegration) {
   def intDecoder: Decoder[Int] = int4
