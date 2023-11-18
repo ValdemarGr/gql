@@ -107,7 +107,7 @@ lazy val sharedSettings = Seq(
         "-Wconf:cat=unused-nowarn:s",
         "-Ywarn-unused:-nowarn",
         "-Xmigration",
-        "-Xsource:3",
+        "-Xsource:3"
       )
     } else Seq.empty // Seq("-explain")
   },
