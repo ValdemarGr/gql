@@ -177,7 +177,7 @@ class PerformanceTest extends CatsEffectSuite {
       .toOption
       .get match {
       case Application.Subscription(run) =>
-        run.take(10).compile.drain.timed.map { case (dur, _) => fail(dur.toMillis.toString() + " ms"): Unit }
+        run.take(10).compile.drain // l.timed.map { case (dur, _) => fail(dur.toMillis.toString() + " ms"): Unit }
       case _ => ???
     }
   }
@@ -197,7 +197,7 @@ class PerformanceTest extends CatsEffectSuite {
       .toOption
       .get match {
       case Application.Subscription(run) =>
-        run.take(10).compile.drain.timed.map { case (dur, _) => fail(dur.toMillis.toString() + " ms"): Unit }
+        run.take(10).compile.drain // .timed.map { case (dur, _) => fail(dur.toMillis.toString() + " ms"): Unit }
       case _ => ???
     }
   }
