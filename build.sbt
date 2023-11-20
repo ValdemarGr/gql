@@ -107,7 +107,7 @@ lazy val sharedSettings = Seq(
         "-Wconf:cat=unused-nowarn:s",
         "-Ywarn-unused:-nowarn",
         "-Xmigration",
-        "-Xsource:3",
+        "-Xsource:3"
       )
     } else Seq.empty // Seq("-explain")
   },
@@ -322,8 +322,8 @@ lazy val relationalDoobie = project
   .settings(
     name := "gql-relational-doobie",
     libraryDependencies ++= Seq(
-      "org.tpolecat" %% "doobie-core" % "1.0.0-RC4",
-      "org.tpolecat" %% "doobie-postgres" % "1.0.0-RC4" % Test
+      "org.tpolecat" %% "doobie-core" % "1.0.0-RC5",
+      "org.tpolecat" %% "doobie-postgres" % "1.0.0-RC5" % Test
     )
   )
 
