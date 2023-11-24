@@ -107,7 +107,7 @@ lazy val sharedSettings = Seq(
         "-Wconf:cat=unused-nowarn:s",
         "-Ywarn-unused:-nowarn",
         "-Xmigration",
-        "-Xsource:3",
+        "-Xsource:3"
       )
     } else Seq.empty // Seq("-explain")
   },
@@ -309,7 +309,7 @@ lazy val relationalSkunk = project
   .settings(
     name := "gql-relational-skunk",
     libraryDependencies ++= Seq(
-      "org.tpolecat" %% "skunk-core" % "0.6.0",
+      "org.tpolecat" %% "skunk-core" % "0.6.2",
       "org.tpolecat" %% "natchez-noop" % "0.3.4" % Test
     )
   )
