@@ -107,7 +107,7 @@ lazy val sharedSettings = Seq(
         "-Wconf:cat=unused-nowarn:s",
         "-Ywarn-unused:-nowarn",
         "-Xmigration",
-        "-Xsource:3",
+        "-Xsource:3"
       )
     } else Seq.empty // Seq("-explain")
   },
@@ -270,7 +270,7 @@ lazy val serverGoi = project
     name := "gql-server-goi",
     libraryDependencies ++= Seq(
       "com.beachape" %% "enumeratum" % "1.7.2",
-      "org.typelevel" %% "twiddles-core" % "0.6.0"
+      "org.typelevel" %% "twiddles-core" % "0.6.1"
     )
   )
   .dependsOn(core)
