@@ -22,7 +22,7 @@ import fs2.{Chunk, Stream}
 import cats.data._
 import gql._
 import cats._
-import org.typelevel.paiges.Doc
+import org.typelevel.paiges._
 import scala.concurrent.duration.FiniteDuration
 
 // Offers a flat representation of a scope tree of streams
@@ -55,7 +55,7 @@ object SignalScopes {
    * A concurrent accumulation data structure with bounded size (backpressure when full)
    * Uncons all (unblock all blocked pushers)
    */
-  def apply[F[_], A: Doced](takeOne: Boolean, debug: DebugPrinter[F], accumulate: Option[FiniteDuration], root: Scope[F])(implicit
+  def apply[F[_], A: Document](takeOne: Boolean, debug: DebugPrinter[F], accumulate: Option[FiniteDuration], root: Scope[F])(implicit
       F: Temporal[F]
   ): F[SignalScopes[F, A]] = {
 
@@ -72,7 +72,7 @@ object SignalScopes {
 
       def printTreeF = getPrintState >>= root.string
 
-      def printElems(xs: List[ResourceInfo[F, A]], D: Doced[A]): F[String] =
+      def printElems(xs: List[ResourceInfo[F, A]], D: Document[A]): F[String] =
         xs
           .traverse(x => x.scope.isOpen tupleLeft x)
           .flatMap { ys =>
@@ -81,7 +81,7 @@ object SignalScopes {
                 .fields(
                   ys.map { case (r, open) =>
                     DebugPrinter.Printer.fields(
-                      DebugPrinter.Printer.resourceInfoDoced(open, lookup)(D).apply(r)
+                      DebugPrinter.Printer.resourceInfoDoced(open, lookup)(D).document(r)
                     )
                   }: _*
                 )
@@ -104,7 +104,7 @@ object SignalScopes {
                   fs2.Stream
                     .repeatEval(sig.uncons)
                     .map(xs => Chunk.seq(xs.values.toList))
-                    .evalTap(cs => debug.eval(printElems(cs.toList, Doced[A]).map(s => s"unconsed:\n$s")))
+                    .evalTap(cs => debug.eval(printElems(cs.toList, Document[A]).map(s => s"unconsed:\n$s")))
                     .evalTap { xs =>
                       /*
                        * Consider the following pathelogical scope tree:
@@ -141,7 +141,7 @@ object SignalScopes {
                     .evalMap(_.filterA(_.scope.isOpen))
                     .evalTap { cs =>
                       debug.eval {
-                        printElems(cs.toList, Doced.from[A](_ => Doc.text("ditto")))
+                        printElems(cs.toList, Document.instance[A](_ => Doc.text("ditto")))
                           .map(s => s"unconsed after removing old children:\n$s")
                       }
                     }
