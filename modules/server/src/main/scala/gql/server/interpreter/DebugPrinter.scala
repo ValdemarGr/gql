@@ -50,8 +50,8 @@ object DebugPrinter {
     def record(name: String, d: Doc): Doc =
       recordBy(name, Doc.char('('), Doc.char(')'), d)
 
-    def preparedFieldDoced[F[_]]: Doced[PreparedField[F, ?]] = pf =>
-      pf match {
+    def preparedFieldDoced[F[_]]: Document[PreparedField[F, ?]] =
+      Document.instance[PreparedField[F, ?]] {
         case PreparedSpecification(spec, sels) =>
           record(
             "PreparedSpecification",
@@ -61,7 +61,7 @@ object DebugPrinter {
                 "PreparedSelections",
                 Doc.char('{'),
                 Doc.char('}'),
-                fields(sels.map(preparedFieldDoced(_)).toList: _*)
+                fields(sels.map(preparedFieldDoced.document(_)).toList: _*)
               )
             )
           )
@@ -71,35 +71,37 @@ object DebugPrinter {
             kvs(
               "name" -> Doc.text(name),
               "alias" -> Doc.text(alias.toString()),
-              "cont" -> preparedContDoced(cont)
+              "cont" -> preparedContDoced.document(cont)
             )
           )
       }
 
-    def preparedDoced[F[_]]: Doced[Prepared[F, ?]] = pc =>
-      pc match {
+    def preparedDoced[F[_]]: Document[Prepared[F, ?]] =
+      Document.instance[Prepared[F, ?]] {
         case Selection(fields, _) =>
           record(
             "Selection",
-            Doc.intercalate(Doc.char(',') + Doc.space, fields.map(preparedFieldDoced(_)).toList)
+            Doc.intercalate(Doc.char(',') + Doc.space, fields.map(preparedFieldDoced.document(_)).toList)
           )
-        case PreparedList(of, _)   => record("PreparedList", preparedContDoced(of))
-        case PreparedOption(of)    => record("PreparedOption", preparedContDoced(of))
+        case PreparedList(of, _)   => record("PreparedList", preparedContDoced.document(of))
+        case PreparedOption(of)    => record("PreparedOption", preparedContDoced.document(of))
         case PreparedLeaf(name, _) => record("PreparedLeaf", Doc.text(name))
       }
 
-    def preparedContDoced[F[_]]: Doced[PreparedCont[F, ?, ?]] = pc =>
-      record(
-        "PreparedCont",
-        kvs(
-          "edges" -> preparedStepDoced(pc.edges),
-          "cont" -> preparedDoced(pc.cont)
+    def preparedContDoced[F[_]]: Document[PreparedCont[F, ?, ?]] =
+      Document.instance[PreparedCont[F, ?, ?]] { pc =>
+        record(
+          "PreparedCont",
+          kvs(
+            "edges" -> preparedStepDoced.document(pc.edges),
+            "cont" -> preparedDoced.document(pc.cont)
+          )
         )
-      )
+      }
 
-    def preparedStepDoced[F[_]]: Doced[PreparedStep[F, ?, ?]] = { pc =>
+    def preparedStepDoced[F[_]]: Document[PreparedStep[F, ?, ?]] = {
       import PreparedStep._
-      pc match {
+      Document.instance[PreparedStep[F, ?, ?]] {
         case Lift(_)           => Doc.text("Lift(...)")
         case EmbedEffect(_)    => Doc.text("EmbedEffect")
         case InlineBatch(_, _) => Doc.text("InlineBatch")
@@ -107,46 +109,48 @@ object DebugPrinter {
           record("EmbedStream", kvs("signal" -> Doc.text(signal.toString())))
         case EmbedError() => Doc.text("EmbedError")
         case Compose(left, right) =>
-          record("Compose", kvs("left" -> preparedStepDoced(left), "right" -> preparedStepDoced(right)))
+          record("Compose", kvs("left" -> preparedStepDoced.document(left), "right" -> preparedStepDoced.document(right)))
         case GetMeta(meta) =>
           record("GetMeta", kvs("meta" -> Doc.text(meta.toString())))
         case First(step) =>
-          record("First", kvs("step" -> preparedStepDoced(step)))
+          record("First", kvs("step" -> preparedStepDoced.document(step)))
         case Batch(id, globalEdgeId) =>
           record("Batch", kvs("id" -> Doc.text(id.toString()), "globalEdgeId" -> Doc.text(globalEdgeId.toString())))
         case Choose(fac, fbc) =>
-          record("Choose", kvs("fac" -> preparedStepDoced(fac), "fbc" -> preparedStepDoced(fbc)))
+          record("Choose", kvs("fac" -> preparedStepDoced.document(fac), "fbc" -> preparedStepDoced.document(fbc)))
       }
     }
 
-    def stepContDoced[F[_]]: Doced[StepCont[F, ?, ?]] = sc =>
+    def stepContDoced[F[_]]: Document[StepCont[F, ?, ?]] = sc =>
       sc match {
-        case StepCont.Done(p) => record("StepCont.Done", preparedDoced(p))
+        case StepCont.Done(p) => record("StepCont.Done", preparedDoced.document(p))
         case StepCont.Continue(step, next) =>
           record(
             "StepCont.Continue",
             kvs(
-              "step" -> preparedStepDoced(step),
-              "cont" -> stepContDoced(next)
+              "step" -> preparedStepDoced.document(step),
+              "cont" -> stepContDoced.document(next)
             )
           )
-        case StepCont.Join(_, next)      => record("StepCont.Join", stepContDoced(next))
-        case StepCont.TupleWith(_, next) => record("StepCont.TupleWith", stepContDoced(next))
+        case StepCont.Join(_, next)      => record("StepCont.Join", stepContDoced.document(next))
+        case StepCont.TupleWith(_, next) => record("StepCont.TupleWith", stepContDoced.document(next))
       }
 
-    def streamingDataDoced[F[_]]: Doced[StreamingData[F, ?, ?]] = sd =>
-      record(
-        "StreamingData",
-        kvs(
-          "originIndex" -> Doc.text(sd.originIndex.toString()),
-          "edges" -> stepContDoced(sd.edges),
-          "value" -> Doc.text(sd.value.leftMap(_.getMessage()).map(_.getClass().getName()).toString())
+    def streamingDataDoced[F[_]]: Document[StreamingData[F, ?, ?]] =
+      Document[StreamingData[F, ?, ?]] { sd =>
+        record(
+          "StreamingData",
+          kvs(
+            "originIndex" -> Doc.text(sd.originIndex.toString()),
+            "edges" -> stepContDoced.document(sd.edges),
+            "value" -> Doc.text(sd.value.leftMap(_.getMessage()).map(_.getClass().getName()).toString())
+          )
         )
-      )
+      }
 
     def resourceInfoDoced[F[_], A](isOpen: Boolean, names: Map[Unique.Token, String])(implicit
-        D: Doced[A]
-    ): Doced[SignalScopes.ResourceInfo[F, A]] = { ri =>
+        D: Document[A]
+    ): Document[SignalScopes.ResourceInfo[F, A]] = { ri =>
       def makeName(id: Unique.Token): Doc =
         Doc.text(names.get(id).getOrElse(id.toString()))
 
@@ -156,7 +160,7 @@ object DebugPrinter {
           "parentName" -> makeName(ri.parent.scope.id),
           "name" -> makeName(ri.scope.id),
           "open" -> Doc.text(isOpen.toString()),
-          "value" -> D(ri.value)
+          "value" -> D.document(ri.value)
         )
       )
     }
