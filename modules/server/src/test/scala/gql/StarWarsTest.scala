@@ -607,12 +607,15 @@ class StarWarsTest extends CatsEffectSuite {
       {
         "errors": [
   {
-    "message" : "Field 'cors' is not a member of `Query`.",
+    "message" : "Field 'dorse' is not a member of `Character`.",
     "locations" : [
       {
-        "line" : 2,
-        "column" : 8
+        "line" : 7,
+        "column" : 10
       }
+    ],
+    "path" : [
+      "hero"
     ]
   },
   {
@@ -628,15 +631,12 @@ class StarWarsTest extends CatsEffectSuite {
     ]
   },
   {
-    "message" : "Field 'dorse' is not a member of `Character`.",
+    "message" : "Field 'cors' is not a member of `Query`.",
     "locations" : [
       {
-        "line" : 7,
-        "column" : 10
+        "line" : 2,
+        "column" : 8
       }
-    ],
-    "path" : [
-      "hero"
     ]
   }
         ]

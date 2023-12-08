@@ -22,8 +22,7 @@ import cats.mtl._
 import gql.ast._
 import gql.parser.GraphqlParser
 import gql.preparation.PositionalError
-import gql.preparation.ArgParsing
-import gql.preparation.RootPreparation
+import gql.preparation._
 import gql.preparation.FieldMerging
 
 object Validation {
@@ -318,10 +317,9 @@ object Validation {
         arg.entries.toChain
           .mapFilter(x => x.defaultValue.tupleLeft(x))
           .traverse_[G, Unit] { case (a: ArgValue[a], pv) =>
-            RootPreparation.Stack.runK[Unit] {
-              ArgParsing[RootPreparation.Stack[Unit, *], Unit](Map.empty)
-                .decodeIn[a](a.input.value, pv.map(List(_)), ambigiousEnum = false)
-            } match {
+            (new ArgParsing[Unit](Map.empty))
+              .decodeIn[a](a.input.value, pv.map(List(_)), ambigiousEnum = false)
+              .run match {
               case Left(errs) =>
                 errs.traverse_ { err =>
                   val suf = err.position
@@ -433,10 +431,9 @@ object Validation {
                         case (None, Some(_)) =>
                           raise[F, G](Error.InterfaceImplementationMissingDefaultArg(ol.name, i.value.name, k, argName))
                         case (Some(ld), Some(rd)) =>
-                          RootPreparation.Stack
-                            .runK {
-                              FieldMerging[RootPreparation.Stack[Unit, *], Unit].compareValues(ld, rd, None)
-                            }
+                          (new FieldMerging[Unit])
+                            .compareValues(ld, rd, None)
+                            .run
                             .swap
                             .toOption
                             .traverse_(_.traverse_ { pe =>
