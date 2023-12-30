@@ -49,3 +49,19 @@ object StepCont {
       case _: Done[?, ?]            => cont
     }
 }
+
+sealed trait Continuation[F[_], -I] {
+  def contramap[I2](f: I2 => I): Continuation[F, I2] =
+    Continuation.Continue[F, I2, I](PreparedStep.Lift[F, I2, I](f), this)
+}
+object Continuation {
+  final case class Done[F[_], I](prep: Prepared[F, I]) extends Continuation[F, I]
+  final case class Continue[F[_], I, C](
+    step: PreparedStep[F, I, C],
+    next: Continuation[F, C]
+  ) extends Continuation[F, I]
+  // final case class TupleWith[F[_], I, A](
+  //   a: A,
+  //   next: Continuation[F, (I, A)]
+  // ) extends Continuation[F, I]
+}

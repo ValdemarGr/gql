@@ -358,7 +358,11 @@ object SubqueryInterpreter {
 }
 
 import cats.effect.implicits._
-class Go[F[_]]()(implicit
+class Go[F[_]](
+  ss: SignalScopes[F, StreamingData[F, ?, ?]],
+  sup: Supervisor[F],
+  throttle: F ~> F
+)(implicit
     F: Async[F]
 ) {
   def interpretSelection[I](
@@ -401,5 +405,40 @@ class Go[F[_]]()(implicit
       ps: PreparedStep[F, I, O],
       cont: Prepared[F, O],
       en: EvalNode[F, I]
-  ): F[Json] = ???
+  ): F[Json] = {
+    def goCont[I](
+        c: Continuation[F, I],
+        en: EvalNode[F, I]
+    ): F[Json] =
+      c match {
+        case Continuation.Done(prep)             => interpretPrepared(prep, en)
+        case fa: Continuation.Continue[F, I, c]  => goStep[I, c](fa.step, fa.next, en)
+        // case fa: Continuation.TupleWith[F, I, a] => goCont[(I, a)](fa.next, en.map((_, fa.a)))
+      }
+
+    def goStep[I, O](
+        ps: PreparedStep[F, I, O],
+        cont: Continuation[F, O],
+        en: EvalNode[F, I]
+    ): F[Json] = {
+      import PreparedStep._
+      ps match {
+        case Lift(f) => goCont(cont, en.map(f))
+        // TODO submit timing
+        case alg: EmbedEffect[F, i] =>
+          (en.value: F[i]).flatMap(i => goCont(cont, en.setValue(i)))
+        case alg: Compose[F, I, a, O] =>
+          goStep(alg.left, Continuation.Continue(alg.right, cont), en)
+        case alg: Choose[F, a, b, c, d] =>
+          (en.value: Either[a, b]) match {
+            case Left(a) => goStep(alg.fac, cont.contramap[c](Left(_)), en.setValue(a))
+            case Right(b) => goStep(alg.fbc, cont.contramap[d](Right(_)), en.setValue(b))
+          }
+        case alg: First[F, i2, o2, c2] =>
+          val (i2, c2) = en.value: (i2, c2)
+          goStep(alg.step, cont.contramap[o2](o2 => (o2, c2)), en.setValue(i2))
+      }
+    }
+    ???
+  }
 }
