@@ -356,3 +356,50 @@ object SubqueryInterpreter {
       }
     }
 }
+
+import cats.effect.implicits._
+class Go[F[_]]()(implicit
+    F: Async[F]
+) {
+  def interpretSelection[I](
+      fields: List[PreparedField[F, I]],
+      en: EvalNode[F, I]
+  ): F[Chain[(String, Json)]] = {
+    fields.parTraverse {
+      case fa: PreparedSpecification[F, I, a] =>
+        val x = fa.specialization.specify(en.value)
+        // TODO raise errors
+        x.right.flatten
+          .traverse(a => interpretSelection[a](fa.selection, en.setValue(a)))
+          .map(_.getOrElse(Chain.empty))
+      case df: PreparedDataField[F, I, a] =>
+        // TODO
+        F.pure(Chain.empty[(String, Json)])
+    }
+    ???
+  }
+
+  def interpretPrepared[I](
+      s: Prepared[F, I],
+      en: EvalNode[F, I]
+  ): F[Json] =
+    s match {
+      case PreparedLeaf(_, enc) => F.pure(enc(en.value))
+      case Selection(xs, _)     => interpretSelection(xs, en).map(_.toList.toMap.asJson)
+      case lst: PreparedList[F, a, I, b] =>
+        lst.toSeq(en.value).zipWithIndex.parTraverse { case (a, i) =>
+          interpretEffect[a, b](lst.of.edges, lst.of.cont, en.modify(_.index(i)).setValue(a))
+        }
+        F.pure(Json.Null)
+      case opt: PreparedOption[F, i, a] =>
+        val en2: Option[i] = en.value
+        en2.traverse(i => interpretEffect[i, a](opt.of.edges, opt.of.cont, en.setValue(i)))
+        F.pure(Json.Null)
+    }
+
+  def interpretEffect[I, O](
+      ps: PreparedStep[F, I, O],
+      cont: Prepared[F, O],
+      en: EvalNode[F, I]
+  ): F[Json] = ???
+}
