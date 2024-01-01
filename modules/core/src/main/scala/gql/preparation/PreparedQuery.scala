@@ -41,22 +41,63 @@ final case class StepEffectId(
     edgeId: UniqueEdgeCursor
 )
 
-sealed trait PreparedStep[+F[_], -I, +O] extends Product with Serializable
+sealed trait PreparedStep[+F[_], -I, +O] extends Product with Serializable {
+  def nodeId: NodeId
+}
 object PreparedStep {
-  final case class Lift[F[_], I, O](f: I => O) extends AnyRef with PreparedStep[F, I, O]
-  final case class EmbedEffect[F[_], I](sei: StepEffectId) extends AnyRef with PreparedStep[F, F[I], I]
-  final case class EmbedStream[F[_], I](signal: Boolean, sei: StepEffectId) extends AnyRef with PreparedStep[F, fs2.Stream[F, I], I]
-  final case class EmbedError[F[_], I]() extends AnyRef with PreparedStep[F, Ior[String, I], I]
-  final case class Compose[F[_], I, A, O](left: PreparedStep[F, I, A], right: PreparedStep[F, A, O])
-      extends AnyRef
+  final case class Lift[F[_], I, O](
+      nodeId: NodeId,
+      f: I => O
+  ) extends AnyRef
       with PreparedStep[F, I, O]
-  final case class GetMeta[F[_], I](meta: Eval[PreparedMeta[F]]) extends AnyRef with PreparedStep[Nothing, I, FieldMeta[F]]
-  final case class First[F[_], I, O, C](step: PreparedStep[F, I, O]) extends AnyRef with PreparedStep[F, (I, C), (O, C)]
-  final case class Batch[F[_], K, V](id: Step.BatchKey[K, V], nodeId: UniqueBatchInstance[K, V])
-      extends AnyRef
-      with PreparedStep[F, Set[K], Map[K, V]]
-  final case class InlineBatch[F[_], K, V](run: Set[K] => F[Map[K, V]], sei: StepEffectId) extends PreparedStep[F, Set[K], Map[K, V]]
+  final case class EmbedEffect[F[_], I](
+      sei: StepEffectId
+  ) extends AnyRef
+      with PreparedStep[F, F[I], I] {
+    def nodeId: NodeId = sei.nodeId
+  }
+  final case class EmbedStream[F[_], I](
+      signal: Boolean,
+      sei: StepEffectId
+  ) extends AnyRef
+      with PreparedStep[F, fs2.Stream[F, I], I] {
+    def nodeId: NodeId = sei.nodeId
+  }
+  final case class EmbedError[F[_], I](
+      nodeId: NodeId
+  ) extends AnyRef
+      with PreparedStep[F, Ior[String, I], I]
+  final case class Compose[F[_], I, A, O](
+      nodeId: NodeId,
+      left: PreparedStep[F, I, A],
+      right: PreparedStep[F, A, O]
+  ) extends AnyRef
+      with PreparedStep[F, I, O]
+  final case class GetMeta[F[_], I](
+      nodeId: NodeId,
+      meta: Eval[PreparedMeta[F]]
+  ) extends AnyRef
+      with PreparedStep[Nothing, I, FieldMeta[F]]
+  final case class First[F[_], I, O, C](
+      nodeId: NodeId,
+      step: PreparedStep[F, I, O]
+  ) extends AnyRef
+      with PreparedStep[F, (I, C), (O, C)]
+  final case class Batch[F[_], K, V](
+      id: Step.BatchKey[K, V],
+      ubi: UniqueBatchInstance[K, V]
+  ) extends AnyRef
+      with PreparedStep[F, Set[K], Map[K, V]] {
+    def nodeId: NodeId = ubi.id
+  }
+  final case class InlineBatch[F[_], K, V](
+      run: Set[K] => F[Map[K, V]],
+      sei: StepEffectId
+  ) extends PreparedStep[F, Set[K], Map[K, V]] {
+    def nodeId: NodeId = sei.nodeId
+  }
   final case class Choose[F[_], A, B, C, D](
+      nodeId: NodeId,
       fac: PreparedStep[F, A, C],
       fbc: PreparedStep[F, B, D]
   ) extends PreparedStep[F, Either[A, B], Either[C, D]]
@@ -70,6 +111,7 @@ final case class PreparedCont[+F[_], I, A](
 )
 
 final case class Selection[F[_], I](
+    nodeId: NodeId,
     fields: List[PreparedField[F, I]],
     source: ast.Selectable[F, I]
 ) extends Prepared[F, I]
@@ -85,9 +127,14 @@ final case class PreparedOption[F[_], I, O](
     of: PreparedCont[F, I, O]
 ) extends Prepared[F, Option[I]]
 
-final case class PreparedLeaf[F[_], I](name: String, encode: I => Json) extends Prepared[F, I]
+final case class PreparedLeaf[F[_], I](
+    nodeId: NodeId,
+    name: String,
+    encode: I => Json
+) extends Prepared[F, I]
 
 final case class PreparedDataField[+F[_], A, B](
+    nodeId: NodeId,
     name: String,
     alias: Option[String],
     cont: PreparedCont[F, A, B],
@@ -130,6 +177,7 @@ object Specialization {
 }
 
 final case class PreparedSpecification[F[_], I, A](
+    nodeId: NodeId,
     specialization: Specialization[F, I, A],
     selection: List[PreparedDataField[F, A, ?]]
 ) extends PreparedField[F, I]

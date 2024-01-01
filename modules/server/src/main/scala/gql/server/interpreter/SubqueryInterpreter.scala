@@ -123,7 +123,7 @@ object SubqueryInterpreter {
 
         @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
         val result: W[Chain[(Int, Json)]] = step match {
-          case Lift(f) => runNext(inputs.map(_.map(f)))
+          case Lift(_, f) => runNext(inputs.map(_.map(f)))
           case alg: EmbedEffect[?, i] =>
             val cursor = alg.sei.edgeId
             inputs.flatTraverse { id =>
@@ -145,7 +145,7 @@ object SubqueryInterpreter {
               }
             }
               .map(xs => Chain.fromOption(xs).flatten) >>= runNext
-          case EmbedError() =>
+          case EmbedError(_) =>
             (inputs: Chain[IndexedData[F, Ior[String, C]]])
               .flatTraverse { id =>
                 liftIor(id.node.cursor, id.sequence).map(Chain.fromOption(_))
@@ -204,15 +204,15 @@ object SubqueryInterpreter {
                     }
                 }
 
-              val leftAlg = Compose(alg.fac, Lift[F, c, C](Left(_)))
-              val rightAlg = Compose(alg.fbc, Lift[F, d, C](Right(_)))
+              val leftAlg = Compose(???, alg.fac, Lift[F, c, C](???, Left(_)))
+              val rightAlg = Compose(???, alg.fbc, Lift[F, d, C](???, Right(_)))
 
               val leftF = runStep(lefts, leftAlg, StepCont.Join[F, C, O](complete _, cont))
               val rightF = runStep(rights, rightAlg, StepCont.Join[F, C, O](complete _, cont))
 
               (leftF, rightF).parMapN(_ ++ _)
             }
-          case GetMeta(pm0) =>
+          case GetMeta(_, pm0) =>
             val pm = pm0.value
             runNext {
               inputs.map { in =>
@@ -239,7 +239,7 @@ object SubqueryInterpreter {
             val keys: Chain[(Cursor, Set[k])] = inputs.map(id => id.node.cursor -> id.node.value)
 
             lift {
-              batchAccumulator.submit[k, v](alg.nodeId, keys).map {
+              batchAccumulator.submit[k, v](alg.ubi, keys).map {
                 case None => Chain.empty
                 case Some(m) =>
                   inputs.map { id =>
@@ -288,7 +288,7 @@ object SubqueryInterpreter {
         Chain
           .fromSeq(dfs.toList)
           .parFlatTraverse {
-            case PreparedSpecification(_, Nil)      => W.pure(Chain(in.as(Map.empty[String, Json])))
+            case PreparedSpecification(_, _, Nil)   => W.pure(Chain(in.as(Map.empty[String, Json])))
             case ps: PreparedSpecification[F, I, a] =>
               // Invariant specified.length == in.length
               val specified: W[Chain[EvalNode[F, Option[a]]]] =
@@ -312,7 +312,7 @@ object SubqueryInterpreter {
                   }
                 }).map(Chain.fromSeq)
               }
-            case df @ PreparedDataField(_, _, _, _, _) =>
+            case df @ PreparedDataField(_, _, _, _, _, _) =>
               runDataField(df, in)
                 .map(_.map(j => Map(df.outputName -> j)))
                 .map(Chain(_))
@@ -330,9 +330,9 @@ object SubqueryInterpreter {
       @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
       def startNext[I](s: Prepared[F, I], in: Chain[EvalNode[F, I]]): W[Chain[Json]] = W.defer {
         s match {
-          case PreparedLeaf(_, enc) => W.pure(in.map(x => enc(x.value)))
-          case Selection(Nil, _)    => W.pure(in.as(Json.obj()))
-          case Selection(fields, _) => runFields(fields, in).map(_.map(JsonObject.fromMap(_).asJson))
+          case PreparedLeaf(_, _, enc) => W.pure(in.map(x => enc(x.value)))
+          case Selection(_, Nil, _)    => W.pure(in.as(Json.obj()))
+          case Selection(_, fields, _) => runFields(fields, in).map(_.map(JsonObject.fromMap(_).asJson))
           case s: PreparedList[F, a, ?, b] =>
             val of = s.of
             val toSeq = s.toSeq
@@ -358,48 +358,80 @@ object SubqueryInterpreter {
 }
 
 import cats.effect.implicits._
+final case class BatchFamily[F[_]](
+    pendingInputs: Int,
+    keys: Set[?],
+    completes: List[Deferred[F, Option[Map[?, ?]]]],
+    cursors: Chain[Cursor]
+)
+final case class BatchState[F[_]](
+    batches: Map[NodeId, BatchFamily[F]]
+)
 class Go[F[_]](
-  ss: SignalScopes[F, StreamingData[F, ?, ?]],
-  sup: Supervisor[F],
-  throttle: F ~> F
+    ss: SignalScopes[F, StreamingData[F, ?, ?]],
+    sup: Supervisor[F],
+    stats: Statistics[F],
+    subgraphBatches: Map[NodeId, List[NodeId]],
+    batchState: Ref[F, BatchState[F]],
+    throttle: F ~> F,
+    errors: Ref[F, Chain[EvalFailure]]
 )(implicit
     F: Async[F]
 ) {
+  def multiplicityN(id: NodeId, n: Int): F[Unit] =
+    subgraphBatches(id).toNel.traverse_ { nel =>
+      val toAdd = n - 1
+      batchState.update { bs =>
+        val news = nel.map { id =>
+          val b = bs.batches.getOrElse(id, BatchFamily(1, Set.empty, Nil, Chain.empty))
+          (id, b.copy(pendingInputs = b.pendingInputs + toAdd))
+        }
+        bs.copy(batches = bs.batches ++ news.iterator)
+      }
+    }
+
+  def submit(name: String, duration: FiniteDuration, size: Int): F[Unit] =
+    sup.supervise(stats.updateStats(name, duration, size)).void
+
   def interpretSelection[I](
       fields: List[PreparedField[F, I]],
       en: EvalNode[F, I]
   ): F[Chain[(String, Json)]] = {
-    fields.parTraverse {
+    Chain.fromSeq(fields).parFlatTraverse {
       case fa: PreparedSpecification[F, I, a] =>
         val x = fa.specialization.specify(en.value)
-        // TODO raise errors
-        x.right.flatten
-          .traverse(a => interpretSelection[a](fa.selection, en.setValue(a)))
-          .map(_.getOrElse(Chain.empty))
+        x.left.traverse(x => errors.update(EvalFailure.Raised(en.cursor, x) +: _)) *>
+          x.right.flatten
+            .traverse(a => interpretSelection[a](fa.selection, en.setValue(a)))
+            .map(_.getOrElse(Chain.empty))
       case df: PreparedDataField[F, I, a] =>
-        // TODO
-        F.pure(Chain.empty[(String, Json)])
+        interpretEffect(df.cont.edges, df.cont.cont, en).map(j => Chain(df.outputName -> j))
     }
-    ???
   }
 
   def interpretPrepared[I](
       s: Prepared[F, I],
       en: EvalNode[F, I]
-  ): F[Json] =
+  ): F[Json] = {
     s match {
-      case PreparedLeaf(_, enc) => F.pure(enc(en.value))
-      case Selection(xs, _)     => interpretSelection(xs, en).map(_.toList.toMap.asJson)
+      case PreparedLeaf(_, _, enc) => F.pure(enc(en.value))
+      case Selection(_, xs, _)     => interpretSelection(xs, en).map(_.toList.toMap.asJson)
       case lst: PreparedList[F, a, I, b] =>
-        lst.toSeq(en.value).zipWithIndex.parTraverse { case (a, i) =>
-          interpretEffect[a, b](lst.of.edges, lst.of.cont, en.modify(_.index(i)).setValue(a))
-        }
-        F.pure(Json.Null)
+        val sq = lst.toSeq(en.value)
+        multiplicityN(lst.id, sq.size) *>
+          sq.zipWithIndex
+            .parTraverse { case (a, i) =>
+              interpretEffect[a, b](lst.of.edges, lst.of.cont, en.modify(_.index(i)).setValue(a))
+            }
+            .map(Json.arr(_: _*))
       case opt: PreparedOption[F, i, a] =>
         val en2: Option[i] = en.value
-        en2.traverse(i => interpretEffect[i, a](opt.of.edges, opt.of.cont, en.setValue(i)))
-        F.pure(Json.Null)
+        multiplicityN(opt.id, en2.size.toInt) *>
+          en2
+            .traverse(i => interpretEffect[i, a](opt.of.edges, opt.of.cont, en.setValue(i)))
+            .map(_.getOrElse(Json.Null))
     }
+  }
 
   def interpretEffect[I, O](
       ps: PreparedStep[F, I, O],
@@ -413,7 +445,13 @@ class Go[F[_]](
       c match {
         case Continuation.Done(prep)             => interpretPrepared(prep, en)
         case fa: Continuation.Continue[F, I, c]  => goStep[I, c](fa.step, fa.next, en)
-        // case fa: Continuation.TupleWith[F, I, a] => goCont[(I, a)](fa.next, en.map((_, fa.a)))
+        case fa: Continuation.Contramap[F, i, I] => goCont(fa.next, en.map(fa.f))
+      }
+
+    def runEffect[A](fa: F[A], id: UniqueEdgeCursor, n: Int, makeError: Throwable => EvalFailure): F[Option[A]] =
+      throttle(fa.timed.attempt).flatMap {
+        case Right((t, a)) => submit(id.asString, t, n) *> F.pure(Some(a))
+        case Left(err)     => errors.update(makeError(err) +: _).as(None)
       }
 
     def goStep[I, O](
@@ -423,15 +461,51 @@ class Go[F[_]](
     ): F[Json] = {
       import PreparedStep._
       ps match {
-        case Lift(f) => goCont(cont, en.map(f))
+        case Lift(_, f) => goCont(cont, en.map(f))
         // TODO submit timing
-        case alg: EmbedEffect[F, i] =>
-          (en.value: F[i]).flatMap(i => goCont(cont, en.setValue(i)))
+        case fa: EmbedEffect[F, i] =>
+          runEffect(en.value: F[i], fa.sei.edgeId, 1, e => EvalFailure.EffectResolution(en.cursor, Left(e)))
+            .flatMap {
+              case Some(x) => goCont(cont, en.setValue(x))
+              case None    => F.pure(Json.Null)
+            }
+        case alg: InlineBatch[F, k, o] =>
+          def run(xs: Set[k], cursors: Chain[Cursor]): F[Option[Map[k, o]]] =
+            runEffect(alg.run(xs), alg.sei.edgeId, xs.size, e => EvalFailure.BatchResolution(cursors, e))
+
+          val id = alg.sei.nodeId
+          val runBatch: F[Option[Map[k, o]]] = batchState.get.map(_.batches.get(id)).flatMap {
+            case None => run(en.value, Chain(en.cursor))
+            case Some(x: BatchFamily[F]) =>
+              if (x.pendingInputs > 1) {
+                Deferred[F, Option[Map[k, o]]].flatMap { d =>
+                  batchState.update { s =>
+                    val fam = s.batches(id)
+                    val updated = fam.copy(
+                      pendingInputs = fam.pendingInputs - 1,
+                      keys = fam.keys ++ en.value,
+                      completes = d.asInstanceOf[Deferred[F, Option[Map[?, ?]]]] :: fam.completes,
+                      cursors = fam.cursors :+ en.cursor
+                    )
+                    BatchState(s.batches + (id -> updated))
+                  } *> d.get
+                }
+              } else {
+                batchState.update(x => BatchState(x.batches - id)) *>
+                  run(x.keys.asInstanceOf[Set[k]] ++ en.value, x.cursors :+ en.cursor)
+                    .flatTap(o => x.completes.traverse_(_.complete(o)))
+              }
+          }
+
+          runBatch.flatMap {
+            case Some(x) => goCont(cont, en.setValue(x))
+            case None    => F.pure(Json.Null)
+          }
         case alg: Compose[F, I, a, O] =>
           goStep(alg.left, Continuation.Continue(alg.right, cont), en)
         case alg: Choose[F, a, b, c, d] =>
           (en.value: Either[a, b]) match {
-            case Left(a) => goStep(alg.fac, cont.contramap[c](Left(_)), en.setValue(a))
+            case Left(a)  => goStep(alg.fac, cont.contramap[c](Left(_)), en.setValue(a))
             case Right(b) => goStep(alg.fbc, cont.contramap[d](Right(_)), en.setValue(b))
           }
         case alg: First[F, i2, o2, c2] =>

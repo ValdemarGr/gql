@@ -449,7 +449,7 @@ trait QueryAlgebra {
     case sel: prep.Selection[F, ?] @unchecked        => Some(sel)
     case prep.PreparedList(_, of, _)                 => findNextSel(of.cont)
     case po: prep.PreparedOption[F, ?, ?] @unchecked => findNextSel(po.of.cont)
-    case prep.PreparedLeaf(_, _)                     => None
+    case prep.PreparedLeaf(_, _, _)                  => None
   }
 
   case class QueryJoin(

@@ -34,7 +34,8 @@ class QueryPreparation[F[_], C](
 ) {
   type G[A] = Alg[C, A]
   val G = Alg.Ops[C]
-  type Analyze[A] = LazyT[WriterT[G, Chain[(Arg[?], Any)], *], PreparedMeta[F], A]
+  type Write[A] = WriterT[G, Chain[(Arg[?], Any)], A]
+  type Analyze[A] = LazyT[Write, PreparedMeta[F], A]
   implicit val L: Applicative[Analyze] = LazyT.applicativeForParallelLazyT
 
   def liftK[A](fa: G[A]): Analyze[A] = LazyT.liftF(WriterT.liftF(fa))
@@ -77,12 +78,12 @@ class QueryPreparation[F[_], C](
       prepareStep[I2, O2](step, fieldMeta, uec append edge)
 
     step match {
-      case Step.Alg.Lift(f)      => L.pure(PreparedStep.Lift(f))
-      case Step.Alg.EmbedError() => L.pure(PreparedStep.EmbedError[F, O]())
+      case Step.Alg.Lift(f)      => liftK(nextNodeId).map(PreparedStep.Lift(_, f))
+      case Step.Alg.EmbedError() => liftK(nextNodeId).map(PreparedStep.EmbedError[F, O](_))
       case alg: Step.Alg.Compose[F, i, a, o] =>
         val left = rec[i, a](alg.left, "compose-left")
         val right = rec[a, o](alg.right, "compose-right")
-        (left, right).mapN(PreparedStep.Compose[F, i, a, o](_, _))
+        (liftK(nextNodeId), left, right).mapN(PreparedStep.Compose.apply[F, i, a, o])
       case _: Step.Alg.EmbedEffect[F, i] =>
         nextId.map(PreparedStep.EmbedEffect[F, i](_))
       case alg: Step.Alg.EmbedStream[F, i] =>
@@ -90,23 +91,25 @@ class QueryPreparation[F[_], C](
       case alg: Step.Alg.Choose[F, a, b, c, d] =>
         val left = rec[a, c](alg.fac, "choice-left")
         val right = rec[b, d](alg.fab, "choice-right")
-        (left, right).mapN(PreparedStep.Choose[F, a, b, c, d](_, _))
+        (liftK(nextNodeId), left, right).mapN(PreparedStep.Choose.apply[F, a, b, c, d])
       case _: Step.Alg.GetMeta[?, i] =>
-        LazyT.lift((pm: Eval[PreparedMeta[F]]) => PreparedStep.GetMeta[F, I](pm))
+        (liftK(nextNodeId), LazyT.id[Write, PreparedMeta[F]]).mapN(PreparedStep.GetMeta.apply[F, I])
       case alg: Step.Alg.Batch[F, k, v] =>
         liftK(G.nextId.map(i => PreparedStep.Batch[F, k, v](alg.id, UniqueBatchInstance(NodeId(i)))))
       case alg: Step.Alg.InlineBatch[F, k, v] =>
         nextId.map(PreparedStep.InlineBatch[F, k, v](alg.run, _))
       case alg: Step.Alg.First[F, i, o, c] =>
-        rec[i, o](alg.step, "first").map(PreparedStep.First[F, i, o, c](_))
+        (liftK(nextNodeId), rec[i, o](alg.step, "first")).mapN(PreparedStep.First.apply[F, i, o, c])
       case alg: Step.Alg.Argument[?, a] =>
         val expected = alg.arg.entries.toList.map(_.name).toSet
         val fields = fieldMeta.fields.filter { case (k, _) => expected.contains(k) }
         LazyT.liftF {
           WriterT {
-            ap
-              .decodeArg(alg.arg, fields.fmap(_.map(List(_))), ambigiousEnum = false, context = Nil)
-              .map(a => (Chain(alg.arg -> a), PreparedStep.Lift[F, I, O](_ => a)))
+            nextNodeId.flatMap { nid =>
+              ap
+                .decodeArg(alg.arg, fields.fmap(_.map(List(_))), ambigiousEnum = false, context = Nil)
+                .map(a => (Chain(alg.arg -> a), PreparedStep.Lift[F, I, O](nid, _ => a)))
+            }
           }
         }
     }
@@ -137,10 +140,10 @@ class QueryPreparation[F[_], C](
       case (s: Selectable[F, a], Some(ss)) =>
         liftK(prepareSelectable[A](s, ss).widen[Prepared[F, A]])
       case (e: Enum[a], None) =>
-        L.pure(PreparedLeaf(e.name, x => Json.fromString(e.revm(x))))
+        liftK(nextNodeId).map(PreparedLeaf(_, e.name, x => Json.fromString(e.revm(x))))
       case (s: Scalar[a], None) =>
         import io.circe.syntax._
-        L.pure(PreparedLeaf(s.name, x => s.encoder(x).asJson))
+        liftK(nextNodeId).map(PreparedLeaf(_, s.name, x => s.encoder(x).asJson))
       case (o, Some(_)) =>
         liftK(G.raise(s"Type `${ModifierStack.fromOut(o).show(_.name)}` cannot have selections.", List(fi.caret)))
       case (o, None) =>
@@ -194,9 +197,9 @@ class QueryPreparation[F[_], C](
         ).tupled
 
         val pdfF: LazyT[G, PreparedMeta[F], PreparedDataField[F, I, ?]] =
-          preparedF.mapF(_.run.map { case (w, f) =>
-            f.andThen { case (x, y) =>
-              PreparedDataField(fi.name, fi.alias, PreparedCont(x, y), field, w.toList.toMap)
+          (liftK(nextNodeId), preparedF).tupled.mapF(_.run.map { case (w, f) =>
+            f.andThen { case (nid, (x, y)) =>
+              PreparedDataField(nid, fi.name, fi.alias, PreparedCont(x, y), field, w.toList.toMap)
             }
           })
 
@@ -335,10 +338,10 @@ class QueryPreparation[F[_], C](
             }
           }
 
-          fa.map(xs => PreparedSpecification[F, A, b](impl.spec, xs))
+          nextNodeId.flatMap(nid => fa.map(xs => PreparedSpecification[F, A, b](nid, impl.spec, xs)))
         }
       }
-      .map(xs => Selection(xs.toList, s))
+      .flatMap(xs => nextNodeId.map(nid => Selection(nid, xs.toList, s)))
 }
 
 final case class MergedFieldInfo[G[_], C](

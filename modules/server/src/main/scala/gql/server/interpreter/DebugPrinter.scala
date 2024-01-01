@@ -52,7 +52,7 @@ object DebugPrinter {
 
     def preparedFieldDoced[F[_]]: Document[PreparedField[F, ?]] =
       Document.instance[PreparedField[F, ?]] {
-        case PreparedSpecification(spec, sels) =>
+        case PreparedSpecification(_, spec, sels) =>
           record(
             "PreparedSpecification",
             kvs(
@@ -65,7 +65,7 @@ object DebugPrinter {
               )
             )
           )
-        case PreparedDataField(name, alias, cont, _, _) =>
+        case PreparedDataField(_, name, alias, cont, _, _) =>
           record(
             "PreparedDataField",
             kvs(
@@ -78,14 +78,14 @@ object DebugPrinter {
 
     def preparedDoced[F[_]]: Document[Prepared[F, ?]] =
       Document.instance[Prepared[F, ?]] {
-        case Selection(fields, _) =>
+        case Selection(_, fields, _) =>
           record(
             "Selection",
             Doc.intercalate(Doc.char(',') + Doc.space, fields.map(preparedFieldDoced.document(_)).toList)
           )
-        case PreparedList(_, of, _) => record("PreparedList", preparedContDoced.document(of))
-        case PreparedOption(_, of)  => record("PreparedOption", preparedContDoced.document(of))
-        case PreparedLeaf(name, _)  => record("PreparedLeaf", Doc.text(name))
+        case PreparedList(_, of, _)   => record("PreparedList", preparedContDoced.document(of))
+        case PreparedOption(_, of)    => record("PreparedOption", preparedContDoced.document(of))
+        case PreparedLeaf(_, name, _) => record("PreparedLeaf", Doc.text(name))
       }
 
     def preparedContDoced[F[_]]: Document[PreparedCont[F, ?, ?]] =
@@ -102,21 +102,21 @@ object DebugPrinter {
     def preparedStepDoced[F[_]]: Document[PreparedStep[F, ?, ?]] = {
       import PreparedStep._
       Document.instance[PreparedStep[F, ?, ?]] {
-        case Lift(_)           => Doc.text("Lift(...)")
+        case Lift(_, _)        => Doc.text("Lift(...)")
         case EmbedEffect(_)    => Doc.text("EmbedEffect")
         case InlineBatch(_, _) => Doc.text("InlineBatch")
         case EmbedStream(signal, _) =>
           record("EmbedStream", kvs("signal" -> Doc.text(signal.toString())))
-        case EmbedError() => Doc.text("EmbedError")
-        case Compose(left, right) =>
+        case EmbedError(_) => Doc.text("EmbedError")
+        case Compose(_, left, right) =>
           record("Compose", kvs("left" -> preparedStepDoced.document(left), "right" -> preparedStepDoced.document(right)))
-        case GetMeta(meta) =>
+        case GetMeta(_, meta) =>
           record("GetMeta", kvs("meta" -> Doc.text(meta.toString())))
-        case First(step) =>
+        case First(_, step) =>
           record("First", kvs("step" -> preparedStepDoced.document(step)))
         case Batch(id, globalEdgeId) =>
           record("Batch", kvs("id" -> Doc.text(id.toString()), "globalEdgeId" -> Doc.text(globalEdgeId.toString())))
-        case Choose(fac, fbc) =>
+        case Choose(_, fac, fbc) =>
           record("Choose", kvs("fac" -> preparedStepDoced.document(fac), "fbc" -> preparedStepDoced.document(fbc)))
       }
     }
