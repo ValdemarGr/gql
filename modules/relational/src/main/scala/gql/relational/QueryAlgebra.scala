@@ -447,7 +447,7 @@ trait QueryAlgebra {
 
   def findNextSel[F[_], A](p: prep.Prepared[F, A]): Option[prep.Selection[F, ?]] = p match {
     case sel: prep.Selection[F, ?] @unchecked        => Some(sel)
-    case prep.PreparedList(of, _)                    => findNextSel(of.cont)
+    case prep.PreparedList(_, of, _)                 => findNextSel(of.cont)
     case po: prep.PreparedOption[F, ?, ?] @unchecked => findNextSel(po.of.cont)
     case prep.PreparedLeaf(_, _)                     => None
   }

@@ -83,9 +83,9 @@ object DebugPrinter {
             "Selection",
             Doc.intercalate(Doc.char(',') + Doc.space, fields.map(preparedFieldDoced.document(_)).toList)
           )
-        case PreparedList(of, _)   => record("PreparedList", preparedContDoced.document(of))
-        case PreparedOption(of)    => record("PreparedOption", preparedContDoced.document(of))
-        case PreparedLeaf(name, _) => record("PreparedLeaf", Doc.text(name))
+        case PreparedList(_, of, _) => record("PreparedList", preparedContDoced.document(of))
+        case PreparedOption(_, of)  => record("PreparedOption", preparedContDoced.document(of))
+        case PreparedLeaf(name, _)  => record("PreparedLeaf", Doc.text(name))
       }
 
     def preparedContDoced[F[_]]: Document[PreparedCont[F, ?, ?]] =

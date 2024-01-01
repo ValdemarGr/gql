@@ -74,9 +74,16 @@ final case class Selection[F[_], I](
     source: ast.Selectable[F, I]
 ) extends Prepared[F, I]
 
-final case class PreparedList[F[_], A, C, B](of: PreparedCont[F, A, B], toSeq: C => Seq[A]) extends Prepared[F, C]
+final case class PreparedList[F[_], A, C, B](
+    id: NodeId,
+    of: PreparedCont[F, A, B],
+    toSeq: C => Seq[A]
+) extends Prepared[F, C]
 
-final case class PreparedOption[F[_], I, O](of: PreparedCont[F, I, O]) extends Prepared[F, Option[I]]
+final case class PreparedOption[F[_], I, O](
+    id: NodeId,
+    of: PreparedCont[F, I, O]
+) extends Prepared[F, Option[I]]
 
 final case class PreparedLeaf[F[_], I](name: String, encode: I => Json) extends Prepared[F, I]
 

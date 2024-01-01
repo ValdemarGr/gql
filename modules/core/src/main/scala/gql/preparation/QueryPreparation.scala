@@ -39,6 +39,8 @@ class QueryPreparation[F[_], C](
 
   def liftK[A](fa: G[A]): Analyze[A] = LazyT.liftF(WriterT.liftF(fa))
 
+  val nextNodeId = G.nextId.map(NodeId(_))
+
   def findImplementations[A](
       s: Selectable[F, A]
   ): List[Specialization[F, A, ?]] = s match {
@@ -66,7 +68,7 @@ class QueryPreparation[F[_], C](
       fieldMeta: PartialFieldMeta[C],
       uec: UniqueEdgeCursor
   ): Analyze[PreparedStep[F, I, O]] = {
-    val nextId = liftK(G.nextId).map(i => StepEffectId(NodeId(i), uec))
+    val nextId = liftK(nextNodeId).map(StepEffectId(_, uec))
 
     def rec[I2, O2](
         step: Step[F, I2, O2],
@@ -122,12 +124,16 @@ class QueryPreparation[F[_], C](
         val innerStep: Step[F, a, b] = out.resolver.underlying
         val compiledStep = prepareStep[a, b](innerStep, fieldMeta, uec)
         val compiledCont = prepare[b](fi, out.of, fieldMeta, uec append "in-arr")
-        (compiledStep, compiledCont).mapN((s, c) => PreparedList(PreparedCont(s, c), out.toSeq))
+        (compiledStep, compiledCont, liftK(nextNodeId)).mapN { (s, c, nid) =>
+          PreparedList(nid, PreparedCont(s, c), out.toSeq)
+        }
       case (out: gql.ast.OutOpt[F, a, b], _) =>
         val innerStep: Step[F, a, b] = out.resolver.underlying
         val compiledStep = prepareStep[a, b](innerStep, fieldMeta, uec)
         val compiledCont = prepare[b](fi, out.of, fieldMeta, uec append "in-opt")
-        (compiledStep, compiledCont).mapN((s, c) => PreparedOption(PreparedCont(s, c)))
+        (compiledStep, compiledCont, liftK(nextNodeId)).mapN { (s, c, nid) =>
+          PreparedOption(nid, PreparedCont(s, c))
+        }
       case (s: Selectable[F, a], Some(ss)) =>
         liftK(prepareSelectable[A](s, ss).widen[Prepared[F, A]])
       case (e: Enum[a], None) =>
