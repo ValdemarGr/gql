@@ -153,8 +153,6 @@ object GqlCodeGenPlugin extends AutoPlugin {
 
           val sh = f / s"shared.scala"
 
-          def escapeSlash(s: String) = s.replace("\\", "\\\\")
-
           import _root_.io.circe._
           import _root_.io.circe.syntax._
           import Json._
@@ -165,8 +163,8 @@ object GqlCodeGenPlugin extends AutoPlugin {
 
             (
               JsonObject(
-                "query" -> fromString(escapeSlash(in.absolutePath)),
-                "output" -> fromString(escapeSlash(outFile.absolutePath))
+                "query" -> fromString(in.absolutePath),
+                "output" -> fromString(outFile.absolutePath)
               ).asJson,
               Seq(in),
               Seq(outFile)
@@ -176,8 +174,8 @@ object GqlCodeGenPlugin extends AutoPlugin {
 
           CodeGenInput(
             json = JsonObject(
-              "schema" -> fromString(escapeSlash(rg.schemaPath.absolutePath)),
-              "shared" -> fromString(escapeSlash(sh.absolutePath)),
+              "schema" -> fromString(rg.schemaPath.absolutePath),
+              "shared" -> fromString(sh.absolutePath),
               "queries" -> arr(queries: _*),
               "packageName" -> fromString(rg.options.packageName)
             ).asJson.spaces2,
