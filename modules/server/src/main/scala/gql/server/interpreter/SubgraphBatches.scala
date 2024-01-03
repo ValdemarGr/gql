@@ -3,6 +3,7 @@ package gql.server.interpreter
 import cats._
 import cats.implicits._
 import gql.preparation._
+import gql.server.planner.OptimizedDAG
 
 object SubgraphBatches {
   final case class State(
@@ -52,6 +53,14 @@ object SubgraphBatches {
         countCont(of.edges, of.cont).map(s => s.copy(accum = s.accum + (id -> s.childBatches)))
       case PreparedOption(id, of) =>
         countCont(of.edges, of.cont).map(s => s.copy(accum = s.accum + (id -> s.childBatches)))
+    }
+  }
+
+  def makeRootCounts(plan: OptimizedDAG) = {
+    val batches: Set[Set[NodeId]] = plan.batches.map{ case (ids, _) => ids }
+    batches.toList.map{ xs =>
+      val br = plan.tree.lookup(xs.head).batchId.get.batcherId
+      br -> xs
     }
   }
 }
