@@ -26,6 +26,7 @@ import gql.graphqlws.GraphqlWS
 import org.http4s.websocket.WebSocketFrame
 import org.typelevel.ci._
 import gql.graphqlws.GraphqlWSServer
+import scala.concurrent.duration._
 
 trait RequestHandler[F[_]] {
   type A
@@ -176,7 +177,8 @@ object Http4sRoutes {
   def ws[F[_]](
       getCompiler: GraphqlWSServer.GetCompiler[F],
       wsb: WebSocketBuilder[F],
-      path: String = "ws"
+      path: String = "ws",
+      pingInterval: FiniteDuration = 30.seconds
   )(implicit F: Async[F]): HttpRoutes[F] = {
     val d = new Http4sDsl[F] {}
     import d._
@@ -185,15 +187,16 @@ object Http4sRoutes {
     HttpRoutes.of[F] { case GET -> Root / `path` =>
       F.uncancelable { _ =>
         GraphqlWSServer[F](getCompiler).allocated.flatMap { case ((toClient, fromClient), close) =>
+          val toSend = toClient.evalMap[F, WebSocketFrame] {
+            case Left(te) => F.fromEither(WebSocketFrame.Close(te.code.code, te.message))
+            case Right(x) => F.pure(WebSocketFrame.Text(x.asJson.noSpaces))
+          }
           wsb
             .withOnClose(close)
             .withFilterPingPongs(true)
             .withHeaders(Headers(Header.Raw(ci"Sec-WebSocket-Protocol", "graphql-transport-ws")))
             .build(
-              toClient.evalMap[F, WebSocketFrame] {
-                case Left(te) => F.fromEither(WebSocketFrame.Close(te.code.code, te.message))
-                case Right(x) => F.pure(WebSocketFrame.Text(x.asJson.noSpaces))
-              },
+              toSend.mergeHaltL(fs2.Stream.awakeEvery[F](pingInterval).as(WebSocketFrame.Ping())),
               _.evalMap[F, Option[String]] {
                 case WebSocketFrame.Text(x, true) => F.pure(Some(x))
                 case _: WebSocketFrame.Close      => F.pure(None)
