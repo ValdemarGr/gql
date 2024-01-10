@@ -96,11 +96,21 @@ object SubgraphBatches {
     }
   }
 
+  def countContinuation[F[_]](state: State, cont: Continuation[F, ?]): Eval[State] = Eval.defer {
+    cont match {
+      case Continuation.Done(prep)         => countPrep(prep).map(_ |+| state)
+      case Continuation.Contramap(_, next) => countContinuation(state, next)
+      case Continuation.Continue(step, next) =>
+        countContinuation(state, next).flatMap(countStep(_, step))
+    }
+  }
+
   def makeRootCounts(plan: OptimizedDAG): List[(BatchRef[?, ?], Set[NodeId])] = {
-    val batches: Set[Set[NodeId]] = plan.batches.map { case (ids, _) => ids }
-    batches.toList.map { xs =>
-      val br = plan.tree.lookup(xs.head).batchId.get
-      br -> xs
+    val batches: List[Set[NodeId]] = plan.plan.values.toList.map { case (bs, _) => bs }.distinct
+    batches.mapFilter { xs =>
+      plan.tree.lookup(xs.head).batchId.map { br =>
+        br -> xs
+      }
     }
   }
 
@@ -110,16 +120,13 @@ object SubgraphBatches {
       completes: List[Deferred[F, Option[Map[K, V]]]],
       cursors: Chain[Cursor]
   )
-  final case class BatchState[F[_]](
-      batches: Map[NodeId, BatchFamily[F, ?, ?]]
-  )
   def make[F[_]](
       schemaState: SchemaState[F],
       countState: State,
       plan: OptimizedDAG,
       stats: Statistics[F],
       throttle: F ~> F
-  )(implicit F: Async[F]) = {
+  )(implicit F: Async[F]): F[SubgraphBatches[F]] = {
     val groups = makeRootCounts(plan)
     val allBatches: F[Map[NodeId, (Ref[F, BatchFamily[F, ?, ?]], Option[Step.BatchKey[?, ?]])]] =
       groups

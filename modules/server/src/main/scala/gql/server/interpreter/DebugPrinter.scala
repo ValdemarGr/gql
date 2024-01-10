@@ -136,6 +136,37 @@ object DebugPrinter {
         case StepCont.TupleWith(_, next) => record("StepCont.TupleWith", stepContDoced.document(next))
       }
 
+    def continuationDoced[F[_]]: Document[Continuation[F, ?]] = cont =>
+      cont match {
+        case Continuation.Done(p) => record("Continuation.Done", preparedDoced.document(p))
+        case Continuation.Continue(step, next) =>
+          record(
+            "Continuation.Continue",
+            kvs(
+              "step" -> preparedStepDoced.document(step),
+              "cont" -> continuationDoced.document(next)
+            )
+          )
+        case Continuation.Contramap(_, next) =>
+          record(
+            "Continuation.Contramap",
+            kvs(
+              "cont" -> continuationDoced.document(next)
+            )
+          )
+      }
+
+    def streamDataDoced[F[_]]: Document[StreamData[F, ?]] =
+      Document[StreamData[F, ?]] { sd =>
+        record(
+          "StreamData",
+          kvs(
+            "cont" -> continuationDoced.document(sd.cont),
+            "value" -> Doc.text(sd.value.leftMap(_.getMessage()).map(_.getClass().getName()).toString())
+          )
+        )
+      }
+
     def streamingDataDoced[F[_]]: Document[StreamingData[F, ?, ?]] =
       Document[StreamingData[F, ?, ?]] { sd =>
         record(

@@ -362,6 +362,11 @@ final case class StreamData[F[_], I](
     cont: Continuation[F, I],
     value: Either[Throwable, I]
 )
+object StreamData {
+  import org.typelevel.paiges._
+  implicit def docedForStreamData[F[_]]: Document[StreamData[F, ?]] =
+    DebugPrinter.Printer.streamDataDoced[F]
+}
 class Go[F[_]](
     ss: SignalScopes[F, StreamData[F, ?]],
     sup: Supervisor[F],
@@ -385,7 +390,8 @@ class Go[F[_]](
             .traverse(a => interpretSelection[a](fa.selection, en.setValue(a)))
             .map(_.getOrElse(Chain.empty))
       case df: PreparedDataField[F, I, a] =>
-        interpretEffect(df.cont.edges, df.cont.cont, en).map(j => Chain(df.outputName -> j))
+        interpretEffect(df.cont.edges, df.cont.cont, en.modify(_.field(df.outputName)))
+          .map(j => Chain(df.outputName -> j))
     }
   }
 
@@ -413,92 +419,91 @@ class Go[F[_]](
     }
   }
 
+  def goCont[I](
+      c: Continuation[F, I],
+      en: EvalNode[F, I]
+  ): F[Json] =
+    c match {
+      case Continuation.Done(prep)             => interpretPrepared(prep, en)
+      case fa: Continuation.Continue[F, I, c]  => goStep[I, c](fa.step, fa.next, en)
+      case fa: Continuation.Contramap[F, i, I] => goCont(fa.next, en.map(fa.f))
+    }
+
+  def goStep[I, O](
+      ps: PreparedStep[F, I, O],
+      cont: Continuation[F, O],
+      en: EvalNode[F, I]
+  ): F[Json] = {
+    import PreparedStep._
+    ps match {
+      case Lift(_, f) => goCont(cont, en.map(f))
+      case fa: EmbedEffect[F, i] =>
+        runEffect(en.value: F[i], fa.sei.edgeId, 1, e => EvalFailure.EffectResolution(en.cursor, Left(e)))
+          .flatMap {
+            case Some(x) => goCont(cont, en.setValue(x))
+            case None    => F.pure(Json.Null)
+          }
+      case alg: InlineBatch[F, k, o] =>
+        val keys = en.value: Set[k]
+        subgraphBatches
+          .inlineBatch(alg, keys, en.cursor)
+          .flatMap {
+            case Some(x) => goCont(cont, en.setValue(x.filter { case (k, _) => keys.contains(k) }))
+            case None    => F.pure(Json.Null)
+          }
+      case alg: Batch[F, k, v] =>
+        val keys = en.value: Set[k]
+        subgraphBatches
+          .batch(alg.ubi, keys, en.cursor)
+          .flatMap {
+            case Some(x) => goCont(cont, en.setValue(x.filter { case (k, _) => keys.contains(k) }))
+            case None    => F.pure(Json.Null)
+          }
+      case EmbedError(_) =>
+        val v = en.value
+        v.left.traverse(x => errors.update(EvalFailure.Raised(en.cursor, x) +: _)) *>
+          v.right.traverse(x => goCont(cont, en.setValue(x))).map(_.getOrElse(Json.Null))
+      case GetMeta(_, pm0) =>
+        val pm = pm0.value
+        goCont(cont, en.map(_ => FieldMeta(QueryMeta(en.cursor, pm.variables), pm.args, pm.pdf)))
+      case alg: Compose[F, I, a, O] =>
+        goStep(alg.left, Continuation.Continue(alg.right, cont), en)
+      case alg: Choose[F, a, b, c, d] =>
+        (en.value: Either[a, b]) match {
+          case Left(a)  => goStep(alg.fac, cont.contramap[c](Left(_)), en.setValue(a))
+          case Right(b) => goStep(alg.fbc, cont.contramap[d](Right(_)), en.setValue(b))
+        }
+      case alg: First[F, i2, o2, c2] =>
+        val (i2, c2) = en.value: (i2, c2)
+        goStep(alg.step, cont.contramap[o2](o2 => (o2, c2)), en.setValue(i2))
+      case alg: EmbedStream[F, i] =>
+        val stream = en.value: fs2.Stream[F, i]
+        val effect: F[EvalNode[F, i]] =
+          ss.acquireAwait(
+            stream.attempt.map(StreamData(cont, _)),
+            en.scope,
+            signal = alg.signal,
+            cursor = en.cursor
+          ).flatMap { case (s, sd) => F.fromEither(sd.value).map(i => en.setValue(i.asInstanceOf[i]).setScope(s)) }
+
+        runEffect(effect, alg.sei.edgeId, 1, e => EvalFailure.StreamHeadResolution(en.cursor, Left(e)))
+          .flatMap {
+            case Some(x) => goCont(cont, x)
+            case None    => F.pure(Json.Null)
+          }
+    }
+  }
+
+  def runEffect[A](fa: F[A], id: UniqueEdgeCursor, n: Int, makeError: Throwable => EvalFailure): F[Option[A]] =
+    throttle(fa.timed.attempt).flatMap {
+      case Right((t, a)) => submit(id.asString, t, n) *> F.pure(Some(a))
+      case Left(err)     => errors.update(makeError(err) +: _).as(None)
+    }
+
   def interpretEffect[I0, O0](
       ps: PreparedStep[F, I0, O0],
       cont: Prepared[F, O0],
       en: EvalNode[F, I0]
-  ): F[Json] = {
-    def goCont[I](
-        c: Continuation[F, I],
-        en: EvalNode[F, I]
-    ): F[Json] =
-      c match {
-        case Continuation.Done(prep)             => interpretPrepared(prep, en)
-        case fa: Continuation.Continue[F, I, c]  => goStep[I, c](fa.step, fa.next, en)
-        case fa: Continuation.Contramap[F, i, I] => goCont(fa.next, en.map(fa.f))
-      }
-
-    def runEffect[A](fa: F[A], id: UniqueEdgeCursor, n: Int, makeError: Throwable => EvalFailure): F[Option[A]] =
-      throttle(fa.timed.attempt).flatMap {
-        case Right((t, a)) => submit(id.asString, t, n) *> F.pure(Some(a))
-        case Left(err)     => errors.update(makeError(err) +: _).as(None)
-      }
-
-    def goStep[I, O](
-        ps: PreparedStep[F, I, O],
-        cont: Continuation[F, O],
-        en: EvalNode[F, I]
-    ): F[Json] = {
-      import PreparedStep._
-      ps match {
-        case Lift(_, f) => goCont(cont, en.map(f))
-        case fa: EmbedEffect[F, i] =>
-          runEffect(en.value: F[i], fa.sei.edgeId, 1, e => EvalFailure.EffectResolution(en.cursor, Left(e)))
-            .flatMap {
-              case Some(x) => goCont(cont, en.setValue(x))
-              case None    => F.pure(Json.Null)
-            }
-        case alg: InlineBatch[F, k, o] =>
-          val keys = en.value: Set[k]
-          subgraphBatches
-            .inlineBatch(alg, keys, en.cursor)
-            .flatMap {
-              case Some(x) => goCont(cont, en.setValue(x.filter { case (k, _) => keys.contains(k) }))
-              case None    => F.pure(Json.Null)
-            }
-        case alg: Batch[F, k, v] =>
-          val keys = en.value: Set[k]
-          subgraphBatches
-            .batch(alg.ubi, keys, en.cursor)
-            .flatMap {
-              case Some(x) => goCont(cont, en.setValue(x.filter { case (k, _) => keys.contains(k) }))
-              case None    => F.pure(Json.Null)
-            }
-        case EmbedError(_) =>
-          val v = en.value
-          v.left.traverse(x => errors.update(EvalFailure.Raised(en.cursor, x) +: _)) *>
-            v.right.traverse(x => goCont(cont, en.setValue(x))).map(_.getOrElse(Json.Null))
-        case GetMeta(_, pm0) =>
-          val pm = pm0.value
-          goCont(cont, en.map(_ => FieldMeta(QueryMeta(en.cursor, pm.variables), pm.args, pm.pdf)))
-        case alg: Compose[F, I, a, O] =>
-          goStep(alg.left, Continuation.Continue(alg.right, cont), en)
-        case alg: Choose[F, a, b, c, d] =>
-          (en.value: Either[a, b]) match {
-            case Left(a)  => goStep(alg.fac, cont.contramap[c](Left(_)), en.setValue(a))
-            case Right(b) => goStep(alg.fbc, cont.contramap[d](Right(_)), en.setValue(b))
-          }
-        case alg: First[F, i2, o2, c2] =>
-          val (i2, c2) = en.value: (i2, c2)
-          goStep(alg.step, cont.contramap[o2](o2 => (o2, c2)), en.setValue(i2))
-        case alg: EmbedStream[F, i] =>
-          val stream = en.value: fs2.Stream[F, i]
-          val effect: F[EvalNode[F, i]] =
-            ss.acquireAwait(
-              stream.attempt.map(StreamData(cont, _)),
-              en.scope,
-              signal = alg.signal,
-              cursor = en.cursor
-            ).flatMap { case (s, sd) => F.fromEither(sd.value).map(i => en.setValue(i.asInstanceOf[i]).setScope(s)) }
-
-          runEffect(effect, alg.sei.edgeId, 1, e => EvalFailure.StreamHeadResolution(en.cursor, Left(e)))
-            .flatMap {
-              case Some(x) => goCont(cont, x)
-              case None    => F.pure(Json.Null)
-            }
-      }
-    }
-
+  ): F[Json] =
     goStep[I0, O0](ps, Continuation.Done(cont), en)
-  }
 }

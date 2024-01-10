@@ -32,65 +32,67 @@ import cats.effect.std.Supervisor
 trait QueryInterpreter[F[_]] {
   import QueryInterpreter._
 
-  def interpretOne[A, B](input: Input[F, A, B], batching: BatchAccumulator[F]): F[Result[F]]
+  def interpretOne[A](input: Input[F, A], sgb: SubgraphBatches[F], errors: Ref[F, Chain[EvalFailure]]): F[Json]
 
-  def interpretAll(inputs: NonEmptyList[Input[F, ?, ?]]): F[Results[F]]
+  def interpretAll(inputs: NonEmptyList[Input[F, ?]]): F[Results]
 }
 
 object QueryInterpreter {
-  final case class Input[F[_], A, B](
-      data: IndexedData[F, A],
-      cont: StepCont[F, A, B]
+  final case class Input[F[_], A](
+      continuation: Continuation[F, A],
+      data: EvalNode[F, A]
   )
 
   object Input {
-    def root[F[_], A](data: A, cont: Prepared[F, A], scope: Scope[F]): Input[F, A, Json] =
-      Input(IndexedData(0, EvalNode.empty(data, scope)), StepCont.Done(cont))
+    def root[F[_], A](data: A, cont: Prepared[F, A], scope: Scope[F]): Input[F, A] =
+      Input(Continuation.Done(cont), EvalNode.empty(data, scope))
   }
 
-  final case class Results[F[_]](errors: Chain[EvalFailure], roots: NonEmptyList[EvalNode[F, Json]])
+  final case class Results(
+    data: NonEmptyList[(Cursor, Json)],
+    errors: Chain[EvalFailure]
+  )
 
-  final case class Result[F[_]](errors: Chain[EvalFailure], rootData: EvalNode[F, Json])
-
-  def apply[F[_]: Async: Statistics](
+  def apply[F[_]: Statistics](
       schemaState: SchemaState[F],
-      ss: SignalScopes[F, StreamingData[F, ?, ?]],
+      ss: SignalScopes[F, StreamData[F, ?]],
       throttle: F ~> F
-  )(implicit planner: Planner[F]) =
+  )(implicit planner: Planner[F], F: Async[F]) =
     new QueryInterpreter[F] {
-      def interpretOne[A, B](input: Input[F, A, B], batching: BatchAccumulator[F]): F[Result[F]] =
+      def interpretOne[A](input: Input[F, A], sgb: SubgraphBatches[F], errors: Ref[F, Chain[EvalFailure]]): F[Json] =
         Supervisor[F].use { sup =>
-          SubqueryInterpreter[F](ss, batching, sup, throttle)
-            .runEdgeCont(Chain(input.data), input.cont)
-            .run
-            .map { case (fails, succs) =>
-              val (_, j) = succs.headOption.get
-              Result(fails, input.data.node.setValue(j))
-            }
+          val go = new Go(ss, sup, implicitly[Statistics[F]], throttle, errors, sgb)
+          go.goCont(input.continuation, input.data)
         }
 
-      def interpretAll(inputs: NonEmptyList[Input[F, ?, ?]]): F[Results[F]] = {
+      def interpretAll(inputs: NonEmptyList[Input[F, ?]]): F[Results] = {
         // We perform an alpha renaming for every input to ensure that every node is distinct
         val indexed = inputs.zipWithIndex
         for {
-          costTree <- indexed.foldMapA { case (input, i) => analyzeCost[F](input.cont).map(_.alpha(i)) }
+          costTree <- indexed.foldMapA { case (input, i) => analyzeCost[F](input.continuation).map(_.alpha(i)) }
           planned <- planner.plan(costTree)
-          accumulator <- BatchAccumulator[F](schemaState, planned, throttle)
-          results <- indexed.parTraverse { case (input, i) => interpretOne(input, accumulator.alpha(i)) }
-          batchErrors <- accumulator.getErrors
-          allErrors = Chain.fromSeq(results.toList).flatMap(_.errors) ++ Chain.fromSeq(batchErrors)
-        } yield Results(allErrors, results.map(_.rootData))
+          counts = inputs.foldMap { in =>
+            SubgraphBatches.countContinuation(SubgraphBatches.State.empty, in.continuation)
+          }.value
+          sb <- SubgraphBatches.make[F](schemaState, counts, planned, implicitly[Statistics[F]], throttle)
+          errors <- F.ref(Chain.empty[EvalFailure])
+          results <- indexed.parTraverse{ case (input, i) => 
+            interpretOne(input, sb.alpha(i), errors) tupleLeft input.data.cursor
+          }
+          batchErrors <- sb.getErrors
+          interpreterErrors <- errors.get
+          allErrors = batchErrors ++ interpreterErrors
+        } yield Results(results, allErrors)
       }
     }
 
-  def analyzeCost[F[_]: Monad: Statistics](cont: StepCont[F, ?, ?]): F[NodeTree] = {
+  def analyzeCost[F[_]: Monad: Statistics](cont: Continuation[F, ?]): F[NodeTree] = {
     Analyzer.analyzeWith[F, Unit] { analyzer =>
-      def contCost(step: StepCont[F, ?, ?]): Analyzer.H[F, Unit] =
-        step match {
-          case d: StepCont.Done[F, i]           => analyzer.analyzePrepared(d.prep)
-          case c: StepCont.Continue[F, ?, ?, ?] => analyzer.analyzeStep(c.step) *> contCost(c.next)
-          case StepCont.Join(_, next)           => contCost(next)
-          case StepCont.TupleWith(_, next)      => contCost(next)
+      def contCost(cont: Continuation[F, ?]): Analyzer.H[F, Unit] =
+        cont match {
+          case Continuation.Done(prep)             => analyzer.analyzePrepared(prep)
+          case fa: Continuation.Continue[F, ?, ?]  => analyzer.analyzeStep(fa.step) *> contCost(fa.next)
+          case fa: Continuation.Contramap[F, ?, ?] => contCost(fa.next)
         }
 
       contCost(cont)
