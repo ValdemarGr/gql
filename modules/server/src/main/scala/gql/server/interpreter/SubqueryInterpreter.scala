@@ -375,9 +375,7 @@ class Go[F[_]](
     batchState: Ref[F, BatchState[F]],
     throttle: F ~> F,
     errors: Ref[F, Chain[EvalFailure]]
-)(implicit
-    F: Async[F]
-) {
+)(implicit F: Async[F]) {
   def multiplicityN(id: NodeId, n: Int): F[Unit] =
     subgraphBatches(id).toNel.traverse_ { nel =>
       val toAdd = n - 1
@@ -513,6 +511,7 @@ class Go[F[_]](
           goStep(alg.step, cont.contramap[o2](o2 => (o2, c2)), en.setValue(i2))
       }
     }
+
     ???
   }
 }

@@ -1,9 +1,34 @@
 package gql.server.interpreter
 
+import cats.effect.implicits._
+import cats.data._
+import gql._
+import cats.effect._
 import cats._
 import cats.implicits._
 import gql.preparation._
 import gql.server.planner.OptimizedDAG
+import gql.resolver.Step
+import gql.Cursor
+import gql.server.planner.BatchRef
+
+trait SubgraphBatches[F[_]] {
+  def multiplicityNode(id: NodeId, n: Int): F[Unit]
+
+  def inlineBatch[K, V](
+      ilb: PreparedStep.InlineBatch[F, K, V],
+      keys: Set[K],
+      cursor: Cursor
+  ): F[Option[Map[K, V]]]
+
+  def batch[K, V](
+      ubi: UniqueBatchInstance[K, V],
+      keys: Set[K],
+      cursor: Cursor
+  ): F[Option[Map[K, V]]]
+
+  def getErrors: F[Chain[EvalFailure.BatchResolution]]
+}
 
 object SubgraphBatches {
   final case class State(
@@ -56,11 +81,139 @@ object SubgraphBatches {
     }
   }
 
-  def makeRootCounts(plan: OptimizedDAG) = {
-    val batches: Set[Set[NodeId]] = plan.batches.map{ case (ids, _) => ids }
-    batches.toList.map{ xs =>
-      val br = plan.tree.lookup(xs.head).batchId.get.batcherId
+  def makeRootCounts(plan: OptimizedDAG): List[(BatchRef[?, ?], Set[NodeId])] = {
+    val batches: Set[Set[NodeId]] = plan.batches.map { case (ids, _) => ids }
+    batches.toList.map { xs =>
+      val br = plan.tree.lookup(xs.head).batchId.get
       br -> xs
+    }
+  }
+
+  final case class BatchFamily[F[_], K, V](
+      pendingInputs: Int,
+      keys: Set[K],
+      completes: List[Deferred[F, Option[Map[K, V]]]],
+      cursors: Chain[Cursor]
+  )
+  final case class BatchState[F[_]](
+      batches: Map[NodeId, BatchFamily[F, ?, ?]]
+  )
+  def make[F[_]](
+      schemaState: SchemaState[F],
+      countState: State,
+      plan: OptimizedDAG,
+      stats: Statistics[F],
+      throttle: F ~> F
+  )(implicit F: Async[F]) = {
+    val groups = makeRootCounts(plan)
+    val allBatches: F[Map[NodeId, (Ref[F, BatchFamily[F, ?, ?]], Option[Step.BatchKey[?, ?]])]] =
+      groups
+        .flatTraverse { case (k, vs) =>
+          F.ref[BatchFamily[F, ?, ?]](BatchFamily(vs.size, Set.empty, Nil, Chain.empty)).map { ref =>
+            vs.toList.tupleRight((ref, Option(k.batcherId)))
+          }
+        }
+        .map(_.toMap)
+    val inlineBatchIds: F[Map[NodeId, (Ref[F, BatchFamily[F, ?, ?]], Option[Step.BatchKey[?, ?]])]] =
+      (countState.childBatches.toSet -- groups.map { case (_, vs) => vs.toList }.flatten).toList
+        .traverse { id =>
+          F.ref[BatchFamily[F, ?, ?]](BatchFamily(1, Set.empty, Nil, Chain.empty))
+            .map(ref => (id, (ref, Option.empty[Step.BatchKey[?, ?]])))
+        }
+        .map(_.toMap)
+
+    val batchLookup: Map[UniqueBatchInstance[?, ?], (SchemaState.BatchFunction[F, ?, ?], Int)] =
+      groups.map { case (k, _) => (k.uniqueNodeId, (schemaState.batchFunctions(k.batcherId), k.batcherId.id)) }.toMap
+    def getBatchImpl[K, V](id: UniqueBatchInstance[K, V]) = {
+      val (res, id0) = batchLookup(id)
+      (res.asInstanceOf[SchemaState.BatchFunction[F, K, V]], id0)
+    }
+
+    F.ref(Chain.empty[EvalFailure.BatchResolution]).flatMap { errRef =>
+      (allBatches, inlineBatchIds).mapN(_ ++ _).map { batches =>
+        def consume[K, V](
+            ref: Ref[F, BatchFamily[F, K, V]],
+            inputs: Set[K],
+            cursor: Cursor,
+            run: Set[K] => F[Map[K, V]],
+            statsId: String
+        ): F[Option[Map[K, V]]] = {
+          F.deferred[Option[Map[K, V]]].flatMap { d =>
+            ref.modify { bf =>
+              val allKeys = bf.keys ++ inputs
+              val allCursors = bf.cursors :+ cursor
+              if (bf.pendingInputs > 1) {
+                BatchFamily[F, K, V](
+                  keys = allKeys,
+                  pendingInputs = bf.pendingInputs - 1,
+                  completes = d :: bf.completes,
+                  cursors = allCursors
+                ) -> d.get
+              } else {
+                val empty = BatchFamily[F, K, V](
+                  keys = Set.empty,
+                  pendingInputs = 0,
+                  completes = Nil,
+                  cursors = Chain.empty
+                )
+                val effect = throttle {
+                  run(allKeys).timed.attempt
+                    .flatMap[Option[Map[K, V]]] {
+                      case Right((dur, result)) => stats.updateStats(statsId, dur, allKeys.size).as(Some(result))
+                      case Left(err) =>
+                        errRef.update(_ :+ EvalFailure.BatchResolution(allCursors, err)).as(None)
+                    }
+                    .flatTap(res => bf.completes.traverse_(_.complete(res).void))
+                }
+
+                empty -> effect
+              }
+            }
+          }
+        }.flatten
+
+        new SubgraphBatches[F] {
+          override def multiplicityNode(mulId: NodeId, n: Int): F[Unit] = {
+            val toAdd = n - 1
+            countState.accum
+              .get(mulId)
+              .traverse_(_.traverse_ { id =>
+                val (ref, _) = batches(id)
+                ref.update { case bf =>
+                  bf.copy(pendingInputs = bf.pendingInputs + toAdd)
+                }
+              })
+          }
+
+          override def inlineBatch[K, V](
+              ilb: PreparedStep.InlineBatch[F, K, V],
+              keys: Set[K],
+              cursor: Cursor
+          ): F[Option[Map[K, V]]] = {
+            val (ref, _) = batches(ilb.nodeId)
+            consume[K, V](ref.asInstanceOf[Ref[F, BatchFamily[F, K, V]]], keys, cursor, ilb.run, ilb.sei.edgeId.asString)
+          }
+
+          override def batch[K, V](
+              ubi: UniqueBatchInstance[K, V],
+              keys: Set[K],
+              cursor: Cursor
+          ): F[Option[Map[K, V]]] = {
+            val (ref, _) = batches(ubi.id)
+
+            val (impl, implId) = getBatchImpl(ubi)
+            consume[K, V](
+              ref.asInstanceOf[Ref[F, BatchFamily[F, K, V]]],
+              keys,
+              cursor,
+              impl.f,
+              s"batch_${implId}"
+            )
+          }
+
+          override def getErrors: F[Chain[EvalFailure.BatchResolution]] = errRef.get
+        }
+      }
     }
   }
 }
