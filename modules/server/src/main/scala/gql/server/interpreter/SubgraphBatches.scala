@@ -12,7 +12,7 @@ import gql.resolver.Step
 import gql.Cursor
 import gql.server.planner.BatchRef
 
-trait SubgraphBatches[F[_]] {
+trait SubgraphBatches[F[_]] { self =>
   def multiplicityNode(id: NodeId, n: Int): F[Unit]
 
   def inlineBatch[K, V](
@@ -28,6 +28,21 @@ trait SubgraphBatches[F[_]] {
   ): F[Option[Map[K, V]]]
 
   def getErrors: F[Chain[EvalFailure.BatchResolution]]
+
+  def alpha(i: Int): SubgraphBatches[F] = new SubgraphBatches[F] {
+    def multiplicityNode(id: NodeId, n: Int): F[Unit] = self.multiplicityNode(id, n)
+    def inlineBatch[K, V](
+        ilb: PreparedStep.InlineBatch[F, K, V],
+        keys: Set[K],
+        cursor: Cursor
+    ): F[Option[Map[K, V]]] = self.inlineBatch(ilb.copy(sei = ilb.sei.alpha(i)), keys, cursor)
+    def batch[K, V](
+        ubi: UniqueBatchInstance[K, V],
+        keys: Set[K],
+        cursor: Cursor
+    ): F[Option[Map[K, V]]] = self.batch(ubi.copy(id = ubi.id.alpha(i)), keys, cursor)
+    def getErrors: F[Chain[EvalFailure.BatchResolution]] = self.getErrors
+  }
 }
 
 object SubgraphBatches {

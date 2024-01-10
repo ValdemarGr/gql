@@ -358,36 +358,18 @@ object SubqueryInterpreter {
 }
 
 import cats.effect.implicits._
-final case class BatchFamily[F[_]](
-    pendingInputs: Int,
-    keys: Set[?],
-    completes: List[Deferred[F, Option[Map[?, ?]]]],
-    cursors: Chain[Cursor]
-)
-final case class BatchState[F[_]](
-    batches: Map[NodeId, BatchFamily[F]]
+final case class StreamData[F[_], I](
+    cont: Continuation[F, I],
+    value: Either[Throwable, I]
 )
 class Go[F[_]](
-    ss: SignalScopes[F, StreamingData[F, ?, ?]],
+    ss: SignalScopes[F, StreamData[F, ?]],
     sup: Supervisor[F],
     stats: Statistics[F],
-    subgraphBatches: Map[NodeId, List[NodeId]],
-    batchState: Ref[F, BatchState[F]],
     throttle: F ~> F,
-    errors: Ref[F, Chain[EvalFailure]]
+    errors: Ref[F, Chain[EvalFailure]],
+    subgraphBatches: SubgraphBatches[F]
 )(implicit F: Async[F]) {
-  def multiplicityN(id: NodeId, n: Int): F[Unit] =
-    subgraphBatches(id).toNel.traverse_ { nel =>
-      val toAdd = n - 1
-      batchState.update { bs =>
-        val news = nel.map { id =>
-          val b = bs.batches.getOrElse(id, BatchFamily(1, Set.empty, Nil, Chain.empty))
-          (id, b.copy(pendingInputs = b.pendingInputs + toAdd))
-        }
-        bs.copy(batches = bs.batches ++ news.iterator)
-      }
-    }
-
   def submit(name: String, duration: FiniteDuration, size: Int): F[Unit] =
     sup.supervise(stats.updateStats(name, duration, size)).void
 
@@ -416,7 +398,7 @@ class Go[F[_]](
       case Selection(_, xs, _)     => interpretSelection(xs, en).map(_.toList.toMap.asJson)
       case lst: PreparedList[F, a, I, b] =>
         val sq = lst.toSeq(en.value)
-        multiplicityN(lst.id, sq.size) *>
+        subgraphBatches.multiplicityNode(lst.id, sq.size) *>
           sq.zipWithIndex
             .parTraverse { case (a, i) =>
               interpretEffect[a, b](lst.of.edges, lst.of.cont, en.modify(_.index(i)).setValue(a))
@@ -424,17 +406,17 @@ class Go[F[_]](
             .map(Json.arr(_: _*))
       case opt: PreparedOption[F, i, a] =>
         val en2: Option[i] = en.value
-        multiplicityN(opt.id, en2.size.toInt) *>
+        subgraphBatches.multiplicityNode(opt.id, en2.size.toInt) *>
           en2
             .traverse(i => interpretEffect[i, a](opt.of.edges, opt.of.cont, en.setValue(i)))
             .map(_.getOrElse(Json.Null))
     }
   }
 
-  def interpretEffect[I, O](
-      ps: PreparedStep[F, I, O],
-      cont: Prepared[F, O],
-      en: EvalNode[F, I]
+  def interpretEffect[I0, O0](
+      ps: PreparedStep[F, I0, O0],
+      cont: Prepared[F, O0],
+      en: EvalNode[F, I0]
   ): F[Json] = {
     def goCont[I](
         c: Continuation[F, I],
@@ -460,7 +442,6 @@ class Go[F[_]](
       import PreparedStep._
       ps match {
         case Lift(_, f) => goCont(cont, en.map(f))
-        // TODO submit timing
         case fa: EmbedEffect[F, i] =>
           runEffect(en.value: F[i], fa.sei.edgeId, 1, e => EvalFailure.EffectResolution(en.cursor, Left(e)))
             .flatMap {
@@ -468,37 +449,28 @@ class Go[F[_]](
               case None    => F.pure(Json.Null)
             }
         case alg: InlineBatch[F, k, o] =>
-          def run(xs: Set[k], cursors: Chain[Cursor]): F[Option[Map[k, o]]] =
-            runEffect(alg.run(xs), alg.sei.edgeId, xs.size, e => EvalFailure.BatchResolution(cursors, e))
-
-          val id = alg.sei.nodeId
-          val runBatch: F[Option[Map[k, o]]] = batchState.get.map(_.batches.get(id)).flatMap {
-            case None => run(en.value, Chain(en.cursor))
-            case Some(x: BatchFamily[F]) =>
-              if (x.pendingInputs > 1) {
-                Deferred[F, Option[Map[k, o]]].flatMap { d =>
-                  batchState.update { s =>
-                    val fam = s.batches(id)
-                    val updated = fam.copy(
-                      pendingInputs = fam.pendingInputs - 1,
-                      keys = fam.keys ++ en.value,
-                      completes = d.asInstanceOf[Deferred[F, Option[Map[?, ?]]]] :: fam.completes,
-                      cursors = fam.cursors :+ en.cursor
-                    )
-                    BatchState(s.batches + (id -> updated))
-                  } *> d.get
-                }
-              } else {
-                batchState.update(x => BatchState(x.batches - id)) *>
-                  run(x.keys.asInstanceOf[Set[k]] ++ en.value, x.cursors :+ en.cursor)
-                    .flatTap(o => x.completes.traverse_(_.complete(o)))
-              }
-          }
-
-          runBatch.flatMap {
-            case Some(x) => goCont(cont, en.setValue(x))
-            case None    => F.pure(Json.Null)
-          }
+          val keys = en.value: Set[k]
+          subgraphBatches
+            .inlineBatch(alg, keys, en.cursor)
+            .flatMap {
+              case Some(x) => goCont(cont, en.setValue(x.filter { case (k, _) => keys.contains(k) }))
+              case None    => F.pure(Json.Null)
+            }
+        case alg: Batch[F, k, v] =>
+          val keys = en.value: Set[k]
+          subgraphBatches
+            .batch(alg.ubi, keys, en.cursor)
+            .flatMap {
+              case Some(x) => goCont(cont, en.setValue(x.filter { case (k, _) => keys.contains(k) }))
+              case None    => F.pure(Json.Null)
+            }
+        case EmbedError(_) =>
+          val v = en.value
+          v.left.traverse(x => errors.update(EvalFailure.Raised(en.cursor, x) +: _)) *>
+            v.right.traverse(x => goCont(cont, en.setValue(x))).map(_.getOrElse(Json.Null))
+        case GetMeta(_, pm0) =>
+          val pm = pm0.value
+          goCont(cont, en.map(_ => FieldMeta(QueryMeta(en.cursor, pm.variables), pm.args, pm.pdf)))
         case alg: Compose[F, I, a, O] =>
           goStep(alg.left, Continuation.Continue(alg.right, cont), en)
         case alg: Choose[F, a, b, c, d] =>
@@ -509,9 +481,24 @@ class Go[F[_]](
         case alg: First[F, i2, o2, c2] =>
           val (i2, c2) = en.value: (i2, c2)
           goStep(alg.step, cont.contramap[o2](o2 => (o2, c2)), en.setValue(i2))
+        case alg: EmbedStream[F, i] =>
+          val stream = en.value: fs2.Stream[F, i]
+          val effect: F[EvalNode[F, i]] =
+            ss.acquireAwait(
+              stream.attempt.map(StreamData(cont, _)),
+              en.scope,
+              signal = alg.signal,
+              cursor = en.cursor
+            ).flatMap { case (s, sd) => F.fromEither(sd.value).map(i => en.setValue(i.asInstanceOf[i]).setScope(s)) }
+
+          runEffect(effect, alg.sei.edgeId, 1, e => EvalFailure.StreamHeadResolution(en.cursor, Left(e)))
+            .flatMap {
+              case Some(x) => goCont(cont, x)
+              case None    => F.pure(Json.Null)
+            }
       }
     }
 
-    ???
+    goStep[I0, O0](ps, Continuation.Done(cont), en)
   }
 }

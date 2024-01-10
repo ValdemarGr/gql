@@ -39,7 +39,9 @@ object NodeId {
 final case class StepEffectId(
     nodeId: NodeId,
     edgeId: UniqueEdgeCursor
-)
+) {
+  def alpha(i: Int): StepEffectId = StepEffectId(nodeId.alpha(i), edgeId)
+}
 
 sealed trait PreparedStep[+F[_], -I, +O] extends Product with Serializable {
   def nodeId: NodeId
