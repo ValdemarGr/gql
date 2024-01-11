@@ -8,7 +8,6 @@ import cats._
 import cats.implicits._
 import gql.preparation._
 import gql.server.planner.OptimizedDAG
-import gql.resolver.Step
 import gql.Cursor
 import gql.server.planner.BatchRef
 
@@ -46,10 +45,21 @@ trait SubgraphBatches[F[_]] { self =>
 }
 
 object SubgraphBatches {
+  final case class MulitplicityNode(id: NodeId)
+  final case class BatchNodeId(id: NodeId) {
+    def alpha(i: Int) = BatchNodeId(id.alpha(i))
+  }
+
   final case class State(
-      childBatches: List[NodeId],
-      accum: Map[NodeId, List[NodeId]]
-  )
+      childBatches: List[BatchNodeId],
+      accum: Map[MulitplicityNode, List[BatchNodeId]]
+  ) {
+    def alpha(i: Int) = 
+      State(
+        childBatches.map(_.alpha(i)),
+        accum.map { case (k, v) => k -> v.map(_.alpha(i)) }
+      )
+  }
   object State {
     def empty = State(List.empty, Map.empty)
     implicit val monoid: Monoid[State] = new Monoid[State] {
@@ -65,12 +75,16 @@ object SubgraphBatches {
       case Compose(_, l, r) =>
         countStep(state, r).flatMap(countStep(_, l))
       case alg: Choose[F, ?, ?, ?, ?] =>
-        val s1F = countStep(state, alg.fac).map(s => s.copy(accum = s.accum + (alg.nodeId -> s.childBatches)))
-        val s2F = countStep(state, alg.fbc).map(s => s.copy(accum = s.accum + (alg.nodeId -> s.childBatches)))
+        val s1F = countStep(state, alg.fac).map { s =>
+          s.copy(accum = s.accum + (MulitplicityNode(alg.fac.nodeId) -> s.childBatches))
+        }
+        val s2F = countStep(state, alg.fbd).map { s =>
+          s.copy(accum = s.accum + (MulitplicityNode(alg.fbd.nodeId) -> s.childBatches))
+        }
         (s1F, s2F).mapN(_ |+| _)
       case alg: First[F, ?, ?, ?]    => countStep(state, alg.step)
-      case alg: Batch[F, ?, ?]       => Eval.now(state.copy(childBatches = alg.nodeId :: state.childBatches))
-      case alg: InlineBatch[F, ?, ?] => Eval.now(state.copy(childBatches = alg.nodeId :: state.childBatches))
+      case alg: Batch[F, ?, ?]       => Eval.now(state.copy(childBatches = BatchNodeId(alg.nodeId) :: state.childBatches))
+      case alg: InlineBatch[F, ?, ?] => Eval.now(state.copy(childBatches = BatchNodeId(alg.nodeId) :: state.childBatches))
     }
   }
 
@@ -90,9 +104,9 @@ object SubgraphBatches {
       case PreparedLeaf(_, _, _)   => Eval.now(State(Nil, Map.empty))
       case Selection(_, fields, _) => fields.foldMapA(countField(_))
       case PreparedList(id, of, _) =>
-        countCont(of.edges, of.cont).map(s => s.copy(accum = s.accum + (id -> s.childBatches)))
+        countCont(of.edges, of.cont).map(s => s.copy(accum = s.accum + (MulitplicityNode(id) -> s.childBatches)))
       case PreparedOption(id, of) =>
-        countCont(of.edges, of.cont).map(s => s.copy(accum = s.accum + (id -> s.childBatches)))
+        countCont(of.edges, of.cont).map(s => s.copy(accum = s.accum + (MulitplicityNode(id) -> s.childBatches)))
     }
   }
 
@@ -105,11 +119,11 @@ object SubgraphBatches {
     }
   }
 
-  def makeRootCounts(plan: OptimizedDAG): List[(BatchRef[?, ?], Set[NodeId])] = {
+  def makeRootCounts(plan: OptimizedDAG): List[(BatchRef[?, ?], Set[BatchNodeId])] = {
     val batches: List[Set[NodeId]] = plan.plan.values.toList.map { case (bs, _) => bs }.distinct
     batches.mapFilter { xs =>
       plan.tree.lookup(xs.head).batchId.map { br =>
-        br -> xs
+        br -> xs.map(BatchNodeId(_))
       }
     }
   }
@@ -128,19 +142,18 @@ object SubgraphBatches {
       throttle: F ~> F
   )(implicit F: Async[F]): F[SubgraphBatches[F]] = {
     val groups = makeRootCounts(plan)
-    val allBatches: F[Map[NodeId, (Ref[F, BatchFamily[F, ?, ?]], Option[Step.BatchKey[?, ?]])]] =
+    val allBatches: F[Map[BatchNodeId, Ref[F, BatchFamily[F, ?, ?]]]] =
       groups
-        .flatTraverse { case (k, vs) =>
+        .flatTraverse { case (_, vs) =>
           F.ref[BatchFamily[F, ?, ?]](BatchFamily(vs.size, Set.empty, Nil, Chain.empty)).map { ref =>
-            vs.toList.tupleRight((ref, Option(k.batcherId)))
+            vs.toList.tupleRight(ref)
           }
         }
         .map(_.toMap)
-    val inlineBatchIds: F[Map[NodeId, (Ref[F, BatchFamily[F, ?, ?]], Option[Step.BatchKey[?, ?]])]] =
+    val inlineBatchIds: F[Map[BatchNodeId, Ref[F, BatchFamily[F, ?, ?]]]] =
       (countState.childBatches.toSet -- groups.map { case (_, vs) => vs.toList }.flatten).toList
         .traverse { id =>
-          F.ref[BatchFamily[F, ?, ?]](BatchFamily(1, Set.empty, Nil, Chain.empty))
-            .map(ref => (id, (ref, Option.empty[Step.BatchKey[?, ?]])))
+          F.ref[BatchFamily[F, ?, ?]](BatchFamily(1, Set.empty, Nil, Chain.empty)).tupleLeft(id)
         }
         .map(_.toMap)
 
@@ -198,9 +211,9 @@ object SubgraphBatches {
           override def multiplicityNode(mulId: NodeId, n: Int): F[Unit] = {
             val toAdd = n - 1
             countState.accum
-              .get(mulId)
+              .get(MulitplicityNode(mulId))
               .traverse_(_.traverse_ { id =>
-                val (ref, _) = batches(id)
+                val ref = batches(id)
                 ref.update { case bf =>
                   bf.copy(pendingInputs = bf.pendingInputs + toAdd)
                 }
@@ -212,7 +225,7 @@ object SubgraphBatches {
               keys: Set[K],
               cursor: Cursor
           ): F[Option[Map[K, V]]] = {
-            val (ref, _) = batches(ilb.nodeId)
+            val ref = batches(BatchNodeId(ilb.nodeId))
             consume[K, V](ref.asInstanceOf[Ref[F, BatchFamily[F, K, V]]], keys, cursor, ilb.run, ilb.sei.edgeId.asString)
           }
 
@@ -221,7 +234,7 @@ object SubgraphBatches {
               keys: Set[K],
               cursor: Cursor
           ): F[Option[Map[K, V]]] = {
-            val (ref, _) = batches(ubi.id)
+            val ref = batches(BatchNodeId(ubi.id))
 
             val (impl, implId) = getBatchImpl(ubi)
             consume[K, V](

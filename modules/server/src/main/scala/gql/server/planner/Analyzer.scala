@@ -92,7 +92,7 @@ object Analyzer {
         step match {
           case Lift(_, _) | EmbedError(_) | GetMeta(_, _) => F.unit
           case Compose(_, l, r)                           => analyzeStep[G](l) *> analyzeStep[G](r)
-          case alg: Choose[G, ?, ?, ?, ?]                 => goParallel(alg.fac, alg.fbc)
+          case alg: Choose[G, ?, ?, ?, ?]                 => goParallel(alg.fac, alg.fbd)
           case alg: First[G, ?, ?, ?]                     => analyzeStep[G](alg.step)
           case Batch(_, _) | EmbedEffect(_) | EmbedStream(_, _) | InlineBatch(_, _) =>
             val (name, id) = step match {

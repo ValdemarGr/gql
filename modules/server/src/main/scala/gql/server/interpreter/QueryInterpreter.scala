@@ -71,9 +71,9 @@ object QueryInterpreter {
         for {
           costTree <- indexed.foldMapA { case (input, i) => analyzeCost[F](input.continuation).map(_.alpha(i)) }
           planned <- planner.plan(costTree)
-          counts = inputs.foldMap { in =>
-            SubgraphBatches.countContinuation(SubgraphBatches.State.empty, in.continuation)
-          }.value
+          counts = indexed.foldMap { case (in, i) =>
+            SubgraphBatches.countContinuation(SubgraphBatches.State.empty, in.continuation).value.alpha(i)
+          }
           sb <- SubgraphBatches.make[F](schemaState, counts, planned, implicitly[Statistics[F]], throttle)
           errors <- F.ref(Chain.empty[EvalFailure])
           results <- indexed.parTraverse{ case (input, i) => 

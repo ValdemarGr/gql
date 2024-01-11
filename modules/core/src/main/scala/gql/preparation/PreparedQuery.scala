@@ -101,7 +101,7 @@ object PreparedStep {
   final case class Choose[F[_], A, B, C, D](
       nodeId: NodeId,
       fac: PreparedStep[F, A, C],
-      fbc: PreparedStep[F, B, D]
+      fbd: PreparedStep[F, B, D]
   ) extends PreparedStep[F, Either[A, B], Either[C, D]]
 }
 

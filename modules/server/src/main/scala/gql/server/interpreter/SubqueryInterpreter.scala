@@ -205,7 +205,7 @@ object SubqueryInterpreter {
                 }
 
               val leftAlg = Compose(???, alg.fac, Lift[F, c, C](???, Left(_)))
-              val rightAlg = Compose(???, alg.fbc, Lift[F, d, C](???, Right(_)))
+              val rightAlg = Compose(???, alg.fbd, Lift[F, d, C](???, Right(_)))
 
               val leftF = runStep(lefts, leftAlg, StepCont.Join[F, C, O](complete _, cont))
               val rightF = runStep(rights, rightAlg, StepCont.Join[F, C, O](complete _, cont))
@@ -469,9 +469,15 @@ class Go[F[_]](
       case alg: Compose[F, I, a, O] =>
         goStep(alg.left, Continuation.Continue(alg.right, cont), en)
       case alg: Choose[F, a, b, c, d] =>
-        (en.value: Either[a, b]) match {
-          case Left(a)  => goStep(alg.fac, cont.contramap[c](Left(_)), en.setValue(a))
-          case Right(b) => goStep(alg.fbc, cont.contramap[d](Right(_)), en.setValue(b))
+        val e = en.value: Either[a, b]
+        val record =
+          if (en.value.isLeft) subgraphBatches.multiplicityNode(alg.fbd.nodeId, 0)
+          else subgraphBatches.multiplicityNode(alg.fac.nodeId, 0)
+        record *> {
+          e match {
+            case Left(a)  => goStep(alg.fac, cont.contramap[c](Left(_)), en.setValue(a))
+            case Right(b) => goStep(alg.fbd, cont.contramap[d](Right(_)), en.setValue(b))
+          }
         }
       case alg: First[F, i2, o2, c2] =>
         val (i2, c2) = en.value: (i2, c2)
