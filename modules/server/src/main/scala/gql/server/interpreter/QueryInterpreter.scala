@@ -67,14 +67,6 @@ object QueryInterpreter {
 
       def interpretAll(inputs: NonEmptyList[Input[F, ?]]): F[Results] = {
         /* We perform an alpha renaming for every input to ensure that every node is distinct
-         * Every object that the SubqueryInterpreter passes a NodeId to,
-         * translates that NodeId to its proper alpha-renamed id.
-         *
-         * For instance if SubqueryInterpreter_3 invokes an operation that regards NodeId 5 in partition 3,
-         * then that NodeId must be translated to (3, 5).
-         *
-         * Every structure foreign to the SubqueryInterpreter, such as the plan, must record nodes as alpha renamed.
-         * For all structures below, this occurs after construction.
          */
         val indexed = inputs.mapWithIndex { case (input, i) =>
           input.copy(continuation = AlphaRenaming.alphaContinuation(i, input.continuation).value)
