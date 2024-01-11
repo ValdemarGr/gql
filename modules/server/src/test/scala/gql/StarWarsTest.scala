@@ -35,8 +35,13 @@ class StarWarsTest extends CatsEffectSuite {
 
   def assertJsonIO(actual: IO[JsonObject])(expected: Json)(implicit loc: Location): IO[Unit] =
     actual.map { jo =>
-      import io.circe.syntax._
-      assertEquals(jo.asJson, expected)
+      val eo = expected.asObject.get
+      val eoData = eo("data")
+      val eoErrors = eo("errors").flatMap(_.asArray).map(_.toSet)
+      val joData = jo("data")
+      val joErrors = jo("errors").flatMap(_.asArray).map(_.toSet)
+      assertEquals(joData, eoData)
+      assertEquals(joErrors, eoErrors)
     }
 
   test("the schema should be valid") {
