@@ -20,6 +20,7 @@ import munit.CatsEffectSuite
 import io.circe._
 import io.circe.syntax._
 import munit.Location
+import io.circe.literal._
 
 // https://github.com/graphql/graphql-js/blob/main/src/__tests__/starWarsData.ts
 class StarWarsTest extends CatsEffectSuite {
@@ -32,12 +33,10 @@ class StarWarsTest extends CatsEffectSuite {
       case _                           => ???
     }
 
-  def assertJsonIO(actual: IO[JsonObject])(expected: String)(implicit loc: Location): IO[Unit] =
+  def assertJsonIO(actual: IO[JsonObject])(expected: Json)(implicit loc: Location): IO[Unit] =
     actual.map { jo =>
-      val p = io.circe.parser.parse(expected)
-      assert(clue(p).isRight)
       import io.circe.syntax._
-      assertEquals(jo.asJson, p.toOption.get)
+      assertEquals(jo.asJson, expected)
     }
 
   test("the schema should be valid") {
@@ -54,7 +53,7 @@ class StarWarsTest extends CatsEffectSuite {
     """
 
     assertJsonIO(query(q)) {
-      """
+      json"""
       {
         "data": {
           "hero": {
@@ -80,7 +79,7 @@ class StarWarsTest extends CatsEffectSuite {
     """
 
     assertJsonIO(query(q)) {
-      """
+      json"""
       {
         "data": {
           "hero": {
@@ -121,7 +120,7 @@ class StarWarsTest extends CatsEffectSuite {
       """
 
     assertJsonIO(query(q)) {
-      """
+      json"""
         {
           "data": {
             "hero": {
@@ -211,7 +210,7 @@ class StarWarsTest extends CatsEffectSuite {
     """
 
     assertJsonIO(query(q)) {
-      """
+      json"""
       {
         "data": {
           "luke": {
@@ -239,7 +238,7 @@ class StarWarsTest extends CatsEffectSuite {
     """
 
     assertJsonIO(query(q)) {
-      """
+      json"""
       {
         "data": {
           "luke": {
@@ -264,7 +263,7 @@ class StarWarsTest extends CatsEffectSuite {
 
   test("allows us to create a generic query, then use it to fetch skywalker using his id") {
     assertJsonIO(query(genericQuery, Map("someId" -> Json.fromString("1000")))) {
-      """
+      json"""
       {
         "data": {
           "human": {
@@ -278,7 +277,7 @@ class StarWarsTest extends CatsEffectSuite {
 
   test("allows us to create a generic qurey, then use it to fetch han solo using his id") {
     assertJsonIO(query(genericQuery, Map("someId" -> Json.fromString("1002")))) {
-      """
+      json"""
       {
         "data": {
           "human": {
@@ -292,7 +291,7 @@ class StarWarsTest extends CatsEffectSuite {
 
   test("allows us to create a generic query, then pass an invalid id to get null back") {
     assertJsonIO(query(genericQuery, Map("someId" -> Json.fromString("not a valid id")))) {
-      """
+      json"""
       {
         "data": {
           "human": null
@@ -304,11 +303,11 @@ class StarWarsTest extends CatsEffectSuite {
 
   test("allows us to create a generic query, then pass no id to get an error") {
     assertJsonIO(query(genericQuery, Map.empty)) {
-      """
+      json"""
       {
         "errors": [
           {
-            "message": "Variable '$someId' is required but was not provided.",
+            "message": "Variable '$$someId' is required but was not provided.",
             "locations": [
               {
                 "line": 1,
@@ -337,7 +336,7 @@ class StarWarsTest extends CatsEffectSuite {
     """
 
     assertJsonIO(query(q)) {
-      """
+      json"""
       {
         "data": {
           "luke": {
@@ -372,7 +371,7 @@ class StarWarsTest extends CatsEffectSuite {
     """
 
     assertJsonIO(query(q)) {
-      """
+      json"""
       {
         "data": {
           "luke": {
@@ -400,7 +399,7 @@ class StarWarsTest extends CatsEffectSuite {
     """
 
     assertJsonIO(query(q)) {
-      """
+      json"""
       {
         "data": {
           "hero": {
@@ -424,7 +423,7 @@ class StarWarsTest extends CatsEffectSuite {
     """
 
     assertJsonIO(query(q)) {
-      """
+      json"""
       {
         "data": {
           "hero": {
@@ -448,7 +447,7 @@ class StarWarsTest extends CatsEffectSuite {
     """
 
     assertJsonIO(query(q)) {
-      """
+      json"""
       {
         "errors": [
           {
@@ -484,7 +483,7 @@ class StarWarsTest extends CatsEffectSuite {
     """
 
     assertJsonIO(query(q)) {
-      """
+      json"""
       {
         "errors": [
           {
@@ -550,7 +549,7 @@ class StarWarsTest extends CatsEffectSuite {
     """
 
     assertJsonIO(query(q)) {
-      """
+      json"""
       {
         "errors": [
           {
@@ -603,7 +602,7 @@ class StarWarsTest extends CatsEffectSuite {
     """
 
     assertJsonIO(query(q)) {
-      """
+      json"""
       {
         "errors": [
   {
@@ -682,7 +681,7 @@ class StarWarsTest extends CatsEffectSuite {
     """
 
     assertJsonIO(query(q)) {
-      """
+      json"""
       {
         "data": {
           "hero": {
