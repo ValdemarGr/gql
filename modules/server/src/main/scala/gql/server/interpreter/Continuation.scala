@@ -15,14 +15,20 @@
  */
 package gql.server.interpreter
 
-import org.typelevel.paiges.Document
+import gql.preparation._
 
-final case class StreamingData[F[_], A, B](
-    originIndex: Int,
-    edges: StepCont[F, A, B],
-    value: Either[Throwable, A]
-)
-object StreamingData {
-  implicit def docedForStreamingData[F[_]]: Document[StreamingData[F, ?, ?]] =
-    DebugPrinter.Printer.streamingDataDoced[F]
+sealed trait Continuation[F[_], -I] {
+  def contramap[I2](f: I2 => I): Continuation[F, I2] =
+    Continuation.Contramap[F, I, I2](f, this)
+}
+object Continuation {
+  final case class Done[F[_], I](prep: Prepared[F, I]) extends Continuation[F, I]
+  final case class Continue[F[_], I, C](
+    step: PreparedStep[F, I, C],
+    next: Continuation[F, C]
+  ) extends Continuation[F, I]
+  final case class Contramap[F[_], I, I2](
+    f: I2 => I,
+    next: Continuation[F, I]
+  ) extends Continuation[F, I2]
 }

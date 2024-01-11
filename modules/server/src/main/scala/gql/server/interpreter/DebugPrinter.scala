@@ -121,21 +121,6 @@ object DebugPrinter {
       }
     }
 
-    def stepContDoced[F[_]]: Document[StepCont[F, ?, ?]] = sc =>
-      sc match {
-        case StepCont.Done(p) => record("StepCont.Done", preparedDoced.document(p))
-        case StepCont.Continue(step, next) =>
-          record(
-            "StepCont.Continue",
-            kvs(
-              "step" -> preparedStepDoced.document(step),
-              "cont" -> stepContDoced.document(next)
-            )
-          )
-        case StepCont.Join(_, next)      => record("StepCont.Join", stepContDoced.document(next))
-        case StepCont.TupleWith(_, next) => record("StepCont.TupleWith", stepContDoced.document(next))
-      }
-
     def continuationDoced[F[_]]: Document[Continuation[F, ?]] = cont =>
       cont match {
         case Continuation.Done(p) => record("Continuation.Done", preparedDoced.document(p))
@@ -162,18 +147,6 @@ object DebugPrinter {
           "StreamData",
           kvs(
             "cont" -> continuationDoced.document(sd.cont),
-            "value" -> Doc.text(sd.value.leftMap(_.getMessage()).map(_.getClass().getName()).toString())
-          )
-        )
-      }
-
-    def streamingDataDoced[F[_]]: Document[StreamingData[F, ?, ?]] =
-      Document[StreamingData[F, ?, ?]] { sd =>
-        record(
-          "StreamingData",
-          kvs(
-            "originIndex" -> Doc.text(sd.originIndex.toString()),
-            "edges" -> stepContDoced.document(sd.edges),
             "value" -> Doc.text(sd.value.leftMap(_.getMessage()).map(_.getClass().getName()).toString())
           )
         )

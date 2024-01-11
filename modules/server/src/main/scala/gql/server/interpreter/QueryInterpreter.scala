@@ -49,36 +49,45 @@ object QueryInterpreter {
   }
 
   final case class Results(
-    data: NonEmptyList[(Cursor, Json)],
-    errors: Chain[EvalFailure]
+      data: NonEmptyList[(Cursor, Json)],
+      errors: Chain[EvalFailure]
   )
 
-  def apply[F[_]: Statistics](
+  def apply[F[_]](
       schemaState: SchemaState[F],
       ss: SignalScopes[F, StreamData[F, ?]],
       throttle: F ~> F
-  )(implicit planner: Planner[F], F: Async[F]) =
+  )(implicit stats: Statistics[F], planner: Planner[F], F: Async[F]) =
     new QueryInterpreter[F] {
       def interpretOne[A](input: Input[F, A], sgb: SubgraphBatches[F], errors: Ref[F, Chain[EvalFailure]]): F[Json] =
         Supervisor[F].use { sup =>
-          val go = new Go(ss, sup, implicitly[Statistics[F]], throttle, errors, sgb)
+          val go = new SubqueryInterpreter(ss, sup, stats, throttle, errors, sgb)
           go.goCont(input.continuation, input.data)
         }
 
       def interpretAll(inputs: NonEmptyList[Input[F, ?]]): F[Results] = {
-        // We perform an alpha renaming for every input to ensure that every node is distinct
-        val indexed = inputs.zipWithIndex
+        /* We perform an alpha renaming for every input to ensure that every node is distinct
+         * Every object that the SubqueryInterpreter passes a NodeId to,
+         * translates that NodeId to its proper alpha-renamed id.
+         *
+         * For instance if SubqueryInterpreter_3 invokes an operation that regards NodeId 5 in partition 3,
+         * then that NodeId must be translated to (3, 5).
+         *
+         * Every structure foreign to the SubqueryInterpreter, such as the plan, must record nodes as alpha renamed.
+         * For all structures below, this occurs after construction.
+         */
+        val indexed = inputs.mapWithIndex { case (input, i) =>
+          input.copy(continuation = AlphaRenaming.alphaContinuation(i, input.continuation).value)
+        }
         for {
-          costTree <- indexed.foldMapA { case (input, i) => analyzeCost[F](input.continuation).map(_.alpha(i)) }
+          costTree <- indexed.foldMapA(input => analyzeCost[F](input.continuation))
           planned <- planner.plan(costTree)
-          counts = indexed.foldMap { case (in, i) =>
-            SubgraphBatches.countContinuation(SubgraphBatches.State.empty, in.continuation).value.alpha(i)
-          }
-          sb <- SubgraphBatches.make[F](schemaState, counts, planned, implicitly[Statistics[F]], throttle)
+          counts = indexed.foldMap { in =>
+            SubgraphBatches.countContinuation(SubgraphBatches.State.empty, in.continuation)
+          }.value
+          sb <- SubgraphBatches.make[F](schemaState, counts, planned, stats, throttle)
           errors <- F.ref(Chain.empty[EvalFailure])
-          results <- indexed.parTraverse{ case (input, i) => 
-            interpretOne(input, sb.alpha(i), errors) tupleLeft input.data.cursor
-          }
+          results <- indexed.parTraverse(input => interpretOne(input, sb, errors) tupleLeft input.data.cursor)
           batchErrors <- sb.getErrors
           interpreterErrors <- errors.get
           allErrors = batchErrors ++ interpreterErrors

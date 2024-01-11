@@ -27,39 +27,16 @@ trait SubgraphBatches[F[_]] { self =>
   ): F[Option[Map[K, V]]]
 
   def getErrors: F[Chain[EvalFailure.BatchResolution]]
-
-  def alpha(i: Int): SubgraphBatches[F] = new SubgraphBatches[F] {
-    def multiplicityNode(id: NodeId, n: Int): F[Unit] = self.multiplicityNode(id, n)
-    def inlineBatch[K, V](
-        ilb: PreparedStep.InlineBatch[F, K, V],
-        keys: Set[K],
-        cursor: Cursor
-    ): F[Option[Map[K, V]]] = self.inlineBatch(ilb.copy(sei = ilb.sei.alpha(i)), keys, cursor)
-    def batch[K, V](
-        ubi: UniqueBatchInstance[K, V],
-        keys: Set[K],
-        cursor: Cursor
-    ): F[Option[Map[K, V]]] = self.batch(ubi.copy(id = ubi.id.alpha(i)), keys, cursor)
-    def getErrors: F[Chain[EvalFailure.BatchResolution]] = self.getErrors
-  }
 }
 
 object SubgraphBatches {
   final case class MulitplicityNode(id: NodeId)
-  final case class BatchNodeId(id: NodeId) {
-    def alpha(i: Int) = BatchNodeId(id.alpha(i))
-  }
+  final case class BatchNodeId(id: NodeId)
 
   final case class State(
       childBatches: List[BatchNodeId],
       accum: Map[MulitplicityNode, List[BatchNodeId]]
-  ) {
-    def alpha(i: Int) = 
-      State(
-        childBatches.map(_.alpha(i)),
-        accum.map { case (k, v) => k -> v.map(_.alpha(i)) }
-      )
-  }
+  )
   object State {
     def empty = State(List.empty, Map.empty)
     implicit val monoid: Monoid[State] = new Monoid[State] {
