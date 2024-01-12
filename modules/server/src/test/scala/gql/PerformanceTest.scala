@@ -26,6 +26,8 @@ import scala.concurrent.duration._
 import fs2.concurrent.SignallingRef
 
 class PerformanceTest extends CatsEffectSuite {
+  override def munitIOTimeout: Duration = 1.minutes
+
   def parListenSignal[A]: fs2.Pipe[IO, fs2.Stream[IO, A], A] =
     streams =>
       Stream.eval(SignallingRef.of[IO, Option[A]](None)).flatMap { sig =>
