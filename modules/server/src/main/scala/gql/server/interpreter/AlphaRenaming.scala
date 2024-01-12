@@ -19,7 +19,8 @@ object AlphaRenaming {
         case alg: InlineBatch[F, k, v] => now(InlineBatch[F, k, v](alg.run, alg.sei.alpha(scope)))
         case alg: Batch[F, k, v]       => now(Batch[F, k, v](alg.id, alg.ubi.alpha(scope)))
         case alg: Compose[F, A, a, B] =>
-          now(Compose[F, A, a, B](alg.nodeId.alpha(scope), alg.left, alg.right))
+          (alphaStep(scope, alg.left), alphaStep(scope, alg.right))
+            .mapN(Compose[F, A, a, B](alg.nodeId.alpha(scope), _, _))
         case alg: Choose[f, i, a, b, c] =>
           (
             alphaStep(scope, alg.fac),

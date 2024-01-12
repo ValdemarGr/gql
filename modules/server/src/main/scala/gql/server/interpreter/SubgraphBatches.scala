@@ -137,7 +137,11 @@ object SubgraphBatches {
         .map(_.toMap)
 
     val batchLookup: Map[UniqueBatchInstance[?, ?], (SchemaState.BatchFunction[F, ?, ?], Int)] =
-      groups.map { case (k, _) => (k.uniqueNodeId, (schemaState.batchFunctions(k.batcherId), k.batcherId.id)) }.toMap
+      plan.tree.all.mapFilter { n =>
+        n.batchId.map { br =>
+          (br.uniqueNodeId, (schemaState.batchFunctions(br.batcherId), br.batcherId.id))
+        }
+      }.toMap
     def getBatchImpl[K, V](id: UniqueBatchInstance[K, V]) = {
       val (res, id0) = batchLookup(id)
       (res.asInstanceOf[SchemaState.BatchFunction[F, K, V]], id0)
