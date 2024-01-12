@@ -48,8 +48,8 @@ class PerformanceTest extends CatsEffectSuite {
             .Stream(0)
             .covary[IO]
             .repeatN(10)
-            .meteredStartImmediately(100.millis)
-            .switchMap(_ => fs2.Stream(0).covary[IO].repeatN(10).meteredStartImmediately(100.millis))
+            .meteredStartImmediately(200.millis)
+            .switchMap(_ => fs2.Stream(0).covary[IO].repeatN(10).meteredStartImmediately(200.millis))
         )
       )
     )
