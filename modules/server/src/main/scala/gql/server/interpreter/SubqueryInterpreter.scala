@@ -26,6 +26,7 @@ import cats.implicits._
 import scala.concurrent.duration.FiniteDuration
 import gql.resolver._
 import io.circe.syntax._
+import org.typelevel.scalaccompat.annotation._
 
 import cats.effect.implicits._
 final case class StreamData[F[_], I](
@@ -55,6 +56,7 @@ class SubqueryInterpreter[F[_]](
   def submit(name: String, duration: FiniteDuration, size: Int): F[Unit] =
     sup.supervise(stats.updateStats(name, duration, size)).void
 
+  @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
   def interpretSelection[I](
       fields: List[PreparedField[F, I]],
       en: EvalNode[F, I]
@@ -72,6 +74,7 @@ class SubqueryInterpreter[F[_]](
     }
   }
 
+  @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
   def interpretPrepared[I](
       s: Prepared[F, I],
       en: EvalNode[F, I]
@@ -96,6 +99,7 @@ class SubqueryInterpreter[F[_]](
     }
   }
 
+  @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
   def goCont[I](
       c: Continuation[F, I],
       en: EvalNode[F, I]
@@ -106,6 +110,7 @@ class SubqueryInterpreter[F[_]](
       case fa: Continuation.Contramap[F, i, I] => goCont(fa.next, en.map(fa.f))
     }
 
+  @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
   def goStep[I, O](
       ps: PreparedStep[F, I, O],
       cont: Continuation[F, O],

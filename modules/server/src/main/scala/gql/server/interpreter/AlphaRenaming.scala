@@ -3,24 +3,32 @@ package gql.server.interpreter
 import cats._
 import cats.implicits._
 import gql.preparation._
+import org.typelevel.scalaccompat.annotation._
 
 object AlphaRenaming {
-  def alphaStep[F[_], A, B](scope: Int, step: PreparedStep[F, A, B]): Eval[PreparedStep[F, A, B]] = Eval.defer {
-    import PreparedStep._
-    step match {
-      case Lift(nid, a)              => Eval.now(Lift(nid.alpha(scope), a))
-      case EmbedError(nid)           => Eval.now(EmbedError(nid.alpha(scope)))
-      case GetMeta(nid, meta)        => Eval.now(GetMeta(nid.alpha(scope), meta))
-      case alg: EmbedEffect[f, i]    => Eval.now(EmbedEffect[f, i](alg.sei.alpha(scope)))
-      case alg: InlineBatch[f, k, v] => Eval.now(InlineBatch[f, k, v](alg.run, alg.sei.alpha(scope)))
-      case alg: Batch[f, k, v]       => Eval.now(Batch[f, k, v](alg.id, alg.ubi.alpha(scope)))
-      case Compose(nid, l, r)        => Eval.now(Compose(nid.alpha(scope), l, r))
-      case alg: Choose[f, i, a, b, c] =>
-        (alphaStep(scope, alg.fac), alphaStep(scope, alg.fbd)).mapN(Choose[f, i, a, b, c](alg.nodeId.alpha(scope), _, _))
-      case alg: First[f, i, a, b] => alphaStep(scope, alg.step).map(First[f, i, a, b](alg.nodeId.alpha(scope), _))
-      case alg: EmbedStream[f, i] => Eval.now(EmbedStream[f, i](alg.signal, alg.sei.alpha(scope)))
+  @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
+  def alphaStep[F[_], A, B](scope: Int, step: PreparedStep[F, A, B]): Eval[PreparedStep[F, A, B]] =
+    Eval.defer[PreparedStep[F, A, B]] {
+      import PreparedStep._
+      def now(fa: PreparedStep[F, A, B]): Eval[PreparedStep[F, A, B]] = Eval.now(fa)
+      step match {
+        case alg: EmbedEffect[f, b]    => now(EmbedEffect[f, b](alg.sei.alpha(scope)))
+        case alg: Lift[F, A, B]        => now(Lift[F, A, B](alg.nodeId.alpha(scope), alg.f))
+        case alg: EmbedError[F, B]     => now(EmbedError[F, B](alg.nodeId.alpha(scope)))
+        case alg: GetMeta[f, a]        => now(GetMeta[f, a](alg.nodeId.alpha(scope), alg.meta))
+        case alg: InlineBatch[F, k, v] => now(InlineBatch[F, k, v](alg.run, alg.sei.alpha(scope)))
+        case alg: Batch[F, k, v]       => now(Batch[F, k, v](alg.id, alg.ubi.alpha(scope)))
+        case alg: Compose[F, A, a, B] =>
+          now(Compose[F, A, a, B](alg.nodeId.alpha(scope), alg.left, alg.right))
+        case alg: Choose[f, i, a, b, c] =>
+          (
+            alphaStep(scope, alg.fac),
+            alphaStep(scope, alg.fbd)
+          ).mapN(Choose[f, i, a, b, c](alg.nodeId.alpha(scope), _, _))
+        case alg: First[f, i, a, b] => alphaStep(scope, alg.step).map(First[f, i, a, b](alg.nodeId.alpha(scope), _))
+        case alg: EmbedStream[f, i] => now(EmbedStream[f, i](alg.signal, alg.sei.alpha(scope)))
+      }
     }
-  }
 
   def alphaCont[F[_], A, B](scope: Int, cont: PreparedCont[F, A, B]): Eval[PreparedCont[F, A, B]] = Eval.defer {
     (alphaStep(scope, cont.edges), alphaPrep(scope, cont.cont))
@@ -32,6 +40,7 @@ object AlphaRenaming {
       alphaCont(scope, field.cont).map(cont => field.copy[F, A, B](cont = cont, nodeId = field.nodeId.alpha(scope)))
     }
 
+  @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
   def alphaField[F[_], A](scope: Int, field: PreparedField[F, A]): Eval[PreparedField[F, A]] = Eval.defer {
     field match {
       case pdf: PreparedDataField[F, A, b] => alphaDataField(scope, pdf)
@@ -42,7 +51,8 @@ object AlphaRenaming {
     }
   }
 
-  def alphaPrep[F[_], A](scope: Int, prep: Prepared[F, A]): Eval[Prepared[F, A]] = Eval.defer {
+  @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
+  def alphaPrep[F[_], A](scope: Int, prep: Prepared[F, A]): Eval[Prepared[F, A]] = Eval.defer[Prepared[F, A]] {
     prep match {
       case PreparedLeaf(nid, name, f) => Eval.now(PreparedLeaf(nid.alpha(scope), name, f))
       case Selection(nodeId, fields, source) =>

@@ -3,6 +3,7 @@ package gql.server.interpreter
 import cats.effect.implicits._
 import cats.data._
 import gql._
+import org.typelevel.scalaccompat.annotation._
 import cats.effect._
 import cats._
 import cats.implicits._
@@ -45,6 +46,7 @@ object SubgraphBatches {
     }
   }
 
+  @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
   def countStep[F[_]](state: State, step: PreparedStep[F, ?, ?]): Eval[State] = Eval.defer {
     import PreparedStep._
     step match {
