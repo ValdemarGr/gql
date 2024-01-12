@@ -90,10 +90,10 @@ object Analyzer {
 
         import PreparedStep._
         step match {
-          case Lift(_) | EmbedError() | GetMeta(_) => F.unit
-          case Compose(l, r)                       => analyzeStep[G](l) *> analyzeStep[G](r)
-          case alg: Choose[G, ?, ?, ?, ?]          => goParallel(alg.fac, alg.fbc)
-          case alg: First[G, ?, ?, ?]              => analyzeStep[G](alg.step)
+          case Lift(_, _) | EmbedError(_) | GetMeta(_, _) => F.unit
+          case Compose(_, l, r)                           => analyzeStep[G](l) *> analyzeStep[G](r)
+          case alg: Choose[G, ?, ?, ?, ?]                 => goParallel(alg.fac, alg.fbd)
+          case alg: First[G, ?, ?, ?]                     => analyzeStep[G](alg.step)
           case Batch(_, _) | EmbedEffect(_) | EmbedStream(_, _) | InlineBatch(_, _) =>
             val (name, id) = step match {
               case Batch(id, nid)      => (s"batch_${id.id}", nid.id)
@@ -131,16 +131,16 @@ object Analyzer {
         prepared.traverse_ { p =>
           local {
             p match {
-              case PreparedDataField(_, _, cont, _, _) => analyzeCont[G](cont.edges, cont.cont)
-              case PreparedSpecification(_, selection) => analyzeFields[G](selection)
+              case PreparedDataField(_, _, _, cont, _, _) => analyzeCont[G](cont.edges, cont.cont)
+              case PreparedSpecification(_, _, selection) => analyzeFields[G](selection)
             }
           }
         }
 
       @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
       def analyzePrepared[G[_]](p: Prepared[G, ?]): F[Unit] = p match {
-        case PreparedLeaf(_, _)          => F.unit
-        case Selection(fields, _)        => analyzeFields[G](fields)
+        case PreparedLeaf(_, _, _)          => F.unit
+        case Selection(_, fields, _)        => analyzeFields[G](fields)
         case l: PreparedList[G, ?, ?, ?] => analyzeCont[G](l.of.edges, l.of.cont)
         case o: PreparedOption[G, ?, ?]  => analyzeCont[G](o.of.edges, o.of.cont)
       }

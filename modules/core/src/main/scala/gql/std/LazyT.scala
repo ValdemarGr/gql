@@ -23,7 +23,7 @@ case class LazyT[F[_], A, B](fb: F[Eval[A] => B]) {
   def mapF[G[_], C](f: F[Eval[A] => B] => G[Eval[A] => C]) =
     LazyT(f(fb))
 
-  def runWithValue(f: B => A)(implicit F: Functor[F]) =
+  def runWithValue(f: B => A)(implicit F: Functor[F]): F[B] =
     runWithBoth(f).map { case (_, b) => b }
 
   def runWithBoth(f: B => A)(implicit F: Functor[F]): F[(A, B)] =
@@ -38,6 +38,9 @@ case class LazyT[F[_], A, B](fb: F[Eval[A] => B]) {
 }
 
 object LazyT {
+  def id[F[_], A](implicit F: Applicative[F]): LazyT[F, A, Eval[A]] =
+    LazyT(F.pure(x => x))
+
   def liftF[F[_], A, B](fb: F[B])(implicit F: Functor[F]): LazyT[F, A, B] =
     LazyT(fb.map(a => (_: Eval[A]) => a))
 

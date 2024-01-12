@@ -63,7 +63,7 @@ object StreamInterpreter {
   ): StreamInterpreter[F] = fromMakeInterpreter[F](QueryInterpreter[F](schemaState, _, _), debug, accumulate)
 
   def fromMakeInterpreter[F[_]: Temporal](
-      makeInterpreter: (SignalScopes[F, StreamingData[F, ?, ?]], F ~> F) => QueryInterpreter[F],
+      makeInterpreter: (SignalScopes[F, StreamData[F, ?]], F ~> F) => QueryInterpreter[F],
       debug: DebugPrinter[F],
       accumulate: Option[FiniteDuration]
   ): StreamInterpreter[F] = new StreamInterpreter[F] {
@@ -78,7 +78,7 @@ object StreamInterpreter {
     ): Stream[F, Result] =
       Stream.resource(Scope[F](None)).flatMap { rootScope =>
         Stream
-          .eval(SignalScopes[F, StreamingData[F, ?, ?]](takeOne = takeOne, debug, accumulate, rootScope))
+          .eval(SignalScopes[F, StreamData[F, ?]](takeOne = takeOne, debug, accumulate, rootScope))
           .flatMap { ss =>
             val interpreter = makeInterpreter(ss, throttle)
 
@@ -87,23 +87,23 @@ object StreamInterpreter {
             val initial = QueryInterpreter.Input.root(root, selection, rootScope)
 
             Stream.eval(interpreter.interpretAll(NonEmptyList.one(initial))).flatMap { res =>
-              val jo: JsonObject = res.roots.map(_.value).reduceLeft(_ deepMerge _).asObject.get
+              val jo: JsonObject = res.data.map { case (_, j) => j }.reduceLeft(_ deepMerge _).asObject.get
 
               Stream.emit(Result(res.errors, jo)) ++
                 changeStream
                   .evalMapAccumulate(jo) { case (prevJo, changes) =>
                     // Now we have prepared the input for this next iteration
                     val preparedRoots =
-                      changes.map { case SignalScopes.ResourceInfo(sd: StreamingData[F, a, b], p, s, _) =>
+                      changes.map { case SignalScopes.ResourceInfo(sd: StreamData[F, a], p, s, _) =>
                         val c = p.cursor
                         sd.value match {
                           case Left(ex) =>
                             (Chain(EvalFailure.StreamTailResolution(c, Left(ex))), None, c)
                           case Right(a) =>
-                            val sc = sd.edges
+                            val sc = sd.cont
                             (
                               Chain.empty,
-                              Some(QueryInterpreter.Input[F, a, b](IndexedData(sd.originIndex, EvalNode(c, a, s)), sc)),
+                              Some(QueryInterpreter.Input[F, a](sc, EvalNode(c, a, s))),
                               c
                             )
                         }
@@ -111,14 +111,14 @@ object StreamInterpreter {
 
                     // Some of the streams may have emitted errors, we have to insert nulls into the result at those positions
                     val paddedErrors = preparedRoots.toList.mapFilter {
-                      case (_, None, c)    => Some((Json.Null, c))
+                      case (_, None, c)    => Some((c, Json.Null))
                       case (_, Some(_), _) => None
                     }
 
                     // These are the inputs that are ready to be evaluated
                     val defined = preparedRoots.collect { case (_, Some(x), c) => (x, c) }
 
-                    val evalled: F[(List[EvalNode[F, Json]], Chain[EvalFailure])] =
+                    val evalled: F[(List[(Cursor, Json)], Chain[EvalFailure])] =
                       debug(s"interpreting for ${defined.size} inputs") >>
                         defined
                           .map { case (x, _) => x }
@@ -128,15 +128,15 @@ object StreamInterpreter {
                             // Okay there were no inputs (toNel), just emit what we have
                             case None => (Nil, Chain.empty)
                             // Okay so an evaluation happened
-                            case Some(res) => (res.roots.toList, res.errors)
+                            case Some(res) => (res.data.toList, res.errors)
                           } <* debug("done interpreting")
 
                     // Patch the previously emitted json data
                     val o: F[(JsonObject, Chain[EvalFailure])] = evalled.map { case (jsons, errs) =>
-                      val allJsons = jsons.map(en => (en.value, en.cursor)) ++ paddedErrors
+                      val allJsons = jsons ++ paddedErrors
                       val allErrs = errs ++ Chain.fromSeq(preparedRoots.toList).flatMap { case (es, _, _) => es }
 
-                      val stitched = allJsons.foldLeft(prevJo) { case (accum, (patch, pos)) =>
+                      val stitched = allJsons.foldLeft(prevJo) { case (accum, (pos, patch)) =>
                         stitchInto(accum.asJson, patch, pos).asObject.get
                       }
 

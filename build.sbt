@@ -121,6 +121,7 @@ lazy val sharedSettings = Seq(
     "org.typelevel" %% "cats-parse" % "0.3.8",
     "io.circe" %% "circe-core" % "0.14.6",
     "io.circe" %% "circe-parser" % "0.14.6",
+    "io.circe" %% "circe-literal" % "0.14.6",
     "org.tpolecat" %% "sourcepos" % "1.1.0",
     "org.typelevel" %% "paiges-core" % "0.4.2",
     "org.scalameta" %% "munit" % "1.0.0-M10" % Test,

@@ -18,6 +18,8 @@ package gql.server.interpreter
 import gql._
 
 final case class EvalNode[F[_], +A](cursor: Cursor, value: A, scope: Scope[F]) {
+  def map[B](f: A => B): EvalNode[F, B] = copy(value = f(value))
+
   def setValue[B](value: B): EvalNode[F, B] = copy(value = value)
 
   def modify(f: Cursor => Cursor): EvalNode[F, A] = copy(cursor = f(cursor))

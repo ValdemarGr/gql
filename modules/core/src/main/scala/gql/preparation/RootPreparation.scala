@@ -160,7 +160,7 @@ class RootPreparation[F[_], C] {
             case x :: xs =>
               val r = NonEmptyList(x, xs)
               fm.checkSelectionsMerge(r) >> qp.prepareSelectable(o, r)
-            case _ => G.pure(Selection(Nil, o))
+            case _ => G.nextId.map(NodeId(_)).map(Selection(_, Nil, o))
           }
           (prog, G.usedVariables).tupled.flatMap { case (res, used) =>
             val unused = vm.keySet -- used
