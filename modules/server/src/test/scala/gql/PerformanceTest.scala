@@ -26,30 +26,6 @@ import scala.concurrent.duration._
 import fs2.concurrent.SignallingRef
 
 class PerformanceTest extends CatsEffectSuite {
-  def parListen[A]: fs2.Pipe[IO, fs2.Stream[IO, A], Unit] =
-    streams =>
-      for {
-        d <- Stream.eval(IO.deferred[Either[Throwable, Unit]])
-        c <- Stream.eval(IO.deferred[Unit])
-        sigRef <- Stream.eval(SignallingRef[IO, Unit](()))
-
-        bg = streams.flatMap { sub =>
-          Stream.supervise {
-            sub
-              .evalMap(_ => sigRef.set(()))
-              .compile
-              .drain
-              .onError(e => d.complete(Left(e)).void)
-              .onCancel(c.complete(()).void)
-          }.void
-        }
-
-        listenCancel = (c.get *> IO.canceled).as(Right(()): Either[Throwable, Unit])
-        fg = sigRef.discrete.interruptWhen(d).interruptWhen(listenCancel)
-
-        _ <- fg.concurrently(bg)
-      } yield ()
-
   def parListenSignal[A]: fs2.Pipe[IO, fs2.Stream[IO, A], A] =
     streams =>
       Stream.eval(SignallingRef.of[IO, Option[A]](None)).flatMap { sig =>
@@ -74,18 +50,6 @@ class PerformanceTest extends CatsEffectSuite {
             .repeatN(10)
             .meteredStartImmediately(100.millis)
             .switchMap(_ => fs2.Stream(0).covary[IO].repeatN(10).meteredStartImmediately(100.millis))
-        )
-      ),
-      "concurrent2" -> b(
-        _.streamMap(_ =>
-          fs2
-            .Stream(0)
-            .covary[IO]
-            .repeatN(10)
-            .meteredStartImmediately(100.millis)
-            .map(_ => fs2.Stream(0).covary[IO].repeatN(10).meteredStartImmediately(100.millis))
-            .through(parListen)
-            .as(0)
         )
       )
     )
@@ -178,26 +142,6 @@ class PerformanceTest extends CatsEffectSuite {
       .get match {
       case Application.Subscription(run) =>
         run.take(10).compile.drain // l.timed.map { case (dur, _) => fail(dur.toMillis.toString() + " ms"): Unit }
-      case _ => ???
-    }
-  }
-
-  test("performance for concurrent streams 2") {
-    Compiler[IO]
-      .compile(
-        schema,
-        """
-        subscription {
-          data {
-            concurrent2
-          }
-        }
-      """
-      )
-      .toOption
-      .get match {
-      case Application.Subscription(run) =>
-        run.take(10).compile.drain // .timed.map { case (dur, _) => fail(dur.toMillis.toString() + " ms"): Unit }
       case _ => ???
     }
   }
