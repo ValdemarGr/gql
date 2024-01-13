@@ -144,6 +144,9 @@ object Resolver extends ResolverInstances {
 
     def rightThrough[O2](f: Resolver[F, R, R] => Resolver[F, R, O2]): Resolver[F, I, Either[L, O2]] =
       self andThen Resolver.id[F, L].choose(f(Resolver.id[F, R]))
+
+    def bothThrough[O1, O2](fa: Resolver[F, L, O1])(fb: Resolver[F, R, O2]): Resolver[F, I, Either[O1, O2]] =
+      self andThen fa.choose(fb)
   }
 
   implicit class ResolverStreamOps[F[_], I, O](private val self: Resolver[F, I, fs2.Stream[F, O]]) extends AnyVal {

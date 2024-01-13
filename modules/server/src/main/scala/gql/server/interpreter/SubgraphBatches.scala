@@ -126,6 +126,7 @@ object SubgraphBatches {
     val allBatches: F[Map[BatchNodeId, Ref[F, BatchFamily[F, ?, ?]]]] =
       groups
         .flatTraverse { case (_, vs) =>
+          println(s"batch $vs")
           F.ref[BatchFamily[F, ?, ?]](BatchFamily(vs.size, Set.empty, Nil, Chain.empty)).map { ref =>
             vs.toList.tupleRight(ref)
           }
@@ -159,7 +160,9 @@ object SubgraphBatches {
             statsId: String
         ): F[Option[Map[K, V]]] = {
           F.deferred[Option[Map[K, V]]].flatMap { d =>
+            var lg = ""
             ref.modify { bf =>
+              lg = s"bf for ${cursor.formatted} $bf"
               val allKeys = bf.keys ++ inputs
               val allCursors = bf.cursors :+ cursor
               if (bf.pendingInputs > 1) {
@@ -188,16 +191,18 @@ object SubgraphBatches {
 
                 empty -> effect
               }
-            }
+            }.map{ x => println(lg); x}
           }
         }.flatten
 
         new SubgraphBatches[F] {
           override def multiplicityNode(mulId: NodeId, n: Int): F[Unit] = {
+            // TODO can fire batches
             val toAdd = n - 1
             countState.accum
               .get(MulitplicityNode(mulId))
               .traverse_(_.toList.traverse_ { id =>
+                println(s"adding $toAdd to $id")
                 val ref = batches(id)
                 ref.update { case bf =>
                   bf.copy(pendingInputs = bf.pendingInputs + toAdd)
