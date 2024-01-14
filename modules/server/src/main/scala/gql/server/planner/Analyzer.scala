@@ -139,8 +139,8 @@ object Analyzer {
 
       @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
       def analyzePrepared[G[_]](p: Prepared[G, ?]): F[Unit] = p match {
-        case PreparedLeaf(_, _, _)          => F.unit
-        case Selection(_, fields, _)        => analyzeFields[G](fields)
+        case PreparedLeaf(_, _, _)       => F.unit
+        case Selection(_, fields, _)     => analyzeFields[G](fields)
         case l: PreparedList[G, ?, ?, ?] => analyzeCont[G](l.of.edges, l.of.cont)
         case o: PreparedOption[G, ?, ?]  => analyzeCont[G](o.of.edges, o.of.cont)
       }

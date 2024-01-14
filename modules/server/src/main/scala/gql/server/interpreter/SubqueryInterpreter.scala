@@ -66,7 +66,7 @@ class SubqueryInterpreter[F[_]](
         val x = fa.specialization.specify(en.value)
         x.left.traverse(x => errors.update(EvalFailure.Raised(en.cursor, x) +: _)) *>
           x.right.flatten
-            .traverse(a => interpretSelection[a](fa.selection, en.setValue(a)))
+            .parTraverse(a => interpretSelection[a](fa.selection, en.setValue(a)))
             .map(_.getOrElse(Chain.empty))
       case df: PreparedDataField[F, I, a] =>
         interpretEffect(df.cont.edges, df.cont.cont, en.modify(_.field(df.outputName)))
