@@ -42,30 +42,46 @@ class BatchTest extends CatsEffectSuite {
           )
         }
 
+        def diamondFields[A] = builder[IO, A] { b =>
+          b.fields(
+            "diamondL" -> b(
+              _.as("42".asLeft[Int]).bothThrough(bs.getString.one)(bs.getInt.one.map(_.toString())).map(_.merge)
+            ),
+            "diamondR" -> b(
+              _.as(43.asRight[String]).bothThrough(bs.getString.one)(bs.getInt.one.map(_.toString())).map(_.merge)
+            ),
+            "diamondB" -> b(
+              _.as(44.asRight[Int]).bothThrough(bs.getInt.one)(bs.getInt.one).map(_.merge).map(_.toString())
+            ),
+            "diamondPrefix" -> b(
+              _.void
+                .andThen(bs.getUnit.one)
+                .as(45.asRight[Int])
+                .bothThrough(bs.getInt.one)(bs.getInt.one)
+                .map(_.merge)
+                .void
+                .andThen(bs.getUnit.one)
+                .as("45")
+            )
+          )
+        }
+
+        case object DiamondTpe
+        implicit lazy val diamondTpe: Type[IO, DiamondTpe.type] = builder[IO, DiamondTpe.type] { b =>
+          b.tpe(
+            "Diamond",
+            diamondFields[DiamondTpe.type].head,
+            diamondFields[DiamondTpe.type].tail: _*
+          )
+        }
+
         SchemaShape.unit[IO](
           builder[IO, Unit] { b =>
             b.fields(
               "opaque" -> b(_.as(OpaqueTpe)),
               "b2" -> b(_.as(2) andThen bs.getInt.opt),
-              "diamondL" -> b(
-                _.as("42".asLeft[Int]).bothThrough(bs.getString.one)(bs.getInt.one.map(_.toString())).map(_.merge)
-              ),
-              "diamondR" -> b(
-                _.as(43.asRight[String]).bothThrough(bs.getString.one)(bs.getInt.one.map(_.toString())).map(_.merge)
-              ),
-              "diamondB" -> b(
-                _.as(44.asRight[Int]).bothThrough(bs.getInt.one)(bs.getInt.one).map(_.merge).map(_.toString())
-              ),
-              "diamondPrefix" -> b(
-                _.andThen(bs.getUnit.one)
-                  .as(45.asRight[Int])
-                  .bothThrough(bs.getInt.one)(bs.getInt.one)
-                  .map(_.merge)
-                  .void
-                  .andThen(bs.getUnit.one)
-                  .as("45")
-              )
-            )
+              "diamonds" -> b(_.as(List(Some(DiamondTpe), Option.empty[DiamondTpe.type], Some(DiamondTpe))))
+            ) ::: diamondFields[Unit]
           }
         )
       }
@@ -150,5 +166,29 @@ class BatchTest extends CatsEffectSuite {
           assertEquals(ii.foldMap(_.size) + si.foldMap(_.size), 4)
         }
       }
+  }
+
+  test("running diamonds inside and outside of a list should work too") {
+    val query = """
+      query {
+        diamondL
+        diamondR
+        diamondB
+        diamondPrefix
+        diamonds {
+          diamondL
+          diamondR
+          diamondB
+          diamondPrefix
+        }
+        opaque {
+          b1
+          b2
+        }
+        b2
+      }
+    """
+
+    resetCounts *> runQuery(query)
   }
 }
