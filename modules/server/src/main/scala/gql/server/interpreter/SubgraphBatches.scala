@@ -109,11 +109,46 @@ object SubgraphBatches {
     }
   }
 
+  final case class InputSubmission[F[_], K, V](
+      keys: Set[K],
+      run: Set[K] => F[Map[K, V]],
+      cursors: NonEmptyChain[Cursor],
+      completes: NonEmptyChain[Deferred[F, Option[Map[K, V]]]],
+      statId: String
+  ) {
+    def merge(that: InputSubmission[F, K, V]): InputSubmission[F, K, V] = {
+      InputSubmission(
+        keys ++ that.keys,
+        ks => run(ks ++ that.keys),
+        cursors ++ that.cursors,
+        completes ++ that.completes,
+        statId
+      )
+    }
+  }
+  object InputSubmission {
+    def use[F[_], K, V](
+        keys: Set[K],
+        run: Set[K] => F[Map[K, V]],
+        cursor: Cursor,
+        statId: String
+    )(f: InputSubmission[F, K, V] => F[Unit])(implicit F: Concurrent[F]): F[Option[Map[K, V]]] =
+      F.deferred[Option[Map[K, V]]].flatMap { d =>
+        val is = InputSubmission(
+          keys,
+          run,
+          NonEmptyChain.one(cursor),
+          NonEmptyChain.one(d),
+          statId
+        )
+
+        f(is) *> d.get
+      }
+  }
+
   final case class BatchFamily[F[_], K, V](
       pendingInputs: Int,
-      keys: Set[K],
-      completes: List[Deferred[F, Option[Map[K, V]]]],
-      cursors: Chain[Cursor]
+      inputSubmission: Option[InputSubmission[F, K, V]]
   )
   def make[F[_]](
       schemaState: SchemaState[F],
@@ -126,8 +161,7 @@ object SubgraphBatches {
     val allBatches: F[Map[BatchNodeId, Ref[F, BatchFamily[F, ?, ?]]]] =
       groups
         .flatTraverse { case (_, vs) =>
-          println(s"batch $vs")
-          F.ref[BatchFamily[F, ?, ?]](BatchFamily(vs.size, Set.empty, Nil, Chain.empty)).map { ref =>
+          F.ref[BatchFamily[F, ?, ?]](BatchFamily(vs.size, none)).map { ref =>
             vs.toList.tupleRight(ref)
           }
         }
@@ -135,7 +169,7 @@ object SubgraphBatches {
     val inlineBatchIds: F[Map[BatchNodeId, Ref[F, BatchFamily[F, ?, ?]]]] =
       (countState.childBatches -- groups.map { case (_, vs) => vs.toList }.flatten).toList
         .traverse { id =>
-          F.ref[BatchFamily[F, ?, ?]](BatchFamily(1, Set.empty, Nil, Chain.empty)).tupleLeft(id)
+          F.ref[BatchFamily[F, ?, ?]](BatchFamily(1, none)).tupleLeft(id)
         }
         .map(_.toMap)
 
@@ -152,62 +186,65 @@ object SubgraphBatches {
 
     F.ref(Chain.empty[EvalFailure.BatchResolution]).flatMap { errRef =>
       (allBatches, inlineBatchIds).mapN(_ ++ _).map { batches =>
-        def consume[K, V](
-            ref: Ref[F, BatchFamily[F, K, V]],
-            inputs: Set[K],
-            cursor: Cursor,
-            run: Set[K] => F[Map[K, V]],
-            statsId: String
-        ): F[Option[Map[K, V]]] = {
-          F.deferred[Option[Map[K, V]]].flatMap { d =>
-            var lg = ""
-            ref.modify { bf =>
-              lg = s"bf for ${cursor.formatted} $bf"
-              val allKeys = bf.keys ++ inputs
-              val allCursors = bf.cursors :+ cursor
-              if (bf.pendingInputs > 1) {
-                BatchFamily[F, K, V](
-                  keys = allKeys,
-                  pendingInputs = bf.pendingInputs - 1,
-                  completes = d :: bf.completes,
-                  cursors = allCursors
-                ) -> d.get
-              } else {
-                val empty = BatchFamily[F, K, V](
-                  keys = Set.empty,
-                  pendingInputs = 0,
-                  completes = Nil,
-                  cursors = Chain.empty
-                )
-                val effect = throttle {
-                  run(allKeys).timed.attempt
-                    .flatMap[Option[Map[K, V]]] {
-                      case Right((dur, result)) => stats.updateStats(statsId, dur, allKeys.size).as(Some(result))
-                      case Left(err) =>
-                        errRef.update(_ :+ EvalFailure.BatchResolution(allCursors, err)).as(None)
-                    }
-                    .flatTap(res => bf.completes.traverse_(_.complete(res).void))
+        def modifyFamily[K, V](
+            bf: BatchFamily[F, K, V],
+            n: Int
+        ): (BatchFamily[F, K, V], F[Unit]) = {
+          val newPending = bf.pendingInputs + n
+
+          if (newPending > 0) {
+            BatchFamily[F, K, V](
+              pendingInputs = newPending,
+              inputSubmission = bf.inputSubmission
+            ) -> F.unit
+          } else {
+            val empty = BatchFamily[F, K, V](
+              pendingInputs = 0,
+              inputSubmission = none
+            )
+
+            val effect = bf.inputSubmission.traverse_ { is =>
+              val go: F[Option[Map[K, V]]] =
+                if (is.keys.nonEmpty) {
+                  throttle {
+                    is.run(is.keys)
+                      .timed
+                      .attempt
+                      .flatMap[Option[Map[K, V]]] {
+                        case Right((dur, result)) => stats.updateStats(is.statId, dur, is.keys.size).as(Some(result))
+                        case Left(err) =>
+                          errRef.update(_ :+ EvalFailure.BatchResolution(is.cursors.toChain, err)).as(None)
+                      }
+                  }
+                } else {
+                  F.pure(Some(Map.empty))
                 }
 
-                empty -> effect
-              }
-            }.map{ x => println(lg); x}
+              go.flatTap(res => is.completes.traverse_(_.complete(res).void))
+            }
+
+            empty -> effect
           }
-        }.flatten
+        }
+
+        def submit[K, V](
+            ref: Ref[F, BatchFamily[F, K, V]],
+            is: InputSubmission[F, K, V]
+        ) =
+          ref.modify { bf =>
+            val combined = bf.inputSubmission.map(_.merge(is)).getOrElse(is)
+
+            val (newFam, eff) = modifyFamily(bf.copy(inputSubmission = Some(combined)), -1)
+
+            newFam -> eff
+          }.flatten
 
         new SubgraphBatches[F] {
           override def multiplicityNode(mulId: NodeId, n: Int): F[Unit] = {
-            // TODO can fire batches
             val toAdd = n - 1
             countState.accum
               .get(MulitplicityNode(mulId))
-              .traverse_(_.toList.traverse_ { id =>
-                println(s"adding $toAdd to $id")
-                val ref = batches(id)
-                ref.update { case bf =>
-                  bf.copy(pendingInputs = bf.pendingInputs + toAdd)
-                }
-              })
+              .traverse_(_.toList.traverse_(batches(_).modify(modifyFamily(_, toAdd)).flatten))
           }
 
           override def inlineBatch[K, V](
@@ -216,7 +253,9 @@ object SubgraphBatches {
               cursor: Cursor
           ): F[Option[Map[K, V]]] = {
             val ref = batches(BatchNodeId(ilb.nodeId))
-            consume[K, V](ref.asInstanceOf[Ref[F, BatchFamily[F, K, V]]], keys, cursor, ilb.run, ilb.sei.edgeId.asString)
+            InputSubmission.use(keys, ilb.run, cursor, ilb.sei.edgeId.asString) { is =>
+              submit[K, V](ref.asInstanceOf[Ref[F, BatchFamily[F, K, V]]], is)
+            }
           }
 
           override def batch[K, V](
@@ -227,13 +266,9 @@ object SubgraphBatches {
             val ref = batches(BatchNodeId(ubi.id))
 
             val (impl, implId) = getBatchImpl(ubi)
-            consume[K, V](
-              ref.asInstanceOf[Ref[F, BatchFamily[F, K, V]]],
-              keys,
-              cursor,
-              impl.f,
-              s"batch_${implId}"
-            )
+            InputSubmission.use(keys, impl.f, cursor, s"batch_${implId}") { is =>
+              submit[K, V](ref.asInstanceOf[Ref[F, BatchFamily[F, K, V]]], is)
+            }
           }
 
           override def getErrors: F[Chain[EvalFailure.BatchResolution]] = errRef.get

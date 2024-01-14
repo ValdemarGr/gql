@@ -109,7 +109,6 @@ class BatchTest extends CatsEffectSuite {
   }
 
   test("running diamonds individually should work") {
-    println("starting test 2")
     List(
       "diamondL",
       "diamondR",
@@ -132,7 +131,6 @@ class BatchTest extends CatsEffectSuite {
   }
 
   test("running all diamonds should also work") {
-    println("starting test 3")
     val query = """
       query {
         diamondL

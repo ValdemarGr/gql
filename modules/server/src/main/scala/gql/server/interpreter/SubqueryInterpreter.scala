@@ -134,11 +134,9 @@ class SubqueryInterpreter[F[_]](
             case None    => F.pure(Json.Null)
           }
       case alg: Batch[F, k, v] =>
-        println(s"found batch ${alg.id} (${alg.ubi})")
         val keys = en.value: Set[k]
         subgraphBatches
           .batch(alg.ubi, keys, en.cursor)
-          .map{x => println(s"done with ${alg.id} (${alg.ubi}), got $x");x}
           .flatMap {
             case Some(x) => goCont(cont, en.setValue(x.filter { case (k, _) => keys.contains(k) }))
             case None    => F.pure(Json.Null)
@@ -153,7 +151,6 @@ class SubqueryInterpreter[F[_]](
       case alg: Compose[F, I, a, O] =>
         goStep(alg.left, Continuation.Continue(alg.right, cont), en)
       case alg: Choose[F, a, b, c, d] =>
-        println(s"vising choose with children (${alg.fac.nodeId}, ${alg.fbd.nodeId})")
         val e = en.value: Either[a, b]
         val record =
           if (en.value.isLeft) subgraphBatches.multiplicityNode(alg.fbd.nodeId, 0)
