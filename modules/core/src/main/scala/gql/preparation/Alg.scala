@@ -155,7 +155,7 @@ object Alg {
           Eval.now(Outcome.Result(state.cursor, state))
         case CursorOver(cursor, fa) =>
           go(fa, state.copy(cursor = cursor))
-            .map(_.modifyState(s => s.copy(cursor = s.cursor)))
+            .map(_.modifyState(s => s.copy(cursor = state.cursor)))
         case re: RaiseError[C] =>
           Eval.now(Outcome.Errors(re.pe))
         case alg: Attempt[C, a] =>
