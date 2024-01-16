@@ -8,6 +8,7 @@ import cats.implicits._
 import gql.resolver.Resolver
 import gql.resolver.ShowMissingKeys
 import io.circe.JsonObject
+import cats.effect
 
 class BatchTest extends CatsEffectSuite {
   case class Batchers(
@@ -66,6 +67,29 @@ class BatchTest extends CatsEffectSuite {
           )
         }
 
+        sealed trait Unifier
+        case object Case1 extends Unifier
+        case object Case2 extends Unifier
+
+        implicit lazy val case1: Type[IO, Case1.type] = builder[IO, Case1.type] { b =>
+          b.tpe(
+            "Case1",
+            "case1" -> b(_.as("case1") andThen bs.getString.opt)
+          )
+        }
+
+        implicit lazy val case2: Type[IO, Case2.type] = builder[IO, Case2.type] { b =>
+          b.tpe(
+            "Case2",
+            "case2" -> b(_.as("case2") andThen bs.getString.opt)
+          )
+        }
+
+        implicit lazy val unifier: Union[IO, Unifier] =
+          union[IO, Unifier]("Unifier")
+            .subtype[Case1.type]
+            .subtype[Case2.type]
+
         case object DiamondTpe
         implicit lazy val diamondTpe: Type[IO, DiamondTpe.type] = builder[IO, DiamondTpe.type] { b =>
           b.tpe(
@@ -79,6 +103,7 @@ class BatchTest extends CatsEffectSuite {
           builder[IO, Unit] { b =>
             b.fields(
               "opaque" -> b(_.as(OpaqueTpe)),
+              "unifier" -> b(_.as(Case1: Unifier)),
               "b2" -> b(_.as(2) andThen bs.getInt.opt),
               "diamonds" -> b(_.as(List(Some(DiamondTpe), Option.empty[DiamondTpe.type], Some(DiamondTpe))))
             ) ::: diamondFields[Unit]
@@ -190,5 +215,22 @@ class BatchTest extends CatsEffectSuite {
     """
 
     resetCounts *> runQuery(query)
+  }
+
+  test("unions should be tracked properly") {
+    val query = """
+      query {
+        unifier {
+          ... on Case1 {
+            case1
+          }
+          ... on Case2 {
+            case2
+          }
+        }
+      }
+    """
+
+    runQuery(query)
   }
 }

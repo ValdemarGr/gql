@@ -64,7 +64,10 @@ class SubqueryInterpreter[F[_]](
     Chain.fromSeq(fields).parFlatTraverse {
       case fa: PreparedSpecification[F, I, a] =>
         val x = fa.specialization.specify(en.value)
-        x.left.traverse(x => errors.update(EvalFailure.Raised(en.cursor, x) +: _)) *>
+        val v = x.right.flatten
+        val sub = subgraphBatches.multiplicityNode(fa.nodeId, v.size.toInt)
+        sub *>
+          x.left.traverse(x => errors.update(EvalFailure.Raised(en.cursor, x) +: _)) *>
           x.right.flatten
             .parTraverse(a => interpretSelection[a](fa.selection, en.setValue(a)))
             .map(_.getOrElse(Chain.empty))

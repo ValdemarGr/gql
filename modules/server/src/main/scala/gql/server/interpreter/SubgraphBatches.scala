@@ -76,7 +76,10 @@ object SubgraphBatches {
   def countField[F[_]](pf: PreparedField[F, ?]): Eval[State] = Eval.defer {
     pf match {
       case PreparedDataField(_, _, _, cont, _, _) => countCont(cont.edges, cont.cont)
-      case PreparedSpecification(_, _, selection) => selection.foldMapA(countField(_))
+      case PreparedSpecification(nid, _, selection) =>
+        selection.foldMapA(countField(_)).map { s =>
+          s.copy(accum = s.accum + (MulitplicityNode(nid) -> s.childBatches))
+        }
     }
   }
 
@@ -241,10 +244,13 @@ object SubgraphBatches {
 
         new SubgraphBatches[F] {
           override def multiplicityNode(mulId: NodeId, n: Int): F[Unit] = {
-            val toAdd = n - 1
-            countState.accum
-              .get(MulitplicityNode(mulId))
-              .traverse_(_.toList.traverse_(batches(_).modify(modifyFamily(_, toAdd)).flatten))
+            if (n === 1) F.unit
+            else {
+              val toAdd = n - 1
+              countState.accum
+                .get(MulitplicityNode(mulId))
+                .traverse_(_.toList.traverse_(batches(_).modify(modifyFamily(_, toAdd)).flatten))
+            }
           }
 
           override def inlineBatch[K, V](
