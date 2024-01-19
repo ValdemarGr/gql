@@ -34,7 +34,11 @@ object DebugPrinter {
     def eval(fa: => F[String]): F[Unit] = fa.flatMap(f)
   }
 
-  def noop[F[_]](implicit F: Monad[F]): DebugPrinter[F] = apply(_ => F.unit)
+  def noop[F[_]](implicit F: Monad[F]): DebugPrinter[F] = new DebugPrinter[F] {
+    def apply(s: => String): F[Unit] = F.unit
+
+    def eval(fa: => F[String]): F[Unit] = F.unit
+  }
 
   object Printer {
     def kv(k: String, v: Doc): Doc = Doc.text(k) + Doc.space + Doc.char('=') + Doc.space + v
