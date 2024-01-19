@@ -8,7 +8,6 @@ import cats.implicits._
 import gql.resolver.Resolver
 import gql.resolver.ShowMissingKeys
 import io.circe.JsonObject
-import cats.effect
 
 class BatchTest extends CatsEffectSuite {
   case class Batchers(
