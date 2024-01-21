@@ -18,7 +18,7 @@ package gql.client
 import io.circe._
 
 final case class QueryResult[A](
-    data: A,
+    data: Decoder.Result[A],
     errors: Option[List[QueryResult.Error]]
 )
 
@@ -40,9 +40,9 @@ object QueryResult {
   }
 
   implicit def decoder[A: Decoder]: Decoder[QueryResult[A]] = Decoder.instance[QueryResult[A]] { c =>
-    for {
-      data <- c.downField("data").as[A]
-      errors <- c.downField("errors").as[Option[List[Error]]]
-    } yield QueryResult(data, errors)
+    c
+      .downField("errors")
+      .as[Option[List[Error]]]
+      .map(errs => QueryResult(c.downField("data").as[A], errs))
   }
 }

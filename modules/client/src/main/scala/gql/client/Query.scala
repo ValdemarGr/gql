@@ -42,9 +42,13 @@ final case class SimpleQuery[A](
   lazy val queryString: String = Query.renderQuery(this)
 
   def compile: Query.Compiled[A] = Query.Compiled(
-    Query.queryDecoder(selectionSet),
-    queryString,
-    this
+    Query.Dec.decoderForSelectionSet(selectionSet),
+    queryString
+  )
+
+  def compileFull: Query.Compiled[QueryResult[A]] = Query.Compiled(
+    Query.queryResultDecoder(selectionSet),
+    queryString
   )
 }
 
@@ -52,9 +56,13 @@ final case class NamedQuery[A](name: String, query: SimpleQuery[A]) extends Quer
   lazy val queryString: String = Query.renderQuery(query, name.some)
 
   def compile: Query.Compiled[A] = Query.Compiled(
-    Query.queryDecoder(query.selectionSet),
-    queryString,
-    query
+    Query.Dec.decoderForSelectionSet(query.selectionSet),
+    queryString
+  )
+
+  def compileFull: Query.Compiled[QueryResult[A]] = Query.Compiled(
+    Query.queryResultDecoder(query.selectionSet),
+    queryString
   )
 }
 
@@ -66,9 +74,14 @@ final case class ParameterizedQuery[V, A](
   lazy val queryString: String = Query.renderQuery(query, name.some, variables.written.map(_.toList))
 
   def compile(v: V): Query.Compiled[A] = Query.Compiled(
-    Query.queryDecoder(query.selectionSet),
+    Query.Dec.decoderForSelectionSet(query.selectionSet),
     queryString,
-    query,
+    variables.value.encodeObject(v).some
+  )
+
+  def compileFull(v: V): Query.Compiled[QueryResult[A]] = Query.Compiled(
+    Query.queryResultDecoder(query.selectionSet),
+    queryString,
     variables.value.encodeObject(v).some
   )
 }
@@ -77,7 +90,6 @@ object Query {
   final case class Compiled[A](
       decoder: Decoder[A],
       query: String,
-      origin: SimpleQuery[A],
       variables: Option[JsonObject] = None
   )
 
@@ -90,16 +102,7 @@ object Query {
         JsonObject.fromMap(
           Map(
             "query" -> Some(Json.fromString(x.query)),
-            "variables" -> x.variables.map(
-              _.asJson /*.fold[Json](
-                jsonNull = Json.Null,
-                jsonBoolean = _.asJson,
-                jsonNumber = _.asJson,
-                jsonString = _.asJson,
-                jsonArray = _.asJson,
-                jsonObject = _.toMap.collect { case (k, v) if !v.isNull => k -> v }.asJson
-              )*/
-            )
+            "variables" -> x.variables.map(_.asJson)
           ).collect { case (k, Some(v)) => k -> v }
         )
       }
@@ -137,6 +140,9 @@ object Query {
 
   def queryDecoder[A](ss: SelectionSet[A]): Decoder[A] =
     Decoder.instance(_.get[A]("data")(Dec.decoderForSelectionSet(ss)))
+
+  def queryResultDecoder[A](ss: SelectionSet[A]): Decoder[QueryResult[A]] =
+    QueryResult.decoder(Dec.decoderForSelectionSet(ss))
 
   def findSelectionFragments[A](selection: Selection[A]) = selection match {
     case f: Fragment[a] => f :: findFragments(f.subSelection)
