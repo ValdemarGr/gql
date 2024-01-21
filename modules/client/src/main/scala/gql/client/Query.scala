@@ -74,7 +74,7 @@ final case class ParameterizedQuery[V, A](
   lazy val queryString: String = Query.renderQuery(query, name.some, variables.written.map(_.toList))
 
   def compile(v: V): Query.Compiled[A] = Query.Compiled(
-    Query.Dec.decoderForSelectionSet(query.selectionSet),
+    Query.queryDecoder(query.selectionSet),
     queryString,
     variables.value.encodeObject(v).some
   )
