@@ -42,7 +42,7 @@ final case class SimpleQuery[A](
   lazy val queryString: String = Query.renderQuery(this)
 
   def compile: Query.Compiled[A] = Query.Compiled(
-    Query.Dec.decoderForSelectionSet(selectionSet),
+    Query.queryDecoder(selectionSet),
     queryString
   )
 
@@ -56,7 +56,7 @@ final case class NamedQuery[A](name: String, query: SimpleQuery[A]) extends Quer
   lazy val queryString: String = Query.renderQuery(query, name.some)
 
   def compile: Query.Compiled[A] = Query.Compiled(
-    Query.Dec.decoderForSelectionSet(query.selectionSet),
+    Query.queryDecoder(query.selectionSet),
     queryString
   )
 
