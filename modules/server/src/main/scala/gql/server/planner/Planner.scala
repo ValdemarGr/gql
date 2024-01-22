@@ -35,7 +35,7 @@ object Planner {
       // The best solution has lease amount of nodes in the contracted DAG
       val plan = enumerateAllPlanner[F](tree)
         .map(plan => (plan, plan.values.toSet.size))
-        .take(tree.all.size.toLong)
+        .take(5)
         .compile
         .fold(Option.empty[(Map[NodeId, PlanEnumeration.Batch], Int)]) {
           case (None, (nextPlan, s))                                                => Some((nextPlan, s))
