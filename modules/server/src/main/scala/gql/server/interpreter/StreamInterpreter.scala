@@ -45,7 +45,11 @@ trait StreamInterpreter[F[_]] {
       throttle: F ~> F = FunctionK.id[F]
   ): Stream[F, Result]
 
-  def interpretSync[A](root: A, selection: Selection[F, A], throttle: F ~> F): F[Result]
+  def interpretSync[A](
+      root: A,
+      selection: Selection[F, A],
+      throttle: F ~> F = FunctionK.id[F]
+  ): F[Result]
 }
 
 object StreamInterpreter {
@@ -58,12 +62,6 @@ object StreamInterpreter {
 
   def apply[F[_]: Async: Statistics: Planner](
       schemaState: SchemaState[F],
-      debug: DebugPrinter[F],
-      accumulate: Option[FiniteDuration]
-  ): StreamInterpreter[F] = fromMakeInterpreter[F](QueryInterpreter[F](schemaState, _, _), debug, accumulate)
-
-  def fromMakeInterpreter[F[_]: Temporal](
-      makeInterpreter: (SignalScopes[F, StreamData[F, ?]], F ~> F) => QueryInterpreter[F],
       debug: DebugPrinter[F],
       accumulate: Option[FiniteDuration]
   ): StreamInterpreter[F] = new StreamInterpreter[F] {
@@ -80,7 +78,7 @@ object StreamInterpreter {
         Stream
           .eval(SignalScopes[F, StreamData[F, ?]](takeOne = takeOne, debug, accumulate, rootScope))
           .flatMap { ss =>
-            val interpreter = makeInterpreter(ss, throttle)
+            val interpreter = QueryInterpreter[F](schemaState, ss, throttle)
 
             val changeStream = Stream.repeatEval(ss.unconsRelevantEvents)
 
