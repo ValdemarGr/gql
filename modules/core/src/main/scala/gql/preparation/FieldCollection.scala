@@ -125,10 +125,12 @@ class FieldCollection[F[_], C](
       all
         .collect { case QA.Selection.InlineFragmentSelection(f, c) => (c, f) }
         .parFlatTraverse { case (caret, f) =>
-          da.foldDirectives[Position.InlineFragmentSpread](f.directives, List(caret))(f) {
-            case (f, p: Position.InlineFragmentSpread[a], d) =>
-              da.parseArg(p, d.arguments, List(caret)).map(p.handler(_, f)).flatMap(G.raiseEither(_, List(caret)))
-          }.map(_ tupleLeft caret)
+          da
+            .parseProvidedSubtype[Position.InlineFragmentSpread](f.directives, List(caret))
+            .flatMap(_.foldLeftM(List(f)) { case (fs, d) => 
+              fs.parFlatTraverse(f => G.raiseEither(d.p.handler(d.a, f), List(caret)))
+            })
+            .map(_.tupleLeft(caret))
         }
         .flatMap(_.parFlatTraverse { case (caret, f) =>
           f.typeCondition.traverse(matchType(_, sel, caret)).map(_.getOrElse(sel)).flatMap { t =>
@@ -139,9 +141,12 @@ class FieldCollection[F[_], C](
     val realFragments = all
       .collect { case QA.Selection.FragmentSpreadSelection(f, c) => (c, f) }
       .parFlatTraverse { case (caret, f) =>
-        da.foldDirectives[Position.FragmentSpread](f.directives, List(caret))(f) { case (f, p: Position.FragmentSpread[a], d) =>
-          da.parseArg(p, d.arguments, List(caret)).map(p.handler(_, f)).flatMap(G.raiseEither(_, List(caret)))
-        }.map(_ tupleLeft caret)
+        da
+          .parseProvidedSubtype[Position.FragmentSpread](f.directives, List(caret))
+          .flatMap(_.foldLeftM(List(f)) { case (fs, d) => 
+            fs.parFlatTraverse(f => G.raiseEither(d.p.handler(d.a, f), List(caret)))
+          })
+          .map(_.tupleLeft(caret))
       }
       .flatMap(_.parFlatTraverse { case (caret, f) =>
         val fn = f.fragmentName

@@ -141,7 +141,7 @@ class ArgParsing[C](variables: VariableMap[C]) {
               verifiedF *> verifiedTypenameF *> parseInnerF
           }
         }
-      case (e @ Enum(name, _, _), v) =>
+      case (e @ Enum(name, _, _, _), v) =>
         val fa: G[(String, List[C])] = v match {
           case V.EnumValue(s, cs)                    => G.pure((s, cs))
           case V.StringValue(s, cs) if ambigiousEnum => G.pure((s, cs))

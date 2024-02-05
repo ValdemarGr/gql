@@ -21,10 +21,10 @@ import gql._
 
 trait DirectiveDsl[F[_]] {
   def directive(name: String): Directive[Unit] =
-    Directive(name)
+    Directive(name, isRepeatable = false)
 
   def directive[A](name: String, arg: Arg[A]): Directive[A] =
-    Directive(name, EmptyableArg.Lift(arg))
+    Directive(name, isRepeatable = false, EmptyableArg.Lift(arg))
 
   def onField[A](directive: Directive[A], handler: Position.FieldHandler[F, A]): State[SchemaState[F], Position.Field[F, A]] =
     DirectiveDsl.onField(directive, handler)
@@ -47,10 +47,10 @@ trait DirectiveDslFull {
     State(s => (s.copy(positions = pos :: s.positions), pos))
 
   def directive(name: String): Directive[Unit] =
-    Directive(name)
+    Directive(name, isRepeatable= false)
 
   def directive[A](name: String, arg: Arg[A]): Directive[A] =
-    Directive(name, EmptyableArg.Lift(arg))
+    Directive(name, isRepeatable= false, EmptyableArg.Lift(arg))
 
   def onField[F[_], A](directive: Directive[A], handler: Position.FieldHandler[F, A]): State[SchemaState[F], Position.Field[F, A]] =
     addPosition[F, A, Position.Field[F, A]](Position.Field(directive, handler))

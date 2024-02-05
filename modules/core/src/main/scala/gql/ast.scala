@@ -166,6 +166,7 @@ object ast extends AstImplicits.Implicits {
   final case class Enum[A](
       name: String,
       mappings: NonEmptyList[(String, EnumValue[? <: A])],
+      directives: List[SchemaDirective[Nothing, Position.Enum]] = Nil,
       description: Option[String] = None
   ) extends OutToplevel[fs2.Pure, A]
       with InToplevel[A] {
@@ -287,6 +288,13 @@ object ast extends AstImplicits.Implicits {
   trait IDLowPrio {
     implicit def idIn[A](implicit s: Scalar[A]): In[ID[A]] = ID.idTpe[A]
   }
+
+  
+  // TypeSystemDirectiveLocation
+  final case class SchemaDirective[+F[_], P[x] <: Position[F, x]](
+    position: P[?],
+    args: List[(String, V[Const, Unit])]
+  )
 }
 
 object AstImplicits {
