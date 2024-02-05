@@ -23,6 +23,12 @@ import scala.annotation.nowarn
 /** FreeApply is a Free Applicative, but witout pure. It has an Apply instance.
   */
 sealed abstract class FreeApply[F[_], +A] extends Product with Serializable {
+  def parFoldMap[G[_], B >: A](fk: F ~> G)(implicit G: Parallel[G]): G[B] = {
+    implicit val H: Apply[G.F] = G.apply
+    val fk2: F ~> G.F = fk.andThen(G.parallel)
+    G.sequential(foldMap[G.F, B](fk2))
+  }
+
   def foldMap[G[_], B >: A](fk: F ~> G)(implicit G: Apply[G]): G[B] =
     FreeApply.foldMap[F, G, B](this)(fk)
 
