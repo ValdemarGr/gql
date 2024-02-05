@@ -296,7 +296,7 @@ object Validation {
             validateTypeName[F, G](name) *>
             validateArg[F, G](fields, discovery)
         }
-      case Enum(name, _, _)      => validateTypeName[F, G](name)
+      case Enum(name, _, _, _)      => validateTypeName[F, G](name)
       case Scalar(name, _, _, _) => validateTypeName[F, G](name)
     }
 
@@ -480,7 +480,7 @@ object Validation {
       G: Monad[G]
   ): G[Unit] =
     tl match {
-      case Enum(_, _, _)       => G.unit
+      case Enum(_, _, _, _)       => G.unit
       case Scalar(_, _, _, _)  => G.unit
       case s: Selectable[F, ?] => validateToplevel[F, G](s, discovery)
       case OutArr(of, _, _)    => validateOutput[F, G](of, discovery)

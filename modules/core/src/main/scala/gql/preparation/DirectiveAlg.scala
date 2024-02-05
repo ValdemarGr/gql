@@ -19,6 +19,7 @@ import gql.parser._
 import cats._
 import cats.implicits._
 import gql._
+import scala.reflect.ClassTag
 
 class DirectiveAlg[F[_], C](
     positions: Map[String, List[Position[F, ?]]],
@@ -27,17 +28,60 @@ class DirectiveAlg[F[_], C](
   type G[A] = Alg[C, A]
   val G = Alg.Ops[C]
 
-  def parseArg[P[x] <: Position[F, x], A](p: P[A], args: Option[QueryAst.Arguments[C, AnyValue]], context: List[C]): G[A] = {
+  def parseArg[P[x] <: Position[F, x], A](p: P[A], args: List[(String, Value[AnyValue, List[C]])], context: List[C]): G[A] = {
     p.directive.arg match {
-      case EmptyableArg.Empty =>
-        args match {
-          case Some(_) => G.raise(s"Directive '${p.directive.name}' does not expect arguments", context)
-          case None    => G.unit
-        }
-      case EmptyableArg.Lift(a) =>
-        val argFields = args.toList.flatMap(_.nel.toList).map(a => a.name -> a.value.map(List(_))).toMap
-        ap.decodeArg(a, argFields, ambigiousEnum = false, context)
+      case EmptyableArg.Lift(a)               => ap.decodeArg(a, args.toMap, ambigiousEnum = false, context)
+      case EmptyableArg.Empty if args.isEmpty => G.unit
+      case EmptyableArg.Empty                 => G.raise(s"Directive '${p.directive.name}' does not expect arguments", context)
     }
+  }
+
+  def getDirective[P[x] <: Position[F, x]](name: String, context: List[C])(pf: PartialFunction[Position[F, ?], P[?]]): Alg[C, P[?]] =
+    positions.get(name) match {
+      case None => G.raise(s"Couldn't find directive '$name'", context)
+      case Some(d) =>
+        val p = d.collectFirst(pf)
+        G.raiseOpt(p, s"Directive '$name' cannot appear here", context)
+    }
+
+  case class ParsedDirective[A, P[x] <: Position[F, x]](p: P[A], a: A)
+  def parseProvided[P[x] <: Position[F, x]](
+      directives: Option[QueryAst.Directives[C, AnyValue]],
+      context: List[C]
+  )(pf: PartialFunction[Position[F, ?], P[?]]): Alg[C, List[ParsedDirective[?, P]]] =
+    directives.map(_.nel.toList).getOrElse(Nil).parTraverse { d =>
+      getDirective[P](d.name, context)(pf).flatMap { p =>
+        // rigid type variable inference help
+        def go[A](p: P[A]): G[ParsedDirective[A,P]] =
+          parseArg(
+            p,
+            d.arguments.map(_.nel.toList).getOrElse(Nil).map(a => a.name -> a.value.map(List(_))),
+            context
+          ).map(ParsedDirective(p, _))
+
+        go(p)
+      }
+    }
+
+  def parseProvidedSubtype[P[x] <: Position[F, x]](
+      directives: Option[QueryAst.Directives[C, AnyValue]],
+      context: List[C]
+  )(implicit CT: ClassTag[P[Any]]): Alg[C, List[ParsedDirective[?, P]]] = {
+    val pf: PartialFunction[Position[F, ?], P[?]] = PartialFunction
+      .fromFunction(identity[Position[F, ?]])
+      .andThen(x => CT.unapply(x))
+      .andThen { case Some(x) => x: P[?] }
+    parseProvided[P](directives, context)(pf)
+  }
+
+  def parseSchemaDirective[P[x] <: Position[F, x]](sd: ast.SchemaDirective[F, P], context: List[C]): G[ParsedDirective[?, P]] = {
+    // rigid type variable inference help
+    def go[A](p: P[A]): G[ParsedDirective[A, P]] = 
+      parseArg(p, sd.args.map{ case (k, v) => k -> v.map(_ => List.empty[C])}, context).flatMap{ a =>
+        G.pure(ParsedDirective(p, a))
+      }
+
+    go(sd.position: P[?]).widen[ParsedDirective[?, P]]
   }
 
   def foldDirectives[P[x] <: Position[F, x]]: DirectiveAlg.PartiallyAppliedFold[F, C, P] =
