@@ -16,6 +16,7 @@
 package gql
 
 import gql.ast._
+import cats.arrow.ArrowChoice
 
 sealed trait Modifier
 object Modifier {
@@ -162,4 +163,89 @@ object InverseModifierStack {
         }
       case Nil => ms.inner
     }
+}
+
+import cats.implicits._
+object language {
+  import cats.free._
+  import cats.arrow._
+  import cats._
+  import cats.data._
+  type Var[A] = FreeApplicative[FetchVar, A]
+  type ArrowM[Arrow0[_, _], A] = Free[ArrowAlg[*, Arrow0], A]
+  object ArrowM {
+    def compile[Arrow0[_, _]: Arrow, A, B](f: Var[A] => ArrowM[Arrow0, Var[B]]): Arrow0[A, B] = {
+      type M = Map[FetchVar[?], Any]
+      type S = (Int, Arrow0[M, M])
+      type G[C] = State[S, C]
+
+      def nextId = State[S, Int] { case (x, arr) => ((x + 1, arr), x) }
+
+      val initVar = FetchVar[A](0)
+      val init: Var[A] = FreeApplicative.lift(initVar)
+
+      val program = f(init)
+
+      def compiler(m: M) = new (FetchVar ~> Id) {
+        def apply[A0](fa: FetchVar[A0]): Id[A0] = m(fa).asInstanceOf[A0]
+      }
+      val ((_, arr), outVar) = program
+        .foldMap {
+          new (ArrowAlg[*, Arrow0] ~> G) {
+            def apply[A1](fa: ArrowAlg[A1, Arrow0]): G[A1] = fa match {
+              case alg: ArrowAlg.Declare[a, b, Arrow0] =>
+                nextId.flatMap { thisId =>
+                  val fetchVar = FetchVar[b](thisId)
+                  val thisArr: Arrow0[M, M] = alg.arrow
+                    .first[M]
+                    .lmap[M](m => (alg.v.foldMap(compiler(m)), m))
+                    .rmap { case (b, m) => m + (fetchVar -> b) }
+
+                  State.modify[S] { case (x, arr) => (x, arr >>> thisArr) }.as(FreeApplicative.lift(fetchVar))
+                }
+            }
+          }
+        }
+        .run((1, Arrow[Arrow0].lift[M, M](identity)))
+        .value
+
+      arr.map(m => outVar.foldMap(compiler(m))).lmap[A](a => Map(initVar -> a))
+    }
+
+    def declare[Arrow0[_, _], A, B](v: Var[A])(arrow: Arrow0[A, B]): ArrowM[Arrow0, Var[B]] =
+      Free.liftF[ArrowAlg[*, Arrow0], Var[B]](ArrowAlg.Declare(v, arrow))
+  }
+}
+import language._
+
+final case class FetchVar[A](id: Int)
+
+sealed trait ArrowAlg[A, Arrow[_, _]]
+object ArrowAlg {
+  final case class Declare[A, B, Arrow[_, _]](v: Var[A], arrow: Arrow[A, B]) extends ArrowAlg[Var[B], Arrow]
+}
+
+object Test {
+  final case class MyArrow[A, B](f: A => B)
+  implicit lazy val arrowForMyArrow: ArrowChoice[MyArrow] = ???
+
+  implicit class Dsl[A](private val v: Var[A]) {
+    def mapv[B](f: A => B): ArrowM[MyArrow, Var[B]] = ArrowM.declare(v)(MyArrow(f))
+  }
+
+  final class PartiallyAppliedCompiler[A] {
+    def apply[B](f: Var[A] => ArrowM[MyArrow, Var[B]]): MyArrow[A, B] = ArrowM.compile(f)
+  }
+
+  def compile[A]: PartiallyAppliedCompiler[A] = new PartiallyAppliedCompiler[A]
+
+  val result: MyArrow[Int, String] = compile[Int] { init =>
+    for {
+      x <- init.mapv(_ * 2)
+      _ <- x.mapv(_ * 2)
+      y <- (init, x).tupled.mapv { case (i: Int, x: Int) => i + x }
+      combined <- (x, y).tupled.mapv { case (x, y) => x + y }
+      out <- combined.mapv(_.toString)
+    } yield out
+  }
 }
