@@ -17,6 +17,7 @@ package gql
 
 import gql.ast._
 import cats.arrow.ArrowChoice
+import gql.resolver.Resolver
 
 sealed trait Modifier
 object Modifier {
@@ -166,86 +167,129 @@ object InverseModifierStack {
 }
 
 import cats.implicits._
-object language {
-  import cats.free._
-  import cats.arrow._
-  import cats._
-  import cats.data._
+import cats.free._
+import cats.arrow._
+import cats._
+import cats.data._
+object Attempt2 {
+  final case class FetchVar[A](id: Int)
   type Var[A] = FreeApplicative[FetchVar, A]
-  type ArrowM[Arrow0[_, _], A] = Free[ArrowAlg[*, Arrow0], A]
-  object ArrowM {
-    def compile[Arrow0[_, _]: Arrow, A, B](f: Var[A] => ArrowM[Arrow0, Var[B]]): Arrow0[A, B] = {
-      type M = Map[FetchVar[?], Any]
-      type S = (Int, Arrow0[M, M])
+  sealed trait ArrowAlg[Arrow0[_, _], A]
+  object ArrowAlg {
+    final case class Declare[Arrow0[_, _], A, B](
+        v: Var[A],
+        arrow: Arrow0[A, B]
+    ) extends ArrowAlg[Arrow0, Var[B]]
+  }
+
+  type FreeArrow[Arrow0[_, _], A] = Free[ArrowAlg[Arrow0, *], A]
+
+  def declare[Arrow0[_, _], A, B](v0: Var[A])(arrow: Arrow0[A, B]): FreeArrow[Arrow0, Var[B]] =
+    Free.liftF[ArrowAlg[Arrow0, *], Var[B]](ArrowAlg.Declare(v0, arrow))
+
+  object Compiler {
+    def compileFull[Arrow0[_, _]: Arrow, A, B](f: Var[A] => FreeArrow[Arrow0, Var[B]]): Arrow0[A, B] = {
+      type U = Array[Any]
+      type S = (Int, Arrow0[U, U])
       type G[C] = State[S, C]
 
-      def nextId = State[S, Int] { case (x, arr) => ((x + 1, arr), x) }
+      def nextId: G[Int] = State[S, Int] { case (x, u) => ((x + 1, u), x) }
 
       val initVar = FetchVar[A](0)
       val init: Var[A] = FreeApplicative.lift(initVar)
-
       val program = f(init)
 
-      def compiler(m: M) = new (FetchVar ~> Id) {
-        def apply[A0](fa: FetchVar[A0]): Id[A0] = m(fa).asInstanceOf[A0]
+      def varCompiler(x: U) = new (FetchVar ~> Id) {
+        def apply[A0](fa: FetchVar[A0]): Id[A0] = x(fa.id).asInstanceOf[A0]
       }
-      val ((_, arr), outVar) = program
-        .foldMap {
-          new (ArrowAlg[*, Arrow0] ~> G) {
-            def apply[A1](fa: ArrowAlg[A1, Arrow0]): G[A1] = fa match {
-              case alg: ArrowAlg.Declare[a, b, Arrow0] =>
-                nextId.flatMap { thisId =>
-                  val fetchVar = FetchVar[b](thisId)
-                  val thisArr: Arrow0[M, M] = alg.arrow
-                    .first[M]
-                    .lmap[M](m => (alg.v.foldMap(compiler(m)), m))
-                    .rmap { case (b, m) => m + (fetchVar -> b) }
+      val arrowCompiler = new (ArrowAlg[Arrow0, *] ~> G) {
+        def apply[A1](fa: ArrowAlg[Arrow0, A1]): G[A1] = fa match {
+          case alg: ArrowAlg.Declare[Arrow0, a, b] =>
+            nextId.flatMap { thisId =>
+              val fetchVar = FetchVar[b](thisId)
+              val thisArr: Arrow0[U, U] = alg.arrow
+                .first[U]
+                .lmap[U](m => (alg.v.foldMap(varCompiler(m)), m))
+                .rmap { case (b, u) => u.update(fetchVar.id, b); u }
 
-                  State.modify[S] { case (x, arr) => (x, arr >>> thisArr) }.as(FreeApplicative.lift(fetchVar))
-                }
+              State.modify[S] { case (x, arr) => (x, arr >>> thisArr) }.as(FreeApplicative.lift(fetchVar))
             }
-          }
         }
-        .run((1, Arrow[Arrow0].lift[M, M](identity)))
+      }
+
+      val ((varNum, arrowProgram), lastVar) = program
+        .foldMap(arrowCompiler)
+        .run((1, Arrow[Arrow0].lift[U, U](identity)))
         .value
 
-      arr.map(m => outVar.foldMap(compiler(m))).lmap[A](a => Map(initVar -> a))
+      arrowProgram
+        .map(u => lastVar.foldMap(varCompiler(u)))
+        .lmap[A] { a =>
+          val arr = Array.ofDim[Any](varNum)
+          arr.update(0, a)
+          arr
+        }
+    }
+  }
+
+  trait Dsl[Arrow0[_, _]] {
+    implicit class Syntax[A](private val v: Var[A]) {
+      def decl[B](f: Arrow0[A, A] => Arrow0[A, B])(implicit A: Arrow[Arrow0]): FreeArrow[Arrow0, Var[B]] =
+        declare[Arrow0, A, B](v)(f(A.lift(identity)))
     }
 
-    def declare[Arrow0[_, _], A, B](v: Var[A])(arrow: Arrow0[A, B]): ArrowM[Arrow0, Var[B]] =
-      Free.liftF[ArrowAlg[*, Arrow0], Var[B]](ArrowAlg.Declare(v, arrow))
-  }
-}
-import language._
-
-final case class FetchVar[A](id: Int)
-
-sealed trait ArrowAlg[A, Arrow[_, _]]
-object ArrowAlg {
-  final case class Declare[A, B, Arrow[_, _]](v: Var[A], arrow: Arrow[A, B]) extends ArrowAlg[Var[B], Arrow]
-}
-
-object Test {
-  final case class MyArrow[A, B](f: A => B)
-  implicit lazy val arrowForMyArrow: ArrowChoice[MyArrow] = ???
-
-  implicit class Dsl[A](private val v: Var[A]) {
-    def mapv[B](f: A => B): ArrowM[MyArrow, Var[B]] = ArrowM.declare(v)(MyArrow(f))
+    def decl[A](arrow: Arrow0[Unit, A])(implicit A: Arrow[Arrow0]): FreeArrow[Arrow0, Var[A]] =
+      ().pure[Var].decl(_ => arrow)
   }
 
   final class PartiallyAppliedCompiler[A] {
-    def apply[B](f: Var[A] => ArrowM[MyArrow, Var[B]]): MyArrow[A, B] = ArrowM.compile(f)
+    def apply[Arrow0[_, _]: Arrow, B](f: Var[A] => FreeArrow[Arrow0, Var[B]]): Arrow0[A, B] =
+      Compiler.compileFull(f)
   }
 
   def compile[A]: PartiallyAppliedCompiler[A] = new PartiallyAppliedCompiler[A]
 
-  val result: MyArrow[Int, String] = compile[Int] { init =>
-    for {
-      x <- init.mapv(_ * 2)
-      _ <- x.mapv(_ * 2)
-      y <- (init, x).tupled.mapv { case (i: Int, x: Int) => i + x }
-      combined <- (x, y).tupled.mapv { case (x, y) => x + y }
-      out <- combined.mapv(_.toString)
-    } yield out
+  object Test {
+    case class MyArrow[A, B](f: A => B)
+    implicit lazy val arrowForMyArrow: Arrow[MyArrow] = 
+      new Arrow[MyArrow] {
+        override def compose[A, B, C](f: MyArrow[B,C], g: MyArrow[A,B]): MyArrow[A,C] = 
+          MyArrow(f.f.compose(g.f))
+
+        override def first[A, B, C](fa: MyArrow[A,B]): MyArrow[(A, C),(B, C)] = 
+          MyArrow { case (a, c) => (fa.f(a), c) }
+
+        override def lift[A, B](f: A => B): MyArrow[A,B] = 
+          MyArrow(f)
+      }
+
+    object MyArrowDsl extends Dsl[MyArrow]
+    import MyArrowDsl._
+
+    val result: MyArrow[Int, String] = compile { init =>
+      for {
+        x <- init.decl(_.map(_ - 2).map(_ + 2).map(_ - 2))
+        y <- init.decl(_.map(_ * 2))
+        k <- (x, x, x).tupled.decl(_.map { case (x1, x2, x3) => x1 + x2 + x3 })
+        z <- (k, y).tupled.decl(_.map { case (k, y) => k + y }.map(_.toString))
+      } yield z
+    }
+  }
+
+  object Practical {
+    import cats.effect._
+    object ResolverDsl extends Dsl[Resolver[IO, *, *]]
+    import ResolverDsl._
+
+    import gql.dsl.all._
+
+    val result: Resolver[IO, Int, String] = compile { init =>
+      for {
+        x <- init.decl(_.evalMap(x => IO(x - 2)).evalMap(x => IO(x + 2)).evalMap(x => IO(x - 2)))
+        y <- init.decl(_.streamMap(i => fs2.Stream(i)))
+        age <- decl(arged(arg[Int]("age")))
+        z <- (x, y, age).tupled.decl(_.map { case (x, y, age) => x + y + age }.map(_.toString))
+      } yield z
+    }
   }
 }
