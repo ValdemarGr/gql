@@ -10,6 +10,7 @@ import scala.util.Try
 class ArrowTest extends CatsEffectSuite {
   val d = dsl[IO]
   import d._
+  object FunctionLang extends LanguageDsl[Function1]
 
   test("arrow compilation should work properly") {
     compile[Int] { i =>
@@ -23,7 +24,6 @@ class ArrowTest extends CatsEffectSuite {
   }
 
   test("arrow evaluation should work properly") {
-    object FunctionLang extends LanguageDsl[Function1]
     import FunctionLang._
     val f = compile[Int] { i =>
       for {
@@ -85,5 +85,24 @@ class ArrowTest extends CatsEffectSuite {
       }
     }
     assert(clue(fa).isFailure)
+  }
+
+  test("choice should work") {
+    import FunctionLang._
+    val f = compile[Int] { i =>
+      for {
+        x <- i(_.map(_ * 2))
+        y <- x.map(x => if (x > 5) Left(x) else Right(x)).choice(
+          l => l.apply(_.map(_ + 1)),
+          r => for {
+            x0 <- r.apply(_.map(_ - 1))
+            o <- (x0, x).tupled.apply(_.map{ case (z0, z1) => z0 + z1 })
+          } yield o
+        )
+      } yield y
+    }
+
+    assertEquals(f(2), 3 + 4)
+    assertEquals(f(3), 7)
   }
 }
