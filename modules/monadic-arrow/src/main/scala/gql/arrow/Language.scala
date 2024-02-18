@@ -13,21 +13,29 @@ final case class FetchVar[A](
     compilerPos: SourcePos
 )
 
-class Language[Arrow0[_, _]] {
-  final type Var[A] = FreeApplicative[FetchVar, A]
-
-  sealed trait Declaration[A]
-  object Declaration {
-    case class Declare[A, B](v: Var[A], arrow: Arrow0[A, B], pos: SourcePos) extends Declaration[Var[B]]
+final case class Var[A](impl: FreeApplicative[FetchVar, A]) extends AnyVal
+object Var {
+  implicit val applicative: Applicative[Var] = new Applicative[Var] {
+    val underlying = FreeApplicative.freeApplicative[FetchVar]
+    override def ap[A, B](ff: Var[A => B])(fa: Var[A]): Var[B] = Var(underlying.ap(ff.impl)(fa.impl))
+    override def pure[A](x: A): Var[A] = Var(underlying.pure(x))
   }
+}
 
+sealed trait DeclAlg[Arrow0[_, _], A]
+object DeclAlg {
+  case class Declare[Arrow0[_, _], A, B](v: Var[A], arrow: Arrow0[A, B], pos: SourcePos) extends DeclAlg[Arrow0, Var[B]]
+}
+
+class Language[Arrow0[_, _]] {
+  final type Declaration[A] = DeclAlg[Arrow0, A]
   final type Decl[A] = Free[Declaration, A]
 
   def declare[A, B](v: Var[A])(f: Arrow0[A, B])(implicit sp: SourcePos): Decl[Var[B]] =
-    Free.liftF[Declaration, Var[B]](Declaration.Declare(v, f, sp))
+    Free.liftF[Declaration, Var[B]](DeclAlg.Declare(v, f, sp))
 
   def compileFull[A, B](f: Var[A] => Decl[Var[B]])(implicit arrow: Arrow[Arrow0], sp: SourcePos): Arrow0[A, B] = {
-    val init = FreeApplicative.lift(FetchVar[A](0, None, sp))
+    val init = Var(FreeApplicative.lift(FetchVar[A](0, None, sp)))
     val program = f(init)
     type U = Vector[Any]
     type S = (Int, Arrow0[U, U])
@@ -35,60 +43,81 @@ class Language[Arrow0[_, _]] {
 
     val nextId: G[Int] = State[S, Int] { case (x, u) => ((x + 1, u), x) }
 
-    def varCompiler(x: U) = new (FetchVar ~> Id) {
-      def apply[A0](fa: FetchVar[A0]): Id[A0] =
-        if (fa.compilerPos eq sp) x(fa.id).asInstanceOf[A0]
-        else {
-          val msg = fa.pos match {
-            case None =>
-              s"""|Initial variable introduced at ${fa.compilerPos}.
-                  |Variables that were not declared in this scope may not be referenced.
-                  |Example:
-                  |```
-                  |compile[Int]{ init =>
-                  |  for {
-                  |    y <- init.apply(_.andThen(compile[Int]{ _ =>
-                  |      // referencing 'init' here is an error
-                  |      init.apply(_.map(_ + 1))
-                  |    }))
-                  |  } yield y
-                  |}
-                  |```""".stripMargin
-            case Some(p) =>
-              s"""|Variable declared at ${p}.
-                  |Compilation initiated at ${fa.compilerPos}.
-                  |Variables that were not declared in this scope may not be referenced.
-                  |Example:
-                  |```
-                  |compile[Int]{ init =>
-                  |  for {
-                  |    x <- init.apply(_.map(_ + 1))
-                  |    y <- init.apply(_.andThen(compile[Int]{ _ =>
-                  |      // referencing 'x' here is an error
-                  |      x.apply(_.map(_ + 1))
-                  |    }))
-                  |  } yield y
-                  |}
-                  |```""".stripMargin
-          }
-          throw new RuntimeException(
-            s"""|Variable closure error.
-                |$msg""".stripMargin
-          )
+    def resolveVariable[V](v: Var[V]): Arrow0[U, V] = {
+      val x = v.impl
+      type M[X] = Chain[String]
+      val errors = x.analyze[Chain[String]]{
+        new (FetchVar ~> M) {
+          def apply[A0](fa: FetchVar[A0]): M[A0] = 
+            if (fa.compilerPos eq sp) Chain.empty
+            else {
+              val msg = fa.pos match {
+                case None =>
+                  s"""|Initial variable introduced at ${fa.compilerPos}.
+                      |Variables that were not declared in this scope may not be referenced.
+                      |Example:
+                      |```
+                      |compile[Int]{ init =>
+                      |  for {
+                      |    y <- init.apply(_.andThen(compile[Int]{ _ =>
+                      |      // referencing 'init' here is an error
+                      |      init.apply(_.map(_ + 1))
+                      |    }))
+                      |  } yield y
+                      |}
+                      |```""".stripMargin
+                case Some(p) =>
+                  s"""|Variable declared at ${p}.
+                      |Compilation initiated at ${fa.compilerPos}.
+                      |Variables that were not declared in this scope may not be referenced.
+                      |Example:
+                      |```
+                      |compile[Int]{ init =>
+                      |  for {
+                      |    x <- init.apply(_.map(_ + 1))
+                      |    y <- init.apply(_.andThen(compile[Int]{ _ =>
+                      |      // referencing 'x' here is an error
+                      |      x.apply(_.map(_ + 1))
+                      |    }))
+                      |  } yield y
+                      |}
+                      |```""".stripMargin
+              }
+              Chain.one(
+                s"""|Variable closure error.
+                    |$msg""".stripMargin
+              )
+            }
         }
+      }
+
+      if (errors.nonEmpty) {
+        throw new RuntimeException(errors.mkString_("\n\n"))
+      } else {
+        val r = x.foldMap{
+          new (FetchVar ~> Reader[U, *]) {
+            def apply[A0](fa: FetchVar[A0]): Reader[U, A0] = 
+              Reader { u => u(fa.id).asInstanceOf[A0] }
+          }
+        }
+        arrow.lift(r.run)
+      }
     }
 
     val arrowCompiler = new (Declaration ~> G) {
       def apply[A1](fa: Declaration[A1]): G[A1] = fa match {
-        case alg: Declaration.Declare[a, b] =>
+        case alg: DeclAlg.Declare[Arrow0, a, b] =>
           nextId.flatMap { thisId =>
             val fetchVar = FetchVar[b](thisId, alg.pos.some, sp)
-            val thisArr: Arrow0[U, U] = alg.arrow
+            val getVar = resolveVariable(alg.v)
+            val thisArr: Arrow0[U, U] =
+              getVar
               .first[U]
-              .lmap[U](m => (alg.v.foldMap(varCompiler(m)), m))
-              .rmap { case (b, u) => u.updated(fetchVar.id, b) }
+              .lmap[U](m => (m, m))
+              .andThen(alg.arrow.first[U])
+              .rmap{ case (b, u) => u.updated(fetchVar.id, b) }
 
-            State.modify[S] { case (x, arr) => (x, arr >>> thisArr) }.as(FreeApplicative.lift(fetchVar))
+            State.modify[S] { case (x, arr) => (x, arr >>> thisArr) }.as(Var(FreeApplicative.lift(fetchVar)))
           }
       }
     }
@@ -99,11 +128,9 @@ class Language[Arrow0[_, _]] {
       .value
 
     val b = Vector.fill[Any](varNum)(null)
-    arrowProgram
-      .map(u => lastVar.foldMap(varCompiler(u)))
-      .lmap[A] { a =>
-        b.updated(0, a)
-      }
+    val outputArrow: Arrow0[U, B] = resolveVariable(lastVar)
+    val initArrow: Arrow0[A, U] = arrow.lift[A, U](b.updated(0, _))
+    initArrow andThen arrowProgram andThen outputArrow
   }
 }
 
