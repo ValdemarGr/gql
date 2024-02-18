@@ -139,6 +139,12 @@ lazy val core = project
   .settings(sharedSettings)
   .settings(name := "gql-core")
   .dependsOn(parser)
+  
+lazy val monadicArrow = project
+  .in(file("modules/monadic-arrow"))
+  .settings(sharedSettings)
+  .settings(name := "gql-monadic-arrow")
+  .dependsOn(core)
 
 lazy val server = project
   .in(file("modules/server"))
