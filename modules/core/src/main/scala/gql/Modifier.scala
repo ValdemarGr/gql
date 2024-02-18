@@ -170,42 +170,84 @@ import cats.free._
 import cats.arrow._
 import cats._
 import cats.data._
+import org.tpolecat.sourcepos._
 
 object Attempt3 {
-  final case class FetchVar[A](id: Int)
+  final case class FetchVar[A](
+      id: Int,
+      pos: Option[SourcePos],
+      compilerPos: SourcePos
+  )
   type Var[A] = FreeApplicative[FetchVar, A]
 
   class Language[Arrow0[_, _]] {
     sealed trait Declaration[A]
     object Declaration {
-      case class Declare[A, B](v: Var[A], arrow: Arrow0[A, B]) extends Declaration[Var[B]]
+      case class Declare[A, B](v: Var[A], arrow: Arrow0[A, B], pos: SourcePos) extends Declaration[Var[B]]
     }
 
     final type Decl[A] = Free[Declaration, A]
 
-    def declare[A, B](v: Var[A])(f: Arrow0[A, B]): Decl[Var[B]] =
-      Free.liftF[Declaration, Var[B]](Declaration.Declare(v, f))
+    def declare[A, B](v: Var[A])(f: Arrow0[A, B])(implicit sp: SourcePos): Decl[Var[B]] =
+      Free.liftF[Declaration, Var[B]](Declaration.Declare(v, f, sp))
 
-    def liftArrow[A](f: Arrow0[Unit, A]): Decl[Var[A]] = declare[Unit, A](().pure[Var])(f)
-
-    def compile[A, B](f: Var[A] => Decl[Var[B]])(implicit arrow: Arrow[Arrow0]): Arrow0[A, B] = {
-      val init = FreeApplicative.lift(FetchVar[A](0))
+    def compileFull[A, B](f: Var[A] => Decl[Var[B]])(implicit arrow: Arrow[Arrow0], sp: SourcePos): Arrow0[A, B] = {
+      val init = FreeApplicative.lift(FetchVar[A](0, None, sp))
       val program = f(init)
       type U = Vector[Any]
       type S = (Int, Arrow0[U, U])
       type G[C] = State[S, C]
 
-      def nextId: G[Int] = State[S, Int] { case (x, u) => ((x + 1, u), x) }
+      val nextId: G[Int] = State[S, Int] { case (x, u) => ((x + 1, u), x) }
 
       def varCompiler(x: U) = new (FetchVar ~> Id) {
-        def apply[A0](fa: FetchVar[A0]): Id[A0] = x(fa.id).asInstanceOf[A0]
+        def apply[A0](fa: FetchVar[A0]): Id[A0] =
+          if (fa.compilerPos eq sp) x(fa.id).asInstanceOf[A0]
+          else {
+            val msg = fa.pos match {
+              case None => 
+                s"""|Initial variable introduced at ${fa.compilerPos}.
+                    |Variables that were not declared in this scope may not be referenced.
+                    |Example:
+                    |```
+                    |compile[Int]{ init =>
+                    |  for {
+                    |    y <- init.apply(_.andThen(compile[Int]{ _ =>
+                    |      // referencing 'init' here is an error
+                    |      init.apply(_.map(_ + 1))
+                    |    }))
+                    |  } yield y
+                    |}
+                    |```""".stripMargin
+              case Some(p) => 
+                s"""|Variable declared at ${p}.
+                    |Compilation initiated at ${fa.compilerPos}.
+                    |Variables that were not declared in this scope may not be referenced.
+                    |Example:
+                    |```
+                    |compile[Int]{ init =>
+                    |  for {
+                    |    x <- init.apply(_.map(_ + 1))
+                    |    y <- init.apply(_.andThen(compile[Int]{ _ =>
+                    |      // referencing 'x' here is an error
+                    |      x.apply(_.map(_ + 1))
+                    |    }))
+                    |  } yield y
+                    |}
+                    |```""".stripMargin
+            }
+            throw new RuntimeException(
+              s"""|Variable closure error.
+                  |$msg""".stripMargin
+            )
+          }
       }
 
       val arrowCompiler = new (Declaration ~> G) {
         def apply[A1](fa: Declaration[A1]): G[A1] = fa match {
           case alg: Declaration.Declare[a, b] =>
             nextId.flatMap { thisId =>
-              val fetchVar = FetchVar[b](thisId)
+              val fetchVar = FetchVar[b](thisId, alg.pos.some, sp)
               val thisArr: Arrow0[U, U] = alg.arrow
                 .first[U]
                 .lmap[U](m => (alg.v.foldMap(varCompiler(m)), m))
@@ -230,38 +272,48 @@ object Attempt3 {
     }
   }
 
-  trait LanguageDsl[Arrow0[_, _]] extends Language[Arrow0] { self =>
-    implicit class VarOps[A](v: Var[A]) {
-      def declare[B](f: Arrow0[A, B]): Decl[Var[B]] = self.declare(v)(f)
+  abstract class LanguageDsl[Arrow0[_, _]: Arrow] extends Language[Arrow0] { self =>
+    def liftArrow[A](f: Arrow0[Unit, Unit] => Arrow0[Unit, A])(implicit sp: SourcePos): Decl[Var[A]] =
+      declare[Unit, A](().pure[Var])(f(Arrow[Arrow0].id[Unit]))
 
-      def apply[B](f: Arrow0[A, A] => Arrow0[A, B])(implicit A: Arrow[Arrow0]): Decl[Var[B]] = 
-        self.andThen(v)(f(A.id[A]))
+    implicit class VarOps[A](v: Var[A]) {
+      def declare[B](f: Arrow0[A, B])(implicit sp: SourcePos): Decl[Var[B]] = self.declare(v)(f)
+
+      def apply[B](f: Arrow0[A, A] => Arrow0[A, B])(implicit sp: SourcePos): Decl[Var[B]] =
+        declare(f(Arrow[Arrow0].id[A]))
     }
 
     final class PartiallyAppliedLanguageCompiler[A](private val dummy: Boolean = true) {
-      def apply[B](f: Var[A] => Decl[Var[B]])(implicit arrow: Arrow[Arrow0]): Arrow0[A, B] = compile(f)
+      def apply[B](f: Var[A] => Decl[Var[B]])(implicit sp: SourcePos): Arrow0[A, B] = compileFull(f)
     }
 
     def compile[A]: PartiallyAppliedLanguageCompiler[A] = new PartiallyAppliedLanguageCompiler[A]
   }
 
-  object MyProgram {
-    final case class MyArrow[A, B](f: A => B)
-    implicit val a: Arrow[MyArrow] = ???
+  object GQLL {
+    trait ResolverDsl[F[_]] extends LanguageDsl[Resolver[F, *, *]] {
+      def argument[A](arg: Arg[A])(implicit sp: SourcePos): Decl[Var[A]] =
+        liftArrow(_.andThen(Resolver.argument[F, Unit, A](arg)))
+    }
+    object ResolverDsl {
+      def apply[F[_]]: ResolverDsl[F] = new ResolverDsl[F] {}
+    }
 
-    object MyArrowDsl extends LanguageDsl[MyArrow]
-    import MyArrowDsl._
-
-    compile[Int]{ init =>
+    import cats.effect._
+    val d = ResolverDsl[IO]
+    import d._
+    import gql.dsl.all._
+    val res = compile[Int] { init =>
       for {
-        x <- init.apply(_.map(x => x + 2).map(x => x - 2))
-        y <- liftArrow[Int](MyArrow[Unit, Int](_ => 2))
-        z <- (x, y).tupled.apply(_.map{ case (x0, y0) => x0 + y0 })
-      } yield z
+        y <- init.apply(_.evalMap(x => IO(x * 2)))
+        z <- argument(arg[Int]("gab"))
+        h <- (y, z).tupled.apply(_.map { case (y0, z0) => y0 + z0 })
+      } yield h
     }
   }
-}
 
+}
+/*
 object Attempt2 {
   sealed trait ArrowAlg[Arrow0[_, _], A, V[_]]
   object ArrowAlg {
@@ -354,7 +406,7 @@ object Attempt2 {
   }
 
   object Lang {
-    def apply[Arrow0[_, _], A]: Lang[Arrow0, A] = 
+    def apply[Arrow0[_, _], A]: Lang[Arrow0, A] =
       new Lang[Arrow0, A] {
         override def init: FreeApplicative[FetchVar, A] = FreeApplicative.lift(FetchVar(0))
         override def declare[B, C](v: Var[B])(f: Arrow0[B, C]): Declaration[Var[C]] =
@@ -465,10 +517,10 @@ object Attempt2 {
   case class Declare[A, B](v: Var[A], arrow: ArrowIO[A, B]) extends Algebra[Var[B]]
   type MyIO[A] = Free[Algebra, A]
 
-  def delay[A](f: => A): MyIO[Var[A]] = 
+  def delay[A](f: => A): MyIO[Var[A]] =
     Free.liftF[Algebra, Var[A]](Declare[Unit, A](().pure[Var], _ => f))
 
-  def derive[A, B](v: Var[A])(f: ArrowIO[A, B]): MyIO[Var[B]] = 
+  def derive[A, B](v: Var[A])(f: ArrowIO[A, B]): MyIO[Var[B]] =
     Free.liftF[Algebra, Var[B]](Declare(v, f))
 
   for {
@@ -477,3 +529,4 @@ object Attempt2 {
     z <- derive((x,y).tupled){ case (a, b) => a + b }
   } yield z
 }
+ */
