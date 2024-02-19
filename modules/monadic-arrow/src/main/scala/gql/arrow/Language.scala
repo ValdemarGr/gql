@@ -46,7 +46,46 @@ class Language[Arrow0[_, _]] {
   )(implicit sp: SourcePos, c: ArrowChoice[Arrow0]): Decl[Var[C]] =
     Free.liftF[Declaration, Var[C]](DeclAlg.Choice(v, l, r, c, sp))
 
-  def compileFull[A, B](f: Var[A] => Decl[Var[B]])(implicit arrow: Arrow[Arrow0], sp: SourcePos): Arrow0[A, B] = {
+  def compileFull[A, B](f: Var[A] => Decl[Var[B]])(implicit arrow: Arrow[Arrow0], sp: SourcePos): Arrow0[A, B] = 
+    Language.compile[Arrow0, A, B](f)(arrow, sp)
+}
+
+abstract class LanguageDsl[Arrow0[_, _]: Arrow] extends Language[Arrow0] { self =>
+  def liftArrow[A](f: Arrow0[Unit, Unit] => Arrow0[Unit, A])(implicit sp: SourcePos): Decl[Var[A]] =
+    declare[Unit, A](().pure[Var])(f(Arrow[Arrow0].id[Unit]))
+
+  implicit class VarOps[A](v: Var[A]) {
+    def declare[B](f: Arrow0[A, B])(implicit sp: SourcePos): Decl[Var[B]] = self.declare(v)(f)
+
+    def apply[B](f: Arrow0[A, A] => Arrow0[A, B])(implicit sp: SourcePos): Decl[Var[B]] =
+      declare(f(Arrow[Arrow0].id[A]))
+
+    def liftArrowChoice[B, C, D](bd: Arrow0[B, D], cd: Arrow0[C, D])(implicit
+        c: ArrowChoice[Arrow0],
+        ev: A <:< Either[B, C]
+    ): Decl[Var[D]] =
+      apply(_.map(ev.apply(_)).andThen(c.choice(bd, cd)))
+  }
+
+  implicit class VarEitherOps[A, B](v: Var[Either[A, B]]) {
+    def choice[C](bd: Var[A] => Decl[Var[C]], cd: Var[B] => Decl[Var[C]])(implicit sp: SourcePos, c: ArrowChoice[Arrow0]): Decl[Var[C]] =
+      self.choice(v)(bd)(cd)
+  }
+
+  final class PartiallyAppliedLanguageCompiler[A](private val dummy: Boolean = true) {
+    def apply[B](f: Var[A] => Decl[Var[B]])(implicit sp: SourcePos): Arrow0[A, B] = compileFull(f)
+  }
+
+  def compile[A]: PartiallyAppliedLanguageCompiler[A] = new PartiallyAppliedLanguageCompiler[A]
+}
+
+object Language {
+  def compile[Arrow0[_, _], A, B](f: Var[A] => Free[DeclAlg[Arrow0, *], Var[B]])(implicit
+      arrow: Arrow[Arrow0],
+      sp: SourcePos
+  ): Arrow0[A, B] = {
+    type Declaration[X] = DeclAlg[Arrow0, X]
+    type Decl[X] = Free[Declaration, X]
     val init = Var(FreeApplicative.lift(FetchVar[A](0, None, sp)))
     val program = f(init)
     type U = Vector[Any]
@@ -163,33 +202,4 @@ class Language[Arrow0[_, _]] {
     val initArrow: Arrow0[A, U] = arrow.lift[A, U](b.updated(0, _))
     initArrow >>> arrowProgram >>> outputArrow
   }
-}
-
-abstract class LanguageDsl[Arrow0[_, _]: Arrow] extends Language[Arrow0] { self =>
-  def liftArrow[A](f: Arrow0[Unit, Unit] => Arrow0[Unit, A])(implicit sp: SourcePos): Decl[Var[A]] =
-    declare[Unit, A](().pure[Var])(f(Arrow[Arrow0].id[Unit]))
-
-  implicit class VarOps[A](v: Var[A]) {
-    def declare[B](f: Arrow0[A, B])(implicit sp: SourcePos): Decl[Var[B]] = self.declare(v)(f)
-
-    def apply[B](f: Arrow0[A, A] => Arrow0[A, B])(implicit sp: SourcePos): Decl[Var[B]] =
-      declare(f(Arrow[Arrow0].id[A]))
-
-    def liftArrowChoice[B, C, D](bd: Arrow0[B, D], cd: Arrow0[C, D])(implicit
-        c: ArrowChoice[Arrow0],
-        ev: A <:< Either[B, C]
-    ): Decl[Var[D]] =
-      apply(_.map(ev.apply(_)).andThen(c.choice(bd, cd)))
-  }
-
-  implicit class VarEitherOps[A, B](v: Var[Either[A, B]]) {
-    def choice[C](bd: Var[A] => Decl[Var[C]], cd: Var[B] => Decl[Var[C]])(implicit sp: SourcePos, c: ArrowChoice[Arrow0]): Decl[Var[C]] =
-      self.choice(v)(bd)(cd)
-  }
-
-  final class PartiallyAppliedLanguageCompiler[A](private val dummy: Boolean = true) {
-    def apply[B](f: Var[A] => Decl[Var[B]])(implicit sp: SourcePos): Arrow0[A, B] = compileFull(f)
-  }
-
-  def compile[A]: PartiallyAppliedLanguageCompiler[A] = new PartiallyAppliedLanguageCompiler[A]
 }

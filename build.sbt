@@ -389,6 +389,7 @@ lazy val docs = project
   .dependsOn(clientCodegenCli)
   .dependsOn(serverGoi)
   .dependsOn(client)
+  .dependsOn(monadicArrow)
   .dependsOn(http4sClient)
   .dependsOn(mdocExt)
   .enablePlugins(MdocPlugin, DocusaurusPlugin, NoPublishPlugin)

@@ -37,3 +37,24 @@ compile[Int] { i =>
   } yield o
 }
 ```
+
+The dsl includes an extension method to `FieldBuilder` that eases construction of `Field`s.
+```scala mdoc
+import gql.ast._
+import gql.dsl.all._
+
+val gqlDsl = gql.dsl.GqlDsl[IO]
+import gqlDsl._
+
+builder[Unit]{ b =>
+  b.tpe(
+    "MyType",
+    "field" -> b.compile{ i =>
+      for {
+        x <- i(_.evalMap(_ => IO(1 + 2)))
+        y <- x(_.map(_ + 3))
+      } yield y
+    }
+  )
+}
+```
