@@ -41,7 +41,6 @@ compile[Int] { i =>
 The dsl includes an extension method to `FieldBuilder` that eases construction of `Field`s.
 ```scala mdoc
 import gql.ast._
-import gql.dsl.all._
 
 val gqlDsl = gql.dsl.GqlDsl[IO]
 import gqlDsl._
