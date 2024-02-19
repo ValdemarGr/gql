@@ -177,7 +177,7 @@ proc[DataType] { i =>
 ```
 
 ## Arrowless final?
-We can declare expressions for any arrow, not just `Resolver`.
+Expressions can be declared for any arrow, not just `Resolver`.
 The usefullness of this property is not significant, but an interesting property nonetheless.
 ```scala mdoc:nest:silent
 import cats.free._
