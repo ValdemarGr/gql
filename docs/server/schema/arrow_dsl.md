@@ -61,7 +61,7 @@ println {
 ```
 
 The dsl includes an extension method to `FieldBuilder` that eases construction of `Field`s.
-The dsl also extends the any resolver with a `proc` extension method.
+The dsl also enhances any resolver with a `proc` extension method.
 ```scala mdoc:silent
 import gql.ast._
 
