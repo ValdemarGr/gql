@@ -124,7 +124,7 @@ def toplevelMulDiv[F[_]](i: Var[Int])(implicit d: ResolverArrowDsl[F]): Resolver
 ```
 
 ## Lifting arguments
-Request arguments ad-hoc has a syntatic enhancement in the dsl.
+Request arguments is made easier by the arrow dsl.
 ```scala mdoc:silent
 proc[Int] { i =>
   for {
