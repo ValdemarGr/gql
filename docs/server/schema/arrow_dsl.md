@@ -158,7 +158,7 @@ Some steps commonly occur when writing batched resolvers:
 2. Passing the id to a batching resolver.
 3. Pairing the batched output with the parent datatype.
 
-This pairing resolves some clever use of `first` and `contramap/lmap`, but is much easier to express monadically sinc we have access to closures.
+This pairing resolves some clever use of `first` and `contramap/lmap`, but is much easier to express monadically since we have access to closures.
 ```scala mdoc:silent
 def getAddresses(ids: Set[Int]): IO[Map[Int, String]] =
   IO(ids.toList.map(id => id -> s"Address $id").toMap)
