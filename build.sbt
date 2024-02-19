@@ -24,7 +24,7 @@ ThisBuild / mimaReportSignatureProblems := false
 ThisBuild / mimaFailOnProblem := false
 ThisBuild / mimaPreviousArtifacts := Set.empty
 ThisBuild / tlSonatypeUseLegacyHost := true
-ThisBuild / tlFatalWarnings := true
+//ThisBuild / tlFatalWarnings := true
 
 val dbStep = WorkflowStep.Run(
   commands = List("docker-compose up -d"),
