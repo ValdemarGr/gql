@@ -1,5 +1,6 @@
 package gql.arrow
 
+import org.typelevel.scalaccompat.annotation._
 import cats.implicits._
 import cats.free._
 import cats.arrow._
@@ -24,6 +25,7 @@ object Var {
 
 sealed trait DeclAlg[Arrow0[_, _], A]
 object DeclAlg {
+  final case class AskArrow[Arrow0[_, _]]() extends DeclAlg[Arrow0, Arrow[Arrow0]]
   final case class Declare[Arrow0[_, _], A, B](v: Var[A], arrow: Arrow0[A, B], pos: SourcePos) extends DeclAlg[Arrow0, Var[B]]
   final case class Choice[Arrow0[_, _], A, B, C](
       v: Var[Either[A, B]],
@@ -34,53 +36,77 @@ object DeclAlg {
   ) extends DeclAlg[Arrow0, Var[C]]
 }
 
-class Language[Arrow0[_, _]] {
+abstract class Language[Arrow0[_, _]] { self =>
   final type Declaration[A] = DeclAlg[Arrow0, A]
   final type Decl[A] = Free[Declaration, A]
 
   def declare[A, B](v: Var[A])(f: Arrow0[A, B])(implicit sp: SourcePos): Decl[Var[B]] =
-    Free.liftF[Declaration, Var[B]](DeclAlg.Declare(v, f, sp))
+    Language.declare(v)(f)
 
   def choice[A, B, C](v: Var[Either[A, B]])(l: Var[A] => Decl[Var[C]])(
       r: Var[B] => Decl[Var[C]]
   )(implicit sp: SourcePos, c: ArrowChoice[Arrow0]): Decl[Var[C]] =
-    Free.liftF[Declaration, Var[C]](DeclAlg.Choice(v, l, r, c, sp))
+    Language.choice(v)(l)(r)
 
-  def compileFull[A, B](f: Var[A] => Decl[Var[B]])(implicit arrow: Arrow[Arrow0], sp: SourcePos): Arrow0[A, B] = 
-    Language.compile[Arrow0, A, B](f)(arrow, sp)
-}
+  def askArrow: Decl[Arrow[Arrow0]] = Language.askArrow
 
-abstract class LanguageDsl[Arrow0[_, _]: Arrow] extends Language[Arrow0] { self =>
+  def procFull[A, B](f: Var[A] => Decl[Var[B]])(implicit arrow: Arrow[Arrow0], sp: SourcePos): Arrow0[A, B] =
+    Language.proc[Arrow0, A, B](f)(arrow, sp)
+
   def liftArrow[A](f: Arrow0[Unit, Unit] => Arrow0[Unit, A])(implicit sp: SourcePos): Decl[Var[A]] =
-    declare[Unit, A](().pure[Var])(f(Arrow[Arrow0].id[Unit]))
+    askArrow.flatMap { arrow =>
+      declare[Unit, A](().pure[Var])(f(arrow.id[Unit]))
+    }
 
   implicit class VarOps[A](v: Var[A]) {
     def declare[B](f: Arrow0[A, B])(implicit sp: SourcePos): Decl[Var[B]] = self.declare(v)(f)
 
     def apply[B](f: Arrow0[A, A] => Arrow0[A, B])(implicit sp: SourcePos): Decl[Var[B]] =
-      declare(f(Arrow[Arrow0].id[A]))
+      askArrow.flatMap(arrow => declare(f(arrow.id[A])))
 
     def liftArrowChoice[B, C, D](bd: Arrow0[B, D], cd: Arrow0[C, D])(implicit
+        sp: SourcePos,
         c: ArrowChoice[Arrow0],
         ev: A <:< Either[B, C]
     ): Decl[Var[D]] =
       apply(_.map(ev.apply(_)).andThen(c.choice(bd, cd)))
   }
 
-  implicit class VarEitherOps[A, B](v: Var[Either[A, B]]) {
-    def choice[C](bd: Var[A] => Decl[Var[C]], cd: Var[B] => Decl[Var[C]])(implicit sp: SourcePos, c: ArrowChoice[Arrow0]): Decl[Var[C]] =
-      self.choice(v)(bd)(cd)
+  implicit class VarEitherOps[A, B](private val v: Var[Either[A, B]]) {
+    def choice[C](bd: Var[A] => Decl[Var[C]], cd: Var[B] => Decl[Var[C]])(implicit
+        sp: SourcePos,
+        c: ArrowChoice[Arrow0]
+    ): Decl[Var[C]] = self.choice(v)(bd)(cd)
   }
 
-  final class PartiallyAppliedLanguageCompiler[A](private val dummy: Boolean = true) {
-    def apply[B](f: Var[A] => Decl[Var[B]])(implicit sp: SourcePos): Arrow0[A, B] = compileFull(f)
+  implicit class ArrowOps[A, B](private val arr: Arrow0[A, B]) {
+    def proc[C](f: Var[B] => Decl[Var[C]])(implicit sp: SourcePos, arrow: Arrow[Arrow0]): Arrow0[A, C] =
+      arr andThen procFull(f)
   }
 
-  def compile[A]: PartiallyAppliedLanguageCompiler[A] = new PartiallyAppliedLanguageCompiler[A]
+  final class PartiallyAppliedLanguageCompiler[A](@unused private val dummy: Boolean = false) {
+    def apply[B](f: Var[A] => Decl[Var[B]])(implicit sp: SourcePos, arrow: Arrow[Arrow0]): Arrow0[A, B] =
+      procFull(f)
+  }
+
+  def proc[A]: PartiallyAppliedLanguageCompiler[A] = new PartiallyAppliedLanguageCompiler[A]
 }
 
 object Language {
-  def compile[Arrow0[_, _], A, B](f: Var[A] => Free[DeclAlg[Arrow0, *], Var[B]])(implicit
+  def declare[Arrow0[_, _], A, B](v: Var[A])(f: Arrow0[A, B])(implicit
+      sp: SourcePos
+  ): Free[DeclAlg[Arrow0, *], Var[B]] =
+    Free.liftF[DeclAlg[Arrow0, *], Var[B]](DeclAlg.Declare(v, f, sp))
+
+  def choice[Arrow0[_, _], A, B, C](v: Var[Either[A, B]])(l: Var[A] => Free[DeclAlg[Arrow0, *], Var[C]])(
+      r: Var[B] => Free[DeclAlg[Arrow0, *], Var[C]]
+  )(implicit sp: SourcePos, c: ArrowChoice[Arrow0]): Free[DeclAlg[Arrow0, *], Var[C]] =
+    Free.liftF[DeclAlg[Arrow0, *], Var[C]](DeclAlg.Choice(v, l, r, c, sp))
+
+  def askArrow[Arrow0[_, _]]: Free[DeclAlg[Arrow0, *], Arrow[Arrow0]] =
+    Free.liftF[DeclAlg[Arrow0, *], Arrow[Arrow0]](DeclAlg.AskArrow())
+
+  def proc[Arrow0[_, _], A, B](f: Var[A] => Free[DeclAlg[Arrow0, *], Var[B]])(implicit
       arrow: Arrow[Arrow0],
       sp: SourcePos
   ): Arrow0[A, B] = {
@@ -112,11 +138,11 @@ object Language {
                       |Variables that were not declared in this scope may not be referenced.
                       |Example:
                       |```
-                      |compile[Int]{ init =>
+                      |proc[Int]{ i =>
                       |  for {
-                      |    y <- init.apply(_.andThen(compile[Int]{ _ =>
-                      |      // referencing 'init' here is an error
-                      |      init.apply(_.map(_ + 1))
+                      |    y <- i.apply(_.andThen(proc[Int]{ _ =>
+                      |      // referencing 'i' here is an error
+                      |      i.apply(_.map(_ + 1))
                       |    }))
                       |  } yield y
                       |}
@@ -127,10 +153,10 @@ object Language {
                       |Variables that were not declared in this scope may not be referenced.
                       |Example:
                       |```
-                      |compile[Int]{ init =>
+                      |proc[Int]{ i =>
                       |  for {
-                      |    x <- init.apply(_.map(_ + 1))
-                      |    y <- init.apply(_.andThen(compile[Int]{ _ =>
+                      |    x <- i.apply(_.map(_ + 1))
+                      |    y <- i.apply(_.andThen(proc[Int]{ _ =>
                       |      // referencing 'x' here is an error
                       |      x.apply(_.map(_ + 1))
                       |    }))
@@ -166,7 +192,9 @@ object Language {
       arr.first[U].map { case (d, u) => u.updated(id, d) }
 
     val arrowCompiler: Declaration ~> G = new (Declaration ~> G) { self =>
+      @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
       def apply[A1](fa: Declaration[A1]): G[A1] = fa match {
+        case _: DeclAlg.AskArrow[Arrow0] => State.pure(Arrow[Arrow0])
         case alg: DeclAlg.Choice[Arrow0, a, b, a1] =>
           val reset = modifyU(_ => Arrow[Arrow0].id[U])
           def path[X](f: Var[X] => Decl[Var[a1]]): G[Arrow0[(U, X), a1]] =

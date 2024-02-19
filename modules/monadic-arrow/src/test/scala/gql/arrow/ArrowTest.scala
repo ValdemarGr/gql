@@ -10,10 +10,10 @@ import scala.util.Try
 class ArrowTest extends CatsEffectSuite {
   val d = dsl[IO]
   import d._
-  object FunctionLang extends LanguageDsl[Function1]
+  object FunctionLang extends Language[Function1]
 
   test("arrow compilation should work properly") {
-    compile[Int] { i =>
+    proc[Int] { i =>
       for {
         a <- i.apply(_.map(x => x * 2))
         b <- i.apply(_.map(x => x + 1))
@@ -25,7 +25,7 @@ class ArrowTest extends CatsEffectSuite {
 
   test("arrow evaluation should work properly") {
     import FunctionLang._
-    val f = compile[Int] { i =>
+    val f = proc[Int] { i =>
       for {
         a <- i(_.map(_ * 2))
         // var is an applicative
@@ -45,7 +45,7 @@ class ArrowTest extends CatsEffectSuite {
     def helper(v: Var[Int]): Free[DeclAlg[Resolver[IO, *, *], *], Var[Int]] =
       dsl[IO].VarOps(v).apply(_.map(x => x * 2))
 
-    compile[Int] { i =>
+    proc[Int] { i =>
       for {
         a <- i.apply(_.map(x => x * 2))
         b <- i.apply(_.map(x => x + 1))
@@ -55,11 +55,11 @@ class ArrowTest extends CatsEffectSuite {
   }
 
   test("should be able to nest compilations that do not close over any variables") {
-    compile[Int] { i =>
+    proc[Int] { i =>
       for {
         a <- i(_.map(_ * 2))
         b <- a(_.map(_ + 1))
-        c <- b(_.andThen(compile[Int] { i2 =>
+        c <- b(_.andThen(proc[Int] { i2 =>
           for {
             d <- i2(_.map(_ * 2))
             e <- d(_.map(_ + 1))
@@ -71,11 +71,11 @@ class ArrowTest extends CatsEffectSuite {
 
   test("should fail when referencing variables that are not reachable from the compiled program") {
     val fa = Try {
-      compile[Int] { i =>
+      proc[Int] { i =>
         for {
           a <- i(_.map(_ * 2))
           b <- a(_.map(_ + 1))
-          c <- b(_.andThen(compile[Int] { _ =>
+          c <- b(_.andThen(proc[Int] { _ =>
             for {
               d <- i(_.map(_ * 2))
               e <- d(_.map(_ + 1))
@@ -89,20 +89,39 @@ class ArrowTest extends CatsEffectSuite {
 
   test("choice should work") {
     import FunctionLang._
-    val f = compile[Int] { i =>
+    val f = proc[Int] { i =>
       for {
         x <- i(_.map(_ * 2))
-        y <- x.map(x => if (x > 5) Left(x) else Right(x)).choice(
-          l => l.apply(_.map(_ + 1)),
-          r => for {
-            x0 <- r.apply(_.map(_ - 1))
-            o <- (x0, x).tupled.apply(_.map{ case (z0, z1) => z0 + z1 })
-          } yield o
-        )
+        y <- x
+          .map(x => if (x > 5) Left(x) else Right(x))
+          .choice(
+            l => l.apply(_.map(_ + 1)),
+            r =>
+              for {
+                x0 <- r.apply(_.map(_ - 1))
+                o <- (x0, x).tupled.apply(_.map { case (z0, z1) => z0 + z1 })
+              } yield o
+          )
       } yield y
     }
 
     assertEquals(f(2), 3 + 4)
     assertEquals(f(3), 7)
+  }
+
+  test("arrow compilation syntax") {
+    val r: Resolver[IO, Int, Int] =
+      Resolver.lift[IO, Int](_.toString()).proc { str =>
+        for {
+          x <- str(_.map(_.toInt))
+          y <- (x, x).tupled.apply(_.map { case (a, b) => a + b })
+        } yield y
+      }
+    val _ = r
+
+    val r2 = Resolver.lift[fs2.Pure, Int](_.toString()).proc { str =>
+      str(_.map(identity))
+    }
+    val _ = r2
   }
 }

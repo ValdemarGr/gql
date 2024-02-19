@@ -24,7 +24,7 @@ ThisBuild / mimaReportSignatureProblems := false
 ThisBuild / mimaFailOnProblem := false
 ThisBuild / mimaPreviousArtifacts := Set.empty
 ThisBuild / tlSonatypeUseLegacyHost := true
-//ThisBuild / tlFatalWarnings := false
+ThisBuild / tlFatalWarnings := true
 
 val dbStep = WorkflowStep.Run(
   commands = List("docker-compose up -d"),
@@ -139,7 +139,7 @@ lazy val core = project
   .settings(sharedSettings)
   .settings(name := "gql-core")
   .dependsOn(parser)
-  
+
 lazy val monadicArrow = project
   .in(file("modules/monadic-arrow"))
   .settings(sharedSettings)
