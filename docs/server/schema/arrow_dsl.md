@@ -73,8 +73,8 @@ builder[Unit]{ b =>
     "MyType",
     "field" -> b.proc{ i =>
       for {
-        x <- i(_.evalMap(_ => IO(1 + 2)))
-        y <- x(_.map(_ + 3))
+        x <- i.evalMap(_ => IO(1 + 2))
+        y <- x.map(_ + 3)
       } yield y
     },
     "otherField" -> b(_.proc{ i =>

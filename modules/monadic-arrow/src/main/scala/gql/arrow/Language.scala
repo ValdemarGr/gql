@@ -58,7 +58,10 @@ abstract class Language[Arrow0[_, _]] { self =>
       declare[Unit, A](().pure[Var])(f(arrow.id[Unit]))
     }
 
-  implicit class VarOps[A](v: Var[A]) {
+  implicit class VarOps[A](private val v: Var[A]) {
+    def map[B](f: A => B)(implicit sp: SourcePos): Decl[Var[B]] = 
+      askArrow.flatMap(a => declare(a.lift(f)))
+
     def declare[B](f: Arrow0[A, B])(implicit sp: SourcePos): Decl[Var[B]] = self.declare(v)(f)
 
     def apply[B](f: Arrow0[A, A] => Arrow0[A, B])(implicit sp: SourcePos): Decl[Var[B]] =
