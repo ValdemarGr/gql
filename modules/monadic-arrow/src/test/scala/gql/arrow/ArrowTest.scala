@@ -15,10 +15,10 @@ class ArrowTest extends CatsEffectSuite {
   test("arrow compilation should work properly") {
     proc[Int] { i =>
       for {
-        a <- i.apply(_.map(x => x * 2))
-        b <- i.apply(_.map(x => x + 1))
-        c <- (a, b).tupled.apply(_.evalMap { case (x, y) => IO(x + y) })
-        _ <- i.apply(_.map(_ * 2))
+        a <- i.rmap(x => x * 2)
+        b <- i.rmap(x => x + 1)
+        c <- (a, b).tupled.evalMap { case (x, y) => IO(x + y) }
+        _ <- i.rmap(_ * 2)
       } yield c
     }
   }
@@ -27,10 +27,10 @@ class ArrowTest extends CatsEffectSuite {
     import FunctionLang._
     val f = proc[Int] { i =>
       for {
-        a <- i(_.map(_ * 2))
+        a <- i.rmap(_ * 2)
         // var is an applicative
         b = a.map(_ + 1)
-        c <- (a, b).tupled.apply(_.map { case (x, y) => x + y })
+        c <- (a, b).tupled.rmap { case (x, y) => x + y }
       } yield c
     }
     // i = 2
@@ -47,9 +47,9 @@ class ArrowTest extends CatsEffectSuite {
 
     proc[Int] { i =>
       for {
-        a <- i.apply(_.map(x => x * 2))
-        b <- i.apply(_.map(x => x + 1))
-        c <- (helper(a), helper(b)).flatMapN((_, _).tupled.apply(_.map { case (aa, bb) => aa + bb }))
+        a <- i.rmap(x => x * 2)
+        b <- i.rmap(x => x + 1)
+        c <- (helper(a), helper(b)).flatMapN((_, _).tupled.rmap { case (aa, bb) => aa + bb })
       } yield c
     }
   }
@@ -57,14 +57,14 @@ class ArrowTest extends CatsEffectSuite {
   test("should be able to nest compilations that do not close over any variables") {
     proc[Int] { i =>
       for {
-        a <- i(_.map(_ * 2))
-        b <- a(_.map(_ + 1))
-        c <- b(_.andThen(proc[Int] { i2 =>
+        a <- i.rmap(_ * 2)
+        b <- a.rmap(_ + 1)
+        c <- b.andThen(proc[Int] { i2 =>
           for {
-            d <- i2(_.map(_ * 2))
-            e <- d(_.map(_ + 1))
+            d <- i2.rmap(_ * 2)
+            e <- d.rmap(_ + 1)
           } yield e
-        }))
+        })
       } yield c
     }
   }
@@ -73,14 +73,14 @@ class ArrowTest extends CatsEffectSuite {
     val fa = Try {
       proc[Int] { i =>
         for {
-          a <- i(_.map(_ * 2))
-          b <- a(_.map(_ + 1))
-          c <- b(_.andThen(proc[Int] { _ =>
+          a <- i.rmap(_ * 2)
+          b <- a.rmap(_ + 1)
+          c <- b.andThen(proc[Int] { _ =>
             for {
-              d <- i(_.map(_ * 2))
-              e <- d(_.map(_ + 1))
+              d <- i.rmap(_ * 2)
+              e <- d.rmap(_ + 1)
             } yield e
-          }))
+          })
         } yield c
       }
     }
@@ -91,15 +91,15 @@ class ArrowTest extends CatsEffectSuite {
     import FunctionLang._
     val f = proc[Int] { i =>
       for {
-        x <- i(_.map(_ * 2))
+        x <- i.rmap(_ * 2)
         y <- x
           .map(x => if (x > 5) Left(x) else Right(x))
           .choice(
-            l => l.apply(_.map(_ + 1)),
+            l => l.rmap(_ + 1),
             r =>
               for {
-                x0 <- r.apply(_.map(_ - 1))
-                o <- (x0, x).tupled.apply(_.map { case (z0, z1) => z0 + z1 })
+                x0 <- r.rmap(_ - 1)
+                o <- (x0, x).tupled.rmap { case (z0, z1) => z0 + z1 }
               } yield o
           )
       } yield y
@@ -113,14 +113,14 @@ class ArrowTest extends CatsEffectSuite {
     val r: Resolver[IO, Int, Int] =
       Resolver.lift[IO, Int](_.toString()).proc { str =>
         for {
-          x <- str(_.map(_.toInt))
-          y <- (x, x).tupled.apply(_.map { case (a, b) => a + b })
+          x <- str.rmap(_.toInt)
+          y <- (x, x).tupled.rmap { case (a, b) => a + b }
         } yield y
       }
     val _ = r
 
     val r2 = Resolver.lift[fs2.Pure, Int](_.toString()).proc { str =>
-      str(_.map(identity))
+      str.rmap(identity)
     }
     val _ = r2
   }

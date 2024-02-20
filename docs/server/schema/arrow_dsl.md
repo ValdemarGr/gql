@@ -9,7 +9,7 @@ Gql introduces a in-language monadic arrow dsl that re-writes a monadic arrow ex
 This feature is akin to the `proc` [notation in Haskell](https://en.wikibooks.org/wiki/Haskell/Arrow_tutorial#Arrow_proc_notation).
 :::
 
-Using the notation is straightforward.
+Using the notation is straightforward, the same (covariant) combinators for `Resolver` exist in the arrow dsl.
 ```scala mdoc:silent
 import gql.resolver._
 import cats.implicits._
@@ -22,10 +22,10 @@ import d._
 val r: Resolver[IO, Int, String] = 
   proc[Int] { i: Var[Int] =>
     for {
-      a <- i(_.evalMap(x => IO(x + 2)))
-      b <- a(_.evalMap(x => IO(x * 3)))
-      c <- (a, b).tupled.apply(_.evalMap{ case (aa, bb) => IO(aa + bb) }.map(_.toString))
-    } yield c
+      a <- i.evalMap(x => IO(x + 2))
+      b <- a.evalMap(x => IO(x * 3))
+      c <- (a, b).tupled.evalMap{ case (aa, bb) => IO(aa + bb) }
+    } yield c.map(_.toString)
   }
 ```
 
@@ -44,22 +44,53 @@ L.proc[Resolver[IO, *, *], Int, String] { i =>
 
 </details>
 
+The underlying arrow is also available for composition via `apply`.
+```scala mdoc:silent:nest
+proc[Int] { i =>
+  for {
+    x <- i(_.evalMap(z => IO(z + 1)))
+    out <- x.apply(_.map(_.toString))
+  } yield out
+}
+```
+
+### Technical details
+The dsl introduces two datatypes, `Var` and `Decl`.
+* `Var` is a reference to a set of variables that occur in the arrow. `Var` forms an `Applicative`.
+* `Decl` is used to re-write the monadic (`flatMap`) structure into an arrow. `Decl` forms a `Monad`.
+
+The primary use of `Decl` is to bind variables.
+Every transformation on a `Var`iable introduces a new `Var`iable which is stored in the `Decl` structure.
+
+:::info
+Since `Var` forms an `Applicative` that implies that `map` is available for `Var`.
+`map` for `Var` is not memoized since it does not lift `Var` into `Decl`.
+`Var` has an extension [`rmap`](https://github.com/typelevel/cats/blob/c8aabcacd6045b9aed5c8626c4bf5308dd3f4912/core/src/main/scala/cats/arrow/Profunctor.scala#L59) which introduces a new `Var`iable that memoizes the result.
+That is, the following equivalences holds:
+```scala
+declare((v: Var[A]).map(f))(Resolver.id[F, A]) <-> 
+  (v: Var[A]).rmap(f) <->
+  (v: Var[A]).apply(_.map(f))
+```
+:::
+
 Closures are illegal in the dsl, as they are refer to variables that are not guaranteed to be available, so prefer invoking `proc` once per `Resolver`.
 ```scala mdoc
 println {
   scala.util.Try {
     proc[Int] { i =>
       for {
-        x <- i(_.evalMap(x => IO(x + 2)))
-        o <- x(_.andThen(proc[Int]{ _ =>
-          x(_.map(y => y + 2))
-        }))
+        x <- i.evalMap(x => IO(x + 2))
+        o <- x.andThen(proc[Int]{ _ =>
+          x.rmap(y => y + 2)
+        })
       } yield o
     }
   }.toEither.leftMap(_.getMessage)
 }
 ```
 
+### Builder extensions
 The dsl includes an extension method to `FieldBuilder` that eases construction of `Field`s.
 The dsl also enhances any resolver with a `proc` extension method.
 ```scala mdoc:silent
@@ -74,11 +105,11 @@ builder[Unit]{ b =>
     "field" -> b.proc{ i =>
       for {
         x <- i.evalMap(_ => IO(1 + 2))
-        y <- x.map(_ + 3)
+        y <- x.rmap(_ + 3)
       } yield y
     },
     "otherField" -> b(_.proc{ i =>
-      i(_.evalMap(_ => IO(1 + 2)))
+      i.evalMap(_ => IO(1 + 2))
     })
   )
 }
@@ -89,8 +120,8 @@ Sharing common sub-arrows is a desirable property.
 This can is expressed naturally with the dsl.
 ```scala mdoc:nest
 def mulDiv(i: Var[Int]): Decl[Var[Int]] = for {
-  x <- i(_.map(_ * 2))
-  y <- x(_.map(_ / 2))
+  x <- i.rmap(_ * 2)
+  y <- x.rmap(_ / 2)
 } yield y
 
 proc[Int](mulDiv(_) >>= mulDiv)
@@ -106,8 +137,8 @@ def toplevelMulDiv[F[_]](i: Var[Int]): ResolverDecl[F, Var[Int]] = {
   val d = dsl[F]
   import d._
   for {
-    x <- i(_.map(_ * 2))
-    y <- x(_.map(_ / 2))
+    x <- i.rmap(_ * 2)
+    y <- x.rmap(_ / 2)
   } yield y
 }
 ```
@@ -117,8 +148,8 @@ Passing the dsl as an implicit parameter is also an option.
 def toplevelMulDiv[F[_]](i: Var[Int])(implicit d: ResolverArrowDsl[F]): ResolverDecl[F, Var[Int]] = {
   import d._
   for {
-    x <- i(_.map(_ * 2))
-    y <- x(_.map(_ / 2))
+    x <- i.rmap(_ * 2)
+    y <- x.rmap(_ / 2)
   } yield y
 }
 ```
@@ -128,9 +159,9 @@ Request arguments is made easier by the arrow dsl.
 ```scala mdoc:silent
 proc[Int] { i =>
   for {
-    x <- i(_.evalMap(x => IO(x + 2)))
+    x <- i.evalMap(x => IO(x + 2))
     y <- argument(arg[Int]("age"))
-    z <- (x, y).tupled.apply(_.evalMap{ case (a, b) => IO(a + b) })
+    z <- (x, y).tupled.evalMap { case (a, b) => IO(a + b) }
   } yield z
 }
 ```
@@ -140,12 +171,12 @@ The dsl also covers `ArrowChoice`'s `choice` combinator.
 ```scala mdoc:silent
 proc[Int] { i =>
   for {
-    x <- i(_.map(v => if (v > 5) Left(v) else Right(v)))
+    x <- i.rmap(v => if (v > 5) Left(v) else Right(v))
     y <- x.choice(
-      l => l(_.map(_ * 2)),
+      l => l.rmap(_ * 2),
       r => for {
         a <- argument(arg[Int]("age"))
-        out <- (a, r, i).tupled.apply(_.map{ case (a, b, c) => a + b + c })
+        out <- (a, r, i).tupled.rmap{ case (a, b, c) => a + b + c }
       } yield out
     )
   } yield y
@@ -167,11 +198,11 @@ def getAddresses(ids: Set[Int]): IO[Map[Int, String]] =
 case class DataType(id: Int, name: String)
 proc[DataType] { i =>
   for {
-    id <- i(_.map(_.id))
+    id <- i.rmap(_.id)
     r = Resolver.inlineBatch[IO, Int, String](getAddresses).opt
-    (addr: Var[Option[String]]) <- id(_.andThen(r))
+    (addr: Var[Option[String]]) <- id.andThen(r)
     p = (i, addr).tupled
-    out <- p(_.map{ case (dt, a) => s"${dt.name} @ ${a.getOrElse("<unknown>")}" })
+    out <- p.rmap{ case (dt, a) => s"${dt.name} @ ${a.getOrElse("<unknown>")}" }
   } yield out
 }
 ```
@@ -188,15 +219,15 @@ def mulDiv[F2[_, _]](v: Var[Int]): Free[DeclAlg[F2, *], Var[Int]] = {
   // We can ask for the arrow evidence that must occur when some proc compiles us
   askArrow.flatMap{ implicit arrow: Arrow[F2] =>
     for {
-      x <- v(_.map(_ * 2))
-      y <- x(_.map(_ / 2))
+      x <- v.rmap(_ * 2)
+      y <- x.rmap(_ / 2)
     } yield y
   }
 }
 
 proc[Int] { i =>
   for {
-    x <- i(_.map(_ * 2))
+    x <- i.rmap(_ * 2)
     y <- mulDiv(x)
   } yield y
 }
