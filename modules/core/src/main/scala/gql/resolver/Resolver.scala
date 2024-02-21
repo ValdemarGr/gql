@@ -67,6 +67,8 @@ final class Resolver[+F[_], -I, +O](private[gql] val underlying: Step[F, I, O]) 
   def step: Step[F, I, O] = underlying
 
   def covaryAll[F2[x] >: F[x], O2 >: O]: Resolver[F2, I, O2] = this
+
+  def optimize: Resolver[F, I, O] = new Resolver(Step.optimize(underlying))
 }
 
 object Resolver extends ResolverInstances {
@@ -80,7 +82,7 @@ object Resolver extends ResolverInstances {
   def lift[F[_], I]: PartiallyAppliedLift[F, I] = new PartiallyAppliedLift[F, I]
 
   def id[F[_], I]: Resolver[F, I, I] =
-    lift(identity)
+    new Resolver(Step.identity)
 
   def effectFull[F[_], I, O](f: I => F[O]): Resolver[F, I, O] =
     liftFull(f).andThen(new Resolver(Step.embedEffect))
@@ -210,5 +212,7 @@ trait ResolverInstances {
       new Resolver(Step.first(fa.underlying))
 
     override def lift[A, B](f: A => B): Resolver[F, A, B] = Resolver.lift(f)
+
+    override def id[A]: Resolver[F, A, A] = Resolver.id
   }
 }

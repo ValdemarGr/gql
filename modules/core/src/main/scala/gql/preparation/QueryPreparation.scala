@@ -78,8 +78,9 @@ class QueryPreparation[F[_], C](
       prepareStep[I2, O2](step, fieldMeta, uec append edge)
 
     step match {
-      case Step.Alg.Lift(f)      => liftK(nextNodeId).map(PreparedStep.Lift(_, f))
-      case Step.Alg.EmbedError() => liftK(nextNodeId).map(PreparedStep.EmbedError[F, O](_))
+      case _: Step.Alg.Identity[I] => liftK(nextNodeId).map(PreparedStep.Lift(_, identity))
+      case Step.Alg.Lift(f)        => liftK(nextNodeId).map(PreparedStep.Lift(_, f))
+      case Step.Alg.EmbedError()   => liftK(nextNodeId).map(PreparedStep.EmbedError[F, O](_))
       case alg: Step.Alg.Compose[F, i, a, o] =>
         val left = rec[i, a](alg.left, "compose-left")
         val right = rec[a, o](alg.right, "compose-right")
