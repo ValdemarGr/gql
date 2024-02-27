@@ -31,7 +31,7 @@ trait FieldDsl[F[_]] {
 
   def lift[I] = FieldDsl.lift[I]
 
-  def build[I] = FieldDsl.builder[F, I]
+  def build[I] = FieldDsl.build[F, I]
 
   def builder[I] = FieldDsl.builder[F, I]
 
