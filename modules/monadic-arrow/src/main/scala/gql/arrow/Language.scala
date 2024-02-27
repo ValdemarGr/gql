@@ -9,9 +9,9 @@ import cats.data._
 import org.tpolecat.sourcepos._
 
 final case class FetchVar[A](
-    id: Int,
-    pos: Option[SourcePos],
-    compilerPos: SourcePos
+  id: Int,
+  pos: Option[SourcePos],
+  compilerPos: SourcePos
 )
 
 final case class Var[A](impl: FreeApplicative[FetchVar, A]) extends AnyVal
@@ -28,11 +28,11 @@ object DeclAlg {
   final case class AskArrow[F[_, _]]() extends DeclAlg[F, Arrow[F]]
   final case class Declare[F[_, _], A, B](v: Var[A], arrow: F[A, B], pos: SourcePos) extends DeclAlg[F, Var[B]]
   final case class Choice[F[_, _], A, B, C](
-      v: Var[Either[A, B]],
-      bd: Var[A] => Free[DeclAlg[F, *], Var[C]],
-      cd: Var[B] => Free[DeclAlg[F, *], Var[C]],
-      ev: ArrowChoice[F],
-      sp: SourcePos
+    v: Var[Either[A, B]],
+    bd: Var[A] => Free[DeclAlg[F, *], Var[C]],
+    cd: Var[B] => Free[DeclAlg[F, *], Var[C]],
+    ev: ArrowChoice[F],
+    sp: SourcePos
   ) extends DeclAlg[F, Var[C]]
 }
 
@@ -44,7 +44,7 @@ abstract class Language[F[_, _]] { self =>
     Language.declare(v)(f)
 
   def choice[A, B, C](v: Var[Either[A, B]])(l: Var[A] => Decl[Var[C]])(
-      r: Var[B] => Decl[Var[C]]
+    r: Var[B] => Decl[Var[C]]
   )(implicit sp: SourcePos, c: ArrowChoice[F]): Decl[Var[C]] =
     Language.choice(v)(l)(r)
 
@@ -53,10 +53,11 @@ abstract class Language[F[_, _]] { self =>
   def procFull[A, B](f: Var[A] => Decl[Var[B]])(implicit arrow: Arrow[F], sp: SourcePos): F[A, B] =
     Language.proc[F, A, B](f)(arrow, sp)
 
-  def liftArrow[A](f: F[Unit, Unit] => F[Unit, A])(implicit sp: SourcePos): Decl[Var[A]] =
-    askArrow.flatMap { arrow =>
-      declare[Unit, A](().pure[Var])(f(arrow.id[Unit]))
-    }
+  def liftArrow[A](fa: F[Any, A])(implicit sp: SourcePos): Decl[Var[A]] =
+    declare(((): Any).pure[Var])(fa)
+
+  def liftUnitArrow[A](fa: F[Unit, A])(implicit sp: SourcePos): Decl[Var[A]] =
+    declare(().pure[Var])(fa)
 
   implicit class VarOps[A](private val v: Var[A]) {
     def rmap[B](f: A => B)(implicit sp: SourcePos): Decl[Var[B]] =
@@ -68,17 +69,17 @@ abstract class Language[F[_, _]] { self =>
       askArrow.flatMap(arrow => andThen(f(arrow.id[A])))
 
     def liftArrowChoice[B, C, D](bd: F[B, D], cd: F[C, D])(implicit
-        sp: SourcePos,
-        c: ArrowChoice[F],
-        ev: A <:< Either[B, C]
+      sp: SourcePos,
+      c: ArrowChoice[F],
+      ev: A <:< Either[B, C]
     ): Decl[Var[D]] =
       apply(_.map(ev.apply(_)).andThen(c.choice(bd, cd)))
   }
 
   implicit class VarEitherOps[A, B](private val v: Var[Either[A, B]]) {
     def choice[C](bd: Var[A] => Decl[Var[C]], cd: Var[B] => Decl[Var[C]])(implicit
-        sp: SourcePos,
-        c: ArrowChoice[F]
+      sp: SourcePos,
+      c: ArrowChoice[F]
     ): Decl[Var[C]] = self.choice(v)(bd)(cd)
   }
 
@@ -97,12 +98,12 @@ abstract class Language[F[_, _]] { self =>
 
 object Language {
   def declare[F[_, _], A, B](v: Var[A])(f: F[A, B])(implicit
-      sp: SourcePos
+    sp: SourcePos
   ): Free[DeclAlg[F, *], Var[B]] =
     Free.liftF[DeclAlg[F, *], Var[B]](DeclAlg.Declare(v, f, sp))
 
   def choice[F[_, _], A, B, C](v: Var[Either[A, B]])(l: Var[A] => Free[DeclAlg[F, *], Var[C]])(
-      r: Var[B] => Free[DeclAlg[F, *], Var[C]]
+    r: Var[B] => Free[DeclAlg[F, *], Var[C]]
   )(implicit sp: SourcePos, c: ArrowChoice[F]): Free[DeclAlg[F, *], Var[C]] =
     Free.liftF[DeclAlg[F, *], Var[C]](DeclAlg.Choice(v, l, r, c, sp))
 
@@ -110,8 +111,8 @@ object Language {
     Free.liftF[DeclAlg[F, *], Arrow[F]](DeclAlg.AskArrow())
 
   def proc[F[_, _], A, B](f: Var[A] => Free[DeclAlg[F, *], Var[B]])(implicit
-      arrow: Arrow[F],
-      sp: SourcePos
+    arrow: Arrow[F],
+    sp: SourcePos
   ): F[A, B] = {
     type Declaration[X] = DeclAlg[F, X]
     type Decl[X] = Free[Declaration, X]
@@ -181,7 +182,7 @@ object Language {
         val r = x.foldMap {
           new (FetchVar ~> Reader[U, *]) {
             def apply[A0](fa: FetchVar[A0]): Reader[U, A0] =
-              Reader { u => u(fa.id).asInstanceOf[A0] }
+              Reader(u => u(fa.id).asInstanceOf[A0])
           }
         }
         arrow.lift(r.run)

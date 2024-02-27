@@ -8,10 +8,10 @@ import gql.dsl.FieldBuilder
 
 trait ResolverArrowDsl[F[_]] extends Language[Resolver[F, *, *]] {
   def argument[A](arg: Arg[A])(implicit sp: SourcePos): Decl[Var[A]] =
-    liftArrow(_.andThen(Resolver.argument[F, Unit, A](arg)))
+    liftUnitArrow(Resolver.argument[F, Unit, A](arg))
 
   def meta[A](implicit sp: SourcePos): Decl[Var[FieldMeta[F]]] =
-    liftArrow(_.andThen(Resolver.meta[F, Unit]))
+    liftUnitArrow(Resolver.meta[F, Unit])
 
   implicit class FieldBuilderOps[A](private val fb: FieldBuilder[F, A]) {
     def proc[B](f: Var[A] => Decl[Var[B]])(implicit sp: SourcePos, tpe: => ast.Out[F, B]): ast.Field[F, A, B] =
