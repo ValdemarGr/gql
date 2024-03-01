@@ -32,6 +32,7 @@ trait Repo {
 }
 
 class UserTypes(repo: Repo) {
+  // notice how we bind the effect (IO) so that we can omit this parameter in the dsl
   val dsl = new GqlDsl[IO] {}
   import dsl._
 
@@ -70,17 +71,13 @@ Subgraphs can neatly packaged into classes, but that does not address the issue 
 #### Call by name constructor parameters
 A compositional approach is to use call by name constructor parameters to lazily pass mutually recursive dependencies.
 ```scala mdoc:nest
-class UserTypes(
-  paymentTypes: => PaymentTypes,
-) {
+class UserTypes(paymentTypes: => PaymentTypes) {
   lazy val p = paymentTypes
   import p._
   // ...
 }
 
-class PaymentTypes(
-  userTypes: => UserTypes,
-) {
+class PaymentTypes(userTypes: => UserTypes) {
   lazy val u = userTypes
   import u._
   // ...
@@ -89,10 +86,69 @@ class PaymentTypes(
 lazy val userTypes = new UserTypes(paymentTypes)
 lazy val paymentTypes = new PaymentTypes(userTypes)
 ```
+:::tip
 When domain types are defined in seperate projects, OOP interfaces can be used to implement mutual recursion.
 ```scala mdoc:nest
+// core project
+trait User
 trait UserTypes {
   // we can also choose to only expose the datatypes that are necessary
   implicit def userType: Type[IO, User]
 }
+trait Payment
+trait PaymentTypes {
+  implicit def paymentType: Type[IO, Payment]
+}
+
+// user project
+class UserTypesImpl(paymentTypes: => PaymentTypes) extends UserTypes {
+  lazy val p = paymentTypes
+  import p._
+  def userType: Type[IO, User] = ???
+}
+
+// payment project
+class PaymentTypesImpl(userTypes: => UserTypes) extends PaymentTypes {
+  lazy val u = userTypes
+  import u._
+  def paymentType: Type[IO, Payment] = ???
+}
+
+// main project
+lazy val userTypes = new UserTypesImpl(paymentTypes)
+lazy val paymentTypes = new PaymentTypesImpl(userTypes)
+```
+:::
+
+#### Cake
+The cake pattern can also be used to define mutually recursive dependencies, at the cost of composability.
+```scala mdoc:invisible
+trait Payment
+```
+```scala mdoc:nest
+// core project
+trait User
+trait UserTypes {
+  // we can also choose to only expose the datatypes that are necessary
+  implicit def userType: Type[IO, User]
+}
+trait Payment
+trait PaymentTypes {
+  implicit def paymentType: Type[IO, Payment]
+}
+
+// user project
+trait UserTypesImpl extends UserTypes { self: PaymentTypes =>
+  import self._
+  def userType: Type[IO, User] = ???
+}
+
+// payment project
+trait PaymentTypesImpl extends PaymentTypes { self: UserTypes =>
+  import self._
+  def paymentType: Type[IO, Payment] = ???
+}
+
+// main project
+val allTypes = new UserTypesImpl with PaymentTypesImpl { }
 ```
