@@ -429,7 +429,7 @@ object Generator {
 
         val f = env.fragmentInfos.get(fs.fragmentName)
 
-        val optTn = s"Option[${fs.fragmentName}]"
+        val optTn = s"Option[_root_.${env.packageName}.${fs.fragmentName}]"
 
         // If the this type is a sub-type (more specific) of the fragment type
         // That is, This <: Fragment.on
@@ -607,8 +607,7 @@ object Generator {
 
   def generateExecutableDefs[F[_]: Parallel](
       env: Env,
-      query: NonEmptyList[ExecutableDefinition[Caret]],
-      packageName: String
+      query: NonEmptyList[ExecutableDefinition[Caret]]
   )(implicit
       P: CurrentPath[F],
       U: UsedInputTypes[F],
@@ -660,7 +659,7 @@ object Generator {
       Doc.intercalate(
         Doc.hardLine,
         List(
-          Doc.text(s"package $packageName"),
+          Doc.text(s"package ${env.packageName}"),
           Doc.empty,
           imp("_root_.gql.client._"),
           imp("_root_.gql.client.dsl._"),
@@ -770,7 +769,8 @@ object Generator {
 
   final case class Env(
       schema: Map[String, TypeDefinition],
-      fragmentInfos: Map[String, FragmentInfo]
+      fragmentInfos: Map[String, FragmentInfo],
+      packageName: String
   ) {
     def get(name: String): Option[TypeDefinition] = schema.get(name)
 
@@ -804,11 +804,10 @@ object Generator {
 
   def generateFor[F[_]](
       env: Env,
-      query: NonEmptyList[ExecutableDefinition[Caret]],
-      packageName: String
+      query: NonEmptyList[ExecutableDefinition[Caret]]
   )(implicit E: Err[F], F: Applicative[F]): F[(Set[UsedInput], Doc)] = {
     type F[A] = WriterT[EitherT[Kleisli[Eval, Chain[String], *], NonEmptyChain[String], *], Set[UsedInput], A]
-    generateExecutableDefs[F](env, query, packageName).run.value.run(Chain.empty).value.fold(E.raise, F.pure)
+    generateExecutableDefs[F](env, query).run.value.run(Chain.empty).value.fold(E.raise, F.pure)
   }
 
   def getSchemaFrom(s: String): Either[String, Map[String, TypeDefinition]] =
@@ -841,11 +840,10 @@ object Generator {
 
   def generateForInput[F[_]: Async: Err: Files](
       env: Env,
-      i: Input,
-      packageName: String
+      i: Input
   ): F[(String, Set[UsedInput], Output, NonEmptyList[ExecutableDefinition[Caret]])] =
     readInputData[F](i)
-      .flatMap { case (q, eds) => generateFor(env, eds, packageName) tupleLeft ((q, eds)) }
+      .flatMap { case (q, eds) => generateFor(env, eds) tupleLeft ((q, eds)) }
       .map { case ((q, eds), (usedInputs, doc)) => (q, usedInputs, Output(i.output, doc), eds) }
 
   def gatherFragInfo[F[_]: Async: Err: Files](i: Input): F[List[FragmentInfo]] =
@@ -866,11 +864,11 @@ object Generator {
       .foldMonoid
       .flatMap(s => getSchemaFrom(s).fold(s => E.raise(NonEmptyChain.one(s)), F.pure))
 
-  def readEnv[F[_]: Async: Err: Files](schema: Path)(data: List[Input]): F[Env] =
+  def readEnv[F[_]: Async: Err: Files](packageName: String, schema: Path)(data: List[Input]): F[Env] =
     readSchema[F](schema).flatMap { m =>
       data
         .flatTraverse(gatherFragInfo[F])
-        .map(f => Env(m, f.map(fi => fi.name -> fi).toMap))
+        .map(f => Env(m, f.map(fi => fi.name -> fi).toMap, packageName))
     }
 
   final case class PositionalInfo(
@@ -882,9 +880,9 @@ object Generator {
   def readAndGenerate[F[_]: Files](schemaPath: Path, sharedPath: Path, validate: Boolean, packageName: String)(
       data: List[Input]
   )(implicit F: Async[F], E: Err[F]): F[Unit] =
-    readEnv[F](schemaPath)(data).flatMap { e =>
+    readEnv[F](packageName, schemaPath)(data).flatMap { e =>
       data
-        .traverse(d => generateForInput[F](e, d, packageName) tupleLeft d)
+        .traverse(d => generateForInput[F](e, d) tupleLeft d)
         .flatMap { xs =>
           val translated: List[ExecutableDefinition[PositionalInfo]] = xs.flatMap { case (i, (q, _, _, eds)) =>
             eds.toList.map(_.map(c => PositionalInfo(c, i, q)))
