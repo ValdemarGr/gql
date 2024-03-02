@@ -58,22 +58,22 @@ abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
   def runField[F[_]: Queryable: Applicative, G[_], I, B, ArgType](connection: Connection[F], arg: Arg[ArgType])(
       q: (NonEmptyList[I], ArgType) => Query[G, (Query.Select[I], B)]
   )(implicit tpe: => Out[F, G[QueryContext[B]]]) =
-    Field(resolveQuery(EmptyableArg.Lift(arg), q, connection), Eval.later(tpe))
+    Field(resolveQuery(EmptyableArg.Lift(arg), q, connection), Eval.always(tpe))
 
   def runField[F[_]: Queryable: Applicative, G[_], I, B](connection: Connection[F])(
       q: NonEmptyList[I] => Query[G, (Query.Select[I], B)]
   )(implicit tpe: => Out[F, G[QueryContext[B]]]) =
-    Field(resolveQuery[F, G, I, B, Unit](EmptyableArg.Empty, (i, _) => q(i), connection), Eval.later(tpe))
+    Field(resolveQuery[F, G, I, B, Unit](EmptyableArg.Empty, (i, _) => q(i), connection), Eval.always(tpe))
 
   def runFieldSingle[F[_]: Queryable: Applicative, G[_], I, B, ArgType](connection: Connection[F], arg: Arg[ArgType])(
       q: (I, ArgType) => Query[G, B]
   )(implicit tpe: => Out[F, G[QueryContext[B]]]): Field[F, I, G[QueryContext[B]]] =
-    Field(resolveQuerySingle(EmptyableArg.Lift(arg), q, connection), Eval.later(tpe))
+    Field(resolveQuerySingle(EmptyableArg.Lift(arg), q, connection), Eval.always(tpe))
 
   def runFieldSingle[F[_]: Queryable: Applicative, G[_], I, B](connection: Connection[F])(
       q: I => Query[G, B]
   )(implicit tpe: => Out[F, G[QueryContext[B]]]): Field[F, I, G[QueryContext[B]]] =
-    Field(resolveQuerySingle[F, G, I, B, Unit](EmptyableArg.Empty, (i, _) => q(i), connection), Eval.later(tpe))
+    Field(resolveQuerySingle[F, G, I, B, Unit](EmptyableArg.Empty, (i, _) => q(i), connection), Eval.always(tpe))
 
   final class BuildWithBuilder[F[_], A] {
     def apply[B](f: RelationalFieldBuilder[F, A] => B): B = f(new RelationalFieldBuilder[F, A]())
@@ -181,7 +181,7 @@ abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
       def fieldVariant: FieldVariant[B, QueryContext[B]] = FieldVariant.SubSelection[B]()
       def query(value: A): Query[Option, B] = f(value)
     }
-    gql.ast.Variant[F, QueryContext[A], QueryContext[B]](Eval.later(tpe), List(attr)) { qr =>
+    gql.ast.Variant[F, QueryContext[A], QueryContext[B]](Eval.always(tpe), List(attr)) { qr =>
       qr.read(attr).sequence.map(_.flatten).toIor
     }
   }
@@ -191,7 +191,7 @@ abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
       def fieldVariant: FieldVariant[Query.Select[B], B] = FieldVariant.Selection[B]()
       def query(value: A): Query[Option, Query.Select[B]] = f(value)
     }
-    gql.ast.Variant[F, QueryContext[A], B](Eval.later(tpe), List(attr)) { qr =>
+    gql.ast.Variant[F, QueryContext[A], B](Eval.always(tpe), List(attr)) { qr =>
       qr.read(attr).sequence.map(_.flatten).toIor
     }
   }
@@ -228,7 +228,7 @@ abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
       def fieldVariant: FieldVariant[A, QueryContext[A]] = FieldVariant.SubSelection[A]()
       def query(value: B): Query[Option, A] = f(value)
     }
-    gql.ast.Implementation[F, QueryContext[A], QueryContext[B]](Eval.later(interface), List(attr)) { qr =>
+    gql.ast.Implementation[F, QueryContext[A], QueryContext[B]](Eval.always(interface), List(attr)) { qr =>
       qr.read(attr).sequence.map(_.flatten).toIor
     }
   }
@@ -238,7 +238,7 @@ abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
       def fieldVariant: FieldVariant[Query.Select[A], A] = FieldVariant.Selection[A]()
       def query(value: B): Query[Option, Query.Select[A]] = f(value)
     }
-    gql.ast.Implementation[F, A, QueryContext[B]](Eval.later(interface), List(attr)) { qr =>
+    gql.ast.Implementation[F, A, QueryContext[B]](Eval.always(interface), List(attr)) { qr =>
       qr.read(attr).sequence.map(_.flatten).toIor
     }
   }

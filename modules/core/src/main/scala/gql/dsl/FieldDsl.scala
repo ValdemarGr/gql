@@ -80,10 +80,10 @@ trait FieldDslFull {
   def builder[F[_], I] = new FieldDsl.PartiallyAppliedFieldBuilder[F, I]
 
   def abst[F[_], T](implicit tpe: => Out[F, T]): AbstractField[F, T] =
-    AbstractField[F, T](None, Eval.later(tpe))
+    AbstractField[F, T](None, Eval.always(tpe))
 
   def abstWith[F[_], T, A](arg: Arg[A])(implicit tpe: => Out[F, T]): AbstractField[F, T] =
-    AbstractField[F, T](Some(arg), Eval.later(tpe))
+    AbstractField[F, T](Some(arg), Eval.always(tpe))
 
   def abstGroup[F[_]](
       hd: (String, AbstractField[F, ?]),
@@ -113,10 +113,10 @@ trait FieldDslFull {
 object FieldDsl extends FieldDslFull {
   final class PartiallyAppliedEff[I](private val dummy: Boolean = false) extends AnyVal {
     def apply[F[_], T, A](arg: Arg[A])(resolver: (A, I) => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field(Resolver.effect[F, (A, I)] { case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
+      Field(Resolver.effect[F, (A, I)] { case (a, i) => resolver(a, i) }.contraArg(arg), Eval.always(tpe))
 
     def apply[F[_], T](resolver: I => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field(Resolver.effect(resolver), Eval.later(tpe))
+      Field(Resolver.effect(resolver), Eval.always(tpe))
   }
 
   final class FieldsOps[F[_], A](private val fields: Fields[F, A]) extends AnyVal {
@@ -142,10 +142,10 @@ object FieldDsl extends FieldDslFull {
 
   final class PartiallyAppliedLift[I](private val dummy: Boolean = false) extends AnyVal {
     def apply[F[_], T, A](arg: Arg[A])(resolver: (A, I) => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field(Resolver.lift[F, (A, I)] { case (a, i) => resolver(a, i) }.contraArg(arg), Eval.later(tpe))
+      Field(Resolver.lift[F, (A, I)] { case (a, i) => resolver(a, i) }.contraArg(arg), Eval.always(tpe))
 
     def apply[F[_], T](resolver: I => Id[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-      Field(Resolver.lift[F, I](resolver), Eval.later(tpe))
+      Field(Resolver.lift[F, I](resolver), Eval.always(tpe))
   }
 }
 
@@ -162,13 +162,13 @@ trait FieldBuilder[F[_], I] {
   ): Fields[F, I] = FieldDsl.fields[F, I](hd, tl: _*)
 
   def from[T](resolver: Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-    Field[F, I, T](resolver, Eval.later(tpe))
+    Field[F, I, T](resolver, Eval.always(tpe))
 
   def apply[T](f: Resolver[F, I, I] => Resolver[F, I, T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-    Field[F, I, T](f(Resolver.id[F, I]), Eval.later(tpe))
+    Field[F, I, T](f(Resolver.id[F, I]), Eval.always(tpe))
 
   def lift = new FieldDsl.PartiallyAppliedLift[I]
 
   def eff[T](resolver: I => F[T])(implicit tpe: => Out[F, T]): Field[F, I, T] =
-    Field(Resolver.effect(resolver), Eval.later(tpe))
+    Field(Resolver.effect(resolver), Eval.always(tpe))
 }

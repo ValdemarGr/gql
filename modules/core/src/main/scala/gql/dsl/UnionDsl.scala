@@ -40,7 +40,7 @@ trait UnionDslFull {
 object UnionDsl extends UnionDslFull {
   final class PartiallyAppliedUnion[F[_], A](private val name: String) {
     def variant[B](pf: PartialFunction[A, B])(implicit innerTpe: => Type[F, B]): Union[F, A] =
-      Union[F, A](name, NonEmptyList.of(Variant[F, A, B](Eval.later(innerTpe))(pf.lift.andThen(_.rightIor))), None)
+      Union[F, A](name, NonEmptyList.of(Variant[F, A, B](Eval.always(innerTpe))(pf.lift.andThen(_.rightIor))), None)
 
     def subtype[B: ClassTag](implicit ev: B <:< A, innerTpe: => Type[F, B]): Union[F, A] =
       variant[B] { case a: B => a }(innerTpe)
@@ -48,7 +48,7 @@ object UnionDsl extends UnionDslFull {
 
   final case class UnionOps[F[_], A](private val u: Union[F, A]) extends AnyVal {
     def variant[B](pf: PartialFunction[A, B])(implicit innerTpe: => Type[F, B]): Union[F, A] =
-      u.copy(types = Variant[F, A, B](Eval.later(innerTpe))(pf.lift.andThen(_.rightIor)) :: u.types)
+      u.copy(types = Variant[F, A, B](Eval.always(innerTpe))(pf.lift.andThen(_.rightIor)) :: u.types)
 
     def subtype[B: ClassTag](implicit ev: B <:< A, innerTpe: => Type[F, B]): Union[F, A] =
       variant[B] { case a: B => a }(innerTpe)

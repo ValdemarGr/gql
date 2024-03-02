@@ -33,7 +33,7 @@ package object parser {
 
         ParseError(
           Caret(line, col, offset),
-          Eval.later(ParserUtil.errorMessage(str, err))
+          Eval.always(ParserUtil.errorMessage(str, err))
         )
       }
 

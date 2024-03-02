@@ -82,7 +82,7 @@ trait QueryAlgebra {
       connection: Connection[F]
   )(implicit F: Applicative[F], queryable: Queryable[F]): F[Map[I, Either[String, G[QueryContext[B]]]]] = {
     val eff = collapseQuery(query).flatMap { qs =>
-      val out = compileQueryState(qs.map { case (_, b) => b }, FieldVariant.SubSelection[B](), Eval.later(getNextAttributes(fm.astNode)))
+      val out = compileQueryState(qs.map { case (_, b) => b }, FieldVariant.SubSelection[B](), Eval.always(getNextAttributes(fm.astNode)))
       out tupleLeft qs.map { case (sel, _) => sel }.value
     }
 
@@ -274,7 +274,7 @@ trait QueryAlgebra {
     getArg(pdf, tfa.arg)
       .map(tfa.query(a, _))
       .flatMap(collapseQuery)
-      .flatMap(compileQueryState(_, tfa.fieldVariant, Eval.later(getNextAttributes(pdf))))
+      .flatMap(compileQueryState(_, tfa.fieldVariant, Eval.always(getNextAttributes(pdf))))
 
   def compileNextUnification[F[_], A, Q, B](
       attr: UnificationQueryAttribute[A, Q, B],

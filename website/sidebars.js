@@ -57,6 +57,7 @@ const sidebars = {
             "server/schema/error_handling",
             "server/schema/compiler",
             "server/schema/extending",
+            "server/schema/structuring_apps",
           ]
         },
         {

@@ -6,6 +6,9 @@ To host larger graphs there are some considerations that must be addressed.
 * What up-front work can be done to minimize the overhead in introducing new types.
 * How is (mutual) recursion handled between different domains.
 
+Recursive datatypes are notoriously difficult to deal with.
+In functional programming lazyness is often exploited as a solution to introduce cyclic data, but can easily accidentally introduce infinite recursion.
+
 ## Seperating domains
 Partially applying all needed dependencies can be expressed with a class.
 ```scala mdoc
@@ -66,9 +69,9 @@ class UserTypes(repo: Repo) extends GqlDsl[IO] {
 
 </details>
 
-### Mutually recursive domains
+## Mutually recursive domains
 Subgraphs can neatly packaged into classes, but that does not address the issue of recursion between different domains.
-#### Call by name constructor parameters
+### Call by name constructor parameters
 A compositional approach is to use call by name constructor parameters to lazily pass mutually recursive dependencies.
 ```scala mdoc:nest
 class UserTypes(paymentTypes: => PaymentTypes) {
@@ -83,8 +86,8 @@ class PaymentTypes(userTypes: => UserTypes) {
   // ...
 }
 
-lazy val userTypes = new UserTypes(paymentTypes)
-lazy val paymentTypes = new PaymentTypes(userTypes)
+lazy val userTypes: UserTypes = new UserTypes(paymentTypes)
+lazy val paymentTypes: PaymentTypes = new PaymentTypes(userTypes)
 ```
 :::tip
 When domain types are defined in seperate projects, OOP interfaces can be used to implement mutual recursion.
@@ -115,16 +118,13 @@ class PaymentTypesImpl(userTypes: => UserTypes) extends PaymentTypes {
 }
 
 // main project
-lazy val userTypes = new UserTypesImpl(paymentTypes)
-lazy val paymentTypes = new PaymentTypesImpl(userTypes)
+lazy val userTypes: UserTypes = new UserTypesImpl(paymentTypes)
+lazy val paymentTypes: PaymentTypes = new PaymentTypesImpl(userTypes)
 ```
 :::
 
-#### Cake
+### Cake
 The cake pattern can also be used to define mutually recursive dependencies, at the cost of composability.
-```scala mdoc:invisible
-trait Payment
-```
 ```scala mdoc:nest
 // core project
 trait User

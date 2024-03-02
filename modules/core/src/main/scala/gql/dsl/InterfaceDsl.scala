@@ -57,7 +57,7 @@ object InterfaceDsl extends InterfaceDslFull {
 
   final class InterfaceOps[F[_], A](private val tpe: Interface[F, A]) extends AnyVal {
     def implements[B](implicit interface: => Interface[F, B]): Interface[F, A] =
-      tpe.copy(implementations = Eval.later(interface) :: tpe.implementations)
+      tpe.copy(implementations = Eval.always(interface) :: tpe.implementations)
 
     def subtypeImpl[B](implicit ev: A <:< B, interface: => Interface[F, B]): Interface[F, A] = {
       val existingConcretes = tpe.fields.collect { case (k, _: gql.ast.Field[F, A, ?]) => k }.toSet

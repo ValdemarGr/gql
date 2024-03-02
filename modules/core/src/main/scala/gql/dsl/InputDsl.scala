@@ -23,16 +23,16 @@ import cats._
 
 trait InputDslFull {
   def arg[A](name: String)(implicit tpe: => In[A]): Arg[A] =
-    Arg.make[A](ArgValue(name, Eval.later(tpe), None, None))
+    Arg.make[A](ArgValue(name, Eval.always(tpe), None, None))
 
   def arg[A](name: String, description: String)(implicit tpe: => In[A]): Arg[A] =
-    Arg.make[A](ArgValue(name, Eval.later(tpe), None, Some(description)))
+    Arg.make[A](ArgValue(name, Eval.always(tpe), None, Some(description)))
 
   def arg[A](name: String, default: V[Const, Unit])(implicit tpe: => In[A]): Arg[A] =
-    Arg.make[A](ArgValue(name, Eval.later(tpe), Some(default), None))
+    Arg.make[A](ArgValue(name, Eval.always(tpe), Some(default), None))
 
   def arg[A](name: String, default: V[Const, Unit], description: String)(implicit tpe: => In[A]): Arg[A] =
-    Arg.make[A](ArgValue(name, Eval.later(tpe), Some(default), Some(description)))
+    Arg.make[A](ArgValue(name, Eval.always(tpe), Some(default), Some(description)))
 
   def argFull[A]: InputDsl.PartiallyAppliedArgFull[A] = new InputDsl.PartiallyAppliedArgFull[A]
 
@@ -51,7 +51,7 @@ object InputDsl extends InputDslFull {
     def apply[B](name: String, default: Option[V[Const, Unit]], description: Option[String])(
         f: ArgParam[A] => Either[String, B]
     )(implicit tpe: => In[A]): Arg[B] =
-      Arg.makeFrom[A, B](ArgValue(name, Eval.later(tpe), default, description))(f)
+      Arg.makeFrom[A, B](ArgValue(name, Eval.always(tpe), default, description))(f)
   }
 }
 
