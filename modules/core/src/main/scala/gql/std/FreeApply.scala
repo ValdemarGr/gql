@@ -47,6 +47,13 @@ sealed abstract class FreeApply[F[_], +A] extends Product with Serializable {
   @nowarn
   def enumerate: NonEmptyChain[F[Any]] =
     analyze_(fa => NonEmptyChain.one(fa))
+
+  def mapK[G[_]](fk: F ~> G): FreeApply[G, A] =
+    foldMap[FreeApply[G, *], A] {
+      new (F ~> FreeApply[G, *]) {
+        def apply[B](fa: F[B]): FreeApply[G, B] = FreeApply.lift(fk(fa))
+      }
+    }
 }
 
 object FreeApply {

@@ -22,27 +22,41 @@ import gql.parser.{Value => V, QueryAst => P, AnyValue, Const}
 import java.util.UUID
 
 object dsl {
-  def sel[A](fieldName: String, alias: String)(implicit sq: SubQuery[A]): SelectionSet[A] =
-    SelectionSet.lift(Selection.Field(fieldName, Some(alias), Nil, sq))
+  def directive(name: String, args: P.Argument[Unit, AnyValue]*): P.Directive[Unit, AnyValue] =
+    P.Directive(name, args.toList.toNel.map(P.Arguments(_)))
 
-  def sel[A](fieldName: String)(implicit sq: SubQuery[A]): SelectionSet[A] =
-    SelectionSet.lift(Selection.Field(fieldName, None, Nil, sq))
+  object sel {
+    def apply[A](fieldName: String)(implicit sq: SubQuery[A]): SelectionSet[A] =
+      build[A](fieldName, identity)
 
-  def sel[A](fieldName: String, argHd: P.Argument[Unit, AnyValue], argTl: P.Argument[Unit, AnyValue]*)(implicit
-      sq: SubQuery[A]
-  ): SelectionSet[A] =
-    SelectionSet.lift(Selection.Field(fieldName, None, argHd :: argTl.toList, sq))
+    def build[A](fieldName: String, f: Selection.Field[A] => Selection.Field[A])(implicit sq: SubQuery[A]): SelectionSet[A] =
+      SelectionSet.lift(f(Selection.Field(fieldName, None, Nil, sq, Nil)))
+  }
 
-  def sel[A](fieldName: String, alias: String, argHd: P.Argument[Unit, AnyValue], argTl: P.Argument[Unit, AnyValue]*)(implicit
-      sq: SubQuery[A]
-  ): SelectionSet[A] =
-    SelectionSet.lift(Selection.Field(fieldName, Some(alias), argHd :: argTl.toList, sq))
+  object inlineFrag {
+    def apply[A](on: String)(implicit q: SelectionSet[A]): SelectionSet[Option[A]] =
+      build[A](on, x => x)
 
-  def inlineFrag[A](on: String)(implicit q: SelectionSet[A]): SelectionSet[Option[A]] =
-    SelectionSet.lift(Selection.InlineFragment(on, q))
+    def build[A](on: String, f: Selection.InlineFragment[A] => Selection.InlineFragment[A])(implicit
+        q: SelectionSet[A]
+    ): SelectionSet[Option[A]] =
+      SelectionSet.lift(f(Selection.InlineFragment(on, q, Nil)))
+  }
 
-  def fragment[A](name: String, on: String)(implicit q: SelectionSet[A]): SelectionSet[Option[A]] =
-    SelectionSet.lift(Selection.Fragment(name, on, q))
+  object fragment {
+    def apply[A](name: String, on: String)(implicit q: SelectionSet[A]): Fragment[A] =
+      Fragment(name, on, q, Nil)
+
+    object spread {
+      def apply[A](implicit frag: Fragment[A]): SelectionSet[Option[A]] =
+        build[A](identity)
+
+      def build[A](f: Selection.FragmentSpread[A] => Selection.FragmentSpread[A])(implicit
+          frag: Fragment[A]
+      ): SelectionSet[Option[A]] =
+        SelectionSet.lift(f(Selection.FragmentSpread(frag, Nil)))
+    }
+  }
 
   def list[A](implicit sq: SubQuery[A]): SubQuery[List[A]] = ListModifier(sq)
 

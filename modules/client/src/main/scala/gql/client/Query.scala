@@ -20,7 +20,7 @@ import io.circe._
 import org.typelevel.paiges._
 import cats.implicits._
 import cats._
-import gql.client.Selection.Fragment
+import gql.client.Selection.FragmentSpread
 import gql.client.Selection.Field
 import gql.client.Selection.InlineFragment
 import gql.parser.GraphqlRender
@@ -144,8 +144,8 @@ object Query {
   def queryResultDecoder[A](ss: SelectionSet[A]): Decoder[QueryResult[A]] =
     QueryResult.decoder(Dec.decoderForSelectionSet(ss))
 
-  def findSelectionFragments[A](selection: Selection[A]) = selection match {
-    case f: Fragment[a] => f :: findFragments(f.subSelection)
+  def findSelectionFragments[A](selection: Selection[A]): List[Fragment[?]] = selection match {
+    case f: FragmentSpread[a] => f.fr :: findFragments(f.fr.subSelection)
     case f: Field[a] =>
       def unpackSubQuery(q: SubQuery[?]): List[Fragment[?]] =
         q match {
@@ -183,9 +183,9 @@ object Query {
         override def apply[B](fa: Selection[B]): Decoder[B] = {
           fa match {
             case f: Selection.Field[a] =>
-              val name = f.alias.getOrElse(f.fieldName)
+              val name = f.alias0.getOrElse(f.fieldName)
               Decoder.instance(_.get(name)(decoderForSubQuery(f.subQuery)))
-            case f: Fragment[a]       => decoderForFragment(f.on, f.subSelection)
+            case f: FragmentSpread[a] => decoderForFragment(f.fr.on, f.fr.subSelection)
             case f: InlineFragment[a] => decoderForFragment(f.on, f.subSelection)
           }
         }
@@ -214,16 +214,32 @@ object Query {
     def renderArg(a: P.Argument[Unit, AnyValue]): Doc =
       Doc.text(a.name) + Doc.char(':') + Doc.space + GraphqlRender.renderValue(a.value)
 
-    def matchTypename(on: String): SelectionSet[String] =
-      dsl.sel[String]("__typename", matchAlias(on))
+    def renderArgs(args: List[P.Argument[Unit, AnyValue]]): Doc =
+      args match {
+        case Nil => Doc.empty
+        case xs  => Doc.intercalate(Doc.comma + Doc.space, xs.map(renderArg)).bracketBy(Doc.char('('), Doc.char(')'))
+      }
 
-    def renderSelection[A](selection: Selection[A]) = selection match {
+    def matchTypename(on: String): SelectionSet[String] =
+      dsl.sel.build[String]("__typename", _.alias(matchAlias(on)))
+
+    def renderDirective(d: P.Directive[Unit, AnyValue]): Doc =
+      Doc.text("@") + Doc.text(d.name) + renderArgs(d.arguments.toList.flatMap(_.nel.toList))
+
+    def renderDirectives(ds: List[P.Directive[Unit, AnyValue]]): Doc =
+      ds match {
+        case Nil => Doc.empty
+        case xs  => Doc.intercalate(Doc.space, xs.map(renderDirective))
+      }
+
+    def renderSelection[A](selection: Selection[A]): Doc = selection match {
       // Fragments are floated to the top level and handled separately
-      case f: Fragment[a] =>
-        Doc.text(s"...${f.name}")
-      case InlineFragment(on, subSelection) =>
-        Doc.text(s"... on $on") + Doc.space + renderSelectionSet(subSelection <* matchTypename(on))
-      case Selection.Field(name, alias, args, sq) =>
+      case f: FragmentSpread[a] =>
+        Doc.text(s"...${f.fr.name}") + Doc.space + renderDirectives(f.directives)
+      case InlineFragment(on, subSelection, directives) =>
+        Doc.text(s"... on $on") + Doc.space + renderDirectives(directives) +
+          Doc.space + renderSelectionSet(subSelection <* matchTypename(on))
+      case Selection.Field(name, alias, args, sq, directives) =>
         val aliased = alias match {
           case None    => Doc.empty
           case Some(a) => Doc.text(a) + Doc.char(':') + Doc.space
@@ -231,11 +247,7 @@ object Query {
 
         val lhs = aliased + Doc.text(name)
 
-        val argsDoc = args.toNel match {
-          case None => Doc.empty
-          case Some(args) =>
-            Doc.intercalate(Doc.comma + Doc.line, args.map(renderArg).toList).bracketBy(Doc.char('('), Doc.char(')'))
-        }
+        val argsDoc = renderArgs(args)
 
         def renderSubQuery(sq: SubQuery[?]): Doc = sq match {
           case Terminal(_)              => Doc.empty
@@ -245,7 +257,7 @@ object Query {
         }
         val rhs = renderSubQuery(sq)
 
-        lhs + argsDoc + rhs
+        lhs + argsDoc + renderDirectives(directives) + rhs
     }
 
     def renderSelectionSet(ss: SelectionSet[?]): Doc = {

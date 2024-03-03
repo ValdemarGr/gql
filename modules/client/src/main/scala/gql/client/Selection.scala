@@ -87,19 +87,35 @@ sealed trait Selection[A]
 object Selection {
   final case class Field[A](
       fieldName: String,
-      alias: Option[String],
-      args: List[P.Argument[Unit, AnyValue]],
-      subQuery: SubQuery[A]
-  ) extends Selection[A]
+      alias0: Option[String],
+      args0: List[P.Argument[Unit, AnyValue]],
+      subQuery: SubQuery[A],
+      directives0: List[P.Directive[Unit, AnyValue]]
+  ) extends Selection[A] {
+    def alias(name: String): Field[A] = copy(alias0 = Some(name))
+    def args(xs: P.Argument[Unit, AnyValue]*): Field[A] = copy(args0 = xs.toList)
+    def directives(xs: P.Directive[Unit, AnyValue]*): Field[A] = copy(directives0 = xs.toList)
+  }
 
-  final case class Fragment[A](
-      name: String,
-      on: String,
-      subSelection: SelectionSet[A]
-  ) extends Selection[Option[A]]
+  final case class FragmentSpread[A](
+      fr: Fragment[A],
+      directives: List[P.Directive[Unit, AnyValue]]
+  ) extends Selection[Option[A]] {
+    def directives(xs: P.Directive[Unit, AnyValue]*): FragmentSpread[A] = copy(directives = xs.toList)
+  }
 
   final case class InlineFragment[A](
       on: String,
-      subSelection: SelectionSet[A]
-  ) extends Selection[Option[A]]
+      subSelection: SelectionSet[A],
+      directives: List[P.Directive[Unit, AnyValue]]
+  ) extends Selection[Option[A]] {
+    def directives(xs: P.Directive[Unit, AnyValue]*): InlineFragment[A] = copy(directives = xs.toList)
+  }
 }
+
+final case class Fragment[A](
+    name: String,
+    on: String,
+    subSelection: SelectionSet[A],
+    directives: List[P.Directive[Unit, AnyValue]]
+)
