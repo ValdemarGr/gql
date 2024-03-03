@@ -150,6 +150,7 @@ class QueryPreparation[F[_], C](
         liftK(G.raise(s"Object like type `${ModifierStack.fromOut(o).show(_.name)}` must have a selection.", List(fi.caret)))
     }
 
+  @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
   def prepareField[I, O](
       fi: MergedFieldInfo[F, C],
       field: Field[F, I, O],
