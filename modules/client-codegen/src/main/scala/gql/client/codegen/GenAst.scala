@@ -1,10 +1,7 @@
 package gql.client.codegen
 
-import cats.effect._
-import fs2.io.file._
 import gql.parser.TypeSystemAst._
 import gql.parser.QueryAst._
-import gql.parser.{Value => V, AnyValue}
 import cats.data._
 import cats._
 import org.typelevel.paiges.Doc
@@ -12,15 +9,8 @@ import cats.implicits._
 import gql._
 import cats.mtl.Local
 import cats.mtl.Tell
-import cats.mtl.Handle
 import cats.mtl.Stateful
 import cats.parse.Caret
-import gql.parser.QueryAst
-import gql.client.QueryValidation
-import io.circe.Json
-import gql.preparation.RootPreparation
-import gql.parser.ParserUtil
-import gql.util.SchemaUtil
 import gql.client.codegen.{RenderHelpers => R}
 import GenAst._
 
