@@ -15,9 +15,9 @@ sel[Option[String]]("name")
 ```
 Most combinators in the dsl have multiple overloads to provide various features.
 ```scala mdoc:silent
-sel[Option[String]]("name", alias="n")
+sel.build[Option[String]]("name", _.alias("n"))
 
-sel[Option[String]]("name", arg("id", 42))
+sel.build[Option[String]]("name", _.args(arg("id", 42)))
 ```
 
 Every selection related structure forms an `Applicative` such that you can compose multiple selections together:
@@ -57,7 +57,7 @@ val frag = fragment[String]("MyFragment", on="Person") {
 
 val fragmentSpreads = sel[(Option[String], Option[Int])]("person") {
     (
-        frag,
+        fragment.spread(frag),
         inlineFrag[Int]("Person") {
             sel[Int]("age")
         }
@@ -68,11 +68,11 @@ Notice that both `fragment` and `inlineFrag` return an optional result.
 This is because the spread may not match on the type (if the spread condition is a sub-type of the spread-on type).
 This is not always the desired behavior, and as such, fragments can be required:
 ```scala mdoc:silent
-frag.required: SelectionSet[String]
+fragment.spread(frag).required: SelectionSet[String]
 ```
 You can provide additional information, should the fragment turn out to actually be missing:
 ```scala mdoc:silent
-frag.requiredFragment("MyFragment", on="Person")
+fragment.spread(frag).requiredFragment("MyFragment", on="Person")
 ```
 
 :::info
@@ -100,7 +100,7 @@ Variables can be "materialized" into a `VariableClosure` by introducing them to 
 // Given a variable of type String, we can construct a query that returns an Int
 val queryWithVariable: VariableClosure[String, Int] = 
     variable[String]("name").introduce{ name: VariableName[String] =>
-        sel[Int]("id", arg("name", name))
+        sel.build[Int]("id", _.args(arg("name", name)))
     }
 ```
 
@@ -110,7 +110,7 @@ def subQuery1: VariableClosure[String, Int] = queryWithVariable
 
 def subQuery2: VariableClosure[String, Int] = 
     variable[String]("name2").introduce{ name: VariableName[String] =>
-        sel[Int]("id2", arg("name", name))
+        sel.build[Int]("id2", _.args(arg("name", name)))
     }
 
 def combined: VariableClosure[(String, String), Int] = 
@@ -130,7 +130,7 @@ def simpleQuery = Query.simple(
     sel[Unit]("person") {
         (
             sel[Int]("id"),
-            sel[Int]("age", arg("numbers", List(42)))
+            sel.build[Int]("age", _.args(arg("numbers", List(42))))
         ).tupled.void
     }
 )
