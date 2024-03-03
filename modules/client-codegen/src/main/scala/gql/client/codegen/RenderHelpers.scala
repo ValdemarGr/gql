@@ -1,26 +1,10 @@
 package gql.client.codegen
 
-import cats.effect._
-import fs2.io.file._
-import gql.parser.TypeSystemAst._
-import gql.parser.QueryAst._
+import gql.parser.{QueryAst => QA}
 import gql.parser.{Value => V, AnyValue}
-import cats.data._
 import cats._
 import org.typelevel.paiges.Doc
 import cats.implicits._
-import gql._
-import cats.mtl.Local
-import cats.mtl.Tell
-import cats.mtl.Handle
-import cats.mtl.Stateful
-import cats.parse.Caret
-import gql.parser.QueryAst
-import gql.client.QueryValidation
-import io.circe.Json
-import gql.preparation.RootPreparation
-import gql.parser.ParserUtil
-import gql.util.SchemaUtil
 
 object RenderHelpers {
   def modifyHead(f: Char => Char): String => String = { str =>
@@ -122,6 +106,15 @@ object RenderHelpers {
       case EnumValue(v, _)     => Doc.text(s"""V.EnumValue("$v")""")
       case VariableValue(v, _) => Doc.text(s"""V.VariableValue("$v")""")
     }
+  }
+
+  def generateArgument[C](a: QA.Argument[C, AnyValue]): Doc = {
+    Doc.text("arg") + params(List(quoted(a.name), generateValue(a.value, anyValue = true)))
+  }
+
+  def generateDirective[C](d: QA.Directive[C, AnyValue]): Doc = {
+    val xs = d.arguments.toList.flatMap(_.nel.toList).map(generateArgument)
+    Doc.text("directive") + params(quoted(d.name) :: xs)
   }
 
   // https://github.com/rgueldem/ScalaPB/blob/5bd28cb38728e29dc3743a695b98709243f89381/compiler-plugin/src/main/scala/scalapb/compiler/DescriptorImplicits.scala#L1106

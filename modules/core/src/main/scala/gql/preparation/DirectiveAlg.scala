@@ -43,7 +43,7 @@ class DirectiveAlg[F[_], C](
   def foldDirectives[P[x] <: Position[F, x]]: DirectiveAlg.PartiallyAppliedFold[F, C, P] =
     new DirectiveAlg.PartiallyAppliedFold[F, C, P] {
       override def apply[H[_]: Traverse, A](directives: Option[QueryAst.Directives[C, AnyValue]], context: List[C])(base: A)(
-          f: PartialFunction[(A, P[Any], QueryAst.Directive[C, AnyValue]), Alg[C, H[A]]]
+          f: PartialFunction[(A, Position[F, Any], QueryAst.Directive[C, AnyValue]), Alg[C, H[A]]]
       )(implicit H: Monad[H]): Alg[C, H[A]] = {
         def foldNext(rest: List[QueryAst.Directive[C, AnyValue]], accum: A): Alg[C, H[A]] =
           rest match {
@@ -71,6 +71,6 @@ object DirectiveAlg {
     def apply[H[_]: Traverse, A](
         directives: Option[QueryAst.Directives[C, AnyValue]],
         context: List[C]
-    )(base: A)(f: PartialFunction[(A, P[Any], QueryAst.Directive[C, AnyValue]), Alg[C, H[A]]])(implicit H: Monad[H]): Alg[C, H[A]]
+    )(base: A)(f: PartialFunction[(A, Position[F, Any], QueryAst.Directive[C, AnyValue]), Alg[C, H[A]]])(implicit H: Monad[H]): Alg[C, H[A]]
   }
 }

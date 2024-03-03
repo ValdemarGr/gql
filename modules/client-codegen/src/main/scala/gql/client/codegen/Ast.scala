@@ -1,6 +1,7 @@
 package gql.client.codegen
 
-import gql.parser.QueryAst._
+import gql.parser.{QueryAst => QA}
+import QA._
 import gql.parser.{Value => V, AnyValue}
 import cats.data._
 import org.typelevel.paiges.Doc
@@ -46,14 +47,15 @@ final case class SelField(
     name: String,
     alias: Option[String],
     args: List[Argument[Caret, AnyValue]],
-    typename: ModifierStack[String]
+    typename: ModifierStack[String],
+    directives: List[QA.Directive[Caret, AnyValue]]
 ) extends Sel {
   val tn = Doc.text(typename.invert.showScala(identity))
 
   // List(arg("argName1", value1), arg("argName2", value2))
-  lazy val argList: List[Doc] = args.map { a =>
-    Doc.text("arg") + R.params(List(R.quoted(a.name), R.generateValue(a.value, anyValue = true)))
-  }
+  val argList: List[Doc] = args.map(R.generateArgument)
+
+  val directiveList = directives.map(R.generateDirective)
 
   // sel[Type]("fieldName", _.args(arg("argName1", value1), arg("argName2", value2)))
   lazy val sel: Doc = {
@@ -61,8 +63,9 @@ final case class SelField(
       R.typeParams(List(tn)) +
       R.params {
         val al = argList.toNel.map(xs => R.method("args", xs.toList)).getOrElse(Doc.empty)
+        val ds = directiveList.toNel.map(xs => R.method("directives", xs.toList)).getOrElse(Doc.empty)
         val a = alias.map(x => R.method("alias", List(R.quoted(x)))).getOrElse(Doc.empty)
-        R.quoted(name) :: List(Doc.text("x => x") + al + a)
+        R.quoted(name) :: List(Doc.text("x => x") + al + a + ds)
       }
   }
 
@@ -74,7 +77,8 @@ final case class SelFragSpread(
     fragmentName: String,
     condition: String,
     inl: Boolean,
-    required: Boolean
+    required: Boolean,
+    directives: List[QA.Directive[Caret, AnyValue]]
 ) extends Sel {
   lazy val req =
     if (required) R.method("requiredFragment", List(fragmentName, condition).map(R.quoted))
@@ -82,9 +86,12 @@ final case class SelFragSpread(
 
   lazy val sel: Doc = {
     val (fn, p) =
-      if (inl) ("inlineFrag", R.params(List(R.quoted(condition))))
-      else ("fragment.spread", Doc.empty)
-    Doc.text(fn) + R.typeParams(List(Doc.text(scalaType))) + p + req
+      if (inl) ("inlineFrag.build", List(R.quoted(condition)))
+      else ("fragment.spread.build", Nil)
+
+    val d = directives.map(R.generateDirective).toNel.map(xs => R.method("directives", xs.toList)).getOrElse(Doc.empty)
+    val ps = p ++ List(Doc.text(s"x => x") + d)
+    Doc.text(fn) + R.typeParams(List(Doc.text(scalaType))) + R.params(ps) + req
   }
 
   lazy val cc: CaseClassField = {

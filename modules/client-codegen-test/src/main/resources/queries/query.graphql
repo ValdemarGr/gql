@@ -9,7 +9,7 @@ query AlienQuery($name: String!, $struct: FindDogInput, $dogCommand: DogCommand!
     }
     owner {
       name
-      type: name
+      type: name @include(if: true)
       abstract: name
       def: name
       option: name

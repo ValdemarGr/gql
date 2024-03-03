@@ -63,7 +63,8 @@ final class GenAst[F[_]: Parallel](implicit
             f.name,
             f.alias,
             f.arguments.map(_.nel.toList).getOrElse(Nil),
-            ms2
+            ms2,
+            f.directives.map(_.nel.toList).getOrElse(Nil)
           )
 
           (sf, ti)
@@ -146,11 +147,12 @@ final class GenAst[F[_]: Parallel](implicit
         // Then the fragment result will always be present
         val b = f.filter(fi => env.subtypesOf(fi.on).contains(td.name)).isDefined
 
+        val ds = fs.directives.toList.flatMap(_.nel.toList)
         f match {
           case None => raise[(Sel, Option[TypeIntro])](s"Fragment '${fs.fragmentName}' not found")
           case Some(fi) =>
             F.pure {
-              SelFragSpread(optTn, fs.fragmentName, fi.on, inl = false, b) -> None
+              SelFragSpread(optTn, fs.fragmentName, fi.on, inl = false, b, ds) -> None
             }
         }
       case inlineFrag: Selection.InlineFragmentSelection[Caret] =>
@@ -164,10 +166,11 @@ final class GenAst[F[_]: Parallel](implicit
 
         val req = env.subtypesOf(cnd).contains(td.name)
 
+        val ds = ilf.directives.toList.flatMap(_.nel.toList)
         in(s"inline-fragment-${cnd}") {
           // We'd like to match every concrete subtype of the inline fragment's type condition (since typename in the result becomes concrete)
           generateTypeDef(env, name, cnd, ss).map { ti =>
-            SelFragSpread(fn, cnd, cnd, inl = true, req) -> Some(ti)
+            SelFragSpread(fn, cnd, cnd, inl = true, req, ds) -> Some(ti)
           }
         }
     }
