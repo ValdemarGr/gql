@@ -140,7 +140,15 @@ class QueryPreparation[F[_], C](
       case (s: Selectable[F, a], Some(ss)) =>
         liftK(prepareSelectable[A](s, ss).widen[Prepared[F, A]])
       case (e: Enum[a], None) =>
-        liftK(nextNodeId).map(PreparedLeaf(_, e.name, x => Json.fromString(e.revm(x))))
+        val cs = List(fi.caret)
+        liftK {
+        e.directives
+          .parTraverse(da.parseSchemaDirective(_, cs))
+          .flatMap(_.foldLeftM(e){ case (e, d) => G.raiseEither(d.p.handler(d.a, e), cs) })
+          .flatMap{ e =>
+            nextNodeId.map(PreparedLeaf[F, a](_, e.name, x => Json.fromString(e.revm(x))))
+          }
+        }
       case (s: Scalar[a], None) =>
         import io.circe.syntax._
         liftK(nextNodeId).map(PreparedLeaf(_, s.name, x => s.encoder(x).asJson))
@@ -157,13 +165,12 @@ class QueryPreparation[F[_], C](
       currentTypename: String
   ): G[List[PreparedDataField[F, I, ?]]] = {
     da
-      .foldDirectives[Position.Field[F, *]][List, (Field[F, I, ?], MergedFieldInfo[F, C])](fi.directives, List(fi.caret))(
-        (field, fi)
-      ) { case ((f: Field[F, I, ?], fi), p: Position.Field[F, a], d) =>
-        da.parseArg(p, d.arguments, List(fi.caret))
-          .map(p.handler(_, f, fi))
-          .flatMap(G.raiseEither(_, List(fi.caret)))
-      }
+      .parseProvidedSubtype[Position.Field[F, *]](fi.directives, List(fi.caret))
+      .flatMap(_.foldLeftM[G, List[(Field[F, I, ?], MergedFieldInfo[F, C])]](List((field, fi))) { case (xs, prov) =>
+        xs.parFlatTraverse { case (f: Field[F, I, ?], fi) =>
+          G.raiseEither(prov.p.handler(prov.a, f, fi), List(fi.caret))
+        }
+      })
       .flatMap(_.parTraverse { case (field: Field[F, I, o2], fi) =>
         val rootUniqueName = UniqueEdgeCursor(s"${currentTypename}_${fi.name}")
 

@@ -21,10 +21,10 @@ import gql._
 
 trait DirectiveDsl[F[_]] {
   def directive(name: String): Directive[Unit] =
-    Directive(name)
+    Directive(name, isRepeatable = false)
 
   def directive[A](name: String, arg: Arg[A]): Directive[A] =
-    Directive(name, EmptyableArg.Lift(arg))
+    Directive(name, isRepeatable = false, EmptyableArg.Lift(arg))
 
   def onField[A](directive: Directive[A], handler: Position.FieldHandler[F, A]): State[SchemaState[F], Position.Field[F, A]] =
     DirectiveDsl.onField(directive, handler)
@@ -40,6 +40,12 @@ trait DirectiveDsl[F[_]] {
       handler: Position.QueryHandler[QA.InlineFragment, A]
   ): State[SchemaState[F], Position.InlineFragmentSpread[A]] =
     DirectiveDsl.onInlineFragmentSpread(directive, handler)
+
+  def onEnum[A](
+    directive: Directive[A],
+    handler: Position.Enum.Handler[A]
+  ): State[SchemaState[F], Position.Enum[A]] =
+    DirectiveDsl.onEnum(directive, handler)
 }
 
 trait DirectiveDslFull {
@@ -47,10 +53,10 @@ trait DirectiveDslFull {
     State(s => (s.copy(positions = pos :: s.positions), pos))
 
   def directive(name: String): Directive[Unit] =
-    Directive(name)
+    Directive(name, isRepeatable= false)
 
   def directive[A](name: String, arg: Arg[A]): Directive[A] =
-    Directive(name, EmptyableArg.Lift(arg))
+    Directive(name, isRepeatable= false, EmptyableArg.Lift(arg))
 
   def onField[F[_], A](directive: Directive[A], handler: Position.FieldHandler[F, A]): State[SchemaState[F], Position.Field[F, A]] =
     addPosition[F, A, Position.Field[F, A]](Position.Field(directive, handler))
@@ -66,6 +72,12 @@ trait DirectiveDslFull {
       handler: Position.QueryHandler[QA.InlineFragment, A]
   ): State[SchemaState[F], Position.InlineFragmentSpread[A]] =
     addPosition[F, A, Position.InlineFragmentSpread[A]](Position.InlineFragmentSpread(directive, handler))
+
+  def onEnum[F[_], A](
+    directive: Directive[A],
+    handler: Position.Enum.Handler[A]
+  ): State[SchemaState[F], Position.Enum[A]] =
+    addPosition[F, A, Position.Enum[A]](Position.Enum(directive, handler))
 }
 
 object DirectiveDsl extends DirectiveDslFull {

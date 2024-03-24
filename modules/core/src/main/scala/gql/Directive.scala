@@ -20,16 +20,23 @@ import gql.preparation.MergedFieldInfo
 import gql.parser.QueryAst
 
 /** A [[Directive]] takes an argument A and performs some context specific ast transformation.
+  *
+  * The [[Directive]] structure defines executable directives that modify execution
+  * https://spec.graphql.org/draft/#ExecutableDirectiveLocation.
   */
 final case class Directive[A](
     name: String,
+    isRepeatable: Boolean,
     arg: EmptyableArg[A] = EmptyableArg.Empty
-)
+) {
+  def repeatable = copy(isRepeatable = true)
+  def unrepeatable = copy(isRepeatable = false)
+}
 
 /** Consider taking a look at the skip and include directives as an example.
   */
 object Directive {
-  val skipDirective = Directive("skip", EmptyableArg.Lift(gql.dsl.input.arg[Boolean]("if")))
+  val skipDirective = Directive("skip", false, EmptyableArg.Lift(gql.dsl.input.arg[Boolean]("if")))
 
   def skipPositions[F[_]]: List[Position[F, ?]] = {
     val field = Position.Field(
@@ -61,7 +68,7 @@ object Directive {
     List(field, fragmentSpread, inlineFragmentSpread)
   }
 
-  val includeDirective = Directive("include", EmptyableArg.Lift(gql.dsl.input.arg[Boolean]("if")))
+  val includeDirective = Directive("include", false, EmptyableArg.Lift(gql.dsl.input.arg[Boolean]("if")))
 
   def includePositions[F[_]]: List[Position[F, ?]] = {
     val field = Position.Field(
@@ -92,6 +99,22 @@ object Directive {
 
     List(field, fragmentSpread, inlineFragmentSpread)
   }
+
+  val deprecatedDirective = Directive(
+    "deprecated",
+    false,
+    EmptyableArg.Lift(
+      gql.dsl.input.arg[String]("reason", gql.dsl.input.value.scalar("No longer supported"))
+    )
+  )
+
+  val deprecatedEnum: Position.Enum[String] =
+    Position.Enum(
+      deprecatedDirective,
+      new Position.Enum.Handler[String] {
+        def apply[B](a: String, e: ast.Enum[B]): Either[String, ast.Enum[B]] = Right(e)
+      }
+    )
 }
 
 // Add as necessary
@@ -122,4 +145,14 @@ object Position {
       directive: Directive[A],
       handler: QueryHandler[QA.InlineFragment, A]
   ) extends Position[Nothing, A]
+
+  final case class Enum[A](
+    directive: Directive[A],
+    handler: Enum.Handler[A]
+  ) extends Position[Nothing, A]
+  object Enum {
+    trait Handler[A] {
+      def apply[B](a: A, e: ast.Enum[B]): Either[String, ast.Enum[B]]
+    }
+  }
 }

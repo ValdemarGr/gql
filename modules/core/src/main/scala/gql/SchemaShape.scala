@@ -602,7 +602,7 @@ object SchemaShape {
         case ii: TypeInfo.InInfo =>
           ii.t match {
             case Scalar(_, _, _, _) => __TypeKind.SCALAR
-            case Enum(_, _, _)      => __TypeKind.ENUM
+            case Enum(_, _, _, _)   => __TypeKind.ENUM
             case _: Input[?]        => __TypeKind.INPUT_OBJECT
           }
       },
@@ -646,7 +646,7 @@ object SchemaShape {
         case _ => None
       },
       "enumValues" -> lift(inclDeprecated) { case (_, ti) =>
-        ti.asToplevel.collect { case Enum(_, m, _) => m.toList.map { case (k, v) => NamedEnumValue(k, v) } }
+        ti.asToplevel.collect { case Enum(_, m, _, _) => m.toList.map { case (k, v) => NamedEnumValue(k, v) } }
       },
       "inputFields" -> lift(inclDeprecated) {
         case (_, ii: TypeInfo.InInfo) =>
@@ -705,6 +705,7 @@ object SchemaShape {
           case Position.Field(_, _)                => DirectiveLocation.FIELD
           case Position.FragmentSpread(_, _)       => DirectiveLocation.FRAGMENT_SPREAD
           case Position.InlineFragmentSpread(_, _) => DirectiveLocation.INLINE_FRAGMENT
+          case Position.Enum(_, _)                 => DirectiveLocation.ENUM
         }
         zs
       },
