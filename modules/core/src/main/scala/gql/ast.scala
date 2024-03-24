@@ -67,13 +67,14 @@ object ast extends AstImplicits.Implicits {
       name: String,
       fields: NonEmptyList[(String, Field[F, A, ?])],
       implementations: List[Implementation[F, A, ?]],
+      directives: List[SchemaDirective[F, Position.Schema.Type[F, *]]] = Nil,
       description: Option[String] = None,
       attributes: List[TypeAttribute[F, A]] = Nil
   ) extends ObjectLike[F, A] {
     def document(description: String): Type[F, A] = copy(description = Some(description))
 
     def addAttributes[F2[x] >: F[x]](attrs: TypeAttribute[F2, A]*): Type[F2, A] =
-      copy[F2, A](attributes = attributes ++ attrs.toList)
+      (this: Type[F2, A]).copy(attributes = attributes ++ attrs.toList)
 
     lazy val fieldsList: List[(String, Field[F, A, ?])] = fields.toList
 
@@ -166,7 +167,7 @@ object ast extends AstImplicits.Implicits {
   final case class Enum[A](
       name: String,
       mappings: NonEmptyList[(String, EnumValue[? <: A])],
-      directives: List[SchemaDirective[Nothing, Position.Enum]] = Nil,
+      directives: List[SchemaDirective[fs2.Pure, Position.Schema.Enum]] = Nil,
       description: Option[String] = None
   ) extends OutToplevel[fs2.Pure, A]
       with InToplevel[A] {
@@ -174,10 +175,10 @@ object ast extends AstImplicits.Implicits {
 
     def deprecate(reason: Option[String]): Enum[A] =
       copy(directives =
-        SchemaDirective[Nothing, Position.Enum](
+        PureSchemaDirective[Position.Schema.Enum](
           Directive.deprecatedEnum,
           reason.toList.map(r => "reason" -> V.StringValue(r))
-        ) :: directives.filter(_.position.directive.name =!= Directive.deprecatedDirective.name)
+        ) :: directives
       )
 
     lazy val kv = mappings.map { case (k, v) => k -> v.value }
@@ -197,6 +198,7 @@ object ast extends AstImplicits.Implicits {
   final case class Field[+F[_], -A, B](
       resolve: Resolver[F, A, B],
       output: Eval[Out[F, B]],
+      directives: List[SchemaDirective[F, Position.Field[F, *]]] = Nil,
       description: Option[String] = None,
       attributes: List[FieldAttribute[F]] = Nil
   ) extends AnyField[F, A, B] {
@@ -222,13 +224,19 @@ object ast extends AstImplicits.Implicits {
       )
 
     def compose[F2[x] >: F[x], A2](r: Resolver[F2, A2, A]): Field[F2, A2, B] =
-      copy[F2, A2, B](r.andThen(resolve))
+      copy[F2, A2, B](
+        r.andThen(resolve),
+        directives = directives.map(x => x.copy[F2, Position.Field[F2, *]](position = x.position))
+      )
 
     def contramap[F2[x] >: F[x], A2](f: A2 => A): Field[F2, A2, B] =
       compose[F2, A2](Resolver.lift[F2, A2](f))
 
     def addAttributes[F2[x] >: F[x]](attrs: FieldAttribute[F2]*): Field[F2, A, B] =
-      copy(attributes = attributes ++ attrs.toList)
+      copy(
+        attributes = attributes ++ attrs.toList,
+        directives = directives.map(x => x.copy[F2, Position.Field[F2, *]](position = x.position))
+      )
   }
 
   // Field, but without any implementation
@@ -298,10 +306,18 @@ object ast extends AstImplicits.Implicits {
   }
 
   // TypeSystemDirectiveLocation
-  final case class SchemaDirective[+F[_], P[x] <: Position[F, x]](
+  final case class SchemaDirective[+F[_], +P[x] <: Position[F, x]](
       position: P[?],
       args: List[(String, V[Const, Unit])]
   )
+  type PureSchemaDirective[P[x] <: Position[fs2.Pure, x]] = SchemaDirective[fs2.Pure, P]
+  object PureSchemaDirective {
+    def apply[P[x] <: Position[fs2.Pure, x]](
+      position: P[?], 
+      args: List[(String, V[Const, Unit])]
+      ): PureSchemaDirective[P] =
+      SchemaDirective[fs2.Pure, P](position, args)
+  }
 }
 
 object AstImplicits {

@@ -705,7 +705,7 @@ object SchemaShape {
           case Position.Field(_, _)                => DirectiveLocation.FIELD
           case Position.FragmentSpread(_, _)       => DirectiveLocation.FRAGMENT_SPREAD
           case Position.InlineFragmentSpread(_, _) => DirectiveLocation.INLINE_FRAGMENT
-          case Position.Enum(_, _)                 => DirectiveLocation.ENUM
+          //case Position.Enum(_, _)                 => DirectiveLocation.ENUM
         }
         zs
       },

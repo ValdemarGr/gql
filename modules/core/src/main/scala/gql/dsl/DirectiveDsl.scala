@@ -43,8 +43,8 @@ trait DirectiveDsl[F[_]] {
 
   def onEnum[A](
     directive: Directive[A],
-    handler: Position.Enum.Handler[A]
-  ): State[SchemaState[F], Position.Enum[A]] =
+    handler: Position.SchemaHandler[A, ast.Enum]
+  ): State[SchemaState[F], Position.Schema[fs2.Pure, A, ast.Enum]] =
     DirectiveDsl.onEnum(directive, handler)
 }
 
@@ -75,9 +75,9 @@ trait DirectiveDslFull {
 
   def onEnum[F[_], A](
     directive: Directive[A],
-    handler: Position.Enum.Handler[A]
-  ): State[SchemaState[F], Position.Enum[A]] =
-    addPosition[F, A, Position.Enum[A]](Position.Enum(directive, handler))
+    handler: Position.SchemaHandler[A, ast.Enum]
+  ): State[SchemaState[F], Position.Schema[fs2.Pure, A, ast.Enum]] =
+    addPosition[F, A, Position.Schema[fs2.Pure, A, ast.Enum]](Position.Schema(directive, handler))
 }
 
 object DirectiveDsl extends DirectiveDslFull {
