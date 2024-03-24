@@ -112,7 +112,7 @@ lazy val sharedSettings = Seq(
     } else Seq.empty // Seq("-explain")
   },
   libraryDependencies ++= Seq(
-    "org.typelevel" %% "cats-effect" % "3.5.2",
+    "org.typelevel" %% "cats-effect" % "3.5.4",
     "org.typelevel" %% "cats-mtl" % "1.3.1",
     "org.typelevel" %% "cats-core" % "2.9.0",
     "org.typelevel" %% "cats-free" % "2.9.0",
