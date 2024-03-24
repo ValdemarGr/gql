@@ -192,7 +192,7 @@ class ArgParsing[C](variables: VariableMap[C]) {
       if (tooMuch.isEmpty) G.unit
       else G.raise(s"Too many fields provided, unknown fields are ${tooMuch.toList.map(x => s"'$x'").mkString_(", ")}.", context)
 
-    val fv = arg.impl.foldMap[G, ValidatedNec[String, A]](new (Arg.Impl ~> G) {
+    val fv = arg.impl.parFoldMap[G, ValidatedNec[String, A]](new (Arg.Impl ~> G) {
       def apply[B](fa: Arg.Impl[B]): G[B] = fa match {
         case fa: ArgDecoder[a, B] =>
           G.ambientField(fa.av.name) {

@@ -62,11 +62,11 @@ jobs:
 
       - name: Make target directories
         if: github.event_name != 'pull_request' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
-        run: mkdir -p modules/client-codegen-sbt/target modules/server-http4s/target modules/server-graphql-ws/target modules/server/target modules/graphql-ws/target modules/client-codegen-cli/target modules/parser/target modules/relational-skunk/target modules/server-natchez/target target modules/client-http4s/target modules/client/target modules/relational-doobie/target modules/client-codegen/target modules/core/target modules/relational/target modules/server-goi/target project/target
+        run: mkdir -p modules/client-codegen-sbt/target modules/server-http4s/target modules/server-graphql-ws/target modules/server/target modules/graphql-ws/target modules/client-codegen-cli/target modules/parser/target modules/relational-skunk/target modules/server-natchez/target target modules/client-http4s/target modules/client/target modules/relational-doobie/target modules/client-codegen/target modules/monadic-arrow/target modules/core/target modules/relational/target modules/server-goi/target project/target
 
       - name: Compress target directories
         if: github.event_name != 'pull_request' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
-        run: tar cf targets.tar modules/client-codegen-sbt/target modules/server-http4s/target modules/server-graphql-ws/target modules/server/target modules/graphql-ws/target modules/client-codegen-cli/target modules/parser/target modules/relational-skunk/target modules/server-natchez/target target modules/client-http4s/target modules/client/target modules/relational-doobie/target modules/client-codegen/target modules/core/target modules/relational/target modules/server-goi/target project/target
+        run: tar cf targets.tar modules/client-codegen-sbt/target modules/server-http4s/target modules/server-graphql-ws/target modules/server/target modules/graphql-ws/target modules/client-codegen-cli/target modules/parser/target modules/relational-skunk/target modules/server-natchez/target target modules/client-http4s/target modules/client/target modules/relational-doobie/target modules/client-codegen/target modules/monadic-arrow/target modules/core/target modules/relational/target modules/server-goi/target project/target
 
       - name: Upload target directories
         if: github.event_name != 'pull_request' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')

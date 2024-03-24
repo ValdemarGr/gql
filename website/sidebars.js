@@ -50,6 +50,7 @@ const sidebars = {
             "server/schema/output_types",
             "server/schema/input_types",
             "server/schema/dsl",
+            "server/schema/arrow_dsl",
             "server/schema/resolvers",
             "server/schema/schema",
             "server/schema/context",

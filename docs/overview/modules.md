@@ -19,6 +19,7 @@ libraryDependencies += "io.github.valdemargr" %% "gql-server-goi" % "@VERSION@",
 libraryDependencies += "io.github.valdemargr" %% "gql-relational" % "@VERSION@",
 libraryDependencies += "io.github.valdemargr" %% "gql-relational-skunk" % "@VERSION@",
 libraryDependencies += "io.github.valdemargr" %% "gql-relational-doobie" % "@VERSION@",
+libraryDependencies += "io.github.valdemargr" %% "gql-monadic-arrow" % "@VERSION@",
 
 // client
 libraryDependencies += "io.github.valdemargr" %% "gql-client" % "@VERSION@",

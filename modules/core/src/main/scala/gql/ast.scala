@@ -172,6 +172,14 @@ object ast extends AstImplicits.Implicits {
       with InToplevel[A] {
     def document(description: String): Enum[A] = copy(description = Some(description))
 
+    def deprecate(reason: Option[String]): Enum[A] =
+      copy(directives =
+        SchemaDirective[Nothing, Position.Enum](
+          Directive.deprecatedEnum,
+          reason.toList.map(r => "reason" -> V.StringValue(r))
+        ) :: directives.filter(_.position.directive.name =!= Directive.deprecatedDirective.name)
+      )
+
     lazy val kv = mappings.map { case (k, v) => k -> v.value }
 
     lazy val m = kv.toNem
@@ -289,11 +297,10 @@ object ast extends AstImplicits.Implicits {
     implicit def idIn[A](implicit s: Scalar[A]): In[ID[A]] = ID.idTpe[A]
   }
 
-  
   // TypeSystemDirectiveLocation
   final case class SchemaDirective[+F[_], P[x] <: Position[F, x]](
-    position: P[?],
-    args: List[(String, V[Const, Unit])]
+      position: P[?],
+      args: List[(String, V[Const, Unit])]
   )
 }
 
