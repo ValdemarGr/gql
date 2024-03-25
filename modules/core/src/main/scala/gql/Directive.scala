@@ -18,6 +18,7 @@ package gql
 import gql.parser.{QueryAst => QA}
 import gql.preparation.MergedFieldInfo
 import gql.parser.QueryAst
+import fs2.Pure
 
 /** A [[Directive]] takes an argument A and performs some context specific ast transformation.
   *
@@ -193,7 +194,12 @@ object Position {
     ): PureSchema[A, Struct] =
       Schema(directive, handler)
   }
-  type PureHandler[A, Struct[_]] = SchemaHandler[fs2.Pure, A, PureStruct[Struct]#T]
+  trait PureHandler[A, Struct[_]] extends SchemaHandler[fs2.Pure, A, PureStruct[Struct]#T] {
+    def pureApply[B](a: A, struct: Struct[B]): Either[String, Struct[B]]
+    
+    def apply[F2[x] >: Pure[x], B](a: A, struct: Struct[B]): Either[String,Struct[B]] = 
+      pureApply(a, struct)
+  }
 
   object Schema {
     type Enum[A] = PureSchema[A, ast.Enum]
