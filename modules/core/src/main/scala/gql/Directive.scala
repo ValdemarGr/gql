@@ -38,8 +38,8 @@ final case class Directive[A](
 object Directive {
   val skipDirective = Directive("skip", false, EmptyableArg.Lift(gql.dsl.input.arg[Boolean]("if")))
 
-  def skipPositions[F[_]]: List[Position[F, ?]] = {
-    val field = Position.Field(
+  def skipPositions[F[_]]: List[QueryPosition[F, ?]] = {
+    val field: QueryPosition[F, ?] = Position.Field(
       skipDirective,
       new Position.FieldHandler[F, Boolean] {
         override def apply[F2[x] >: F[x], I, C](
@@ -50,14 +50,14 @@ object Directive {
           if (a) Right(Nil) else Right(List((field, mfa)))
       }
     )
-    val fragmentSpread = Position.FragmentSpread[Boolean](
+    val fragmentSpread: QueryPosition[F, ?] = Position.FragmentSpread[Boolean](
       skipDirective,
       new Position.QueryHandler[QA.FragmentSpread, Boolean] {
         override def apply[C](a: Boolean, query: QueryAst.FragmentSpread[C]): Either[String, List[QueryAst.FragmentSpread[C]]] =
           if (a) Right(Nil) else Right(List(query))
       }
     )
-    val inlineFragmentSpread = Position.InlineFragmentSpread[Boolean](
+    val inlineFragmentSpread: QueryPosition[F, ?] = Position.InlineFragmentSpread[Boolean](
       skipDirective,
       new Position.QueryHandler[QA.InlineFragment, Boolean] {
         override def apply[C](a: Boolean, query: QueryAst.InlineFragment[C]): Either[String, List[QueryAst.InlineFragment[C]]] =
@@ -70,8 +70,8 @@ object Directive {
 
   val includeDirective = Directive("include", false, EmptyableArg.Lift(gql.dsl.input.arg[Boolean]("if")))
 
-  def includePositions[F[_]]: List[Position[F, ?]] = {
-    val field = Position.Field(
+  def includePositions[F[_]]: List[QueryPosition[F, ?]] = {
+    val field: QueryPosition[F, ?] = Position.Field(
       includeDirective,
       new Position.FieldHandler[F, Boolean] {
         override def apply[F2[x] >: F[x], I, C](
@@ -82,14 +82,14 @@ object Directive {
           if (a) Right(List((field, mfa))) else Right(Nil)
       }
     )
-    val fragmentSpread = Position.FragmentSpread[Boolean](
+    val fragmentSpread: QueryPosition[F, ?] = Position.FragmentSpread[Boolean](
       includeDirective,
       new Position.QueryHandler[QA.FragmentSpread, Boolean] {
         override def apply[C](a: Boolean, query: QueryAst.FragmentSpread[C]): Either[String, List[QueryAst.FragmentSpread[C]]] =
           if (a) Right(List(query)) else Right(Nil)
       }
     )
-    val inlineFragmentSpread = Position.InlineFragmentSpread[Boolean](
+    val inlineFragmentSpread: QueryPosition[F, ?] = Position.InlineFragmentSpread[Boolean](
       includeDirective,
       new Position.QueryHandler[QA.InlineFragment, Boolean] {
         override def apply[C](a: Boolean, query: QueryAst.InlineFragment[C]): Either[String, List[QueryAst.InlineFragment[C]]] =
@@ -145,6 +145,8 @@ object Directive {
 sealed trait Position[+F[_], A] {
   def directive: Directive[A]
 }
+sealed trait QueryPosition[+F[_], A] extends Position[F, A]
+sealed trait SchemaPosition[+F[_], A] extends Position[F, A]
 object Position {
   trait FieldHandler[+F[_], A] {
     def apply[F2[x] >: F[x], I, C](
@@ -156,7 +158,7 @@ object Position {
   final case class Field[+F[_], A](
       directive: Directive[A],
       handler: FieldHandler[F, A]
-  ) extends Position[F, A]
+  ) extends QueryPosition[F, A]
 
   trait QueryHandler[Struct[_], A] {
     def apply[C](a: A, query: Struct[C]): Either[String, List[Struct[C]]]
@@ -164,11 +166,11 @@ object Position {
   final case class FragmentSpread[A](
       directive: Directive[A],
       handler: QueryHandler[QA.FragmentSpread, A]
-  ) extends Position[Nothing, A]
+  ) extends QueryPosition[Nothing, A]
   final case class InlineFragmentSpread[A](
       directive: Directive[A],
       handler: QueryHandler[QA.InlineFragment, A]
-  ) extends Position[Nothing, A]
+  ) extends QueryPosition[Nothing, A]
 
   trait SchemaHandler[+F[_], A, Struct[_[_], _]] {
     def apply[F2[x] >: F[x], B](a: A, struct: Struct[F2, B]): Either[String, Struct[F2, B]]
@@ -177,7 +179,7 @@ object Position {
   final case class Schema[+F[_], A, Struct[_[_], _]](
       directive: Directive[A],
       handler: SchemaHandler[F, A, Struct]
-  ) extends Position[F, A]
+  ) extends SchemaPosition[F, A]
 
   type PureStruct[Struct[_]] = {
     type T[F[_], B] = Struct[B]

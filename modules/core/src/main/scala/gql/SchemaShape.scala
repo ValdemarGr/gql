@@ -35,7 +35,7 @@ final case class SchemaShape[F[_], Q, M, S](
     subscription: Option[Type[F, S]] = Option.empty[Type[F, Unit]],
     outputTypes: List[OutToplevel[F, ?]] = Nil,
     inputTypes: List[InToplevel[?]] = Nil,
-    positions: List[Position[F, ?]] = Directive.skipPositions[F] ++ Directive.includePositions[F]
+    positions: List[QueryPosition[F, ?]] = Directive.skipPositions[F] ++ Directive.includePositions[F]
 ) {
   def addOutputTypes(t: OutToplevel[F, ?]*): SchemaShape[F, Q, M, S] =
     copy(outputTypes = t.toList ++ outputTypes)
@@ -117,7 +117,7 @@ object SchemaShape {
   final case class DiscoveryState[F[_]](
       toplevels: Map[String, Toplevel[F, ?]],
       implementations: Implementations[F],
-      positions: Map[String, List[Position[F, ?]]]
+      positions: Map[String, List[QueryPosition[F, ?]]]
   ) {
     lazy val inputs: Map[String, InToplevel[?]] = toplevels.collect { case (k, v: InToplevel[?]) => k -> v }
 

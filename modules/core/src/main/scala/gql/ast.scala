@@ -306,7 +306,7 @@ object ast extends AstImplicits.Implicits {
   }
 
   // TypeSystemDirectiveLocation
-  final case class SchemaDirective[+F[_], +P[x] <: Position[F, x]](
+  final case class SchemaDirective[+F[_], +P[x] <: SchemaPosition[F, x]](
       position: P[?],
       args: List[(String, V[Const, Unit])]
   )
