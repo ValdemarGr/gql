@@ -286,7 +286,7 @@ object Validation {
     input match {
       case InArr(of, _) => validateInput[F, G](of, discovery)
       case InOpt(of)    => validateInput[F, G](of, discovery)
-      case t @ Input(name, fields, _) =>
+      case t @ Input(name, fields, _,_) =>
         useInputEdge(t, discovery) {
           val validateNonEmptyF =
             if (fields.entries.isEmpty) raise(InputNoArgs(name))
@@ -297,7 +297,7 @@ object Validation {
             validateArg[F, G](fields, discovery)
         }
       case Enum(name, _, _, _)      => validateTypeName[F, G](name)
-      case Scalar(name, _, _, _) => validateTypeName[F, G](name)
+      case Scalar(name, _, _,_, _) => validateTypeName[F, G](name)
     }
 
   def validateArg[F[_], G[_]](arg: Arg[?], discovery: SchemaShape.DiscoveryState[F])(implicit
@@ -463,7 +463,7 @@ object Validation {
         }
 
         sel match {
-          case Union(_, types, _) =>
+          case Union(_, types,_, _) =>
             val ols = types.toList.map(_.tpe)
 
             allUnique[F, G](DuplicateUnionInstance.apply, ols.map(_.value.name)) >>
@@ -481,7 +481,7 @@ object Validation {
   ): G[Unit] =
     tl match {
       case Enum(_, _, _, _)       => G.unit
-      case Scalar(_, _, _, _)  => G.unit
+      case Scalar(_, _, _, _,_)  => G.unit
       case s: Selectable[F, ?] => validateToplevel[F, G](s, discovery)
       case OutArr(of, _, _)    => validateOutput[F, G](of, discovery)
       case o: OutOpt[?, ?, ?]  => validateOutput[F, G](o.of, discovery)

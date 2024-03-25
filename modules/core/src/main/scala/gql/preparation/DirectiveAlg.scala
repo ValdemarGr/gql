@@ -74,12 +74,11 @@ class DirectiveAlg[F[_], C](
     parseProvided[P](directives, context)(pf)
   }
 
-  def parseSchemaDirective[P[x] <: Position[F, x]](sd: ast.SchemaDirective[F, P], context: List[C]): G[ParsedDirective[?, P]] = {
+  def parseSchemaDirective[P[x] <: SchemaPosition[F, x]](sd: ast.SchemaDirective[F, P], context: List[C]): G[ParsedDirective[?, P]] = {
     // rigid type variable inference help
     def go[A](p: P[A]): G[ParsedDirective[A, P]] = 
-      parseArg(p, sd.args.map{ case (k, v) => k -> v.map(_ => List.empty[C])}, context).flatMap{ a =>
-        G.pure(ParsedDirective(p, a))
-      }
+      parseArg(p, sd.args.map{ case (k, v) => k -> v.map(_ => List.empty[C])}, context)
+        .map(ParsedDirective(p, _))
 
     go(sd.position: P[?]).widen[ParsedDirective[?, P]]
   }

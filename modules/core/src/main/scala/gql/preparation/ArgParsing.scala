@@ -159,11 +159,11 @@ class ArgParsing[C](variables: VariableMap[C]) {
               )
           }
         }
-      case (Scalar(name, _, decoder, _), x: NonVar[List[C]]) =>
+      case (Scalar(name, _, decoder,_, _), x: NonVar[List[C]]) =>
         G.ambientField(name) {
           G.raiseEither(decoder(x.map(_ => ())), x.c)
         }
-      case (Input(_, fields, _), V.ObjectValue(xs, cs)) => decodeArg(fields, xs.toMap, ambigiousEnum, cs)
+      case (Input(_, fields,_, _), V.ObjectValue(xs, cs)) => decodeArg(fields, xs.toMap, ambigiousEnum, cs)
       case (a: InArr[a, c], V.ListValue(vs, cs)) =>
         vs.zipWithIndex
           .parTraverse { case (v, i) =>

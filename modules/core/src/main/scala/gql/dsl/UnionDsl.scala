@@ -40,7 +40,7 @@ trait UnionDslFull {
 object UnionDsl extends UnionDslFull {
   final class PartiallyAppliedUnion[F[_], A](private val name: String) {
     def variant[B](pf: PartialFunction[A, B])(implicit innerTpe: => Type[F, B]): Union[F, A] =
-      Union[F, A](name, NonEmptyList.of(Variant[F, A, B](Eval.later(innerTpe))(pf.lift.andThen(_.rightIor))), None)
+      Union[F, A](name, NonEmptyList.of(Variant[F, A, B](Eval.later(innerTpe))(pf.lift.andThen(_.rightIor))),Nil,  None)
 
     def subtype[B: ClassTag](implicit ev: B <:< A, innerTpe: => Type[F, B]): Union[F, A] =
       variant[B] { case a: B => a }(innerTpe)

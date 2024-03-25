@@ -50,7 +50,7 @@ class QueryPreparation[F[_], C](
       u.types.toList.map { case x: gql.ast.Variant[F, A, b] =>
         Specialization.Union(u, x)
       }
-    case it @ Interface(_, _, _, _) =>
+    case it @ Interface(_, _, _,_, _) =>
       val m: Map[String, SchemaShape.InterfaceImpl[F, A]] =
         implementations
           .get(it.name)
