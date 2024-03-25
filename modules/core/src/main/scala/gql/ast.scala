@@ -74,7 +74,7 @@ object ast extends AstImplicits.Implicits {
     def document(description: String): Type[F, A] = copy(description = Some(description))
 
     def addAttributes[F2[x] >: F[x]](attrs: TypeAttribute[F2, A]*): Type[F2, A] =
-      (this: Type[F2, A]).copy(attributes = attributes ++ attrs.toList)
+      copy(attributes = attributes ++ attrs.toList)
 
     lazy val fieldsList: List[(String, Field[F, A, ?])] = fields.toList
 
@@ -94,6 +94,7 @@ object ast extends AstImplicits.Implicits {
   final case class Input[A](
       name: String,
       fields: Arg[A],
+      directives: List[PureSchemaDirective[Position.Schema.Input]] = Nil,
       description: Option[String] = None
   ) extends InToplevel[A] {
     def document(description: String): Input[A] = copy(description = Some(description))
@@ -111,12 +112,13 @@ object ast extends AstImplicits.Implicits {
   final case class Union[+F[_], A](
       name: String,
       types: NonEmptyList[Variant[F, A, ?]],
+      directives: List[SchemaDirective[F, Position.Schema.Union[F, *]]] = Nil,
       description: Option[String] = None
   ) extends Selectable[F, A] {
     def document(description: String): Union[F, A] = copy(description = Some(description))
 
     def contramap[B](f: B => A): Union[F, B] =
-      Union(name, types.map(_.contramap(f)), description)
+      copy(types = types.map(_.contramap(f)))
 
     lazy val instanceMap = types.map(i => i.tpe.value.name -> i).toList.toMap
 
@@ -131,6 +133,7 @@ object ast extends AstImplicits.Implicits {
       name: String,
       fields: NonEmptyList[(String, AnyField[F, A, ?])],
       implementations: List[Eval[Interface[F, ?]]],
+      directives: List[SchemaDirective[F, Position.Schema.Interface[F, *]]] = Nil,
       description: Option[String] = None
   ) extends ObjectLike[F, A] {
     def document(description: String): Interface[F, A] = copy(description = Some(description))
@@ -146,13 +149,14 @@ object ast extends AstImplicits.Implicits {
       name: String,
       encoder: A => V[Const, Unit],
       decoder: V[Const, Unit] => Either[String, A],
+      directives: List[PureSchemaDirective[Position.Schema.Scalar]] = Nil,
       description: Option[String] = None
   ) extends OutToplevel[fs2.Pure, A]
       with InToplevel[A] {
     def document(description: String): Scalar[A] = copy(description = Some(description))
 
     def eimap[B](f: A => Either[String, B])(g: B => A): Scalar[B] =
-      Scalar(name, encoder.compose(g), decoder.andThen(_.flatMap(f)), description)
+      copy(encoder = encoder.compose(g), decoder = decoder.andThen(_.flatMap(f)))
 
     def rename(newName: String): Scalar[A] = copy(name = newName)
   }
@@ -224,19 +228,13 @@ object ast extends AstImplicits.Implicits {
       )
 
     def compose[F2[x] >: F[x], A2](r: Resolver[F2, A2, A]): Field[F2, A2, B] =
-      copy[F2, A2, B](
-        r.andThen(resolve),
-        directives = directives.map(x => x.copy[F2, Position.Field[F2, *]](position = x.position))
-      )
+      copy(r.andThen(resolve))
 
     def contramap[F2[x] >: F[x], A2](f: A2 => A): Field[F2, A2, B] =
       compose[F2, A2](Resolver.lift[F2, A2](f))
 
     def addAttributes[F2[x] >: F[x]](attrs: FieldAttribute[F2]*): Field[F2, A, B] =
-      copy(
-        attributes = attributes ++ attrs.toList,
-        directives = directives.map(x => x.copy[F2, Position.Field[F2, *]](position = x.position))
-      )
+      copy(attributes = attributes ++ attrs.toList)
   }
 
   // Field, but without any implementation
@@ -285,7 +283,7 @@ object ast extends AstImplicits.Implicits {
 
     implicit lazy val invariantForScalar: Invariant[Scalar] = new Invariant[Scalar] {
       override def imap[A, B](fa: Scalar[A])(f: A => B)(g: B => A): Scalar[B] =
-        Scalar(fa.name, fa.encoder.compose(g), fa.decoder.andThen(_.map(f)), fa.description)
+        fa.copy(encoder = fa.encoder.compose(g), decoder = fa.decoder.andThen(_.map(f)))
     }
   }
 
@@ -310,9 +308,9 @@ object ast extends AstImplicits.Implicits {
       position: P[?],
       args: List[(String, V[Const, Unit])]
   )
-  type PureSchemaDirective[P[x] <: Position[fs2.Pure, x]] = SchemaDirective[fs2.Pure, P]
+  type PureSchemaDirective[P[x] <: SchemaPosition[fs2.Pure, x]] = SchemaDirective[fs2.Pure, P]
   object PureSchemaDirective {
-    def apply[P[x] <: Position[fs2.Pure, x]](
+    def apply[P[x] <: SchemaPosition[fs2.Pure, x]](
       position: P[?], 
       args: List[(String, V[Const, Unit])]
       ): PureSchemaDirective[P] =

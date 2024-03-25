@@ -222,7 +222,7 @@ object SchemaShape {
                   fieldEffects,
                   checkInterfaceF
                 ).parMapN(_ |+| _ |+| _)
-              case Union(_, instances, _) =>
+              case Union(_, instances, _, _) =>
                 instances.parFoldMapA(inst => goOutput(inst.tpe.value))
               case _ => H.pure(M.empty)
             }
@@ -240,7 +240,7 @@ object SchemaShape {
         case t: InToplevel[?] =>
           nextIfNotSeen(t) {
             val nextF = t match {
-              case Input(_, fields, _) => fields.entries.parFoldMapA(x => goInput(x.input.value))
+              case Input(_, fields,_, _) => fields.entries.parFoldMapA(x => goInput(x.input.value))
               case _                   => H.pure(M.empty)
             }
 
@@ -422,14 +422,14 @@ object SchemaShape {
                   e.mappings.toList.map { case (name, value) => doc(value.description) + Doc.text(name) }
                 ) +
                 Doc.hardLine + Doc.text("}")
-            case Input(name, fields, desc) =>
+            case Input(name, fields, _, desc) =>
               doc(desc) +
                 Doc.text(s"input $name") + (Doc.text(" {") + Doc.hardLine + Doc
                   .intercalate(Doc.hardLine, fields.entries.toList.map(renderArgValueDoc))
                   .indent(2) + Doc.hardLine + Doc.text("}"))
             // Dont render built-in scalars
-            case Scalar(name, _, _, desc) => doc(desc) + Doc.text(s"scalar $name")
-            case ol @ Interface(name, fields, _, desc) =>
+            case Scalar(name, _, _, _, desc) => doc(desc) + Doc.text(s"scalar $name")
+            case ol @ Interface(name, fields, _, _, desc) =>
               val fieldsDoc = Doc
                 .intercalate(
                   Doc.hardLine,
@@ -461,7 +461,7 @@ object SchemaShape {
                 Doc.text(s"type $name") + interfaces + (Doc.text(" {") + Doc.hardLine +
                   fieldsDoc +
                   Doc.hardLine + Doc.text("}"))
-            case Union(name, types, desc) =>
+            case Union(name, types, _, desc) =>
               val names = types.toList.map(x => Doc.text(x.tpe.value.name))
               val xs =
                 if (names.size <= 3) Doc.intercalate(Doc.text(" | "), names)
@@ -601,7 +601,7 @@ object SchemaShape {
           }
         case ii: TypeInfo.InInfo =>
           ii.t match {
-            case Scalar(_, _, _, _) => __TypeKind.SCALAR
+            case Scalar(_, _, _,_, _) => __TypeKind.SCALAR
             case Enum(_, _, _, _)   => __TypeKind.ENUM
             case _: Input[?]        => __TypeKind.INPUT_OBJECT
           }
@@ -612,7 +612,7 @@ object SchemaShape {
         case (_, oi: TypeInfo.OutInfo) =>
           oi.t match {
             case Type(_, fields, _, _, _, _)   => Some(fields.toList.map { case (k, v) => NamedField(k, v.asAbstract) })
-            case Interface(_, fields, _, _) => Some(fields.toList.map { case (k, v) => NamedField(k, v.asAbstract) })
+            case Interface(_, fields,_, _, _) => Some(fields.toList.map { case (k, v) => NamedField(k, v.asAbstract) })
             case _                          => None
           }
         case _ => None
@@ -622,7 +622,7 @@ object SchemaShape {
           oi.t match {
             case Type(_, _, impls, _, _, _) =>
               impls.map[TypeInfo](impl => TypeInfo.OutInfo(impl.implementation.value)).some
-            case Interface(_, _, impls, _) => impls.map[TypeInfo](impl => TypeInfo.OutInfo(impl.value)).some
+            case Interface(_, _, impls,_, _) => impls.map[TypeInfo](impl => TypeInfo.OutInfo(impl.value)).some
             case _                         => None
           }
         case _ => None
@@ -630,7 +630,7 @@ object SchemaShape {
       "possibleTypes" -> lift {
         case oi: TypeInfo.OutInfo =>
           oi.t match {
-            case Interface(name, _, _, _) =>
+            case Interface(name, _, _,_, _) =>
               d.implementations
                 .get(name)
                 .toList
@@ -640,7 +640,7 @@ object SchemaShape {
                   case InterfaceImpl.OtherInterface(i) => TypeInfo.OutInfo(i)
                 }
                 .some
-            case Union(_, instances, _) => instances.toList.map[TypeInfo](x => TypeInfo.OutInfo(x.tpe.value)).some
+            case Union(_, instances,_, _) => instances.toList.map[TypeInfo](x => TypeInfo.OutInfo(x.tpe.value)).some
             case _                      => None
           }
         case _ => None
@@ -651,7 +651,7 @@ object SchemaShape {
       "inputFields" -> lift(inclDeprecated) {
         case (_, ii: TypeInfo.InInfo) =>
           ii.t match {
-            case Input(_, fields, _) => Some(fields.entries.toList)
+            case Input(_, fields, _,_) => Some(fields.entries.toList)
             case _                   => None
           }
         case _ => None

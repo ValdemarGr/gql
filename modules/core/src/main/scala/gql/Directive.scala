@@ -159,7 +159,7 @@ object Position {
   final case class Field[+F[_], A](
       directive: Directive[A],
       handler: FieldHandler[F, A]
-  ) extends QueryPosition[F, A]
+  ) extends QueryPosition[F, A] with SchemaPosition[F, A]
 
   trait QueryHandler[Struct[_], A] {
     def apply[C](a: A, query: Struct[C]): Either[String, List[Struct[C]]]
@@ -196,7 +196,7 @@ object Position {
   }
   trait PureHandler[A, Struct[_]] extends SchemaHandler[fs2.Pure, A, PureStruct[Struct]#T] {
     def pureApply[B](a: A, struct: Struct[B]): Either[String, Struct[B]]
-    
+
     def apply[F2[x] >: Pure[x], B](a: A, struct: Struct[B]): Either[String,Struct[B]] = 
       pureApply(a, struct)
   }
