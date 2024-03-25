@@ -191,6 +191,7 @@ object Position {
     ): PureSchema[A, Struct] =
       Schema(directive, handler)
   }
+  type PureHandler[A, Struct[_]] = SchemaHandler[fs2.Pure, A, PureStruct[Struct]#T]
 
   object Schema {
     type Enum[A] = PureSchema[A, ast.Enum]
