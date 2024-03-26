@@ -20,6 +20,7 @@ import cats._
 import cats.implicits._
 import gql._
 import scala.reflect.ClassTag
+import gql.ast._
 
 class DirectiveAlg[F[_], C](
     positions: Map[String, List[Position[F, ?]]],
@@ -52,7 +53,7 @@ class DirectiveAlg[F[_], C](
     directives.map(_.nel.toList).getOrElse(Nil).parTraverse { d =>
       getDirective[P](d.name, context)(pf).flatMap { p =>
         // rigid type variable inference help
-        def go[A](p: P[A]): G[ParsedDirective[A,P]] =
+        def go[A](p: P[A]): G[ParsedDirective[A, P]] =
           parseArg(
             p,
             d.arguments.map(_.nel.toList).getOrElse(Nil).map(a => a.name -> a.value.map(List(_))),
@@ -62,6 +63,16 @@ class DirectiveAlg[F[_], C](
         go(p)
       }
     }
+
+  def parseSchema[P[x] <: SchemaPosition[F, x]](
+    sd: SchemaDirective[F, P],
+    ctx: List[C]
+  ): G[ParsedDirective[?, P]] = {
+    parseArg(sd.position, sd.args.map{ case (k, v) => k -> v.map(_ => List.empty[C]) }, ctx).map{ a =>
+      // unfortunate
+      ParsedDirective(sd.position.asInstanceOf[P[Any]], a) 
+    }
+  }
 
   def parseProvidedSubtype[P[x] <: Position[F, x]](
       directives: Option[QueryAst.Directives[C, AnyValue]],
@@ -76,12 +87,24 @@ class DirectiveAlg[F[_], C](
 
   def parseSchemaDirective[P[x] <: SchemaPosition[F, x]](sd: ast.SchemaDirective[F, P], context: List[C]): G[ParsedDirective[?, P]] = {
     // rigid type variable inference help
-    def go[A](p: P[A]): G[ParsedDirective[A, P]] = 
-      parseArg(p, sd.args.map{ case (k, v) => k -> v.map(_ => List.empty[C])}, context)
+    def go[A](p: P[A]): G[ParsedDirective[A, P]] =
+      parseArg(p, sd.args.map { case (k, v) => k -> v.map(_ => List.empty[C]) }, context)
         .map(ParsedDirective(p, _))
 
     go(sd.position: P[?]).widen[ParsedDirective[?, P]]
   }
+
+  def field[I, O](fi: MergedFieldInfo[F, C], field: Field[F, I, O]): G[List[(Field[F, I, _], MergedFieldInfo[F, C])]] =
+    (
+      parseProvidedSubtype[Position.Field[F, *]](fi.directives, List(fi.caret))
+    ).flatMap{ xs =>
+      val ys = /*field.directives.map(sd => ) ++*/ xs
+      ys.foldLeftM[G, List[(Field[F, I, ?], MergedFieldInfo[F, C])]](List((field, fi))) { case (xs, prov) =>
+        xs.parFlatTraverse { case (f: Field[F, I, ?], fi) =>
+          G.raiseEither(prov.p.handler(prov.a, f, fi), List(fi.caret))
+        }
+      }
+    }
 
   def foldDirectives[P[x] <: Position[F, x]]: DirectiveAlg.PartiallyAppliedFold[F, C, P] =
     new DirectiveAlg.PartiallyAppliedFold[F, C, P] {

@@ -40,16 +40,10 @@ trait DirectiveDsl[F[_]] {
       handler: Position.QueryHandler[QA.InlineFragment, A]
   ): State[SchemaState[F], Position.InlineFragmentSpread[A]] =
     DirectiveDsl.onInlineFragmentSpread(directive, handler)
-
-  def onEnum[A](
-    directive: Directive[A],
-    handler: Position.PureHandler[A, ast.Enum]
-  ): State[SchemaState[F], Position.Schema.Enum[A]] =
-    DirectiveDsl.onEnum(directive, handler)
 }
 
 trait DirectiveDslFull {
-  protected def addPosition[F[_], A, Pos <: Position[F, A]](pos: Pos): State[SchemaState[F], Pos] =
+  protected def addPosition[F[_], A, Pos <: QueryPosition[F, A]](pos: Pos): State[SchemaState[F], Pos] =
     State(s => (s.copy(positions = pos :: s.positions), pos))
 
   def directive(name: String): Directive[Unit] =
@@ -72,12 +66,6 @@ trait DirectiveDslFull {
       handler: Position.QueryHandler[QA.InlineFragment, A]
   ): State[SchemaState[F], Position.InlineFragmentSpread[A]] =
     addPosition[F, A, Position.InlineFragmentSpread[A]](Position.InlineFragmentSpread(directive, handler))
-
-  def onEnum[F[_], A](
-    directive: Directive[A],
-    handler: Position.PureHandler[A, ast.Enum]
-  ): State[SchemaState[F], Position.Schema.Enum[A]] =
-    addPosition[F, A,  Position.Schema.Enum[A]](Position.Schema(directive, handler))
 }
 
 object DirectiveDsl extends DirectiveDslFull {

@@ -115,7 +115,7 @@ object SchemaShape {
   type Implementations[F[_]] = Map[String, Map[String, InterfaceImpl[F, ?]]]
 
   final case class DiscoveryState[F[_]](
-      toplevels: Map[String, Toplevel[F, ?]],
+      toplevels: Map[String, Toplevel[F]],
       implementations: Implementations[F],
       positions: Map[String, List[QueryPosition[F, ?]]]
   ) {
@@ -123,7 +123,7 @@ object SchemaShape {
 
     lazy val outputs: Map[String, OutToplevel[F, ?]] = toplevels.collect { case (k, v: OutToplevel[F, ?]) => k -> v }
 
-    def addToplevel(name: String, tl: Toplevel[F, ?]): DiscoveryState[F] =
+    def addToplevel(name: String, tl: Toplevel[F]): DiscoveryState[F] =
       copy(toplevels = toplevels + (name -> tl))
 
     def addImplementation(name: String, impl: Map[String, InterfaceImpl[F, ?]]): DiscoveryState[F] =
@@ -175,7 +175,7 @@ object SchemaShape {
 
     def runPf(vn: VisitNode[F]) = pf.lift(vn).getOrElse[G[A] => G[A]](ga => ga)
 
-    def nextIfNotSeen(tl: Toplevel[F, ?])(ha: => H[A]): H[A] =
+    def nextIfNotSeen(tl: Toplevel[F])(ha: => H[A]): H[A] =
       L.ask[Set[String]].flatMap { seen =>
         if (seen.contains(tl.name)) H.pure(M.empty)
         else L.local(ha)(_ + tl.name)
@@ -266,7 +266,7 @@ object SchemaShape {
     val H = Monad[H]
     implicit lazy val parForState: Parallel[H] = Parallel.identity[H]
 
-    def nextIfNotSeen(tl: Toplevel[F, ?])(ha: => H[A]): H[A] =
+    def nextIfNotSeen(tl: Toplevel[F])(ha: => H[A]): H[A] =
       S.get.flatMap { seen =>
         if (seen.contains(tl.name)) H.pure(A.empty)
         else S.modify(_ + tl.name) >> ha
@@ -377,7 +377,7 @@ object SchemaShape {
           o + Doc.hardLine
       }
 
-    def renderModifierStack[G[_]](ms: ModifierStack[Toplevel[G, ?]]) =
+    def renderModifierStack[G[_]](ms: ModifierStack[Toplevel[G]]) =
       ms.modifiers.foldLeft(Doc.text(ms.inner.name)) {
         case (accum, Modifier.List)    => accum.tightBracketBy(Doc.char('['), Doc.char(']'))
         case (accum, Modifier.NonNull) => accum + Doc.char('!')
@@ -541,7 +541,7 @@ object SchemaShape {
     )
 
     sealed trait TypeInfo extends Product with Serializable {
-      def asToplevel: Option[Toplevel[F, ?]]
+      def asToplevel: Option[Toplevel[F]]
       def next: Option[TypeInfo]
     }
     sealed trait InnerTypeInfo extends TypeInfo {
@@ -549,10 +549,10 @@ object SchemaShape {
     }
     object TypeInfo {
       final case class OutInfo(t: OutToplevel[F, ?]) extends InnerTypeInfo {
-        def asToplevel: Option[Toplevel[F, ?]] = Some(t)
+        def asToplevel: Option[Toplevel[F]] = Some(t)
       }
       final case class InInfo(t: InToplevel[?]) extends InnerTypeInfo {
-        def asToplevel: Option[Toplevel[F, ?]] = Some(t)
+        def asToplevel: Option[Toplevel[F]] = Some(t)
       }
 
       final case class NEModifierStack(modifiers: NonEmptyList[Modifier], inner: InnerTypeInfo) extends TypeInfo {

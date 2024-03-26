@@ -31,14 +31,14 @@ object ast extends AstImplicits.Implicits {
 
   sealed trait In[A]
 
-  sealed trait Toplevel[+F[_], +A] {
+  sealed trait Toplevel[+F[_]] {
     def name: String
     def description: Option[String]
   }
 
-  sealed trait OutToplevel[+F[_], A] extends Out[F, A] with Toplevel[F, A]
+  sealed trait OutToplevel[+F[_], A] extends Out[F, A] with Toplevel[F]
 
-  sealed trait InToplevel[A] extends In[A] with Toplevel[fs2.Pure, A]
+  sealed trait InToplevel[A] extends In[A] with Toplevel[fs2.Pure]
 
   sealed trait Selectable[+F[_], A] extends OutToplevel[F, A] {
     def anyFields: List[(String, AnyField[F, ?, ?])]

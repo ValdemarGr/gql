@@ -22,7 +22,7 @@ import gql.resolver.Step.BatchKey
 final case class SchemaState[F[_]](
     nextId: Int,
     batchFunctions: Map[BatchKey[?, ?], SchemaState.BatchFunction[F, ?, ?]],
-    positions: List[Position[F, ?]]
+    positions: List[QueryPosition[F, ?]]
 )
 
 object SchemaState {
