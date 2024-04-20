@@ -65,7 +65,9 @@ class RootPreparation[F[_], C] {
       variableMap: Map[String, Json],
       schema: SchemaShape[F, ?, ?, ?]
   ): Alg[C, VariableMap[C]] = {
-    val ap = new ArgParsing[C](Map.empty)
+    lazy val ap: ArgParsing[F, C] = new ArgParsing[F, C](Map.empty, da)
+    lazy val da: DirectiveAlg[F, C] = new DirectiveAlg[F, C](schema.discover.positions, ap)
+
     /*
      * Convert the variable signature into a gql arg and parse both the default value and the provided value
      * Then save the provided getOrElse default into a map along with the type
@@ -135,8 +137,8 @@ class RootPreparation[F[_], C] {
 
       def runWith[A](o: gql.ast.Type[F, A]): G[Selection[F, A]] =
         variables(od, variableMap, schema).flatMap { vm =>
-          val ap = new ArgParsing[C](vm)
-          val da = new DirectiveAlg[F, C](schema.discover.positions, ap)
+          lazy val ap: ArgParsing[F, C] = new ArgParsing[F, C](vm, da)
+          lazy val da: DirectiveAlg[F, C] = new DirectiveAlg[F, C](schema.discover.positions, ap)
 
           val fragMap = frags.map(x => x.name -> x).toMap
           val fc = new FieldCollection[F, C](
@@ -159,7 +161,7 @@ class RootPreparation[F[_], C] {
           val prog: G[Selection[F, A]] = fc.collectSelectionInfo(o, ss).flatMap {
             case x :: xs =>
               val r = NonEmptyList(x, xs)
-              fm.checkSelectionsMerge(r) >> qp.prepareSelectable(o, r)
+              fm.checkSelectionsMerge(r) >> qp.prepareSelectable(o, r, Nil)
             case _ => G.nextId.map(NodeId(_)).map(Selection(_, Nil, o))
           }
           (prog, G.usedVariables).tupled.flatMap { case (res, used) =>

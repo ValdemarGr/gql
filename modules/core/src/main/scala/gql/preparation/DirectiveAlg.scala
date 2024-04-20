@@ -24,7 +24,7 @@ import gql.ast._
 
 class DirectiveAlg[F[_], C](
     positions: Map[String, List[Position[F, ?]]],
-    ap: ArgParsing[C]
+    ap: => ArgParsing[F, C]
 ) {
   type G[A] = Alg[C, A]
   val G = Alg.Ops[C]
@@ -94,17 +94,52 @@ class DirectiveAlg[F[_], C](
     go(sd.position: P[?]).widen[ParsedDirective[?, P]]
   }
 
+  def enumTpe[A](e: Enum[A], ctx: List[C]): G[Enum[A]] = 
+    foldSchemaDirectives(e, e.directives, ctx) { case (e, d) => d.p.handler(d.a, e) }
+
+  def scalar[A](s: Scalar[A], ctx: List[C]): G[Scalar[A]] = 
+    foldSchemaDirectives(s, s.directives, ctx) { case (s, d) => d.p.handler(d.a, s) }
+
+  def input[A](i: Input[A], ctx: List[C]): G[Input[A]] = 
+    foldSchemaDirectives(i, i.directives, ctx) { case (i, d) => d.p.handler(d.a, i) }
+
+  def interface[A](i: Interface[F, A], ctx: List[C]): G[Interface[F, A]] = 
+    foldSchemaDirectives(i, i.directives, ctx) { case (i, d) => d.p.handler(d.a, i) }
+
+  def union[A](u: Union[F, A], ctx: List[C]): G[Union[F, A]] =
+    foldSchemaDirectives(u, u.directives, ctx) { case (u, d) => d.p.handler(d.a, u) }
+
+  def tpe[A](t: ast.Type[F, A], ctx: List[C]): G[ast.Type[F, A]] =
+    foldSchemaDirectives(t, t.directives, ctx) { case (t, d) => d.p.handler(d.a, t) }
+
+  def selectable[A](s: Selectable[F, A], ctx: List[C]): G[ast.Selectable[F,A]] = 
+    s match {
+      case t: ast.Type[F, A] => tpe(t, ctx)
+      case i: Interface[F, A] => interface(i, ctx)
+      case u: Union[F, A] => union(u, ctx)
+    }
+
   def field[I, O](fi: MergedFieldInfo[F, C], field: Field[F, I, O]): G[List[(Field[F, I, _], MergedFieldInfo[F, C])]] =
     (
+      field.directives.parTraverse(parseSchemaDirective(_, List(fi.caret))),
       parseProvidedSubtype[Position.Field[F, *]](fi.directives, List(fi.caret))
-    ).flatMap{ xs =>
-      val ys = /*field.directives.map(sd => ) ++*/ xs
-      ys.foldLeftM[G, List[(Field[F, I, ?], MergedFieldInfo[F, C])]](List((field, fi))) { case (xs, prov) =>
+    ).parMapN(_ ++ _).flatMap{ xs =>
+      xs.foldLeftM[G, List[(Field[F, I, ?], MergedFieldInfo[F, C])]](List((field, fi))) { case (xs, prov) =>
         xs.parFlatTraverse { case (f: Field[F, I, ?], fi) =>
           G.raiseEither(prov.p.handler(prov.a, f, fi), List(fi.caret))
         }
       }
     }
+
+  def foldSchemaDirectives[A, B, P[x] <: SchemaPosition[F, x]](
+    a: A,
+    directives: List[SchemaDirective[F, P]],
+    ctx: List[C]
+    )(
+    run: (A, ParsedDirective[?, P]) => Either[String, A],
+  ) = directives
+    .parTraverse(parseSchemaDirective(_, ctx))
+    .flatMap(_.foldLeftM(a){ case (a, d) => G.raiseEither(run(a, d), ctx) })
 
   def foldDirectives[P[x] <: Position[F, x]]: DirectiveAlg.PartiallyAppliedFold[F, C, P] =
     new DirectiveAlg.PartiallyAppliedFold[F, C, P] {

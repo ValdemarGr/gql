@@ -317,7 +317,9 @@ object Validation {
         arg.entries.toChain
           .mapFilter(x => x.defaultValue.tupleLeft(x))
           .traverse_[G, Unit] { case (a: ArgValue[a], pv) =>
-            (new ArgParsing[Unit](Map.empty))
+            lazy val ap: ArgParsing[F, Unit] = new ArgParsing[F, Unit](Map.empty, da)
+            lazy val da: DirectiveAlg[F, Unit] = new DirectiveAlg[F, Unit](discovery.positions, ap)
+            ap
               .decodeIn[a](a.input.value, pv.map(List(_)), ambigiousEnum = false)
               .run match {
               case Left(errs) =>

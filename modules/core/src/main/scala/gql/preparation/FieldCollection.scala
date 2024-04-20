@@ -30,7 +30,7 @@ import gql.Position
 class FieldCollection[F[_], C](
     implementations: SchemaShape.Implementations[F],
     fragments: Map[String, QA.FragmentDefinition[C]],
-    ap: ArgParsing[C],
+    ap: ArgParsing[F, C],
     da: DirectiveAlg[F, C]
 ) {
   type G[A] = Alg[C, A]

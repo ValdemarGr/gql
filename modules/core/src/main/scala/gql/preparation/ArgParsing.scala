@@ -24,7 +24,10 @@ import gql.parser.AnyValue
 import gql.parser.NonVar
 import gql.parser.{Value => V}
 
-class ArgParsing[C](variables: VariableMap[C]) {
+class ArgParsing[F[_], C](
+  variables: VariableMap[C],
+  da: => DirectiveAlg[F, C]
+) {
   type G[A] = Alg[C, A]
   val G = Alg.Ops[C]
 
@@ -159,11 +162,16 @@ class ArgParsing[C](variables: VariableMap[C]) {
               )
           }
         }
-      case (Scalar(name, _, decoder,_, _), x: NonVar[List[C]]) =>
-        G.ambientField(name) {
-          G.raiseEither(decoder(x.map(_ => ())), x.c)
+      case (s: Scalar[A], x: NonVar[List[C]]) =>
+        G.ambientField(s.name) {
+          da.scalar(s, x.c).flatMap{ s =>
+            G.raiseEither(s.decoder(x.map(_ => ())), x.c)
+          }
         }
-      case (Input(_, fields,_, _), V.ObjectValue(xs, cs)) => decodeArg(fields, xs.toMap, ambigiousEnum, cs)
+      case (in: Input[A], V.ObjectValue(xs, cs)) =>
+        da.input(in, cs).flatMap{ in => 
+          decodeArg(in.fields, xs.toMap, ambigiousEnum, cs)
+        }
       case (a: InArr[a, c], V.ListValue(vs, cs)) =>
         vs.zipWithIndex
           .parTraverse { case (v, i) =>

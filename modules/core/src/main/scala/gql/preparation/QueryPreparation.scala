@@ -27,7 +27,7 @@ import gql.std.LazyT
 import org.typelevel.scalaccompat.annotation._
 
 class QueryPreparation[F[_], C](
-    ap: ArgParsing[C],
+    ap: ArgParsing[F, C],
     da: DirectiveAlg[F, C],
     variables: VariableMap[C],
     implementations: SchemaShape.Implementations[F]
@@ -50,7 +50,7 @@ class QueryPreparation[F[_], C](
       u.types.toList.map { case x: gql.ast.Variant[F, A, b] =>
         Specialization.Union(u, x)
       }
-    case it @ Interface(_, _, _,_, _) =>
+    case it @ Interface(_, _, _, _, _) =>
       val m: Map[String, SchemaShape.InterfaceImpl[F, A]] =
         implementations
           .get(it.name)
@@ -121,7 +121,8 @@ class QueryPreparation[F[_], C](
       t: Out[F, A],
       fieldMeta: PartialFieldMeta[C],
       uec: UniqueEdgeCursor
-  ): Analyze[Prepared[F, A]] =
+  ): Analyze[Prepared[F, A]] = {
+    val cs = List(fi.caret)
     (t, fi.selections.toNel) match {
       case (out: gql.ast.OutArr[F, a, c, b], _) =>
         val innerStep: Step[F, a, b] = out.resolver.underlying
@@ -138,38 +139,33 @@ class QueryPreparation[F[_], C](
           PreparedOption(nid, PreparedCont(s, c))
         }
       case (s: Selectable[F, a], Some(ss)) =>
-        liftK(prepareSelectable[A](s, ss).widen[Prepared[F, A]])
+        liftK(prepareSelectable[A](s, ss, cs).widen[Prepared[F, A]])
       case (e: Enum[a], None) =>
-        val cs = List(fi.caret)
         liftK {
-        e.directives
-          .parTraverse(da.parseSchemaDirective(_, cs))
-          .flatMap(_.foldLeftM(e){ case (e, d) => G.raiseEither(d.p.handler(d.a, e), cs) })
-          .flatMap{ e =>
+          da.enumTpe(e, cs).flatMap { e =>
             nextNodeId.map(PreparedLeaf[F, a](_, e.name, x => Json.fromString(e.revm(x))))
           }
         }
       case (s: Scalar[a], None) =>
         import io.circe.syntax._
-        liftK(nextNodeId).map(PreparedLeaf(_, s.name, x => s.encoder(x).asJson))
+        liftK {
+          da.scalar(s, cs).flatMap { s =>
+            nextNodeId.map(PreparedLeaf[F, a](_, s.name, x => s.encoder(x).asJson))
+          }
+        }
       case (o, Some(_)) =>
         liftK(G.raise(s"Type `${ModifierStack.fromOut(o).show(_.name)}` cannot have selections.", List(fi.caret)))
       case (o, None) =>
         liftK(G.raise(s"Object like type `${ModifierStack.fromOut(o).show(_.name)}` must have a selection.", List(fi.caret)))
     }
+  }
 
   def prepareField[I, O](
       fi: MergedFieldInfo[F, C],
       field: Field[F, I, O],
       currentTypename: String
   ): G[List[PreparedDataField[F, I, ?]]] = {
-    da
-      .parseProvidedSubtype[Position.Field[F, *]](fi.directives, List(fi.caret))
-      .flatMap(_.foldLeftM[G, List[(Field[F, I, ?], MergedFieldInfo[F, C])]](List((field, fi))) { case (xs, prov) =>
-        xs.parFlatTraverse { case (f: Field[F, I, ?], fi) =>
-          G.raiseEither(prov.p.handler(prov.a, f, fi), List(fi.caret))
-        }
-      })
+    da.field(fi, field)
       .flatMap(_.parTraverse { case (field: Field[F, I, o2], fi) =>
         val rootUniqueName = UniqueEdgeCursor(s"${currentTypename}_${fi.name}")
 
@@ -334,21 +330,24 @@ class QueryPreparation[F[_], C](
 
   def prepareSelectable[A](
       s: Selectable[F, A],
-      sis: NonEmptyList[SelectionInfo[F, C]]
+      sis: NonEmptyList[SelectionInfo[F, C]],
+      ctx: List[C]
   ): G[Selection[F, A]] =
-    mergeImplementations[A](s, sis)
-      .flatMap { impls =>
-        impls.parTraverse[G, PreparedSpecification[F, A, ?]] { case impl: MergedSpecialization[F, A, b, C] =>
-          val fa = impl.selections.toList.parFlatTraverse { sel =>
-            sel.field match {
-              case field: Field[F, b2, t] => prepareField[b, t](sel.info, field, impl.spec.typename)
+    da.selectable(s, ctx).flatMap { s =>
+      mergeImplementations[A](s, sis)
+        .flatMap { impls =>
+          impls.parTraverse[G, PreparedSpecification[F, A, ?]] { case impl: MergedSpecialization[F, A, b, C] =>
+            val fa = impl.selections.toList.parFlatTraverse { sel =>
+              sel.field match {
+                case field: Field[F, b2, t] => prepareField[b, t](sel.info, field, impl.spec.typename)
+              }
             }
-          }
 
-          nextNodeId.flatMap(nid => fa.map(xs => PreparedSpecification[F, A, b](nid, impl.spec, xs)))
+            nextNodeId.flatMap(nid => fa.map(xs => PreparedSpecification[F, A, b](nid, impl.spec, xs)))
+          }
         }
-      }
-      .flatMap(xs => nextNodeId.map(nid => Selection(nid, xs.toList, s)))
+        .flatMap(xs => nextNodeId.map(nid => Selection(nid, xs.toList, s)))
+    }
 }
 
 final case class MergedFieldInfo[G[_], C](
