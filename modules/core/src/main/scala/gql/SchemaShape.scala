@@ -128,6 +128,69 @@ object SchemaShape {
 
     def addImplementation(name: String, impl: Map[String, InterfaceImpl[F, ?]]): DiscoveryState[F] =
       copy(implementations = implementations + (name -> impl))
+
+    lazy val directives: Map[String, DiscoveryState.DirectiveGroup] = {
+      import DiscoveryState.DiscoveryDirective._
+
+      val queries = positions.fmap(_.map[DiscoveryState.DiscoveryDirective](x => Query(x)))
+
+      val sps = toplevels.values.toList.flatMap { x =>
+        val T = DiscoveryState.DirectiveSchemaPosition
+        val t: DiscoveryState.DirectiveSchemaPosition = x match {
+          case _: Type[Any, ?]      => T.Type
+          case _: Interface[Any, ?] => T.Interface
+          case _: Union[Any, ?]     => T.Union
+          case _: Scalar[?]         => T.Scalar
+          case _: Enum[?]           => T.Enum
+          case _: Input[?]          => T.Input
+        }
+        x.directives.map(d => Schema(d.position, t))
+      }
+
+      val fields: List[Schema] = toplevels.values.toList.flatMap {
+        case x: ObjectLike[Any, ?] =>
+          x.anyFields.flatMap {
+            case (_, f: Field[Any, ?, ?]) =>
+              f.directives.map(d => Schema(d.position, DiscoveryState.DirectiveSchemaPosition.FieldDefinition))
+            case _ => Nil
+          }
+        case _ => Nil
+      }
+
+      val m = queries |+| sps.groupBy(_.sp.directive.name) |+| fields.groupBy(_.sp.directive.name)
+      m.fmap(_.toNel).collect{ case (k, Some(v)) => k -> v }.fmap(DiscoveryState.DirectiveGroup(_))
+    }
+  }
+
+  object DiscoveryState {
+    final case class DirectiveGroup(xs: NonEmptyList[DiscoveryDirective]) {
+      def directive = xs.head.directive
+    }
+
+    sealed trait DirectiveSchemaPosition
+    object DirectiveSchemaPosition {
+      case object Enum extends DirectiveSchemaPosition
+      case object Scalar extends DirectiveSchemaPosition
+      case object Input extends DirectiveSchemaPosition
+      case object Interface extends DirectiveSchemaPosition
+      case object Type extends DirectiveSchemaPosition
+      case object Union extends DirectiveSchemaPosition
+      case object FieldDefinition extends DirectiveSchemaPosition
+    }
+    sealed trait DiscoveryDirective {
+      def directive: Directive[?]
+    }
+    object DiscoveryDirective {
+      final case class Schema(
+          sp: SchemaPosition[Any, ?],
+          pos: DirectiveSchemaPosition
+      ) extends DiscoveryDirective {
+        def directive: Directive[?] = sp.directive
+      }
+      final case class Query(qp: QueryPosition[Any, ?]) extends DiscoveryDirective {
+        def directive: Directive[?] = qp.directive
+      }
+    }
   }
 
   sealed trait VisitNode[+F[_]]
@@ -240,8 +303,8 @@ object SchemaShape {
         case t: InToplevel[?] =>
           nextIfNotSeen(t) {
             val nextF = t match {
-              case Input(_, fields,_, _) => fields.entries.parFoldMapA(x => goInput(x.input.value))
-              case _                   => H.pure(M.empty)
+              case Input(_, fields, _, _) => fields.entries.parFoldMapA(x => goInput(x.input.value))
+              case _                      => H.pure(M.empty)
             }
 
             nextF.mapF(lifted)
@@ -601,9 +664,9 @@ object SchemaShape {
           }
         case ii: TypeInfo.InInfo =>
           ii.t match {
-            case Scalar(_, _, _,_, _) => __TypeKind.SCALAR
-            case Enum(_, _, _, _)   => __TypeKind.ENUM
-            case _: Input[?]        => __TypeKind.INPUT_OBJECT
+            case Scalar(_, _, _, _, _) => __TypeKind.SCALAR
+            case Enum(_, _, _, _)      => __TypeKind.ENUM
+            case _: Input[?]           => __TypeKind.INPUT_OBJECT
           }
       },
       "name" -> lift(_.asToplevel.map(_.name)),
@@ -612,8 +675,8 @@ object SchemaShape {
         case (_, oi: TypeInfo.OutInfo) =>
           oi.t match {
             case Type(_, fields, _, _, _, _)   => Some(fields.toList.map { case (k, v) => NamedField(k, v.asAbstract) })
-            case Interface(_, fields,_, _, _) => Some(fields.toList.map { case (k, v) => NamedField(k, v.asAbstract) })
-            case _                          => None
+            case Interface(_, fields, _, _, _) => Some(fields.toList.map { case (k, v) => NamedField(k, v.asAbstract) })
+            case _                             => None
           }
         case _ => None
       },
@@ -622,15 +685,15 @@ object SchemaShape {
           oi.t match {
             case Type(_, _, impls, _, _, _) =>
               impls.map[TypeInfo](impl => TypeInfo.OutInfo(impl.implementation.value)).some
-            case Interface(_, _, impls,_, _) => impls.map[TypeInfo](impl => TypeInfo.OutInfo(impl.value)).some
-            case _                         => None
+            case Interface(_, _, impls, _, _) => impls.map[TypeInfo](impl => TypeInfo.OutInfo(impl.value)).some
+            case _                            => None
           }
         case _ => None
       },
       "possibleTypes" -> lift {
         case oi: TypeInfo.OutInfo =>
           oi.t match {
-            case Interface(name, _, _,_, _) =>
+            case Interface(name, _, _, _, _) =>
               d.implementations
                 .get(name)
                 .toList
@@ -640,8 +703,8 @@ object SchemaShape {
                   case InterfaceImpl.OtherInterface(i) => TypeInfo.OutInfo(i)
                 }
                 .some
-            case Union(_, instances,_, _) => instances.toList.map[TypeInfo](x => TypeInfo.OutInfo(x.tpe.value)).some
-            case _                      => None
+            case Union(_, instances, _, _) => instances.toList.map[TypeInfo](x => TypeInfo.OutInfo(x.tpe.value)).some
+            case _                         => None
           }
         case _ => None
       },
@@ -651,8 +714,8 @@ object SchemaShape {
       "inputFields" -> lift(inclDeprecated) {
         case (_, ii: TypeInfo.InInfo) =>
           ii.t match {
-            case Input(_, fields, _,_) => Some(fields.entries.toList)
-            case _                   => None
+            case Input(_, fields, _, _) => Some(fields.entries.toList)
+            case _                      => None
           }
         case _ => None
       },
@@ -695,27 +758,39 @@ object SchemaShape {
       "INPUT_FIELD_DEFINITION" -> enumVal(DirectiveLocation.INPUT_FIELD_DEFINITION)
     )
 
-    implicit lazy val directive: Type[F, Directive[?]] = tpe[F, Directive[?]](
+    implicit lazy val directive: Type[F, DiscoveryState.DirectiveGroup] = tpe[F, DiscoveryState.DirectiveGroup](
       "__Directive",
-      "name" -> lift(_.name),
+      "name" -> lift(_.directive.name),
       "description" -> lift(_ => Option.empty[String]),
-      "locations" -> lift { dir =>
-        val ys = d.positions.getOrElse(dir.name, Nil)
-        val zs: List[DirectiveLocation] = ys.map {
-          case Position.Field(_, _)                => DirectiveLocation.FIELD
-          case Position.FragmentSpread(_, _)       => DirectiveLocation.FRAGMENT_SPREAD
-          case Position.InlineFragmentSpread(_, _) => DirectiveLocation.INLINE_FRAGMENT
-          //case Position.Enum(_, _)                 => DirectiveLocation.ENUM
-        }
-        zs
+      "locations" -> lift { x =>
+        import DiscoveryState._
+        x.xs.map{
+          case DiscoveryDirective.Schema(_, pos) =>
+            val T = DirectiveSchemaPosition
+            pos match {
+              case T.Enum => DirectiveLocation.ENUM
+              case T.Scalar => DirectiveLocation.SCALAR
+              case T.Input => DirectiveLocation.INPUT_OBJECT
+              case T.Interface => DirectiveLocation.INTERFACE
+              case T.Type => DirectiveLocation.OBJECT
+              case T.Union => DirectiveLocation.UNION
+              case T.FieldDefinition => DirectiveLocation.FIELD_DEFINITION
+            }
+          case DiscoveryDirective.Query(qp) => 
+            qp match {
+              case Position.Field(_, _) => DirectiveLocation.FIELD
+              case Position.FragmentSpread(_, _) => DirectiveLocation.FRAGMENT_SPREAD
+              case Position.InlineFragmentSpread(_, _) => DirectiveLocation.INLINE_FRAGMENT
+            }
+        }.toList.distinct
       },
-      "args" -> lift(inclDeprecated) { (_, dir) =>
-        dir.arg match {
+      "args" -> lift(inclDeprecated) { (_, d) =>
+        d.directive.arg match {
           case EmptyableArg.Empty   => Nil
           case EmptyableArg.Lift(a) => a.entries.toList
         }
       },
-      "isRepeatable" -> lift(_ => false)
+      "isRepeatable" -> lift(_.directive.isRepeatable)
     )
 
     case object PhantomSchema
@@ -731,7 +806,7 @@ object SchemaShape {
       "queryType" -> lift(_ => TypeInfo.OutInfo(ss.query): TypeInfo),
       "mutationType" -> lift(_ => ss.mutation.map[TypeInfo](TypeInfo.OutInfo(_))),
       "subscriptionType" -> lift(_ => ss.subscription.map[TypeInfo](TypeInfo.OutInfo(_))),
-      "directives" -> lift(_ => List.empty[Directive[?]])
+      "directives" -> lift(_ => d.directives.values.toList)
     )
 
     lazy val rootFields: NonEmptyList[(String, Field[F, Unit, ?])] =

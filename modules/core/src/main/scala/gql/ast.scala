@@ -34,6 +34,7 @@ object ast extends AstImplicits.Implicits {
   sealed trait Toplevel[+F[_]] {
     def name: String
     def description: Option[String]
+    def directives: List[SchemaDirective[F, SchemaPosition[F, *]]]
   }
 
   sealed trait OutToplevel[+F[_], A] extends Out[F, A] with Toplevel[F]
