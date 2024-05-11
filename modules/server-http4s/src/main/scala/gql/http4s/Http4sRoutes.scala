@@ -72,28 +72,28 @@ object Http4sRoutes {
   }
 
   final case class Content[F[_]](
-    request: Request[F],
-    parse: F[QueryParameters]
+      request: Request[F],
+      parse: F[QueryParameters]
   )
 
   def sync[F[_]](path: String = "graphql")(f: Content[F] => F[Response[F]])(implicit F: Concurrent[F]) = {
     val d = new Http4sDsl[F] {}
     import d._
-    HttpRoutes.of[F]{
+    HttpRoutes.of[F] {
       // https://graphql.github.io/graphql-over-http/draft/#sec-GET
-      case r@GET -> Root / `path` parms p =>  
-        val x = F.unit >> F.fromEither{
-          p.variables.traverse(io.circe.parser.decode[JsonObject](_).map(_.toMap))
+      case r @ GET -> Root / `path` parms p =>
+        val x = F.unit >> F.fromEither {
+          p.variables
+            .traverse(io.circe.parser.decode[JsonObject](_).map(_.toMap))
             .map(variables => QueryParameters(p.query, variables, p.operationName))
         }
         f(Content(r, x))
       // https://graphql.github.io/graphql-over-http/draft/#sec-Request
       // all methods are allowed
-      case r@_ -> Root / `path` =>  f(Content(r, r.as[QueryParameters]))
+      case r @ _ -> Root / `path` => f(Content(r, r.as[QueryParameters]))
     }
   }
 
-  
   def toResponse[F[_]: Concurrent](compiled: Compiler.Outcome[F]): F[Response[F]] = {
     val d = new Http4sDsl[F] {}
     import d._
