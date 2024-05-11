@@ -15,15 +15,15 @@ import gql.http4s._
 
 def mySchema: Schema[IO, Unit, Unit, Unit] = ???
 
-def http4sCompiler: HttpRoutes[IO] = Http4sRoutes.syncSimple[IO]{ qp => 
-  IO(Right(Compiler[IO].compileWith(mySchema, qp)))
+def http4sCompiler: HttpRoutes[IO] = Http4sRoutes.sync[IO](path = "graphql"){ content => 
+  // The caller must choose when to parse the content, for instance after authorization
+  content.parse.flatMap(qp => Http4sRoutes.toResponse(Compiler[IO].compileWith(mySchema, qp)))
 }
 ```
 
 ## Implementing authorization
 Something most applications need is authorization.
 There is no build-in support for this, since authorization is usually very application specific.
-However, it is very simple to implement the authorization your application needs.
 
 Commonly, authorization is provided in the `Authorization` http header.
 Consider the following authorization implementation, that also threads authorization credentials through the whole graph.
@@ -48,61 +48,33 @@ def authorize(token: String): IO[Option[Creds]] = ???
 def authorizeApp(compiled: Compiler.Outcome[AuthIO], creds: Creds): Compiler.Outcome[IO] =
   compiled.map(_.mapK(Kleisli.applyK[IO, Creds](creds)))
 
-def unauth(msg: String) = 
-  IO.pure(Left(Response[IO](Status.Unauthorized).withEntity(msg)))
+def unauth(msg: String): IO[Response[IO]] = 
+  IO.pure(Response[IO](Status.Unauthorized).withEntity(msg))
 
-def routes = Http4sRoutes.syncFull[IO]{ headers =>
-  headers.get[Authorization] match {
+def routes = Http4sRoutes.sync[IO](path="graphql"){ content =>
+  content.request.headers.get[Authorization] match {
     case None => unauth("missing authorization header")
     case Some(Authorization(Credentials.Token(AuthScheme.Bearer, token))) =>
       authorize(token).flatMap{
         case None => unauth("invalid token")
-        case Some(creds) => IO.pure { 
-          Right { (qp: QueryParameters) =>
-            IO.pure{
-              Right {
-                authorizeApp(Compiler[AuthIO].compileWith(schema, qp), creds)
-              }
+        case Some(creds) => 
+          content.parse.flatMap{ qp =>
+            Http4sRoutes.toResponse {
+              authorizeApp(Compiler[AuthIO].compileWith(schema, qp), creds)
             }
           }
-        }
       }
     case _ => unauth("invalid authorization header, use a Bearer Token")
   }
 }
 ```
-There is some wrapping in `Either` and `IO`, since we don't want to parse or prepare the query before authorization has been performed.
-
-Constructing higher order functions and using clever closures to construct complicated routes can be a bit messy.
-An alternative is to implement a `RequestHandler` instead:
-```scala mdoc:silent
-val rh = new RequestHandler[IO] {
-  type A = Creds
-
-  def preParsing(headers: Headers): IO[Either[Response[IO], Creds]] =
-    headers.get[Authorization] match {
-      case None => unauth("missing authorization header")
-      case Some(Authorization(Credentials.Token(AuthScheme.Bearer, token))) =>
-        authorize(token).flatMap{
-          case None => unauth("invalid token")
-          case Some(creds) => IO.pure(Right(creds))
-        }
-      case _ => unauth("invalid authorization header, use a Bearer Token")
-    }
-
-  def compile(qp: QueryParameters, value: Creds): IO[Either[Response[IO], Compiler.Outcome[IO]]] =
-    IO(Right(authorizeApp(Compiler[AuthIO].compileWith(schema, qp), value)))
-}
-
-def syncRoutes: HttpRoutes[IO] = Http4sRoutes.syncHandler[IO](rh)
-```
 
 ## Websocket support
 To implement streaming, we use websockets.
-The websocket route is implemented via a curried function, like the http route, to facilitate pre-parse authorization.
+Most websocket protocols start off by sending a payload with a json object containing headers.
+Subsequent messages act as subscription queries or terminations of subscriptions.
 
-Parameters are passed in graphqlws via a json object payload.
-The structure of this json payload is not constrained; this is up to the application to consider.
+The structure of this header payload is not constrained; this is up to the application to consider.
 
 However, the norm is to embed http headers in the payload:
 ```json
@@ -111,21 +83,29 @@ However, the norm is to embed http headers in the payload:
 }
 ```
 
-Returning `Left` of the query handler function lets the application return an error message to the client, which also immideately closes the websocket.
+The `ConnectionInit[F]` trait is used to handle the initial payload.
+Returning `Left`, lets the application return an error message to the client, which also immideately closes the websocket connection.
 One can embed errors such as `unauthorized` here.
-The GraphQL over websocket protocol defines no way to communicate arbitary information without closing the connection.
 
-The websocket route also comes in a trait flavor:
+:::info
+The GraphQL over websocket protocol defines no way to communicate arbitary information without closing the connection.
+:::
+
+The `ConnectionInit[F]`'s `init` function must return a `Subscribe[F]` that is used for every query after the initial payload.
+
+Here is a full example of the usage:
 ```scala mdoc:silent
 import org.http4s.server.websocket.WebSocketBuilder
 import io.circe._
+import gql.graphqlws.GraphqlWSServer._
 
-def wsb: WebSocketBuilder[IO] = ???
+def makeSubscribe(creds: Creds): Subscribe[IO] = new Subscribe[IO] {
+  def subscribe(id: String, params: QueryParameters): Resource[IO, Compiler.Outcome[IO]] = 
+    Resource.pure(authorizeApp(Compiler[AuthIO].compileWith(schema, params), creds))
+}
 
-val wsh = new WSHandler[IO] {
-  type A = Creds
-
-  def preParsing(headers: Map[String, Json]): IO[Either[String, A]] =
+val init = new ConnectionInit[IO] {
+  def init(headers: Map[String, Json]): IO[Either[String, Subscribe[IO]]] = 
     headers.get("authorization") match {
       case None => IO(Left("missing authorization header"))
       case Some(a) => 
@@ -133,14 +113,13 @@ val wsh = new WSHandler[IO] {
           case None => IO(Left("authorization token must be a string"))
           case Some(a) => authorize(a).map{
             case None => Left("invalid token")
-            case Some(creds) => Right(creds)
+            case Some(creds) => Right(makeSubscribe(creds))
           }
         }
     }
-
-  def compile(params: QueryParameters, value: A): Resource[IO, Compiler.Outcome[IO]] =
-    Resource.pure(authorizeApp(Compiler[AuthIO].compileWith(schema, params), value))
 }
 
-def wsRoutes: HttpRoutes[IO] = Http4sRoutes.wsHandler[IO](wsh, wsb)
+def wsb: WebSocketBuilder[IO] = ???
+
+def wsRoutes: HttpRoutes[IO] = Http4sRoutes.ws[IO](init, wsb)
 ```

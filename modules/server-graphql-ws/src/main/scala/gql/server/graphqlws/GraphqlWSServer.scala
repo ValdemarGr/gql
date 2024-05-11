@@ -26,9 +26,13 @@ import cats.effect.std._
 import gql.graphqlws.GraphqlWS._
 
 object GraphqlWSServer {
-  type Compiler[F[_]] = QueryParameters => Resource[F, Compiler.Outcome[F]]
+  trait Subscribe[F[_]] {
+    def subscribe(id: String, payload: QueryParameters): Resource[F, Compiler.Outcome[F]]
+  }
 
-  type GetCompiler[F[_]] = Map[String, Json] => F[Either[String, Compiler[F]]]
+  trait ConnectionInit[F[_]] {
+    def init(payload: Map[String, Json]): F[Either[String, Subscribe[F]]]
+  }
 
   final case class SubscriptionState[F[_]](close: F[Unit])
 
@@ -37,7 +41,7 @@ object GraphqlWSServer {
     final case class Connecting[F[_]]() extends State[F]
     final case class Connected[F[_]](
         initPayload: Map[String, Json],
-        compiler: Compiler[F],
+        compiler: Subscribe[F],
         subscriptions: Map[String, F[Unit]]
     ) extends State[F]
     final case class Terminating[F[_]](
@@ -49,7 +53,7 @@ object GraphqlWSServer {
 
   type Message = Either[TechnicalError, FromServer]
 
-  def apply[F[_]](getCompiler: GetCompiler[F])(implicit
+  def apply[F[_]](init: ConnectionInit[F])(implicit
       F: Async[F]
   ): Resource[F, (fs2.Stream[F, Either[TechnicalError, FromServer]], fs2.Stream[F, FromClient] => fs2.Stream[F, Unit])] = {
     Supervisor[F].evalMap { sup =>
@@ -71,7 +75,7 @@ object GraphqlWSServer {
                 case Bidirectional.Pong(_)       => F.unit
                 case Bidirectional.Complete(id)  =>
                   // If we remove the subscription, we need to close it
-                  // Cancellation can occur between map removal and falttening
+                  // Cancellation can occur between map removal and flattening
                   state
                     .modify[F[Unit]] {
                       case State.Connecting()   => err(Map.empty, Code.Unauthorized, "Unauthorized")
@@ -95,7 +99,7 @@ object GraphqlWSServer {
                             // Start out with F.unit
                             val newState = State.Connected(ip, compiler, m + (id -> F.unit))
 
-                            val compiled = compiler(payload)
+                            val compiled = compiler.subscribe(id, payload)
 
                             val subscribeF: F[Unit] =
                               F.uncancelable { _ =>
@@ -155,7 +159,7 @@ object GraphqlWSServer {
                     .flatten
                 case FromClient.ConnectionInit(payload) =>
                   timeoutFiber.cancel >>
-                    getCompiler(payload).flatMap { ce =>
+                    init.init(payload).flatMap { ce =>
                       state
                         .modify[F[Unit]] {
                           case State.Terminating(m)     => (State.Terminating(m), F.unit)

@@ -25,5 +25,7 @@ def traceAndRunHttpRequest(qp: QueryParameters) =
         Compiler[IO].compileWith(tracedSchema, qp)
     )
 
-def routes = Http4sRoutes.syncSimple[IO](traceAndRunHttpRequest(_).map(Right(_)))
+def routes = Http4sRoutes.sync[IO](path="graphql"){ c => 
+    c.parse.flatMap(traceAndRunHttpRequest).flatMap(Http4sRoutes.toResponse(_))
+}
 ```

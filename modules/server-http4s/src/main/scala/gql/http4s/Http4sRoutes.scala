@@ -28,60 +28,8 @@ import org.typelevel.ci._
 import gql.graphqlws.GraphqlWSServer
 import scala.concurrent.duration._
 
-trait RequestHandler[F[_]] {
-  type A
-
-  def preParsing(headers: Headers): F[Either[Response[F], A]]
-
-  def compile(params: QueryParameters, value: A): F[Either[Response[F], Compiler.Outcome[F]]]
-}
-
-object RequestHandler {
-  type Aux[F[_], A0] = RequestHandler[F] { type A = A0 }
-
-  def apply[F[_], A](
-      preParsing: Headers => F[Either[Response[F], A]],
-      compile: (QueryParameters, A) => F[Either[Response[F], Compiler.Outcome[F]]]
-  ): RequestHandler[F] = {
-    val preParsing0 = preParsing
-    val compile0 = compile
-    type A0 = A
-    new RequestHandler[F] {
-      type A = A0
-      def preParsing(headers: Headers): F[Either[Response[F], A]] = preParsing0(headers)
-      def compile(params: QueryParameters, value: A): F[Either[Response[F], Compiler.Outcome[F]]] = compile0(params, value)
-    }
-  }
-}
-
-trait WSHandler[F[_]] {
-  type A
-
-  def preParsing(headers: Map[String, Json]): F[Either[String, A]]
-
-  def compile(params: QueryParameters, value: A): Resource[F, Compiler.Outcome[F]]
-}
-
-object WSHandler {
-  type Aux[F[_], A0] = WSHandler[F] { type A = A0 }
-
-  def apply[F[_], A](
-      preParsing: Map[String, Json] => F[Either[String, A]],
-      compile: (QueryParameters, A) => Resource[F, Compiler.Outcome[F]]
-  ): WSHandler[F] = {
-    val preParsing0 = preParsing
-    val compile0 = compile
-    type A0 = A
-    new WSHandler[F] {
-      type A = A0
-      def preParsing(headers: Map[String, Json]): F[Either[String, A]] = preParsing0(headers)
-      def compile(params: QueryParameters, value: A): Resource[F, Compiler.Outcome[F]] = compile0(params, value)
-    }
-  }
-}
-
-object Http4sRoutes {
-  implicit protected lazy val cd: Decoder[QueryParameters] = Decoder.instance[QueryParameters] { c =>
+object implicits {
+  implicit lazy val cd: Decoder[QueryParameters] = Decoder.instance[QueryParameters] { c =>
     for {
       query <- c.downField("query").as[String]
       variables <- c.downField("variables").as[Option[Map[String, Json]]]
@@ -89,10 +37,64 @@ object Http4sRoutes {
     } yield QueryParameters(query, variables, operationName)
   }
 
-  implicit protected def ed[F[_]: Concurrent]: EntityDecoder[F, QueryParameters] =
+  implicit def ed[F[_]: Concurrent]: EntityDecoder[F, QueryParameters] =
     org.http4s.circe.jsonOf[F, QueryParameters]
+}
 
-  def runCompiledSync[F[_]: Concurrent](compiled: Compiler.Outcome[F]) = {
+object Http4sRoutes {
+  import implicits._
+  import org.http4s.dsl.{impl => I}
+
+  object QueryParam extends I.QueryParamDecoderMatcher[String]("query")
+  object OperationName extends I.OptionalQueryParamDecoderMatcher[String]("operationName")
+  object Variables extends I.OptionalQueryParamDecoderMatcher[String]("variables")
+
+  final case class Params(
+      query: String,
+      variables: Option[String],
+      operationName: Option[String]
+  )
+
+  object opName {
+    def unapply(s: Option[String]): Option[Option[String]] = Some(if (s.forall(_.isEmpty)) None else s)
+  }
+
+  object parms {
+    def unapply[F[_]](req: Request[F]): Option[(Request[F], Params)] = {
+      val d = new Http4sDsl[F] {}
+      import d._
+      req match {
+        case r :? QueryParam(query) +& OperationName(opName(operationName)) +& Variables(variables) =>
+          Some(r -> Params(query, variables, operationName))
+        case _ => None
+      }
+    }
+  }
+
+  final case class Content[F[_]](
+      request: Request[F],
+      parse: F[QueryParameters]
+  )
+
+  def sync[F[_]](path: String = "graphql")(f: Content[F] => F[Response[F]])(implicit F: Concurrent[F]) = {
+    val d = new Http4sDsl[F] {}
+    import d._
+    HttpRoutes.of[F] {
+      // https://graphql.github.io/graphql-over-http/draft/#sec-GET
+      case r @ GET -> Root / `path` parms p =>
+        val x = F.unit >> F.fromEither {
+          p.variables
+            .traverse(io.circe.parser.decode[JsonObject](_).map(_.toMap))
+            .map(variables => QueryParameters(p.query, variables, p.operationName))
+        }
+        f(Content(r, x))
+      // https://graphql.github.io/graphql-over-http/draft/#sec-Request
+      // all methods are allowed
+      case r @ _ -> Root / `path` => f(Content(r, r.as[QueryParameters]))
+    }
+  }
+
+  def toResponse[F[_]: Concurrent](compiled: Compiler.Outcome[F]): F[Response[F]] = {
     val d = new Http4sDsl[F] {}
     import d._
     import io.circe.syntax._
@@ -112,70 +114,8 @@ object Http4sRoutes {
     }
   }
 
-  type SC[F[_], A] = F[Either[Response[F], A]]
-  def syncFull[F[_]](full: Headers => SC[F, QueryParameters => SC[F, Compiler.Outcome[F]]], path: String = "graphql")(implicit
-      F: Concurrent[F]
-  ): HttpRoutes[F] = {
-    val d = new Http4sDsl[F] {}
-    import d._
-
-    object QueryParam extends QueryParamDecoderMatcher[String]("query")
-    object OperationName extends OptionalQueryParamDecoderMatcher[String]("operationName")
-    object Variables extends OptionalQueryParamDecoderMatcher[String]("variables")
-
-    def runWith(req: Request[F], parse: F[QueryParameters]) =
-      F.flatMap(full(req.headers)) {
-        case Left(resp) => F.pure(resp)
-        case Right(f) =>
-          parse.flatMap { params =>
-            F.flatMap(f(params)) {
-              case Left(resp) => F.pure(resp)
-              case Right(c)   => runCompiledSync[F](c)
-            }
-          }
-      }
-
-    HttpRoutes.of[F] {
-      // https://graphql.github.io/graphql-over-http/draft/#sec-GET
-      case r @ GET -> Root / `path` :? QueryParam(query) :? OperationName(operationName) :? Variables(variables) =>
-        val opName = if (operationName.forall(_.isEmpty)) None else operationName
-        variables.traverse(io.circe.parser.decode[JsonObject](_)) match {
-          case Left(err) => BadRequest(err.getMessage)
-          case Right(variables) =>
-            runWith(r, F.pure(QueryParameters(query, variables.map(_.toMap), opName)))
-        }
-      // https://graphql.github.io/graphql-over-http/draft/#sec-Request
-      // all methods are allowed
-      case r @ (_: Method) -> Root / `path` => runWith(r, r.as[QueryParameters])
-    }
-  }
-
-  def syncHandler[F[_]](
-      handler: RequestHandler[F],
-      path: String = "graphql"
-  )(implicit F: Concurrent[F]): HttpRoutes[F] = syncFull[F](
-    headers => handler.preParsing(headers).map(_.map(a => (qp: QueryParameters) => handler.compile(qp, a))),
-    path
-  )
-
-  def syncSimple[F[_]](
-      compile: QueryParameters => F[Either[Response[F], Compiler.Outcome[F]]],
-      path: String = "graphql"
-  )(implicit F: Concurrent[F]): HttpRoutes[F] = syncFull[F]({ _ => F.pure(Right(compile)) }, path)
-
-  def wsHandler[F[_]](
-      handler: WSHandler[F],
-      wsb: WebSocketBuilder[F],
-      path: String = "ws"
-  )(implicit F: Async[F]): HttpRoutes[F] =
-    ws[F](
-      m => handler.preParsing(m).map(_.map(a => (qp: QueryParameters) => handler.compile(qp, a))),
-      wsb,
-      path
-    )
-
   def ws[F[_]](
-      getCompiler: GraphqlWSServer.GetCompiler[F],
+      connectionInit: GraphqlWSServer.ConnectionInit[F],
       wsb: WebSocketBuilder[F],
       path: String = "ws",
       pingInterval: FiniteDuration = 30.seconds
@@ -186,7 +126,7 @@ object Http4sRoutes {
 
     HttpRoutes.of[F] { case GET -> Root / `path` =>
       F.uncancelable { _ =>
-        GraphqlWSServer[F](getCompiler).allocated.flatMap { case ((toClient, fromClient), close) =>
+        GraphqlWSServer[F](connectionInit).allocated.flatMap { case ((toClient, fromClient), close) =>
           val toSend = toClient.evalMap[F, WebSocketFrame] {
             case Left(te) => F.fromEither(WebSocketFrame.Close(te.code.code, te.message))
             case Right(x) => F.pure(WebSocketFrame.Text(x.asJson.noSpaces))
