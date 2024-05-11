@@ -100,7 +100,7 @@ import io.circe._
 import gql.graphqlws.GraphqlWSServer._
 
 def makeSubscribe(creds: Creds): Subscribe[IO] = new Subscribe[IO] {
-  def subscribe(id: String, params: QueryParameters): fs2.Stream[IO, Response[IO]] = 
+  def subscribe(id: String, params: QueryParameters): Resource[IO, Compiler.Outcome[IO]] = 
     Resource.pure(authorizeApp(Compiler[AuthIO].compileWith(schema, params), creds))
 }
 

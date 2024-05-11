@@ -29,7 +29,7 @@ class ServerQueryTest extends CatsEffectSuite {
   lazy val swSchema = StarWarsSchema.schema.unsafeRunSync()
 
   lazy val http4sRoutes =
-    gql.http4s.Http4sRoutes.sync[IO]()(c => c.parse.flatMap(x => IO(Right(Compiler[IO].compileWith(swSchema, x)))))
+    gql.http4s.Http4sRoutes.sync[IO]()(_.parse.flatMap(x => gql.http4s.Http4sRoutes.toResponse(Compiler[IO].compileWith(swSchema, x))))
 
   lazy val client = Client.fromHttpApp(http4sRoutes.orNotFound)
 

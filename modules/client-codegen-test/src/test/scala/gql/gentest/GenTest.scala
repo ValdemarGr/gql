@@ -33,7 +33,7 @@ class GenTest extends CatsEffectSuite {
   test("should be able to use the generated query") {
     val q = AlienQuery.query.compile(AlienQuery.Variables(name = "Colt"))
     val client = Client.fromHttpApp[IO](
-      gql.http4s.Http4sRoutes.syncSimple[IO](qp => IO.pure(Right(Compiler[IO].compileWith(sch, qp)))).orNotFound
+      gql.http4s.Http4sRoutes.sync[IO]()(x => x.parse.flatMap(qp => gql.http4s.Http4sRoutes.toResponse(Compiler[IO].compileWith(sch, qp)))).orNotFound
     )
 
     import gql.client.http4s.syntax._
