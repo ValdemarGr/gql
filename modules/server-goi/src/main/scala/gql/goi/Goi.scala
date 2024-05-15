@@ -162,23 +162,22 @@ object Goi {
       implicit lazy val optIorNode: Out[F, Option[Ior[String, Node]]] =
         OutOpt[F, Ior[String, Node], Node](Node.nodeInterface, Resolver.id[F, Ior[String, Node]].rethrow)
 
-      def nodeField[G[_]](implicit
+      def nodeField[G[_]](out: Out[F, G[Option[Ior[String, Node]]]])(implicit
           a: In[G[ID[String]]],
           G: NonEmptyTraverse[G]
-      ): Field[F, Q, G[Option[Ior[String, Node]]]] = {
-        val ev = gql.ast.gqlOutArrForTraversable(G, optIorNode)
+      ): Field[F, Q, G[Option[Ior[String, Node]]]] =
         b.from(
           arged(arg[G[ID[String]]]("id"))
             .evalMap(id => runIds[F, G](id.map(_.value), lookup, sts).value)
             .rethrow
-        )(ev)
-      }
+        )(out)
 
       shape.copy(query =
         shape.query.copy(
           fields = shape.query.fields ::: fields[F, Q](
-            "node" -> nodeField[Id],
-            "nodes" -> nodeField[NonEmptyList]
+            "node" -> nodeField[Id](optIorNode),
+            "nodes" ->
+              nodeField[NonEmptyList](gql.ast.gqlOutArrForTraversable(NonEmptyTraverse[NonEmptyList], optIorNode))
           )
         )
       )
