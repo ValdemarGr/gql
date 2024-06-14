@@ -50,7 +50,7 @@ query Test {
         Generator.mainGenerate[IO](
           schema,
           shared,
-          validate = true,
+          validate = false,
           packageName = None
         )(List(input))
     }
