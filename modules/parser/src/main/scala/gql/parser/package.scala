@@ -43,6 +43,6 @@ package object parser {
   def parseSchema(str: String): Either[ParseError, NonEmptyList[TypeSystemAst.TypeDefinition]] =
     parseFor(
       str,
-      TypeSystemParser.typeSystemDefinition.rep.map(_.collect { case TypeSystemAst.TypeSystemDefinition.TypeDefinition(t) => t }.toNel.get)
-    )
+      TypeSystemParser.typeSystemDefinition.repSep(GraphqlParser.seps0)
+    ).map(_.collect { case TypeSystemAst.TypeSystemDefinition.TypeDefinition(t) => t }.toNel.get)
 }

@@ -30,6 +30,10 @@ import io.circe.Json
 import gql.preparation.RootPreparation
 import gql.parser.ParserUtil
 import gql.util.SchemaUtil
+import cats.effect.std._
+import fs2.Pure
+import gql.preparation.PreparedRoot
+import gql.SchemaShape
 
 object Generator {
   type Err[F[_]] = Handle[F, NonEmptyChain[String]]
@@ -48,7 +52,7 @@ object Generator {
       sourceQuery: String
   )
 
-  def mainGenerate[F[_]: Async](
+  def mainGenerate[F[_]: Async: Console](
       schemaPath: Path,
       sharedPath: Path,
       validate: Boolean,
@@ -56,15 +60,19 @@ object Generator {
   )(data: List[Input]): F[List[String]] = {
     type G[A] = EitherT[F, NonEmptyChain[String], A]
     implicit val files: Files[G] = Files.forAsync[G]
-    val g = new Generator[G]
-    g.readAndGenerate(schemaPath, sharedPath, validate, packageName.getOrElse("gql.client.generated"))(data)
+    Logger
+      .make[G](Console[G].println[String])
+      .flatMap { lg =>
+        val g = new Generator[G](lg)
+        g.readAndGenerate(schemaPath, sharedPath, validate, packageName.getOrElse("gql.client.generated"))(data)
+      }
       .value
       .map(_.fold(_.toList, _ => Nil))
   }
 }
 
 import Generator._
-class Generator[F[_]: Files](implicit
+class Generator[F[_]: Files](lg: Logger[F])(implicit
     F: Async[F],
     E: Err[F]
 ) {
@@ -74,36 +82,41 @@ class Generator[F[_]: Files](implicit
       env: GenAst.Env,
       query: NonEmptyList[ExecutableDefinition[Caret]]
   ): F[(Set[GenAst.UsedInput], Doc)] =
-    ga.generateExecutableDefs(env, query)
-      .run
-      .value
-      .run(Chain.empty)
-      .value
-      .fold(E.raise, F.pure)
+    lg.log(s"Generating executable definitions...") *>
+      ga
+        .generateExecutableDefs(env, query)
+        .run
+        .value
+        .run(Chain.empty)
+        .value
+        .fold(E.raise, F.pure)
 
   def getSchemaFrom(s: String): Either[String, Map[String, TypeDefinition]] =
     gql.parser.parseSchema(s).leftMap(_.prettyError.value).map(_.map(td => td.name -> td).toList.toMap)
 
   def readInputData(i: Input): F[(String, NonEmptyList[ExecutableDefinition[Caret]])] =
-    Files[F]
-      .readAll(i.query)
-      .through(fs2.text.utf8.decode[F])
-      .compile
-      .foldMonoid
-      .flatMap { x =>
-        val fa: F[NonEmptyList[ExecutableDefinition[Caret]]] =
-          gql.parser.parseQuery(x).leftFlatMap(_.prettyError.value.leftNec).fold(E.raise, F.pure)
+    lg.log(s"Reading input data for ${i.query}") *>
+      Files[F]
+        .readAll(i.query)
+        .through(fs2.text.utf8.decode[F])
+        .compile
+        .foldMonoid
+        .flatMap { x =>
+          val fa: F[NonEmptyList[ExecutableDefinition[Caret]]] =
+            gql.parser.parseQuery(x).leftFlatMap(_.prettyError.value.leftNec).fold(E.raise, F.pure)
 
-        fa tupleLeft x
-      }
+          fa tupleLeft x
+        }
 
   def generateForInput(
       env: GenAst.Env,
       i: Input
   ): F[(String, Set[GenAst.UsedInput], Output, NonEmptyList[ExecutableDefinition[Caret]])] =
-    readInputData(i)
-      .flatMap { case (q, eds) => generateFor(env, eds) tupleLeft ((q, eds)) }
-      .map { case ((q, eds), (usedInputs, doc)) => (q, usedInputs, Output(i.output, doc), eds) }
+    lg.log(s"Generating code for ${i.query}") *>
+      readInputData(i)
+        .flatMap { case (q, eds) => generateFor(env, eds) tupleLeft ((q, eds)) }
+        .map { case ((q, eds), (usedInputs, doc)) => (q, usedInputs, Output(i.output, doc), eds) } <*
+      lg.log(s"Done generating code for ${i.query}")
 
   def gatherFragmentInfos(
       xs: NonEmptyList[ExecutableDefinition[Caret]]
@@ -140,53 +153,68 @@ class Generator[F[_]: Files](implicit
   def readAndGenerate(schemaPath: Path, sharedPath: Path, validate: Boolean, packageName: String)(
       data: List[Input]
   ): F[Unit] =
-    readEnv(packageName, schemaPath)(data).flatMap { e =>
-      data
-        .traverse(d => generateForInput(e, d) tupleLeft d)
-        .flatMap { xs =>
-          val translated: List[ExecutableDefinition[PositionalInfo]] = xs.flatMap { case (i, (q, _, _, eds)) =>
-            eds.toList.map(_.map(c => PositionalInfo(c, i, q)))
-          }
-          val allFrags = translated.collect { case f: ExecutableDefinition.Fragment[PositionalInfo] => f }
-          val allOps = translated.collect { case op: ExecutableDefinition.Operation[PositionalInfo] => op }
-          lazy val errors = SchemaUtil.stubSchema(e.schema).flatMap { stubSchema =>
-            allOps.parTraverse { op =>
-              val full: NonEmptyList[ExecutableDefinition[PositionalInfo]] = NonEmptyList(op, allFrags)
-              val vars: ValidatedNec[String, Map[String, Json]] = op.o match {
-                case QueryAst.OperationDefinition.Simple(_) => Map.empty.validNec
-                case QueryAst.OperationDefinition.Detailed(_, _, vds, _, _) =>
-                  vds.toList
-                    .flatMap(_.nel.toList)
-                    .traverse(x => QueryValidation.generateVariableStub(x, e.schema))
-                    .map(_.foldLeft(Map.empty[String, Json])(_ ++ _))
+    lg.log(s"Generating code for ${data.map(_.query).mkString_(", ")}") *>
+      readEnv(packageName, schemaPath)(data).flatMap { e =>
+        lg.log(s"Constructed Env, generating...") *>
+          data
+            .traverse(d => generateForInput(e, d) tupleLeft d)
+            .flatMap { xs =>
+              val translated: List[ExecutableDefinition[PositionalInfo]] = xs.flatMap { case (i, (q, _, _, eds)) =>
+                eds.toList.map(_.map(c => PositionalInfo(c, i, q)))
               }
-              vars.toEither.flatMap { variables =>
-                RootPreparation
-                  .prepareRun(full, stubSchema, variables, None)
-                  .leftMap(_.map { pe =>
-                    val pos = pe.position.formatted
-                    val caretErrs = pe.caret.distinct
-                      .map { c =>
-                        val (msg, _, _) = ParserUtil.showVirtualTextLine(c.sourceQuery, c.caret.offset)
-                        s"in file ${c.input.query}\n" + msg
-                      }
-                    val msg = pe.message
-                    s"$msg at $pos\n${caretErrs.mkString_("\n")}"
-                  })
-              }
+              val allFrags = translated.collect { case f: ExecutableDefinition.Fragment[PositionalInfo] => f }
+              val allOps = translated.collect { case op: ExecutableDefinition.Operation[PositionalInfo] => op }
+
+              val genStub: F[EitherNec[String, SchemaShape[Pure, _, _, _]]] =
+                lg.log(s"Generating stub schema...") *>
+                  F.delay(SchemaUtil.stubSchema(e.schema)) <*
+                  lg.log(s"Done generating stub schema")
+              val errors = genStub.map(_.flatMap { stubSchema =>
+                allOps.parTraverse { op =>
+                  val full: NonEmptyList[ExecutableDefinition[PositionalInfo]] = NonEmptyList(op, allFrags)
+                  val vars: ValidatedNec[String, Map[String, Json]] = op.o match {
+                    case QueryAst.OperationDefinition.Simple(_) => Map.empty.validNec
+                    case QueryAst.OperationDefinition.Detailed(_, _, vds, _, _) =>
+                      vds.toList
+                        .flatMap(_.nel.toList)
+                        .traverse(x => QueryValidation.generateVariableStub(x, e.schema))
+                        .map(_.foldLeft(Map.empty[String, Json])(_ ++ _))
+                  }
+                  vars.toEither.flatMap { variables =>
+                    RootPreparation
+                      .prepareRun(full, stubSchema, variables, None)
+                      .leftMap(_.map { pe =>
+                        val pos = pe.position.formatted
+                        val caretErrs = pe.caret.distinct
+                          .map { c =>
+                            val (msg, _, _) = ParserUtil.showVirtualTextLine(c.sourceQuery, c.caret.offset)
+                            s"in file ${c.input.query}\n" + msg
+                          }
+                        val msg = pe.message
+                        s"$msg at $pos\n${caretErrs.mkString_("\n")}"
+                      })
+                  }
+                }
+              })
+
+              lazy val validateF: F[Either[Unit, List[PreparedRoot[Pure, _, _, _]]]] =
+                lg.log(s"Validating queries..., if this takes long you can skip validation") *>
+                  errors.flatMap(_.leftTraverse[F, Unit](E.raise(_)))
+              lg.log(s"Done validationg")
+
+              val writeF: F[Unit] =
+                xs.flatTraverse { case (_, (_, used, x, _)) =>
+                  lg.log(s"writing to ${x.path}") *>
+                    writeStream(x.path, x.doc).compile.drain.as(used.toList)
+                }.flatMap(_.distinct.toNel.traverse_ { nel =>
+                  lg.log(s"Generating shared types...") *>
+                    F.delay(ga.generateInputs(e, nel.toList, packageName)).flatMap { st =>
+                      lg.log(s"Writing shared types to $sharedPath") *>
+                        writeStream(sharedPath, st).compile.drain
+                    }
+                })
+
+              F.whenA(validate)(validateF) *> writeF <* lg.log(s"Done generating code for ${data.map(_.query).mkString_(", ")}")
             }
-          }
-
-          lazy val validateF = errors.leftTraverse[F, Unit](E.raise(_))
-
-          val writeF: F[Unit] =
-            xs.flatTraverse { case (_, (_, used, x, _)) =>
-              writeStream(x.path, x.doc).compile.drain.as(used.toList)
-            }.flatMap(_.distinct.toNel.traverse_ { nel =>
-              writeStream(sharedPath, ga.generateInputs(e, nel.toList, packageName)).compile.drain
-            })
-
-          F.whenA(validate)(validateF) *> writeF
-        }
-    }
+      }
 }

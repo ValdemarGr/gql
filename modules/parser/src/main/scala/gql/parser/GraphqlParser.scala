@@ -112,7 +112,7 @@ object GraphqlParser {
     vp.rep0.with1.between(t('['), t(']'))
 
   def objectValue[A <: AnyValue](vp: P[Value[A, Caret]]): P[List[(String, Value[A, Caret])]] =
-    objectField(vp).rep.between(t('{'), t('}')).map(_.toList)
+    t('{').soft *> objectField(vp).rep0 <* t('}')
 
   def objectField[A <: AnyValue](vp: P[Value[A, Caret]]): P[(String, Value[A, Caret])] =
     name ~ (t(':') *> vp)
