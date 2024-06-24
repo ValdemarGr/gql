@@ -137,7 +137,7 @@ object SubgraphBatches {
     def merge(that: InputSubmission[F, K, V]): InputSubmission[F, K, V] = {
       InputSubmission(
         keys ++ that.keys,
-        ks => run(ks ++ that.keys),
+        run,
         cursors ++ that.cursors,
         completes ++ that.completes,
         statId
