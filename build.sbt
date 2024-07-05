@@ -119,9 +119,9 @@ lazy val sharedSettings = Seq(
     "co.fs2" %% "fs2-core" % "3.7.0",
     "co.fs2" %% "fs2-io" % "3.7.0",
     "org.typelevel" %% "cats-parse" % "0.3.8",
-    "io.circe" %% "circe-core" % "0.14.6",
-    "io.circe" %% "circe-parser" % "0.14.6",
-    "io.circe" %% "circe-literal" % "0.14.6",
+    "io.circe" %% "circe-core" % "0.14.9",
+    "io.circe" %% "circe-parser" % "0.14.9",
+    "io.circe" %% "circe-literal" % "0.14.9",
     "org.tpolecat" %% "sourcepos" % "1.1.0",
     "org.typelevel" %% "paiges-core" % "0.4.3",
     "org.scalameta" %% "munit" % "1.0.0-RC1" % Test,
@@ -188,7 +188,7 @@ lazy val clientCodegenSbt = project
     scalaVersion := "2.12.18",
     name := "gql-client-codegen-sbt",
     libraryDependencies ++= Seq(
-      "io.circe" %% "circe-core" % "0.14.6"
+      "io.circe" %% "circe-core" % "0.14.9"
     )
   )
   .aggregate(clientCodegenCli)
