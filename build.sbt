@@ -276,7 +276,7 @@ lazy val serverGoi = project
   .settings(
     name := "gql-server-goi",
     libraryDependencies ++= Seq(
-      "com.beachape" %% "enumeratum" % "1.7.3",
+      "com.beachape" %% "enumeratum" % "1.7.4",
       "org.typelevel" %% "twiddles-core" % "0.6.1"
     )
   )
