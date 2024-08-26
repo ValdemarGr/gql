@@ -89,6 +89,17 @@ object NewDesign {
         collect: QueryPlan => Pull[F, Nothing, (List[(JsonPath, Json)], Stream[F, Collect[F]])]
     )
 
+    /*
+
+    data NodeInfo
+    data QueryPlan
+    data EvalResult
+
+    data Stream a = Nil | Cons a (Stream a)
+    data Collect ni qp er = Collect ni (qp -> (er, Stream Collect ni qp er))
+    plan :: [ni] -> qp
+    */
+
     trait Node[F[_], A] {
       def eval(a: A): Pull[F, Nothing, (List[(JsonPath, Json)], Stream[F, Collect[F]])]
     }
@@ -101,6 +112,7 @@ object NewDesign {
         case None => Pull.done
         case Some((hd, updates)) =>
           child.eval(hd).flatMap{ case (jsons, childUpdates) =>
+            updates
             // tl is our updates
             // childUpdates is everything in our subtree
             // if tl updates, kill childUpdates
