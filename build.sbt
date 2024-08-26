@@ -100,6 +100,7 @@ lazy val sharedSettings = Seq(
   mimaReportSignatureProblems := false,
   mimaFailOnProblem := false,
   mimaPreviousArtifacts := Set.empty,
+  fork := true,
   scalacOptions ++= {
     if (scalaVersion.value.startsWith("2")) {
       Seq(
@@ -149,7 +150,10 @@ lazy val monadicArrow = project
 lazy val server = project
   .in(file("modules/server"))
   .settings(sharedSettings)
-  .settings(name := "gql-server")
+  .settings(
+    name := "gql-server",
+    fork := true
+  )
   .dependsOn(core)
 
 lazy val client = project
