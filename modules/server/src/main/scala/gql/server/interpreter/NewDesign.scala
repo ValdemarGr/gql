@@ -126,12 +126,16 @@ object NewDesign {
       path: Set[Unique.Token],
       h: Hierarchy[Stream[IO, Collect[IO]]],
       chan: IO[Channel[IO, Collect[IO]]]
-    ) = {
+    ): IO[List[Fiber[IO, Throwable, Unit]]] = {
       h.children.map{ case (col, child) => 
         IO.unique.map{ tok =>
           val newPath = path + tok
+          registerHierarchy(newPath, child, chan).map{ children =>
+            val killAll = children.parTraverse(_.cancel)
+          }
         }
       }
+      ???
     }
 
     // pulle side:
