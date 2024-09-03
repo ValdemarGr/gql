@@ -122,7 +122,7 @@ object NewDesign {
     /*
      * 
      */
-    def registerHierachy(
+    def registerHierarchy(
       path: Set[Unique.Token],
       h: Hierarchy[Stream[IO, Collect[IO]]],
       chan: IO[Channel[IO, Collect[IO]]]
