@@ -27,8 +27,8 @@ import scala.concurrent.duration.FiniteDuration
 import gql.resolver._
 import io.circe.syntax._
 import org.typelevel.scalaccompat.annotation._
-
 import cats.effect.implicits._
+
 final case class StreamData[F[_], I](
     cont: Continuation[F, I],
     value: Either[Throwable, I]
