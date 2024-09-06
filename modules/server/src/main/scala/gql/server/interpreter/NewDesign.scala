@@ -125,10 +125,15 @@ object NewDesign {
       }
 
     final case class StateEntry[F[_]](
+        // id of the node in the tree
         token: Unique.Token,
-        parent: Set[Unique.Token],
+        parents: Set[Unique.Token],
+        // the next evaluation informaiton
         collect: Collect[F],
-        release: F[Unit]
+        // release all resources currently allocated on this node
+        release: F[Unit],
+        // to allow children to lease this node
+        lease: Resource[F, Unit]
     )
 
     final case class State[F[_]](
@@ -163,7 +168,7 @@ object NewDesign {
                             // If we are consuming, publish the value and await next consumption
                             case Some(xs) =>
                               (
-                                s.copy(values = Some(StateEntry(tok, path, hd, release) :: xs)),
+                                s.copy(values = Some(StateEntry(tok, path, hd, release, leaseResource) :: xs)),
                                 poll(s.consumed.void)
                               )
                           }
@@ -462,5 +467,29 @@ object NewDesign {
       .evalMap { i => IO.println(s"use $i") }
       .compile
       .drain
+
+    (
+      Stream
+        .emits((0 to 10))
+        .covary[IO]
+        .flatTap(i => Stream.bracket(IO.println(s"open $i"))(_ => IO.println(s"close $i")))
+        .pull
+        .uncons1
+        .flatMap {
+          case None => Pull.done
+          case Some((hd, tl)) =>
+            Pull.extendScopeTo(Stream.unit.covary[IO]).map(_.compile.drain).flatMap { kill =>
+              Pull.eval(IO.println(s"sleeping")) >>
+                Pull.eval(IO.sleep(1.second).onCancel(IO.println("cancelled"))) >>
+                Pull.eval(IO.println(s"wake up, kill")) >>
+                Pull.eval(kill) >>
+                Pull.eval(IO.println(s"killed")) >> tl.pull.echo
+            }
+        }
+        .stream
+        .evalMap(x => IO.println(s"using $x"))
+        .interruptWhen(IO.sleep(500.millis) >> IO.println("cancelling").as(().asRight[Throwable])) ++
+        Stream.eval(IO.println("whee")).repeatN(2).meteredStartImmediately(1.second)
+    ).compile.drain
   }
 }
