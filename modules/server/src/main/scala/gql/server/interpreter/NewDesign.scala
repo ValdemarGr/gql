@@ -201,6 +201,7 @@ object NewDesign {
     // }
 
     final case class Context[F[_]](
+        sup: effect.std.Supervisor[F],
         path: Set[Unique.Token],
         state: Ref[F, State[F]],
         parentLease: Resource[F, Option[Int]],
@@ -288,12 +289,13 @@ object NewDesign {
               leaseResource <- resourcePull
               (result, fibs) <- child.eval(hd, mkCtx(killThis.get, leaseResource))
               cancelAll = fibs.parTraverse_(_.cancel)
-              bigProg = repeatUncons(tl, cancelAll).stream
-                .interruptWhen(ctx.interruptContext.attempt)
-                .compile
-                .drain
-                .start
-              ensureCleanup = (ctx.interruptContext *> cancelAll).start
+              bigProg = ctx.sup.supervise {
+                repeatUncons(tl, cancelAll).stream
+                  .interruptWhen(ctx.interruptContext.attempt)
+                  .compile
+                  .drain
+              }
+              ensureCleanup = ctx.sup.supervise(ctx.interruptContext *> cancelAll)
               fiber <- Pull.eval(ensureCleanup *> bigProg)
             } yield result -> List(fiber)
         }
