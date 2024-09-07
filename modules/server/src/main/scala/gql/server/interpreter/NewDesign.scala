@@ -12,6 +12,8 @@ import cats.data.Chain
 import fs2.Chunk
 import fs2.concurrent.Channel
 import fs2.UnsafeFs2Access
+import java.lang
+import scala.collection.immutable
 
 object NewDesign {
   object Pass1 {
@@ -97,7 +99,7 @@ object NewDesign {
     )
 
     type Effect[F[_], A] = Pull[F, Nothing, (Json, List[Fiber[F, Throwable, Unit]])]
-    type Collect[F[_]] = PlanEval[Effect[F, *], (F[Unit], NodeInfo), QueryPlan]
+    type Collect[F[_]] = PlanEval[Effect[F, *], NodeInfo, QueryPlan]
     type PlanEvalEffect[F[_]] = Effect[F, Collect[F]]
 
     final case class Hierarchy[A](children: List[(A, Hierarchy[A])])
@@ -130,10 +132,8 @@ object NewDesign {
         parents: Set[Unique.Token],
         // the next evaluation informaiton
         collect: Collect[F],
-        // release all resources currently allocated on this node
-        release: F[Unit],
         // to allow children to lease this node
-        lease: Resource[F, Unit]
+        lease: Resource[F, Option[Int]]
     )
 
     final case class State[F[_]](
@@ -203,14 +203,17 @@ object NewDesign {
     final case class Context[F[_]](
         path: Set[Unique.Token],
         state: Ref[F, State[F]],
-        parentLease: Resource[F, Unit],
-        plan: QueryPlan
+        parentLease: Resource[F, Option[Int]],
+        plan: QueryPlan,
+        interruptContext: F[Unit]
     ) {
       def addPath(tok: Unique.Token): Context[F] = copy(path = path + tok)
 
-      def setLease(lease: Resource[F, Unit]): Context[F] = copy(parentLease = lease)
+      def setLease(lease: Resource[F, Option[Int]]): Context[F] = copy(parentLease = lease)
 
       def setPlan(qp: QueryPlan): Context[F] = copy(plan = qp)
+
+      def setInterruptContext(interrupt: F[Unit]): Context[F] = copy(interruptContext = interrupt)
     }
 
     trait Cont[F[_], A] {
@@ -222,61 +225,77 @@ object NewDesign {
         child: Cont[IO, A],
         nodeInfo: NodeInfo,
         ctx: Context[IO]
-    ) = {
+    ): Pull[IO, Nothing, (Json, List[Fiber[IO, Throwable, Unit]])] = {
       Pull.eval(IO.unique).flatMap { tok =>
-        val withCtx = ctx.addPath(tok)
-        stream.pull.uncons1.flatMap {
-          case None => Pull.done
-          case Some((hd, tl)) =>
-            UnsafeFs2Access.leaseScope[IO].flatMap { leaseResource =>
-              val withLease = withCtx.setLease(leaseResource)
-              // on head pull we evaluate
-              child.eval(hd, withLease).flatMap { case (result, fibs) =>
-                val cancelAll: IO[Unit] = fibs.parTraverse_(_.cancel)
+        def mkCtx(isKilled: IO[Unit], leaseThis: Resource[IO, Option[Int]]): Context[IO] =
+          ctx.addPath(tok).setInterruptContext(isKilled).setLease(leaseThis)
 
-                // on subsequent pulls we submit to main queue
-                def repeatUncons(
-                    stream: Stream[IO, A],
-                    interruptPrevious: IO[Unit]
-                ): Pull[IO, Nothing, Unit] =
-                  stream.pull.uncons1.flatMap {
-                    case None => Pull.done
-                    case Some((hd, tl)) =>
-                      Pull.eval(interruptPrevious) >>
-                        Pull.eval(IO.deferred[Unit]).flatMap { killThis =>
-                          val c: Collect[IO] = PlanEval[Effect[IO, *], (IO[Unit], NodeInfo), QueryPlan](
-                            plan = killThis.get -> nodeInfo,
-                            eval = qp => child.eval(hd, withLease.setPlan(qp))
-                          )
-
-                          def tryUpdate(poll: IO ~> IO): IO[Unit] =
-                            poll(leaseResource.allocated).flatMap { case (_, release) =>
-                              ctx.state.modify { s =>
-                                s.values match {
-                                  // If we are not consuming, we await next and try again
-                                  case None =>
-                                    (s, release >> poll((s.consumed >> tryUpdate(poll))))
-                                  // If we are consuming, publish the value and await next consumption
-                                  case Some(xs) =>
-                                    (
-                                      s.copy(values = Some(StateEntry(tok, ctx.path, c, release, leaseResource) :: xs)),
-                                      poll(s.consumed.void)
-                                    )
-                                }
-                              }.flatten
-                            }
-
-                          val upd: IO[Unit] = IO.uncancelable(tryUpdate)
-
-                          Pull.eval(upd) >> repeatUncons(tl, killThis.complete(()).void)
-                        }
-                  }
-
-                Pull.eval(repeatUncons(tl, cancelAll).stream.compile.drain.start).map { fib =>
-                  result -> List(fib)
-                }
+        val leaseTree = UnsafeFs2Access.leaseScope[IO].map[Resource[IO, Resource[IO, Option[Int]]]] { r =>
+          ctx.parentLease.flatMap {
+            case Some(_) => SharedResource.make[IO](r)
+            case None =>
+              Resource.raiseError[IO, Resource[IO, Option[Int]], Throwable] {
+                new RuntimeException("impossible, no parent lease")
               }
+          }
+        }
+
+        def resourcePull: Pull[IO, Nothing, Resource[IO, Option[Int]]] =
+          leaseTree.flatMap(r => Stream.resource(r).pull.uncons1.map(_.get._1))
+
+        def tryUpdate(lease: Resource[IO, Option[Int]], c: Collect[IO]): IO[Unit] =
+          ctx.state.modify { s =>
+            s.values match {
+              // If we are not consuming, we await next and try again
+              case None =>
+                (s, (s.consumed >> tryUpdate(lease, c)))
+              // If we are consuming, publish the value and await next consumption
+              case Some(xs) =>
+                (
+                  s.copy(values = Some(StateEntry(tok, ctx.path, c, lease) :: xs)),
+                  s.consumed.void
+                )
             }
+          }.flatten
+
+        def repeatUncons(
+            stream: Stream[IO, A],
+            interruptPrevious: IO[Unit]
+        ): Pull[IO, Nothing, Unit] =
+          stream.pull.uncons1.flatMap {
+            case None => Pull.done
+            case Some((hd, tl)) =>
+              for {
+                _ <- Pull.eval(interruptPrevious)
+                killThis <- Pull.eval(IO.deferred[Unit])
+                leaseResource <- resourcePull
+                c: Collect[IO] = PlanEval[Effect[IO, *], NodeInfo, QueryPlan](
+                  plan = nodeInfo,
+                  eval = qp => child.eval(hd, mkCtx(killThis.get, leaseResource).setPlan(qp))
+                )
+
+                _ <- Pull.eval(tryUpdate(leaseResource, c))
+
+                _ <- repeatUncons(tl, killThis.complete(()).void)
+              } yield ()
+          }
+
+        stream.pull.uncons1.flatMap {
+          case None => Pull.eval(IO.never)
+          case Some((hd, tl)) =>
+            for {
+              killThis <- Pull.eval(IO.deferred[Unit])
+              leaseResource <- resourcePull
+              (result, fibs) <- child.eval(hd, mkCtx(killThis.get, leaseResource))
+              cancelAll = fibs.parTraverse_(_.cancel)
+              bigProg = repeatUncons(tl, cancelAll).stream
+                .interruptWhen(ctx.interruptContext.attempt)
+                .compile
+                .drain
+                .start
+              ensureCleanup = (ctx.interruptContext *> cancelAll).start
+              fiber <- Pull.eval(ensureCleanup *> bigProg)
+            } yield result -> List(fiber)
         }
       }
     }
@@ -589,6 +608,47 @@ object NewDesign {
         case Some((hd, tl)) => Pull.pure(Some(hd -> tl))
       }
       .flatMap(xs => Pull.output(Chunk.fromOption(xs)))
+      .stream
+      .evalMap(x => IO.println(s"using $x"))
+      .compile
+      .drain
+
+    {
+      def rec(x: Stream[IO, Int]): Pull[IO, Int, Unit] =
+        x.pull.uncons1.flatMap {
+          case None           => Pull.done
+          case Some((hd, tl)) => Pull.eval(IO.println(s"using $hd")).flatMap(_ => rec(tl))
+        }
+      rec {
+        Stream
+          .emits((0 to 10))
+          .covary[IO]
+          .flatTap(i => Stream.bracket(IO.println(s"open $i"))(_ => IO.println(s"close $i")))
+      }.stream
+        .evalMap(x => IO.println(s"using $x"))
+        .compile
+        .drain
+    }
+
+    Stream
+      .emits((0 to 10))
+      .covary[IO]
+      .flatTap(i => Stream.bracket(IO.println(s"open $i"))(_ => IO.println(s"close $i")))
+      .pull
+      .uncons1
+      .flatMap {
+        case None => Pull.done
+        case Some((hd, tl)) =>
+          val tlProg = Pull.eval(IO.println(s"using $hd")) >>
+            Stream.emits((0 to 10)).covary[IO].evalMap(i => IO.println(s"inner $i").as(i)).pull.echo >>
+            tl.pull.echo
+
+          Stream
+            .bracketWeak(IO.println(s"inner bracket open"))(_ => IO.println(s"inner bracket close"))
+            .pull
+            .uncons1
+            .flatMap(_ => tlProg)
+      }
       .stream
       .evalMap(x => IO.println(s"using $x"))
       .compile
