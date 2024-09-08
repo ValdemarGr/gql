@@ -66,13 +66,9 @@ object EvalState {
       } yield ProduceConsume(consumedD.get, consumedD.complete(()).void, producedD.get, producedD.complete(()).void)
   }
 
-  final case class EvalStateApi[F[_]](
-      ref: Ref[F, EvalState[F]],
-      ps: ProduceConsume[F]
-  )
-  def init[F[_]](implicit F: Async[F]): F[EvalStateApi[F]] =
+  def init[F[_]](implicit F: Async[F]): F[Ref[F, EvalState[F]]] =
     for {
       ps <- ProduceConsume.make[F]
       ref <- F.ref(EvalState[F](Some(Nil), ps))
-    } yield EvalStateApi(ref, ps)
+    } yield ref
 }

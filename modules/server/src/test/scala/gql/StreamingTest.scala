@@ -32,11 +32,11 @@ final case class Level2(value: Int)
 class StreamingTest extends CatsEffectSuite {
   val level1UsersRef = IO.ref(0).unsafeRunSync()
   def level1Users = level1UsersRef.get.unsafeRunSync()
-  val level1Resource = Resource.make(level1UsersRef.update(_ + 1))(_ => level1UsersRef.update(_ - 1))
+  val level1Resource = Resource.make(level1UsersRef.updateAndGet(_ + 1).map(x => println(s"raw open1 $x")))(_ => level1UsersRef.updateAndGet(_ - 1).map(x => println(s"raw close1 $x")))
 
   val level2UsersRef = IO.ref(0).unsafeRunSync()
   def level2Users = level2UsersRef.get.unsafeRunSync()
-  val level2Resource = Resource.make(level2UsersRef.update(_ + 1))(_ => level2UsersRef.update(_ - 1))
+  val level2Resource = Resource.make(level2UsersRef.updateAndGet(_ + 1).map(x => println(s"raw open2 $x")))(_ => level2UsersRef.updateAndGet(_ - 1).map(x => println(s"raw close2 $x")))
 
   implicit lazy val level1: Type[IO, Level1] = builder[IO, Level1] { b =>
     tpe[IO, Level1](
@@ -86,7 +86,7 @@ class StreamingTest extends CatsEffectSuite {
   lazy val schema = Schema.simple(schemaShape).unsafeRunSync()
 
   def query(q: String, variables: Map[String, Json] = Map.empty): Stream[IO, JsonObject] =
-    Compiler[IO].compile(schema, q, variables = variables /* , debug= gql.interpreter.DebugPrinter[IO](IO.println)*/ ) match {
+    Compiler[IO].compile(schema, q, variables = variables, debug = gql.server.interpreter.DebugPrinter[IO](IO.println)) match {
       case Left(err)                          => Stream(err.asJsonObject)
       case Right(Application.Subscription(s)) => s.map(_.asJsonObject)
       case _                                  => ???
@@ -149,7 +149,7 @@ class StreamingTest extends CatsEffectSuite {
     """
 
     query(q)
-      .take(3)
+      .take(5)
       .map { jo =>
         Json.fromJsonObject(jo).field("data").field("level1").field("level2").field("value").int
       }
@@ -164,11 +164,11 @@ class StreamingTest extends CatsEffectSuite {
     }
   }
 
-  test("should stream out some nested elements") {
+  test("should stream out some nested elements".only) {
     assertEquals(clue(level1Users), 0)
     assertEquals(clue(level2Users), 0)
-    // Run test 100 times
-    (0 to 10).toList.parTraverse { _ =>
+    // Run test some times
+    (0 to 2000).toList.parTraverse { _ =>
       // if inner re-emits, outer will remain the same
       // if outer re-emits, inner will restart
       val q = """

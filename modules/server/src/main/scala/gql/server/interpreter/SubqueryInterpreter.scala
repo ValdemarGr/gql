@@ -29,6 +29,7 @@ import gql.resolver._
 import io.circe.syntax._
 import org.typelevel.scalaccompat.annotation._
 import cats.effect.implicits._
+import java.util.UUID
 
 class SubqueryInterpreter[F[_]](
     state: Ref[F, EvalState[F]],
@@ -46,6 +47,7 @@ class SubqueryInterpreter[F[_]](
       fields: List[PreparedField[F, I]],
       en: EvalNode[F, I]
   ): F[Chain[(String, Json)]] = {
+    // println(s"interpretSelection ${en.value}")
     Chain.fromSeq(fields).parFlatTraverse {
       case fa: PreparedSpecification[F, I, a] =>
         val x = fa.specialization.specify(en.value)
@@ -67,6 +69,8 @@ class SubqueryInterpreter[F[_]](
       s: Prepared[F, I],
       en: EvalNode[F, I]
   ): F[Json] = {
+    // println(s"interpretPrepared ${en.value}")
+
     s match {
       case PreparedLeaf(_, _, enc) => F.pure(enc(en.value))
       case Selection(_, xs, _)     => interpretSelection(xs, en).map(_.toList.toMap.asJson)
@@ -91,12 +95,14 @@ class SubqueryInterpreter[F[_]](
   def goCont[I](
       c: Continuation[F, I],
       en: EvalNode[F, I]
-  ): F[Json] =
+  ): F[Json] = {
+    // println(s"goCont ${en.value}")
     c match {
       case Continuation.Done(prep)             => interpretPrepared(prep, en)
       case fa: Continuation.Continue[F, I, c]  => goStep[I, c](fa.step, fa.next, en)
       case fa: Continuation.Contramap[F, i, I] => goCont(fa.next, en.map(fa.f))
     }
+  }
 
   @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
   def goStep[I, O](
@@ -104,6 +110,7 @@ class SubqueryInterpreter[F[_]](
       cont: Continuation[F, O],
       en: EvalNode[F, I]
   ): F[Json] = {
+    // println(s"goStep ${en.value}")
     import PreparedStep._
     ps match {
       case Lift(_, f) => goCont(cont, en.map(f))
@@ -155,10 +162,6 @@ class SubqueryInterpreter[F[_]](
       case alg: EmbedStream[F, i] =>
         val stream = en.value: fs2.Stream[F, i]
         val effect = subscribeStream[i](stream, cont, en)
-          .flatMap(Pull.output1(_))
-          .stream
-          .compile
-          .lastOrError
 
         val _ = alg
         effect
@@ -175,34 +178,25 @@ class SubqueryInterpreter[F[_]](
       ps: PreparedStep[F, I0, O0],
       cont: Prepared[F, O0],
       en: EvalNode[F, I0]
-  ): F[Json] =
+  ): F[Json] = {
+    // println(s"interpretEffect ${en.value}")
     goStep[I0, O0](ps, Continuation.Done(cont), en)
+  }
 
+  var n = 0
   def subscribeStream[A](
       stream: Stream[F, A],
       cont: Continuation[F, A],
       en: EvalNode[F, ?]
-  ): Pull[F, Nothing, Json] = {
-    Pull.eval(F.unique).flatMap { tok =>
+  ): F[Json] = {
+    // println(s"subscribeStream ${en.value}")
+    F.unique.flatMap { tok =>
       def mkEn(
           isKilled: F[Unit],
           leaseThis: Resource[F, Option[Int]],
           a: A
       ): EvalNode[F, A] =
         en.addParentPath(tok).setInterruptContext(isKilled).setParentLease(leaseThis).setValue(a)
-
-      val leaseTree = fs2.UnsafeFs2Access.leaseScope[F].map[Resource[F, Resource[F, Option[Int]]]] { r =>
-        en.parentLease.flatMap {
-          case Some(_) => SharedResource.make[F](r)
-          case None =>
-            Resource.raiseError[F, Resource[F, Option[Int]], Throwable] {
-              new RuntimeException("impossible, no parent lease")
-            }
-        }
-      }
-
-      def resourcePull: Pull[F, Nothing, Resource[F, Option[Int]]] =
-        leaseTree.flatMap(r => Stream.resource(r).pull.uncons1.map(_.get._1))
 
       def tryUpdate(poll: Poll[F], lease: Resource[F, Option[Int]], c: EvalNode[F, A]): F[Unit] =
         state.modify { s =>
@@ -214,69 +208,34 @@ class SubqueryInterpreter[F[_]](
             case Some(xs) =>
               (
                 s.copy(values = Some(EvalState.Entry(tok, cont, c) :: xs)),
-                s.ps.notifyProduced >> poll(s.ps.consumed.void)
+                s.ps.notifyProduced >> poll(s.ps.consumed)
               )
           }
         }.flatten
 
       def repeatUncons(
-          stream: Stream[F, A],
-          interruptPrevious: F[Unit]
+          stream: Stream[F, A]
+          // interruptPrevious: F[Unit]
       ): Pull[F, Nothing, Unit] =
         stream.pull.uncons1.flatMap {
           case None => Pull.done
           case Some((hd, tl)) =>
-            for {
-              _ <- Pull.eval(interruptPrevious)
-              killThis <- Pull.eval(F.deferred[Unit])
-              leaseResource <- resourcePull
-
-              en = mkEn(killThis.complete(()).void, leaseResource, hd)
-              _ <- Pull.eval(F.uncancelable(tryUpdate(_, leaseResource, en)))
-
-              _ <- repeatUncons(tl, killThis.complete(()).void)
-            } yield ()
+            val en = mkEn(F.unit, Resource.pure(Some(1)), hd)
+            Pull.eval(F.uncancelable(tryUpdate(_, Resource.pure(Some(1)), en))) >> repeatUncons(tl)
         }
 
-      stream.pull.uncons1.flatMap {
-        case None => Pull.eval(F.never)
-        case Some((hd, tl)) =>
-          for {
-            killThis <- Pull.eval(F.deferred[Unit])
-            rr <- leaseTree
-            leaseResource <- Pull.eval {
-              F.uncancelable { poll =>
-                poll(rr.allocated).flatMap { case (r, release) =>
-                  sup
-                    .supervise {
-                      // if killThis then release this lease
-                      (killThis.get *> release)
-                        // if toplevel cancellation then release this lease
-                        .onCancel(release)
-                    }
-                    .as(r)
-                }
-              }
-            }
-            en = mkEn(killThis.complete(()).void, leaseResource, hd)
-            result <- Pull.eval(goCont(cont, en))
-            cancelAll = killThis.complete(()).void
-            // run background task
-            bigProg = sup.supervise {
-              repeatUncons(tl, cancelAll).stream
-                .interruptWhen(en.interruptContext.attempt)
-                .compile
-                .drain
-            }
-            ensureCleanup = sup.supervise {
-              // if parent requests cancellation, then we cancel to ensure cleanup
-              (en.interruptContext *> cancelAll)
-                // if toplevel cancels, then remember to clean children up
-                .onCancel(cancelAll)
-            }
-            _ <- Pull.eval(ensureCleanup *> bigProg)
-          } yield result
+      F.deferred[Json].flatMap { d =>
+        val sout = stream.pull.uncons1.flatMap {
+          case None => Pull.eval(F.never)
+          case Some((hd, tl)) =>
+            val en = mkEn(F.unit, Resource.pure(Some(1)), hd)
+            Pull.eval(goCont(cont, en).flatMap(d.complete(_))) >> repeatUncons(tl)
+        }
+
+        sup.supervise(sout.stream.compile.drain) *> d.get
       }
+
+      // stream.head.compile.lastOrError.flatMap(x => goCont(cont, en.setValue(x)))
     }
   }
 }

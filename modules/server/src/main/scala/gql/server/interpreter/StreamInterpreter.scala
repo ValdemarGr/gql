@@ -27,6 +27,8 @@ import gql.preparation._
 import fs2.Stream
 import scala.concurrent.duration.FiniteDuration
 import cats.arrow.FunctionK
+import cats.effect.std.Supervisor
+import java.util.UUID
 
 /** The [[StreamInterpreter]] is resposible for:
   *   - Wireing together results for a query.
@@ -74,66 +76,73 @@ object StreamInterpreter {
         takeOne: Boolean = false,
         throttle: F ~> F = FunctionK.id[F]
     ): Stream[F, Result] = Stream.eval(EvalState.init[F]).flatMap { state =>
-      def doRound: F[(Resource[F, List[EvalState.Entry[F, ?]]], F[Unit])] = {
-        state.ps.produced >>
-          accumulate.traverse_(F.sleep(_)) >>
-          EvalState.ProduceConsume.make[F].flatMap { ps2 =>
-            state.ref.modify { s =>
-              val allValues = s.values.getOrElse(Nil)
-              val updatedKeys = allValues.map(_.token).toSet
-              val relevant = allValues.filter(_.a.parentLeases.intersect(updatedKeys).isEmpty)
-              val ts: Resource[F, List[EvalState.Entry[F, _]]] =
-                relevant.traverse(e => e.a.parentLease.map(_.as(e))).map(_.flatten)
-              (EvalState[F](None, ps2), (ts, s.ps.notifyConsumed))
-            }
-          }
-      }
+      val id = UUID.randomUUID()
+      Stream.resource(
+        Supervisor[F].onFinalize(F.delay(println(s"cleaned up supervisor $id"))) <* Resource.onFinalize(F.delay(println(s"cleaning up supervisor $id")))
+      ).flatMap { sup =>
+        println("starting")
+        def doRound: F[(Resource[F, List[EvalState.Entry[F, ?]]], F[Unit])] = {
+          debug("awaiting updates") >>
+          state.get.flatMap(_.ps.produced) >>
+            debug("updates arrived") >>
+            accumulate.traverse_(F.sleep(_)) >>
+            EvalState.ProduceConsume.make[F].flatMap { ps2 =>
+              state.modify { s =>
+                val allValues = s.values.getOrElse(Nil)
+                val updatedKeys = allValues.map(_.token).toSet
+                val relevant = allValues.filter(x => (x.a.parentLeases - x.token).intersect(updatedKeys).isEmpty)
+                val ts: Resource[F, List[EvalState.Entry[F, _]]] =
+                  relevant.traverse(e => e.a.parentLease.map(_.as(e))).map(_.flatten)
 
-      val interpreter = QueryInterpreter[F](schemaState, state.ref, throttle)
+                val reopen = state.update(_.copy(values = Some(Nil))) >> s.ps.notifyConsumed
 
-      val initial = QueryInterpreter.Input.root(root, selection)
-
-      val changelog: Stream[F, (List[(Cursor, Json)], Chain[EvalFailure])] = Stream.repeatEval {
-        doRound.flatMap { case (values, notifyConsumed) =>
-          values.use { xs =>
-            val inputs = xs.map { case (entr: EvalState.Entry[F, a]) =>
-              QueryInterpreter.Input[F, a](entr.cont, entr.a)
-            }
-
-            val evalled: F[(List[(Cursor, Json)], Chain[EvalFailure])] =
-              debug(s"interpreting for ${inputs.size} inputs") >>
-                inputs.toNel
-                  .traverse(interpreter.interpretAll)
-                  .map {
-                    // Okay there were no inputs (toNel), just emit what we have
-                    case None => (Nil, Chain.empty)
-                    // Okay so an evaluation happened
-                    case Some(res) => (res.data.toList, res.errors)
-                  } <* debug("done interpreting")
-
-            evalled <* notifyConsumed
-          }
-        }
-      }
-
-      Stream.eval(interpreter.interpretAll(NonEmptyList.one(initial))).flatMap { res =>
-        val jo: JsonObject = res.data.map { case (_, j) => j }.reduceLeft(_ deepMerge _).asObject.get
-
-        Stream.emit(Result(res.errors, jo)) ++
-          changelog
-            .evalMapAccumulate(jo) { case (prevJo, (jsons, errs)) =>
-              // Patch the previously emitted json data
-              val stitched = jsons.foldLeftM(prevJo) { case (accum, (pos, patch)) =>
-                Temporal[F]
-                  .fromEither {
-                    stitchInto(accum.asJson, patch, pos, Cursor.empty).value.value
-                  }
-                  .map(_.asObject.get)
+                (EvalState[F](None, ps2), (ts, reopen))
               }
-
-              stitched.map(o => (o, Result(errs, o)))
             }
-            .map { case (_, x) => x }
+        }
+
+        val interpreter = QueryInterpreter[F](schemaState, state, throttle, sup)
+
+        val initial = QueryInterpreter.Input.root(root, selection)
+
+        val changelog: Stream[F, (List[(Cursor, Json)], Chain[EvalFailure])] = Stream.repeatEval {
+          doRound.flatMap { case (values, reopen) =>
+            values.use { xs =>
+              xs.toNel.traverse { nel =>
+                val inputs = nel.map { case (entr: EvalState.Entry[F, a]) =>
+                  QueryInterpreter.Input[F, a](entr.cont, entr.a)
+                }
+
+                debug(s"interpreting for ${inputs.size} inputs") >>
+                  interpreter
+                    .interpretAll(inputs)
+                    .map { res => (res.data.toList, res.errors) } <*
+                  debug("done interpreting")
+              }
+            } <* reopen
+          }
+        }.unNone
+
+        Stream.eval(interpreter.interpretAll(NonEmptyList.one(initial))).flatMap { res =>
+          println(s"init gave $res")
+          val jo: JsonObject = res.data.map { case (_, j) => j }.reduceLeft(_ deepMerge _).asObject.get
+
+          Stream.emit(Result(res.errors, jo)) ++
+            changelog
+              .evalMapAccumulate(jo) { case (prevJo, (jsons, errs)) =>
+                // Patch the previously emitted json data
+                val stitched = jsons.foldLeftM(prevJo) { case (accum, (pos, patch)) =>
+                  Temporal[F]
+                    .fromEither {
+                      stitchInto(accum.asJson, patch, pos, Cursor.empty).value.value
+                    }
+                    .map(_.asObject.get)
+                }
+
+                stitched.map(o => (o, Result(errs, o)))
+              }
+              .map { case (_, x) => x }
+        }
       }
     }
   }

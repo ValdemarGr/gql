@@ -18,7 +18,6 @@ package gql.server.interpreter
 import cats._
 import cats.implicits._
 import org.typelevel.paiges._
-import cats.effect._
 import gql.preparation._
 
 trait DebugPrinter[F[_]] {
