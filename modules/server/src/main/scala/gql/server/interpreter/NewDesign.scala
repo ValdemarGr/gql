@@ -94,8 +94,8 @@ object NewDesign {
     type CollectValue[F[_]] = (Json, List[Fiber[F, Throwable, Unit]])
 
     final case class Collect[F[_]](
-      nodeInfo: NodeInfo,
-      eval: QueryPlan => Effect[F, CollectValue[F]]
+        nodeInfo: NodeInfo,
+        eval: QueryPlan => Effect[F, CollectValue[F]]
     )
 
     final case class StateEntry[F[_]](
@@ -141,7 +141,7 @@ object NewDesign {
         child: Cont[IO, A],
         nodeInfo: NodeInfo,
         ctx: Context[IO]
-    ): Pull[IO, Nothing, (Json, List[Fiber[IO, Throwable, Unit]])] = {
+    ): Effect[IO, CollectValue[IO]] = {
       Pull.eval(IO.unique).flatMap { tok =>
         def mkCtx(isKilled: IO[Unit], leaseThis: Resource[IO, Option[Int]]): Context[IO] =
           ctx.addPath(tok).setInterruptContext(isKilled).setLease(leaseThis)
@@ -201,16 +201,36 @@ object NewDesign {
           case Some((hd, tl)) =>
             for {
               killThis <- Pull.eval(IO.deferred[Unit])
-              leaseResource <- resourcePull
+              rr <- leaseTree
+              leaseResource <- Pull.eval {
+                IO.uncancelable { poll =>
+                  poll(rr.allocated).flatMap { case (r, release) =>
+                    ctx.sup
+                      .supervise(
+                        // if killThis then release this lease
+                        (killThis.get *> release)
+                          // if toplevel cancellation then release this lease
+                          .onCancel(release)
+                      )
+                      .as(r)
+                  }
+                }
+              }
               (result, fibs) <- child.eval(hd, mkCtx(killThis.get, leaseResource))
-              cancelAll = fibs.parTraverse_(_.cancel)
+              cancelAll = fibs.parTraverse_(_.cancel) >> killThis.complete(()).void
+              // run background task
               bigProg = ctx.sup.supervise {
                 repeatUncons(tl, cancelAll).stream
                   .interruptWhen(ctx.interruptContext.attempt)
                   .compile
                   .drain
               }
-              ensureCleanup = ctx.sup.supervise(ctx.interruptContext *> cancelAll)
+              ensureCleanup = ctx.sup.supervise(
+                // if parent requests cancellation, then we cancel to ensure cleanup
+                (ctx.interruptContext *> cancelAll)
+                  // if toplevel cancels, then remember to clean children up
+                  .onCancel(cancelAll)
+              )
               fiber <- Pull.eval(ensureCleanup *> bigProg)
             } yield result -> List(fiber)
         }

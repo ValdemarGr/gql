@@ -15,6 +15,7 @@
  */
 package gql.server.interpreter
 
+import fs2.{Stream, Pull}
 import cats._
 import cats.data._
 import gql.preparation._
@@ -29,24 +30,8 @@ import io.circe.syntax._
 import org.typelevel.scalaccompat.annotation._
 import cats.effect.implicits._
 
-final case class StreamData[F[_], I](
-    cont: Continuation[F, I],
-    value: Either[Throwable, I]
-)
-object StreamData {
-  import org.typelevel.paiges._
-  implicit def docedForStreamData[F[_]]: Document[StreamData[F, ?]] =
-    DebugPrinter.Printer.streamDataDoced[F]
-}
-
-/** The [[SubqueryInterpreter]] recursively runs through the AST and performs a multitude of tasks:
-  *   - Runs the [[gql.resolver.Resolver]]/[[gql.resolver.Step]]s defined in the query.
-  *   - Accumulates errors that occur during the evaluation of the query.
-  *   - Logs streams that have been subscribed to.
-  *   - Batches computations that have been marked as batchable.
-  */
 class SubqueryInterpreter[F[_]](
-    ss: SignalScopes[F, StreamData[F, ?]],
+    state: Ref[F, EvalState[F]],
     sup: Supervisor[F],
     stats: Statistics[F],
     throttle: F ~> F,
@@ -169,26 +154,21 @@ class SubqueryInterpreter[F[_]](
         goStep(alg.step, cont.contramap[o2](o2 => (o2, c2)), en.setValue(i2))
       case alg: EmbedStream[F, i] =>
         val stream = en.value: fs2.Stream[F, i]
-        val effect: F[EvalNode[F, i]] =
-          ss.acquireAwait(
-            stream.attempt.map(StreamData(cont, _)),
-            en.scope,
-            signal = alg.signal,
-            cursor = en.cursor
-          ).flatMap { case (s, sd) => F.fromEither(sd.value).map(i => en.setValue(i.asInstanceOf[i]).setScope(s)) }
+        val effect = subscribeStream[i](stream, cont, en)
+          .flatMap(Pull.output1(_))
+          .stream
+          .compile
+          .lastOrError
 
-        runEffect(effect, alg.sei.edgeId, 1, e => EvalFailure.StreamHeadResolution(en.cursor, Left(e)))
-          .flatMap {
-            case Some(x) => goCont(cont, x)
-            case None    => F.pure(Json.Null)
-          }
+        val _ = alg
+        effect
     }
   }
 
   def runEffect[A](fa: F[A], id: UniqueEdgeCursor, n: Int, makeError: Throwable => EvalFailure): F[Option[A]] =
     throttle(fa.timed.attempt).flatMap {
-      case Right((t, a)) => submit(id.asString, t, n) *> F.pure(Some(a))
-      case Left(err)     => errors.update(makeError(err) +: _).as(None)
+      case Right((t, a)) => submit(id.asString, t, n) *> a.some.pure[F]
+      case Left(err)     => errors.update(makeError(err) +: _).as(none[A])
     }
 
   def interpretEffect[I0, O0](
@@ -197,4 +177,106 @@ class SubqueryInterpreter[F[_]](
       en: EvalNode[F, I0]
   ): F[Json] =
     goStep[I0, O0](ps, Continuation.Done(cont), en)
+
+  def subscribeStream[A](
+      stream: Stream[F, A],
+      cont: Continuation[F, A],
+      en: EvalNode[F, ?]
+  ): Pull[F, Nothing, Json] = {
+    Pull.eval(F.unique).flatMap { tok =>
+      def mkEn(
+          isKilled: F[Unit],
+          leaseThis: Resource[F, Option[Int]],
+          a: A
+      ): EvalNode[F, A] =
+        en.addParentPath(tok).setInterruptContext(isKilled).setParentLease(leaseThis).setValue(a)
+
+      val leaseTree = fs2.UnsafeFs2Access.leaseScope[F].map[Resource[F, Resource[F, Option[Int]]]] { r =>
+        en.parentLease.flatMap {
+          case Some(_) => SharedResource.make[F](r)
+          case None =>
+            Resource.raiseError[F, Resource[F, Option[Int]], Throwable] {
+              new RuntimeException("impossible, no parent lease")
+            }
+        }
+      }
+
+      def resourcePull: Pull[F, Nothing, Resource[F, Option[Int]]] =
+        leaseTree.flatMap(r => Stream.resource(r).pull.uncons1.map(_.get._1))
+
+      def tryUpdate(poll: Poll[F], lease: Resource[F, Option[Int]], c: EvalNode[F, A]): F[Unit] =
+        state.modify { s =>
+          s.values match {
+            // If we are not consuming, we await next and try again
+            case None =>
+              (s, (poll(s.ps.consumed) >> tryUpdate(poll, lease, c)))
+            // If we are consuming, publish the value and await next consumption
+            case Some(xs) =>
+              (
+                s.copy(values = Some(EvalState.Entry(tok, cont, c) :: xs)),
+                s.ps.notifyProduced >> poll(s.ps.consumed.void)
+              )
+          }
+        }.flatten
+
+      def repeatUncons(
+          stream: Stream[F, A],
+          interruptPrevious: F[Unit]
+      ): Pull[F, Nothing, Unit] =
+        stream.pull.uncons1.flatMap {
+          case None => Pull.done
+          case Some((hd, tl)) =>
+            for {
+              _ <- Pull.eval(interruptPrevious)
+              killThis <- Pull.eval(F.deferred[Unit])
+              leaseResource <- resourcePull
+
+              en = mkEn(killThis.complete(()).void, leaseResource, hd)
+              _ <- Pull.eval(F.uncancelable(tryUpdate(_, leaseResource, en)))
+
+              _ <- repeatUncons(tl, killThis.complete(()).void)
+            } yield ()
+        }
+
+      stream.pull.uncons1.flatMap {
+        case None => Pull.eval(F.never)
+        case Some((hd, tl)) =>
+          for {
+            killThis <- Pull.eval(F.deferred[Unit])
+            rr <- leaseTree
+            leaseResource <- Pull.eval {
+              F.uncancelable { poll =>
+                poll(rr.allocated).flatMap { case (r, release) =>
+                  sup
+                    .supervise {
+                      // if killThis then release this lease
+                      (killThis.get *> release)
+                        // if toplevel cancellation then release this lease
+                        .onCancel(release)
+                    }
+                    .as(r)
+                }
+              }
+            }
+            en = mkEn(killThis.complete(()).void, leaseResource, hd)
+            result <- Pull.eval(goCont(cont, en))
+            cancelAll = killThis.complete(()).void
+            // run background task
+            bigProg = sup.supervise {
+              repeatUncons(tl, cancelAll).stream
+                .interruptWhen(en.interruptContext.attempt)
+                .compile
+                .drain
+            }
+            ensureCleanup = sup.supervise {
+              // if parent requests cancellation, then we cancel to ensure cleanup
+              (en.interruptContext *> cancelAll)
+                // if toplevel cancels, then remember to clean children up
+                .onCancel(cancelAll)
+            }
+            _ <- Pull.eval(ensureCleanup *> bigProg)
+          } yield result
+      }
+    }
+  }
 }

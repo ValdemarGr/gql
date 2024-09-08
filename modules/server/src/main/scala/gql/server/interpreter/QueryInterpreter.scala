@@ -44,8 +44,8 @@ object QueryInterpreter {
   )
 
   object Input {
-    def root[F[_], A](data: A, cont: Prepared[F, A], scope: Scope[F]): Input[F, A] =
-      Input(Continuation.Done(cont), EvalNode.empty(data, scope))
+    def root[F[_]: Async, A](data: A, cont: Prepared[F, A]): Input[F, A] =
+      Input(Continuation.Done(cont), EvalNode.empty(data))
   }
 
   final case class Results(
@@ -55,7 +55,7 @@ object QueryInterpreter {
 
   def apply[F[_]](
       schemaState: SchemaState[F],
-      ss: SignalScopes[F, StreamData[F, ?]],
+      ss: Ref[F, EvalState[F]],
       throttle: F ~> F
   )(implicit stats: Statistics[F], planner: Planner[F], F: Async[F]) =
     new QueryInterpreter[F] {

@@ -144,33 +144,5 @@ object DebugPrinter {
             )
           )
       }
-
-    def streamDataDoced[F[_]]: Document[StreamData[F, ?]] =
-      Document[StreamData[F, ?]] { sd =>
-        record(
-          "StreamData",
-          kvs(
-            "cont" -> continuationDoced.document(sd.cont),
-            "value" -> Doc.text(sd.value.leftMap(_.getMessage()).map(_.getClass().getName()).toString())
-          )
-        )
-      }
-
-    def resourceInfoDoced[F[_], A](isOpen: Boolean, names: Map[Unique.Token, String])(implicit
-        D: Document[A]
-    ): Document[SignalScopes.ResourceInfo[F, A]] = { ri =>
-      def makeName(id: Unique.Token): Doc =
-        Doc.text(names.get(id).getOrElse(id.toString()))
-
-      record(
-        "ResourceInfo",
-        kvs(
-          "parentName" -> makeName(ri.parent.scope.id),
-          "name" -> makeName(ri.scope.id),
-          "open" -> Doc.text(isOpen.toString()),
-          "value" -> D.document(ri.value)
-        )
-      )
-    }
   }
 }
