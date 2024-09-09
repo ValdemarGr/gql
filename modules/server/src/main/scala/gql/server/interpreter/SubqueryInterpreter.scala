@@ -30,6 +30,7 @@ import io.circe.syntax._
 import org.typelevel.scalaccompat.annotation._
 import cats.effect.implicits._
 import java.util.UUID
+import cats.effect.kernel.Resource
 
 class SubqueryInterpreter[F[_]](
     state: Ref[F, EvalState[F]],
@@ -178,24 +179,19 @@ class SubqueryInterpreter[F[_]](
       ps: PreparedStep[F, I0, O0],
       cont: Prepared[F, O0],
       en: EvalNode[F, I0]
-  ): F[Json] = {
-    // println(s"interpretEffect ${en.value}")
+  ): F[Json] =
     goStep[I0, O0](ps, Continuation.Done(cont), en)
-  }
 
-  var n = 0
   def subscribeStream[A](
       stream: Stream[F, A],
       cont: Continuation[F, A],
       en: EvalNode[F, ?]
-  ): F[Json] = {
-    // println(s"subscribeStream ${en.value}")
-    F.unique.flatMap { tok =>
-      def mkEn(
-          isKilled: F[Unit],
-          leaseThis: Resource[F, Option[Int]],
-          a: A
-      ): EvalNode[F, A] =
+  ): F[Json] = for {
+    tok <- F.unique
+    d <- F.deferred[Json]
+
+    _ <- sup.supervise {
+      def mkEn(isKilled: F[Unit], leaseThis: Resource[F, Option[Int]], a: A): EvalNode[F, A] =
         en.addParentPath(tok).setInterruptContext(isKilled).setParentLease(leaseThis).setValue(a)
 
       def tryUpdate(poll: Poll[F], lease: Resource[F, Option[Int]], c: EvalNode[F, A]): F[Unit] =
@@ -213,29 +209,36 @@ class SubqueryInterpreter[F[_]](
           }
         }.flatten
 
-      def repeatUncons(
-          stream: Stream[F, A]
-          // interruptPrevious: F[Unit]
-      ): Pull[F, Nothing, Unit] =
-        stream.pull.uncons1.flatMap {
+      def go(a: A, handle: (EvalNode[F, A], Resource[F, Option[Int]]) => F[Unit]): Stream[F, F[Unit]] =
+        for {
+          killSig <- Stream.eval(F.deferred[Unit])
+          kill = killSig.complete(()).void
+          // leaseScope <- fs2.UnsafeFs2Access.leaseScope[F].flatMap(Pull.output1(_)).streamNoScope
+          // safeLease <- Stream.resource(SharedResource.make[F](leaseScope))
+          safeLease = Resource.pure[F, Option[Int]](Some(1))
+          en = mkEn(kill, safeLease, a)
+          _ <- Stream.eval(handle(en, safeLease))
+        } yield kill
+
+      def walk(xs: Stream[F, A], kill: F[Unit]): Stream[F, Unit] =
+        xs.pull.uncons1.flatMap {
           case None => Pull.done
           case Some((hd, tl)) =>
-            val en = mkEn(F.unit, Resource.pure(Some(1)), hd)
-            Pull.eval(F.uncancelable(tryUpdate(_, Resource.pure(Some(1)), en))) >> repeatUncons(tl)
-        }
+            Pull.eval(kill) >>
+              go(hd, (en, sl) => F.uncancelable(tryUpdate(_, sl, en)).void).flatMap(walk(tl, _)).pull.echo
+        }.streamNoScope
 
-      F.deferred[Json].flatMap { d =>
-        val sout = stream.pull.uncons1.flatMap {
-          case None => Pull.eval(F.never)
-          case Some((hd, tl)) =>
-            val en = mkEn(F.unit, Resource.pure(Some(1)), hd)
-            Pull.eval(goCont(cont, en).flatMap(d.complete(_))) >> repeatUncons(tl)
-        }
+      val sout = stream.pull.uncons1.flatMap {
+        case None => Pull.done
+        case Some((hd, tl)) =>
+          go(hd, (en, _) => goCont(cont, en).flatMap(d.complete(_)).void)
+            .flatMap(x => walk(tl, x).interruptWhen((en.interruptContext).attempt))
+            .pull
+            .echo
+      }.streamNoScope
 
-        sup.supervise(sout.stream.compile.drain) *> d.get
-      }
-
-      // stream.head.compile.lastOrError.flatMap(x => goCont(cont, en.setValue(x)))
+      sout.compile.drain
     }
-  }
+    o <- d.get
+  } yield o
 }

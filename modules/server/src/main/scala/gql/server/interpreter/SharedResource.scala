@@ -14,35 +14,31 @@ object SharedResource {
 
   def make[F[_]](res: Resource[F, Unit])(implicit F: Async[F]): Resource[F, Resource[F, Option[Int]]] =
     Resource.applyFull { poll =>
-      val id = UUID.randomUUID()
-      F.delay(println(s"opening $id")) >>
-        ((poll(res.allocated), F.ref[State[F]](State.Open(1))).tupled).flatMap { case ((_, release0), ref) =>
-          F.deferred[Unit].map { d =>
-            val release = release0 *> d.complete(()).void
-            val open = ref.modify {
-              case State.Closed() => (State.Closed[F](), None)
-              case State.Open(n) =>
-                println(s"api open $n $id")
-                val n2 = n + 1
-                (State.Open(n2), Some(n2))
-            }
-
-            val close = ref.modify {
-              case State.Closed() => (State.Closed[F](), F.unit)
-              case State.Open(n) =>
-                println(s"api close $n $id")
-                val n2 = n - 1
-                if (n2 === 0) (State.Closed[F](), F.delay(println(s"releasing $id")) *> release *> F.delay(println(s"released $id")))
-                else (State.Open(n2), F.unit)
-            }.flatten
-
-            val api = Resource.make(open) {
-              case None    => F.unit
-              case Some(_) => close
-            }
-
-            (api, ((_: ExitCase) => close >> d.tryGet.flatMap(o => ref.get.map(s => println(s"outer resource exiting, state is $s, did we release? ${o.isDefined}")))))
+      ((poll(res.allocated), F.ref[State[F]](State.Open(1))).tupled).flatMap { case ((_, release0), ref) =>
+        F.deferred[Unit].map { d =>
+          val release = release0 *> d.complete(()).void
+          val open = ref.modify {
+            case State.Closed() => (State.Closed[F](), None)
+            case State.Open(n)  =>
+              val n2 = n + 1
+              (State.Open(n2), Some(n2))
           }
+
+          val close = ref.modify {
+            case State.Closed() => (State.Closed[F](), F.unit)
+            case State.Open(n) =>
+              val n2 = n - 1
+              if (n2 === 0) (State.Closed[F](), release)
+              else (State.Open(n2), F.unit)
+          }.flatten
+
+          val api = Resource.make(open) {
+            case None    => F.unit
+            case Some(_) => close
+          }
+
+          (api, ((_: ExitCase) => close))
         }
+      }
     }
 }

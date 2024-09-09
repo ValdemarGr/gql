@@ -76,14 +76,10 @@ object StreamInterpreter {
         takeOne: Boolean = false,
         throttle: F ~> F = FunctionK.id[F]
     ): Stream[F, Result] = Stream.eval(EvalState.init[F]).flatMap { state =>
-      val id = UUID.randomUUID()
-      Stream.resource(
-        Supervisor[F].onFinalize(F.delay(println(s"cleaned up supervisor $id"))) <* Resource.onFinalize(F.delay(println(s"cleaning up supervisor $id")))
-      ).flatMap { sup =>
-        println("starting")
+      Stream.resource(Supervisor[F]).flatMap { sup =>
         def doRound: F[(Resource[F, List[EvalState.Entry[F, ?]]], F[Unit])] = {
           debug("awaiting updates") >>
-          state.get.flatMap(_.ps.produced) >>
+            state.get.flatMap(_.ps.produced) >>
             debug("updates arrived") >>
             accumulate.traverse_(F.sleep(_)) >>
             EvalState.ProduceConsume.make[F].flatMap { ps2 =>
@@ -124,7 +120,6 @@ object StreamInterpreter {
         }.unNone
 
         Stream.eval(interpreter.interpretAll(NonEmptyList.one(initial))).flatMap { res =>
-          println(s"init gave $res")
           val jo: JsonObject = res.data.map { case (_, j) => j }.reduceLeft(_ deepMerge _).asObject.get
 
           Stream.emit(Result(res.errors, jo)) ++
