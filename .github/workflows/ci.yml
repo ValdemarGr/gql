@@ -51,8 +51,7 @@ jobs:
         if: matrix.java == 'temurin@8' && steps.setup-java-temurin-8.outputs.cache-hit == 'false'
         run: sbt +update
 
-      - name: Start services
-        run: docker-compose up -d
+      - uses: hoverkraft-tech/compose-action@v0.0.0
 
       - name: Check that workflows are up to date
         run: sbt githubWorkflowCheck
@@ -103,8 +102,7 @@ jobs:
         if: matrix.java == 'temurin@8' && steps.setup-java-temurin-8.outputs.cache-hit == 'false'
         run: sbt +update
 
-      - name: Start services
-        run: docker-compose up -d
+      - uses: hoverkraft-tech/compose-action@v0.0.0
 
       - name: Download target directories (2.13)
         uses: actions/download-artifact@v3
@@ -177,8 +175,7 @@ jobs:
         if: matrix.java == 'temurin@8' && steps.setup-java-temurin-8.outputs.cache-hit == 'false'
         run: sbt +update
 
-      - name: Start services
-        run: docker-compose up -d
+      - uses: hoverkraft-tech/compose-action@v0.0.0
 
       - name: Submit Dependencies
         uses: scalacenter/sbt-dependency-submission@v2
@@ -200,8 +197,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Start services
-        run: docker-compose up -d
+      - uses: hoverkraft-tech/compose-action@v0.0.0
 
       - name: Setup Java (temurin@8)
         id: setup-java-temurin-8
@@ -238,8 +234,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Start services
-        run: docker-compose up -d
+      - uses: hoverkraft-tech/compose-action@v0.0.0
 
       - name: Setup Java (temurin@8)
         id: setup-java-temurin-8

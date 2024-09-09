@@ -26,9 +26,8 @@ ThisBuild / mimaPreviousArtifacts := Set.empty
 ThisBuild / tlSonatypeUseLegacyHost := true
 //ThisBuild / tlFatalWarnings := true
 
-val dbStep = WorkflowStep.Run(
-  commands = List("docker-compose up -d"),
-  name = Some("Start services")
+val dbStep = WorkflowStep.Use(
+  ref = UseRef.Public("hoverkraft-tech", "compose-action", "v0.0.0")
 )
 
 ThisBuild / githubWorkflowJobSetup += dbStep
@@ -100,6 +99,7 @@ lazy val sharedSettings = Seq(
   mimaReportSignatureProblems := false,
   mimaFailOnProblem := false,
   mimaPreviousArtifacts := Set.empty,
+  Test / unmanagedResources += file("./schema.graphql"),
   fork := true,
   scalacOptions ++= {
     if (scalaVersion.value.startsWith("2")) {

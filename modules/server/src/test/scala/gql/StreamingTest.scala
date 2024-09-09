@@ -43,13 +43,13 @@ class StreamingTest extends CatsEffectSuite {
       "Level1",
       "value" -> lift(_.value),
       "level2" -> b {
-        _.map(_ =>
+        _.streamMap(_ =>
           Stream
             .iterate(0)(_ + 1)
             .lift[IO]
             .meteredStartImmediately(500.millis)
             .flatMap(x => fs2.Stream.resource(level1Resource) as Level2(x))
-        ).embedSequentialStream
+        )
       }
     )
   }

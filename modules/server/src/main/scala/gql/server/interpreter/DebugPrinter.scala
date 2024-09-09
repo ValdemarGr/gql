@@ -108,8 +108,8 @@ object DebugPrinter {
         case Lift(_, _)        => Doc.text("Lift(...)")
         case EmbedEffect(_)    => Doc.text("EmbedEffect")
         case InlineBatch(_, _) => Doc.text("InlineBatch")
-        case EmbedStream(signal, _) =>
-          record("EmbedStream", kvs("signal" -> Doc.text(signal.toString())))
+        case EmbedStream(_) =>
+          record("EmbedStream", kvs())
         case EmbedError(_) => Doc.text("EmbedError")
         case Compose(_, left, right) =>
           record("Compose", kvs("left" -> preparedStepDoced.document(left), "right" -> preparedStepDoced.document(right)))
