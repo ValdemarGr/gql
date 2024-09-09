@@ -29,7 +29,6 @@ import gql.resolver._
 import io.circe.syntax._
 import org.typelevel.scalaccompat.annotation._
 import cats.effect.implicits._
-import java.util.UUID
 import cats.effect.kernel.Resource
 
 class SubqueryInterpreter[F[_]](
@@ -47,8 +46,7 @@ class SubqueryInterpreter[F[_]](
   def interpretSelection[I](
       fields: List[PreparedField[F, I]],
       en: EvalNode[F, I]
-  ): F[Chain[(String, Json)]] = {
-    // println(s"interpretSelection ${en.value}")
+  ): F[Chain[(String, Json)]] =
     Chain.fromSeq(fields).parFlatTraverse {
       case fa: PreparedSpecification[F, I, a] =>
         val x = fa.specialization.specify(en.value)
@@ -63,15 +61,12 @@ class SubqueryInterpreter[F[_]](
         interpretEffect(df.cont.edges, df.cont.cont, en.modify(_.field(df.outputName)))
           .map(j => Chain(df.outputName -> j))
     }
-  }
 
   @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
   def interpretPrepared[I](
       s: Prepared[F, I],
       en: EvalNode[F, I]
-  ): F[Json] = {
-    // println(s"interpretPrepared ${en.value}")
-
+  ): F[Json] =
     s match {
       case PreparedLeaf(_, _, enc) => F.pure(enc(en.value))
       case Selection(_, xs, _)     => interpretSelection(xs, en).map(_.toList.toMap.asJson)
@@ -90,20 +85,17 @@ class SubqueryInterpreter[F[_]](
             .traverse(i => interpretEffect[i, a](opt.of.edges, opt.of.cont, en.setValue(i)))
             .map(_.getOrElse(Json.Null))
     }
-  }
 
   @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
   def goCont[I](
       c: Continuation[F, I],
       en: EvalNode[F, I]
-  ): F[Json] = {
-    // println(s"goCont ${en.value}")
+  ): F[Json] =
     c match {
       case Continuation.Done(prep)             => interpretPrepared(prep, en)
       case fa: Continuation.Continue[F, I, c]  => goStep[I, c](fa.step, fa.next, en)
       case fa: Continuation.Contramap[F, i, I] => goCont(fa.next, en.map(fa.f))
     }
-  }
 
   @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
   def goStep[I, O](
@@ -111,7 +103,6 @@ class SubqueryInterpreter[F[_]](
       cont: Continuation[F, O],
       en: EvalNode[F, I]
   ): F[Json] = {
-    // println(s"goStep ${en.value}")
     import PreparedStep._
     ps match {
       case Lift(_, f) => goCont(cont, en.map(f))

@@ -10,7 +10,4 @@ object UnsafeFs2Access {
 
   def leaseScope[F[_]: MonadThrow]: Pull[F, Nothing, Resource[F, Unit]] =
     getScope[F].map(scope => Resource.make(scope.lease)(x => x.cancel.rethrow).void)
-
-  def interruptWhen[F[_]: MonadThrow, O](fa: F[Unit])(p: Pull[F, O, Unit]): Pull[F, O, Unit] =
-    Pull.interruptScope(Pull.scope(Pull.interruptWhen(fa.attempt) >> p))
 }

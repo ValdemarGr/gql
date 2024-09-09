@@ -25,8 +25,6 @@ import gql.ast._
 import gql.dsl.all._
 import cats.effect._
 import scala.concurrent.duration._
-import cats.effect.std.Supervisor
-import cats.effect.std.Random
 
 final case class Level1(value: Int)
 final case class Level2(value: Int)

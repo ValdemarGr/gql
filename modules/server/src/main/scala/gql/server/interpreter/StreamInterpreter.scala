@@ -28,7 +28,6 @@ import fs2.Stream
 import scala.concurrent.duration.FiniteDuration
 import cats.arrow.FunctionK
 import cats.effect.std.Supervisor
-import java.util.UUID
 
 /** The [[StreamInterpreter]] is resposible for:
   *   - Wireing together results for a query.
