@@ -164,17 +164,6 @@ class StreamingTest extends CatsEffectSuite {
     }
   }
 
-  // test("resource leak") {
-  //   IO.ref(0).flatMap { ref =>
-  //     val res = Stream.resource(Resource.make(ref.update(_ + 1))(_ => ref.update(_ - 1)))
-
-  //     (0 to 100000).toList.parTraverse_ { _ =>
-  //       val fa = res.evalMap(_ => IO.sleep(10.millis)).take(10).compile.drain
-  //       IO.race(fa, IO.sleep(90.millis))
-  //     } >> ref.get.map(assertEquals(_, 0))
-  //   }
-  // }
-
   test("should stream out some nested elements") {
     assertEquals(clue(level1Users), 0)
     assertEquals(clue(level2Users), 0)
