@@ -27,7 +27,7 @@ ThisBuild / tlSonatypeUseLegacyHost := true
 //ThisBuild / tlFatalWarnings := true
 
 val dbStep = WorkflowStep.Use(
-  ref = UseRef.Public("hoverkraft-tech", "compose-action", "v0.0.0")
+  ref = UseRef.Public("hoverkraft-tech", "compose-action", "v2.0.1")
 )
 
 ThisBuild / githubWorkflowJobSetup += dbStep

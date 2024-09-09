@@ -51,7 +51,7 @@ jobs:
         if: matrix.java == 'temurin@8' && steps.setup-java-temurin-8.outputs.cache-hit == 'false'
         run: sbt +update
 
-      - uses: hoverkraft-tech/compose-action@v0.0.0
+      - uses: hoverkraft-tech/compose-action@v2.0.1
 
       - name: Check that workflows are up to date
         run: sbt githubWorkflowCheck
@@ -102,7 +102,7 @@ jobs:
         if: matrix.java == 'temurin@8' && steps.setup-java-temurin-8.outputs.cache-hit == 'false'
         run: sbt +update
 
-      - uses: hoverkraft-tech/compose-action@v0.0.0
+      - uses: hoverkraft-tech/compose-action@v2.0.1
 
       - name: Download target directories (2.13)
         uses: actions/download-artifact@v3
@@ -175,7 +175,7 @@ jobs:
         if: matrix.java == 'temurin@8' && steps.setup-java-temurin-8.outputs.cache-hit == 'false'
         run: sbt +update
 
-      - uses: hoverkraft-tech/compose-action@v0.0.0
+      - uses: hoverkraft-tech/compose-action@v2.0.1
 
       - name: Submit Dependencies
         uses: scalacenter/sbt-dependency-submission@v2
@@ -197,7 +197,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: hoverkraft-tech/compose-action@v0.0.0
+      - uses: hoverkraft-tech/compose-action@v2.0.1
 
       - name: Setup Java (temurin@8)
         id: setup-java-temurin-8
@@ -234,7 +234,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: hoverkraft-tech/compose-action@v0.0.0
+      - uses: hoverkraft-tech/compose-action@v2.0.1
 
       - name: Setup Java (temurin@8)
         id: setup-java-temurin-8
