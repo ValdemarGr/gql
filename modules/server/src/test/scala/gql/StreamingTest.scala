@@ -285,7 +285,6 @@ class StreamingTest extends CatsEffectSuite {
           // There should be one lease on both resources if we await
           // When a new element arrives, that is, tl.head, then a lease on level2 and level1 should be present
           val check = IO {
-            println((level1Users, level2Users))
             assert(clue(level1Users) >= 1)
             assert(clue(level2Users) >= 1)
           }
