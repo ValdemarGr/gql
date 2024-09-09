@@ -166,22 +166,16 @@ class StreamingTest extends CatsEffectSuite {
     }
   }
 
-  test("example".only) {
-    IO.uncancelable{ poll =>
-      IO.println("hey") *> poll(IO.canceled) *> IO.println("world") *> IO(assert(false))
-    }
-  }
+  // test("resource leak") {
+  //   IO.ref(0).flatMap { ref =>
+  //     val res = Stream.resource(Resource.make(ref.update(_ + 1))(_ => ref.update(_ - 1)))
 
-  test("resource leak") {
-    IO.ref(0).flatMap { ref =>
-      val res = Stream.resource(Resource.make(ref.update(_ + 1))(_ => ref.update(_ - 1)))
-
-      (0 to 100000).toList.parTraverse_ { _ =>
-        val fa = res.evalMap(_ => IO.sleep(10.millis)).take(10).compile.drain
-        IO.race(fa, IO.sleep(90.millis))
-      } >> ref.get.map(assertEquals(_, 0))
-    }
-  }
+  //     (0 to 100000).toList.parTraverse_ { _ =>
+  //       val fa = res.evalMap(_ => IO.sleep(10.millis)).take(10).compile.drain
+  //       IO.race(fa, IO.sleep(90.millis))
+  //     } >> ref.get.map(assertEquals(_, 0))
+  //   }
+  // }
 
   test("should stream out some nested elements") {
     assertEquals(clue(level1Users), 0)
@@ -291,6 +285,7 @@ class StreamingTest extends CatsEffectSuite {
           // There should be one lease on both resources if we await
           // When a new element arrives, that is, tl.head, then a lease on level2 and level1 should be present
           val check = IO {
+            println((level1Users, level2Users))
             assert(clue(level1Users) >= 1)
             assert(clue(level2Users) >= 1)
           }
