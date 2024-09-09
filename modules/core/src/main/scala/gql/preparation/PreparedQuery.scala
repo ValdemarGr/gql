@@ -59,7 +59,6 @@ object PreparedStep {
     def nodeId: NodeId = sei.nodeId
   }
   final case class EmbedStream[F[_], I](
-      signal: Boolean,
       sei: StepEffectId
   ) extends AnyRef
       with PreparedStep[F, fs2.Stream[F, I], I] {

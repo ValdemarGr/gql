@@ -30,7 +30,7 @@ import gql._
   * Some methods are only available resolvers that have a certain shape. Consider taking a look at the companion object for more
   * information.
   */
-final class Resolver[+F[_], -I, +O](private[gql] val underlying: Step[F, I, O]) {
+final class Resolver[+F[_], -I, +O](val underlying: Step[F, I, O]) {
   def andThen[F2[x] >: F[x], O2](that: Resolver[F2, O, O2]): Resolver[F2, I, O2] =
     new Resolver(Step.compose(underlying, that.underlying))
 
@@ -60,9 +60,6 @@ final class Resolver[+F[_], -I, +O](private[gql] val underlying: Step[F, I, O]) 
 
   def streamMap[F2[x] >: F[x], O2](f: O => fs2.Stream[F2, O2]): Resolver[F2, I, O2] =
     this.map(f).embedStream
-
-  def sequentialStreamMap[F2[x] >: F[x], O2](f: O => fs2.Stream[F2, O2]): Resolver[F2, I, O2] =
-    this.map(f).embedSequentialStream
 
   def step: Step[F, I, O] = underlying
 
@@ -152,9 +149,6 @@ object Resolver extends ResolverInstances {
   implicit class ResolverStreamOps[F[_], I, O](private val self: Resolver[F, I, fs2.Stream[F, O]]) extends AnyVal {
     def embedStream: Resolver[F, I, O] =
       self andThen new Resolver(Step.embedStream)
-
-    def embedSequentialStream: Resolver[F, I, O] =
-      self andThen new Resolver(Step.embedStreamFull(signal = false))
   }
 
   implicit class ResolverBatchOps[F[_], K, V](private val r: Resolver[F, Set[K], Map[K, V]]) extends AnyVal {
