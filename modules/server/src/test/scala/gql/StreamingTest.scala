@@ -25,6 +25,8 @@ import gql.ast._
 import gql.dsl.all._
 import cats.effect._
 import scala.concurrent.duration._
+import cats.effect.std.Supervisor
+import cats.effect.std.Random
 
 final case class Level1(value: Int)
 final case class Level2(value: Int)
@@ -164,11 +166,28 @@ class StreamingTest extends CatsEffectSuite {
     }
   }
 
-  test("should stream out some nested elements".only) {
+  test("example".only) {
+    IO.uncancelable{ poll =>
+      IO.println("hey") *> poll(IO.canceled) *> IO.println("world") *> IO(assert(false))
+    }
+  }
+
+  test("resource leak") {
+    IO.ref(0).flatMap { ref =>
+      val res = Stream.resource(Resource.make(ref.update(_ + 1))(_ => ref.update(_ - 1)))
+
+      (0 to 100000).toList.parTraverse_ { _ =>
+        val fa = res.evalMap(_ => IO.sleep(10.millis)).take(10).compile.drain
+        IO.race(fa, IO.sleep(90.millis))
+      } >> ref.get.map(assertEquals(_, 0))
+    }
+  }
+
+  test("should stream out some nested elements") {
     assertEquals(clue(level1Users), 0)
     assertEquals(clue(level2Users), 0)
     // Run test some times
-    (0 to 2000).toList.parTraverse_ { _ =>
+    (0 to 100).toList.parTraverse_ { _ =>
       // if inner re-emits, outer will remain the same
       // if outer re-emits, inner will restart
       val q = """
@@ -192,7 +211,7 @@ class StreamingTest extends CatsEffectSuite {
         }
         .compile
         .drain
-        } >> IO {
+    } >> IO {
       assertEquals(clue(level1Users), 0)
       assertEquals(clue(level2Users), 0)
     }

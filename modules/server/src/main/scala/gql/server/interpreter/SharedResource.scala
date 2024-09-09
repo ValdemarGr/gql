@@ -3,7 +3,6 @@ package gql.server.interpreter
 import cats.effect._
 import cats.implicits._
 import cats.effect.kernel.Resource.ExitCase
-import java.util.UUID
 
 object SharedResource {
   sealed trait State[F[_]]

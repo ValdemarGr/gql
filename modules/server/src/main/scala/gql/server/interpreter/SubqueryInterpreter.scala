@@ -29,7 +29,6 @@ import gql.resolver._
 import io.circe.syntax._
 import org.typelevel.scalaccompat.annotation._
 import cats.effect.implicits._
-import java.util.UUID
 import cats.effect.kernel.Resource
 
 class SubqueryInterpreter[F[_]](
@@ -209,33 +208,29 @@ class SubqueryInterpreter[F[_]](
           }
         }.flatten
 
-      def go(a: A, handle: (EvalNode[F, A], Resource[F, Option[Int]]) => F[Unit]): Stream[F, F[Unit]] =
+      def go(kill: F[Unit], a: A, handle: (EvalNode[F, A], Resource[F, Option[Int]]) => F[Unit]): Stream[F, F[Unit]] =
         for {
-          killSig <- Stream.eval(F.deferred[Unit])
-          kill = killSig.complete(()).void
-          // leaseScope <- fs2.UnsafeFs2Access.leaseScope[F].flatMap(Pull.output1(_)).streamNoScope
-          // safeLease <- Stream.resource(SharedResource.make[F](leaseScope))
-          safeLease = Resource.pure[F, Option[Int]](Some(1))
-          en = mkEn(kill, safeLease, a)
-          _ <- Stream.eval(handle(en, safeLease))
+          leaseScope <- fs2.UnsafeFs2Access.leaseScope[F].flatMap(Pull.output1(_)).streamNoScope
+          safeLease <- Stream.resource(SharedResource.make[F](leaseScope))
+          _ <- Stream.eval(handle(mkEn(kill, safeLease, a), safeLease))
         } yield kill
 
-      def walk(xs: Stream[F, A], kill: F[Unit]): Stream[F, Unit] =
-        xs.pull.uncons1.flatMap {
-          case None => Pull.done
-          case Some((hd, tl)) =>
-            Pull.eval(kill) >>
-              go(hd, (en, sl) => F.uncancelable(tryUpdate(_, sl, en)).void).flatMap(walk(tl, _)).pull.echo
-        }.streamNoScope
+      val sout = stream.zipWithIndex
+        .evalMap[F, (Option[Deferred[F, Unit]], A)] {
+          case (a, 0) => (none[Deferred[F, Unit]], a).pure[F]
+          case (a, _) => F.deferred[Unit].map(d => (Some(d), a))
 
-      val sout = stream.pull.uncons1.flatMap {
-        case None => Pull.done
-        case Some((hd, tl)) =>
-          go(hd, (en, _) => goCont(cont, en).flatMap(d.complete(_)).void)
-            .flatMap(x => walk(tl, x).interruptWhen((en.interruptContext).attempt))
-            .pull
-            .echo
-      }.streamNoScope
+        }
+        .zipWithPrevious
+        .flatMap {
+          case (None, (_, a)) => go(F.unit, a, (en, _) => goCont(cont, en).flatMap(d.complete(_)).void)
+          case (Some((killPrev, _)), (killMe, a)) =>
+            val kp: F[Unit] = killPrev.traverse_(_.complete(()))
+            val km = killMe.traverse_(_.get)
+            Stream.eval(kp) >> go(km, a, (en, sl) => F.uncancelable(tryUpdate(_, sl, en)))
+        }
+        // we may only interrupt after first element
+        .interruptWhen(d.get >> en.interruptContext.attempt)
 
       sout.compile.drain
     }
