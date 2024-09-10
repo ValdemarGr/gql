@@ -15,6 +15,7 @@
  */
 package gql.server.interpreter
 
+import fs2.{Stream, Pull}
 import cats._
 import cats.data._
 import gql.preparation._
@@ -27,26 +28,11 @@ import scala.concurrent.duration.FiniteDuration
 import gql.resolver._
 import io.circe.syntax._
 import org.typelevel.scalaccompat.annotation._
-
 import cats.effect.implicits._
-final case class StreamData[F[_], I](
-    cont: Continuation[F, I],
-    value: Either[Throwable, I]
-)
-object StreamData {
-  import org.typelevel.paiges._
-  implicit def docedForStreamData[F[_]]: Document[StreamData[F, ?]] =
-    DebugPrinter.Printer.streamDataDoced[F]
-}
+import cats.effect.kernel.Resource
 
-/** The [[SubqueryInterpreter]] recursively runs through the AST and performs a multitude of tasks:
-  *   - Runs the [[gql.resolver.Resolver]]/[[gql.resolver.Step]]s defined in the query.
-  *   - Accumulates errors that occur during the evaluation of the query.
-  *   - Logs streams that have been subscribed to.
-  *   - Batches computations that have been marked as batchable.
-  */
 class SubqueryInterpreter[F[_]](
-    ss: SignalScopes[F, StreamData[F, ?]],
+    state: Ref[F, EvalState[F]],
     sup: Supervisor[F],
     stats: Statistics[F],
     throttle: F ~> F,
@@ -60,7 +46,7 @@ class SubqueryInterpreter[F[_]](
   def interpretSelection[I](
       fields: List[PreparedField[F, I]],
       en: EvalNode[F, I]
-  ): F[Chain[(String, Json)]] = {
+  ): F[Chain[(String, Json)]] =
     Chain.fromSeq(fields).parFlatTraverse {
       case fa: PreparedSpecification[F, I, a] =>
         val x = fa.specialization.specify(en.value)
@@ -75,13 +61,12 @@ class SubqueryInterpreter[F[_]](
         interpretEffect(df.cont.edges, df.cont.cont, en.modify(_.field(df.outputName)))
           .map(j => Chain(df.outputName -> j))
     }
-  }
 
   @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
   def interpretPrepared[I](
       s: Prepared[F, I],
       en: EvalNode[F, I]
-  ): F[Json] = {
+  ): F[Json] =
     s match {
       case PreparedLeaf(_, _, enc) => F.pure(enc(en.value))
       case Selection(_, xs, _)     => interpretSelection(xs, en).map(_.toList.toMap.asJson)
@@ -100,7 +85,6 @@ class SubqueryInterpreter[F[_]](
             .traverse(i => interpretEffect[i, a](opt.of.edges, opt.of.cont, en.setValue(i)))
             .map(_.getOrElse(Json.Null))
     }
-  }
 
   @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
   def goCont[I](
@@ -169,26 +153,17 @@ class SubqueryInterpreter[F[_]](
         goStep(alg.step, cont.contramap[o2](o2 => (o2, c2)), en.setValue(i2))
       case alg: EmbedStream[F, i] =>
         val stream = en.value: fs2.Stream[F, i]
-        val effect: F[EvalNode[F, i]] =
-          ss.acquireAwait(
-            stream.attempt.map(StreamData(cont, _)),
-            en.scope,
-            signal = alg.signal,
-            cursor = en.cursor
-          ).flatMap { case (s, sd) => F.fromEither(sd.value).map(i => en.setValue(i.asInstanceOf[i]).setScope(s)) }
+        val effect = subscribeStream[i](stream, cont, en)
 
-        runEffect(effect, alg.sei.edgeId, 1, e => EvalFailure.StreamHeadResolution(en.cursor, Left(e)))
-          .flatMap {
-            case Some(x) => goCont(cont, x)
-            case None    => F.pure(Json.Null)
-          }
+        val _ = alg
+        effect
     }
   }
 
   def runEffect[A](fa: F[A], id: UniqueEdgeCursor, n: Int, makeError: Throwable => EvalFailure): F[Option[A]] =
     throttle(fa.timed.attempt).flatMap {
-      case Right((t, a)) => submit(id.asString, t, n) *> F.pure(Some(a))
-      case Left(err)     => errors.update(makeError(err) +: _).as(None)
+      case Right((t, a)) => submit(id.asString, t, n) *> a.some.pure[F]
+      case Left(err)     => errors.update(makeError(err) +: _).as(none[A])
     }
 
   def interpretEffect[I0, O0](
@@ -197,4 +172,76 @@ class SubqueryInterpreter[F[_]](
       en: EvalNode[F, I0]
   ): F[Json] =
     goStep[I0, O0](ps, Continuation.Done(cont), en)
+
+  def subscribeStream[A](
+      stream: Stream[F, A],
+      cont: Continuation[F, A],
+      en: EvalNode[F, ?]
+  ): F[Json] = for {
+    tok <- F.unique
+    d <- F.deferred[Json]
+
+    background = {
+      def mkEn(isKilled: F[Unit], leaseThis: Resource[F, Option[Int]], a: A): EvalNode[F, A] =
+        en.addParentPath(tok).setInterruptContext(isKilled).setParentLease(leaseThis).setValue(a)
+
+      def tryUpdate(poll: Poll[F], lease: Resource[F, Option[Int]], c: EvalNode[F, A]): F[Unit] =
+        state.modify { s =>
+          s.values match {
+            // If we are not consuming, we await next and try again
+            case None =>
+              (s, (poll(s.ps.consumed) >> tryUpdate(poll, lease, c)))
+            // If we are consuming, publish the value and await next consumption
+            case Some(xs) =>
+              (
+                s.copy(values = Some(EvalState.Entry(tok, cont, c) :: xs)),
+                s.ps.notifyProduced >> poll(s.ps.consumed)
+              )
+          }
+        }.flatten
+
+      def go(a: A, handle: (EvalNode[F, A], Resource[F, Option[Int]]) => F[Unit]): Stream[F, F[Unit]] =
+        for {
+          killSig <- Stream.eval(F.deferred[Unit])
+          kill = killSig.complete(()).void
+          leaseScope <- fs2.UnsafeFs2Access.leaseScope[F].flatMap(Pull.output1(_)).streamNoScope
+          safeLease <- Stream.resource(SharedResource.make[F](leaseScope))
+          _ <- Stream.eval(handle(mkEn(kill, safeLease, a), safeLease))
+        } yield kill
+
+      def walk(xs: Stream[F, A], kill: F[Unit]): Stream[F, Unit] =
+        xs.pull.uncons1.flatMap {
+          case None => Pull.done
+          case Some((hd, tl)) =>
+            Pull.eval(kill) >>
+              go(hd, (en, sl) => F.uncancelable(tryUpdate(_, sl, en)).void).flatMap(walk(tl, _)).pull.echo
+        }.streamNoScope
+
+      val sout = stream.pull.uncons1.flatMap {
+        case None => Pull.done
+        case Some((hd, tl)) =>
+          go(hd, (en, _) => goCont(cont, en).flatMap(d.complete(_)).void)
+            .flatMap(x => walk(tl, x).interruptWhen((en.interruptContext).attempt))
+            .pull
+            .echo
+      }.streamNoScope
+
+      sout
+    }
+
+    // _ <- sup.supervise(background.compile.drain)
+    // to fix stream resource safety
+    interruptStream <- F.deferred[Unit]
+    streamDone <- F.deferred[Unit]
+    _ <- F.uncancelable { _ =>
+      val killStream = interruptStream.complete(()).void
+      val markDone = streamDone.complete(()).void
+      val s = background.interruptWhen(interruptStream.get.attempt).compile.drain.guarantee(markDone)
+      sup
+        .supervise(F.never[Unit].guarantee(killStream *> streamDone.get))
+        .onError(_ => killStream.void) *> s.start.void
+    }
+
+    o <- d.get
+  } yield o
 }

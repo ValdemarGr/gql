@@ -41,10 +41,12 @@ query Test {
   test("gen the schema") {
     Files[IO].tempDirectory.use { dir =>
       val shared = dir / "shared.graphql"
-      val schema = Path("./schema.graphql")
+      val schema = dir / "schema.graphql"
       val qryloc = dir / "query.graphql"
       val input = Generator.Input(query = qryloc, output = dir / "output.scala")
-      val writeF = fs2.Stream(qry).through(fs2.text.utf8.encode).through(Files[IO].writeAll(qryloc)).compile.drain
+      val writeF =
+        fs2.Stream(qry).through(fs2.text.utf8.encode).through(Files[IO].writeAll(qryloc)).compile.drain >>
+          fs2.io.readClassLoaderResource[IO]("./schema.graphql").through(Files[IO].writeAll(schema)).compile.drain
 
       writeF *>
         Generator.mainGenerate[IO](

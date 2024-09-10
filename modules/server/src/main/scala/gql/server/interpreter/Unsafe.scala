@@ -13,14 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package gql.server.interpreter
+package fs2
 
-import cats.effect._
+import fs2.internal.Scope
+import cats.effect.Resource
+import cats._
+import cats.implicits._
 
-trait Lease[F[_]] {
-  def scope: Scope[F]
+object UnsafeFs2Access {
+  def getScope[F[_]]: Pull[F, Nothing, Scope[F]] = Pull.getScope[F]
 
-  def id: Unique.Token
-
-  def release: F[Unit]
+  def leaseScope[F[_]: MonadThrow]: Pull[F, Nothing, Resource[F, Unit]] =
+    getScope[F].map(scope => Resource.make(scope.lease)(x => x.cancel.rethrow).void)
 }

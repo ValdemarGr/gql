@@ -42,7 +42,7 @@ object AlphaRenaming {
             alphaStep(scope, alg.fbd)
           ).mapN(Choose[f, i, a, b, c](alg.nodeId.alpha(scope), _, _))
         case alg: First[f, i, a, b] => alphaStep(scope, alg.step).map(First[f, i, a, b](alg.nodeId.alpha(scope), _))
-        case alg: EmbedStream[f, i] => now(EmbedStream[f, i](alg.signal, alg.sei.alpha(scope)))
+        case alg: EmbedStream[f, i] => now(EmbedStream[f, i](alg.sei.alpha(scope)))
       }
     }
 

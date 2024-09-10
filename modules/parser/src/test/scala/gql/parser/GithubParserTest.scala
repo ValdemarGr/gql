@@ -17,12 +17,11 @@ package gql.parser
 
 import cats.implicits._
 import munit.CatsEffectSuite
-import fs2.io.file._
 import cats.effect._
 
 class GithubParserTest extends CatsEffectSuite {
   test(s"parsing github query") {
-    Files[IO].readAll(Path("./schema.graphql")).through(fs2.text.utf8.decode).compile.string.map { sch =>
+    fs2.io.readClassLoaderResource[IO]("./schema.graphql").through(fs2.text.utf8.decode).compile.string.map { sch =>
       assert(clue(gql.parser.parseSchema(sch).leftMap(_.prettyError.value)).isRight)
     }
     // assert(clue(gql.parser.parseQuery(q).leftMap(_.prettyError.value)).isRight)

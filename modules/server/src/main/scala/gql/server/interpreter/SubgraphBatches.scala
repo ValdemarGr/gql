@@ -65,7 +65,7 @@ object SubgraphBatches {
   def countStep[F[_]](state: State, step: PreparedStep[F, ?, ?]): Eval[State] = Eval.defer {
     import PreparedStep._
     step match {
-      case Lift(_, _) | EmbedError(_) | GetMeta(_, _) | EmbedEffect(_) | EmbedStream(_, _) => Eval.now(state)
+      case Lift(_, _) | EmbedError(_) | GetMeta(_, _) | EmbedEffect(_) | EmbedStream(_) => Eval.now(state)
       case Compose(_, l, r) =>
         countStep(state, r).flatMap(countStep(_, l))
       case alg: Choose[F, ?, ?, ?, ?] =>

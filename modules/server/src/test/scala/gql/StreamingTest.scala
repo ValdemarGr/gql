@@ -43,13 +43,13 @@ class StreamingTest extends CatsEffectSuite {
       "Level1",
       "value" -> lift(_.value),
       "level2" -> b {
-        _.map(_ =>
+        _.streamMap(_ =>
           Stream
             .iterate(0)(_ + 1)
             .lift[IO]
             .meteredStartImmediately(500.millis)
             .flatMap(x => fs2.Stream.resource(level1Resource) as Level2(x))
-        ).embedSequentialStream
+        )
       }
     )
   }
@@ -86,7 +86,7 @@ class StreamingTest extends CatsEffectSuite {
   lazy val schema = Schema.simple(schemaShape).unsafeRunSync()
 
   def query(q: String, variables: Map[String, Json] = Map.empty): Stream[IO, JsonObject] =
-    Compiler[IO].compile(schema, q, variables = variables /* , debug= gql.interpreter.DebugPrinter[IO](IO.println)*/ ) match {
+    Compiler[IO].compile(schema, q, variables = variables) match {
       case Left(err)                          => Stream(err.asJsonObject)
       case Right(Application.Subscription(s)) => s.map(_.asJsonObject)
       case _                                  => ???
@@ -149,7 +149,7 @@ class StreamingTest extends CatsEffectSuite {
     """
 
     query(q)
-      .take(3)
+      .take(5)
       .map { jo =>
         Json.fromJsonObject(jo).field("data").field("level1").field("level2").field("value").int
       }
@@ -167,8 +167,8 @@ class StreamingTest extends CatsEffectSuite {
   test("should stream out some nested elements") {
     assertEquals(clue(level1Users), 0)
     assertEquals(clue(level2Users), 0)
-    // Run test 100 times
-    (0 to 10).toList.parTraverse { _ =>
+    // Run test some times
+    (0 to 100).toList.parTraverse_ { _ =>
       // if inner re-emits, outer will remain the same
       // if outer re-emits, inner will restart
       val q = """
@@ -267,15 +267,24 @@ class StreamingTest extends CatsEffectSuite {
 
     query(q).pull.uncons1
       .flatMap {
-        case None => ???
+        case None         => ???
         case Some((_, _)) =>
-          Pull.eval {
-            IO {
-              // There should be one lease on both resources
-              assert(clue(level1Users) >= 1)
-              assert(clue(level2Users) >= 1)
-            }
+          // There should be one lease on both resources if we await
+          // When a new element arrives, that is, tl.head, then a lease on level2 and level1 should be present
+          val check = IO {
+            assert(clue(level1Users) >= 1)
+            assert(clue(level2Users) >= 1)
           }
+
+          val tryComplete =
+            Stream
+              .repeatEval(check.attempt)
+              .meteredStartImmediately(100.millis)
+              .find(_.isRight)
+              .compile
+              .drain
+
+          Pull.eval(IO.race(tryComplete, IO.sleep(5.seconds) >> check)).void
       }
       .stream
       .compile

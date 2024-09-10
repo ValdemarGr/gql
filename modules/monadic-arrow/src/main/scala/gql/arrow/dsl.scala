@@ -40,8 +40,6 @@ trait ResolverArrowDsl[F[_]] extends Language[Resolver[F, *, *]] {
       v(_.emap(f))
     def streamMap[B](f: A => fs2.Stream[F, B])(implicit sp: SourcePos): Decl[Var[B]] =
       v(_.streamMap(f))
-    def sequentialStreamMap[B](f: A => fs2.Stream[F, B])(implicit sp: SourcePos): Decl[Var[B]] =
-      v(_.sequentialStreamMap(f))
   }
 }
 

@@ -44,8 +44,8 @@ object QueryInterpreter {
   )
 
   object Input {
-    def root[F[_], A](data: A, cont: Prepared[F, A], scope: Scope[F]): Input[F, A] =
-      Input(Continuation.Done(cont), EvalNode.empty(data, scope))
+    def root[F[_]: Async, A](data: A, cont: Prepared[F, A]): Input[F, A] =
+      Input(Continuation.Done(cont), EvalNode.empty(data))
   }
 
   final case class Results(
@@ -55,15 +55,15 @@ object QueryInterpreter {
 
   def apply[F[_]](
       schemaState: SchemaState[F],
-      ss: SignalScopes[F, StreamData[F, ?]],
-      throttle: F ~> F
+      ss: Ref[F, EvalState[F]],
+      throttle: F ~> F,
+      sup: Supervisor[F]
   )(implicit stats: Statistics[F], planner: Planner[F], F: Async[F]) =
     new QueryInterpreter[F] {
-      def interpretOne[A](input: Input[F, A], sgb: SubgraphBatches[F], errors: Ref[F, Chain[EvalFailure]]): F[Json] =
-        Supervisor[F].use { sup =>
-          val go = new SubqueryInterpreter(ss, sup, stats, throttle, errors, sgb)
-          go.goCont(input.continuation, input.data)
-        }
+      def interpretOne[A](input: Input[F, A], sgb: SubgraphBatches[F], errors: Ref[F, Chain[EvalFailure]]): F[Json] = {
+        val go = new SubqueryInterpreter(ss, sup, stats, throttle, errors, sgb)
+        go.goCont(input.continuation, input.data)
+      }
 
       def interpretAll(inputs: NonEmptyList[Input[F, ?]]): F[Results] = {
         /* We perform an alpha renaming for every input to ensure that every node is distinct

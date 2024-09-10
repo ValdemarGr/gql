@@ -265,10 +265,12 @@ object Query {
       Doc.intercalate(Doc.comma + Doc.line, docs).bracketBy(Doc.char('{'), Doc.char('}'))
     }
 
-    def renderFragment(frag: Fragment[?]): Doc =
-      Doc.text("fragment") + Doc.space +
-        Doc.text(frag.name) + Doc.space +
-        Doc.text("on") + Doc.space + Doc.text(frag.on) + Doc.space +
-        renderSelectionSet(frag.subSelection <* matchTypename(frag.on))
+    def renderFragment(frag: Fragment[?]): Doc = frag match {
+      case frag: Fragment[a] =>
+        Doc.text("fragment") + Doc.space +
+          Doc.text(frag.name) + Doc.space +
+          Doc.text("on") + Doc.space + Doc.text(frag.on) + Doc.space +
+          renderSelectionSet(frag.subSelection <* matchTypename(frag.on))
+    }
   }
 }

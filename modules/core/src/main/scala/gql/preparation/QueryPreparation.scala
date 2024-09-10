@@ -86,8 +86,8 @@ class QueryPreparation[F[_], C](
         (liftK(nextNodeId), left, right).mapN(PreparedStep.Compose.apply[F, i, a, o])
       case _: Step.Alg.EmbedEffect[F, i] =>
         nextId.map(PreparedStep.EmbedEffect[F, i](_))
-      case alg: Step.Alg.EmbedStream[F, i] =>
-        nextId.map(PreparedStep.EmbedStream[F, i](alg.signal, _))
+      case _: Step.Alg.EmbedStream[F, i] =>
+        nextId.map(PreparedStep.EmbedStream[F, i](_))
       case alg: Step.Alg.Choose[F, a, b, c, d] =>
         val left = rec[a, c](alg.fac, "choice-left")
         val right = rec[b, d](alg.fab, "choice-right")

@@ -26,9 +26,8 @@ ThisBuild / mimaPreviousArtifacts := Set.empty
 ThisBuild / tlSonatypeUseLegacyHost := true
 //ThisBuild / tlFatalWarnings := true
 
-val dbStep = WorkflowStep.Run(
-  commands = List("docker-compose up -d"),
-  name = Some("Start services")
+val dbStep = WorkflowStep.Use(
+  ref = UseRef.Public("hoverkraft-tech", "compose-action", "v2.0.1")
 )
 
 ThisBuild / githubWorkflowJobSetup += dbStep
@@ -100,6 +99,8 @@ lazy val sharedSettings = Seq(
   mimaReportSignatureProblems := false,
   mimaFailOnProblem := false,
   mimaPreviousArtifacts := Set.empty,
+  Test / unmanagedResources += file("./schema.graphql"),
+  fork := true,
   scalacOptions ++= {
     if (scalaVersion.value.startsWith("2")) {
       Seq(
@@ -114,10 +115,10 @@ lazy val sharedSettings = Seq(
   libraryDependencies ++= Seq(
     "org.typelevel" %% "cats-effect" % "3.5.4",
     "org.typelevel" %% "cats-mtl" % "1.3.1",
-    "org.typelevel" %% "cats-core" % "2.9.0",
-    "org.typelevel" %% "cats-free" % "2.9.0",
-    "co.fs2" %% "fs2-core" % "3.7.0",
-    "co.fs2" %% "fs2-io" % "3.7.0",
+    "org.typelevel" %% "cats-core" % "2.12.0",
+    "org.typelevel" %% "cats-free" % "2.12.0",
+    "co.fs2" %% "fs2-core" % "3.11.0",
+    "co.fs2" %% "fs2-io" % "3.11.0",
     "org.typelevel" %% "cats-parse" % "0.3.8",
     "io.circe" %% "circe-core" % "0.14.6",
     "io.circe" %% "circe-parser" % "0.14.6",
@@ -149,7 +150,10 @@ lazy val monadicArrow = project
 lazy val server = project
   .in(file("modules/server"))
   .settings(sharedSettings)
-  .settings(name := "gql-server")
+  .settings(
+    name := "gql-server",
+    fork := true
+  )
   .dependsOn(core)
 
 lazy val client = project

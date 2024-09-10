@@ -28,10 +28,7 @@ object Step {
 
     final case class EmbedEffect[F[_], I]() extends AnyRef with Step[F, F[I], I]
 
-    final case class EmbedStream[F[_], I](
-        signal: Boolean
-    ) extends AnyRef
-        with Step[F, fs2.Stream[F, I], I]
+    final case class EmbedStream[F[_], I]() extends AnyRef with Step[F, fs2.Stream[F, I], I]
 
     final case class EmbedError[I]() extends AnyRef with Step[Nothing, Ior[String, I], I]
 
@@ -59,11 +56,8 @@ object Step {
   def embedError[F[_], I]: Step[F, Ior[String, I], I] =
     Alg.EmbedError()
 
-  def embedStreamFull[F[_], I, O](signal: Boolean): Step[F, fs2.Stream[F, I], I] =
-    Alg.EmbedStream(signal)
-
   def embedStream[F[_], I, O]: Step[F, fs2.Stream[F, I], I] =
-    embedStreamFull(signal = true)
+    Alg.EmbedStream()
 
   def argument[F[_], A](arg: Arg[A]): Step[F, Any, A] =
     Alg.Argument(arg)

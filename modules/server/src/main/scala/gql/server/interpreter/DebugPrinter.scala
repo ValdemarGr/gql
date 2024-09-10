@@ -18,7 +18,6 @@ package gql.server.interpreter
 import cats._
 import cats.implicits._
 import org.typelevel.paiges._
-import cats.effect._
 import gql.preparation._
 
 trait DebugPrinter[F[_]] {
@@ -109,8 +108,8 @@ object DebugPrinter {
         case Lift(_, _)        => Doc.text("Lift(...)")
         case EmbedEffect(_)    => Doc.text("EmbedEffect")
         case InlineBatch(_, _) => Doc.text("InlineBatch")
-        case EmbedStream(signal, _) =>
-          record("EmbedStream", kvs("signal" -> Doc.text(signal.toString())))
+        case EmbedStream(_) =>
+          record("EmbedStream", kvs())
         case EmbedError(_) => Doc.text("EmbedError")
         case Compose(_, left, right) =>
           record("Compose", kvs("left" -> preparedStepDoced.document(left), "right" -> preparedStepDoced.document(right)))
@@ -144,33 +143,5 @@ object DebugPrinter {
             )
           )
       }
-
-    def streamDataDoced[F[_]]: Document[StreamData[F, ?]] =
-      Document[StreamData[F, ?]] { sd =>
-        record(
-          "StreamData",
-          kvs(
-            "cont" -> continuationDoced.document(sd.cont),
-            "value" -> Doc.text(sd.value.leftMap(_.getMessage()).map(_.getClass().getName()).toString())
-          )
-        )
-      }
-
-    def resourceInfoDoced[F[_], A](isOpen: Boolean, names: Map[Unique.Token, String])(implicit
-        D: Document[A]
-    ): Document[SignalScopes.ResourceInfo[F, A]] = { ri =>
-      def makeName(id: Unique.Token): Doc =
-        Doc.text(names.get(id).getOrElse(id.toString()))
-
-      record(
-        "ResourceInfo",
-        kvs(
-          "parentName" -> makeName(ri.parent.scope.id),
-          "name" -> makeName(ri.scope.id),
-          "open" -> Doc.text(isOpen.toString()),
-          "value" -> D.document(ri.value)
-        )
-      )
-    }
   }
 }
