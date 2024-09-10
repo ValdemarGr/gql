@@ -16,6 +16,7 @@
 package gql.server.interpreter
 
 import gql.preparation._
+import cats.data.Ior
 
 sealed trait Continuation[F[_], -I] {
   def contramap[I2](f: I2 => I): Continuation[F, I2] =
@@ -31,4 +32,7 @@ object Continuation {
       f: I2 => I,
       next: Continuation[F, I]
   ) extends Continuation[F, I2]
+  final case class Rethrow[F[_], I](
+      inner: Continuation[F, I]
+  ) extends Continuation[F, Ior[EvalFailure, I]]
 }

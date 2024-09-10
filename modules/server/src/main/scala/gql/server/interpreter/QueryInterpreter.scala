@@ -94,6 +94,7 @@ object QueryInterpreter {
           case Continuation.Done(prep)             => analyzer.analyzePrepared(prep)
           case fa: Continuation.Continue[F, ?, ?]  => analyzer.analyzeStep(fa.step) *> contCost(fa.next)
           case fa: Continuation.Contramap[F, ?, ?] => contCost(fa.next)
+          case fa: Continuation.Rethrow[F, ?]      => contCost(fa.inner)
         }
 
       contCost(cont)

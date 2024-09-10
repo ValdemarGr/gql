@@ -86,6 +86,7 @@ object AlphaRenaming {
       case Continuation.Continue(step, cont) =>
         (alphaStep(scope, step), alphaContinuation(scope, cont)).mapN(Continuation.Continue(_, _))
       case Continuation.Contramap(f, cont) => alphaContinuation(scope, cont).map(Continuation.Contramap(f, _))
+      case r: Continuation.Rethrow[F, i]   => alphaContinuation(scope, r.inner).map(Continuation.Rethrow(_))
     }
   }
 }

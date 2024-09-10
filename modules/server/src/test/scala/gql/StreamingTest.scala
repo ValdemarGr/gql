@@ -78,7 +78,13 @@ class StreamingTest extends CatsEffectSuite {
     subscription = Some(
       tpe[IO, Unit](
         "Subscription",
-        "level1" -> lift(_ => Level1(0))
+        "level1" -> lift(_ => Level1(0)),
+        "throwhd" -> build[IO, Unit](
+          _.streamMap(_ => fs2.Stream(1).covary[IO].evalMap(_ => IO.raiseError[Int](new Exception("err"))).repeat)
+        ),
+        "throwtl" -> build[IO, Unit](
+          _.streamMap(_ => fs2.Stream(1) ++ fs2.Stream(1).covary[IO].evalMap(_ => IO.raiseError[Int](new Exception("err"))).repeat)
+        )
       )
     )
   )
@@ -96,7 +102,7 @@ class StreamingTest extends CatsEffectSuite {
     def field(f: String): Json = {
       assert(clue(j).isObject, "should be object")
       val o = j.asObject.get
-      assert(clue(o(f)).isDefined, s"should have field $f")
+      assert(clue(o(f)).isDefined, s"should have field $f in $j")
       o(f).get
     }
 
@@ -109,6 +115,10 @@ class StreamingTest extends CatsEffectSuite {
       val x = number.toInt
       assert(clue(x).isDefined, "should be int")
       x.get
+    }
+
+    def isNull(): Unit = {
+      assert(clue(j).isNull, "should be null")
     }
   }
 
@@ -162,6 +172,35 @@ class StreamingTest extends CatsEffectSuite {
       assertEquals(clue(level1Users), 0)
       assertEquals(clue(level2Users), 0)
     }
+  }
+
+  test("should be able to throw exceptions in head of stream") {
+    val q = """
+     subscription {
+       throwhd
+     }
+    """
+
+    query(q)
+      .take(1)
+      .compile
+      .lastOrError
+      .map(jo => Json.fromJsonObject(jo).field("data").field("throwhd").isNull)
+  }
+
+  test("should be able to throw exceptions in tail of stream") {
+    val q = """
+     subscription {
+       throwtl
+     }
+    """
+
+    query(q)
+      .drop(1)
+      .take(1)
+      .compile
+      .lastOrError
+      .map(jo => Json.fromJsonObject(jo).field("data").field("throwtl").isNull)
   }
 
   test("should stream out some nested elements") {

@@ -142,6 +142,13 @@ object DebugPrinter {
               "cont" -> continuationDoced.document(next)
             )
           )
+        case Continuation.Rethrow(inner) =>
+          record(
+            "Continuation.Rethrow",
+            kvs(
+              "inner" -> continuationDoced.document(inner)
+            )
+          )
       }
   }
 }

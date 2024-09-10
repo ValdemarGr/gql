@@ -42,6 +42,9 @@ class SubqueryInterpreter[F[_]](
   def submit(name: String, duration: FiniteDuration, size: Int): F[Unit] =
     sup.supervise(stats.updateStats(name, duration, size)).void
 
+  def rethrow[A](cont: Continuation[F, A]): Continuation[F, Ior[EvalFailure, A]] =
+    Continuation.Rethrow[F, A](cont)
+
   @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
   def interpretSelection[I](
       fields: List[PreparedField[F, I]],
@@ -95,6 +98,10 @@ class SubqueryInterpreter[F[_]](
       case Continuation.Done(prep)             => interpretPrepared(prep, en)
       case fa: Continuation.Continue[F, I, c]  => goStep[I, c](fa.step, fa.next, en)
       case fa: Continuation.Contramap[F, i, I] => goCont(fa.next, en.map(fa.f))
+      case fa: Continuation.Rethrow[F, i] =>
+        val x = en.value: Ior[EvalFailure, i]
+        x.left.traverse(x => errors.update(x +: _)) *>
+          x.right.traverse(x => goCont(fa.inner, en.setValue(x))).map(_.getOrElse(Json.Null))
     }
 
   @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
@@ -107,11 +114,9 @@ class SubqueryInterpreter[F[_]](
     ps match {
       case Lift(_, f) => goCont(cont, en.map(f))
       case fa: EmbedEffect[F, i] =>
-        runEffect(en.value: F[i], fa.sei.edgeId, 1, e => EvalFailure.EffectResolution(en.cursor, Left(e)))
-          .flatMap {
-            case Some(x) => goCont(cont, en.setValue(x))
-            case None    => F.pure(Json.Null)
-          }
+        val fb = en.value: F[i]
+        runEffect(fb, fa.sei.edgeId, 1, e => EvalFailure.EffectResolution(en.cursor, Left(e)))
+          .flatMap(x => goCont(rethrow(cont), en.setValue(x)))
       case alg: InlineBatch[F, k, o] =>
         val keys = en.value: Set[k]
         subgraphBatches
@@ -129,9 +134,7 @@ class SubqueryInterpreter[F[_]](
             case None    => F.pure(Json.Null)
           }
       case EmbedError(_) =>
-        val v = en.value
-        v.left.traverse(x => errors.update(EvalFailure.Raised(en.cursor, x) +: _)) *>
-          v.right.traverse(x => goCont(cont, en.setValue(x))).map(_.getOrElse(Json.Null))
+        goCont(rethrow(cont), en.setValue(en.value.leftMap(EvalFailure.Raised(en.cursor, _))))
       case GetMeta(_, pm0) =>
         val pm = pm0.value
         goCont(cont, en.map(_ => FieldMeta(QueryMeta(en.cursor, pm.variables), pm.args, pm.pdf)))
@@ -151,19 +154,21 @@ class SubqueryInterpreter[F[_]](
       case alg: First[F, i2, o2, c2] =>
         val (i2, c2) = en.value: (i2, c2)
         goStep(alg.step, cont.contramap[o2](o2 => (o2, c2)), en.setValue(i2))
-      case alg: EmbedStream[F, i] =>
+      case _: EmbedStream[F, i] =>
         val stream = en.value: fs2.Stream[F, i]
-        val effect = subscribeStream[i](stream, cont, en)
-
-        val _ = alg
-        effect
+        val s2 = stream.attempt.zipWithIndex.map {
+          case (Left(t), 0)  => EvalFailure.StreamTailResolution(en.cursor, Left(t)).leftIor[i]
+          case (Left(t), _)  => EvalFailure.StreamHeadResolution(en.cursor, Left(t)).leftIor[i]
+          case (Right(a), _) => a.rightIor[EvalFailure]
+        }
+        subscribeStream[Ior[EvalFailure, i]](s2, rethrow(cont), en)
     }
   }
 
-  def runEffect[A](fa: F[A], id: UniqueEdgeCursor, n: Int, makeError: Throwable => EvalFailure): F[Option[A]] =
+  def runEffect[A](fa: F[A], id: UniqueEdgeCursor, n: Int, makeError: Throwable => EvalFailure): F[Ior[EvalFailure, A]] =
     throttle(fa.timed.attempt).flatMap {
-      case Right((t, a)) => submit(id.asString, t, n) *> a.some.pure[F]
-      case Left(err)     => errors.update(makeError(err) +: _).as(none[A])
+      case Right((t, a)) => submit(id.asString, t, n).as(a.rightIor[EvalFailure])
+      case Left(err)     => makeError(err).leftIor[A].pure[F]
     }
 
   def interpretEffect[I0, O0](
