@@ -333,8 +333,8 @@ lazy val relationalDoobie = project
   .settings(
     name := "gql-relational-doobie",
     libraryDependencies ++= Seq(
-      "org.tpolecat" %% "doobie-core" % "1.0.0-RC4",
-      "org.tpolecat" %% "doobie-postgres" % "1.0.0-RC4" % Test
+      "org.tpolecat" %% "doobie-core" % "1.0.0-RC6",
+      "org.tpolecat" %% "doobie-postgres" % "1.0.0-RC6" % Test
     )
   )
 
