@@ -18,7 +18,66 @@ trait Arc[F[_]] {
 }
 
 object Arc {
-  def make[F[_]]: Resource[F, Arc[F]] = ???
+  final case class State[F[_]](
+      activeLeases: Set[Int],
+      nextLease: Int,
+      release: F[Unit]
+  ) {
+    def tryRelease(id: Int): Either[State[F], F[Unit]] =
+      if (activeLeases.contains(id)) {
+        if (activeLeases.size == 1) Right(release)
+        else Left(copy(activeLeases = activeLeases - id))
+      } else Left(this)
+
+    def acquire: (State[F], (Option[Int], Int)) = {
+      if (activeLeases.isEmpty) (this, (None, 0))
+      else {
+        val nextId = nextLease
+        (copy(activeLeases = activeLeases + nextId, nextLease = nextId + 1), (Some(nextId), activeLeases.size))
+      }
+    }
+  }
+
+  def make[F[_]](implicit F: Async[F]): Resource[F, Arc[F]] = {
+    val init = 0
+    Resource.eval(F.ref(State[F](Set(init), init + 1, F.unit))).flatMap { ref =>
+      def release(id: Int) = F.uncancelable { _ =>
+        ref.modify { s =>
+          s.tryRelease(id) match {
+            case Left(s)  => (s, F.unit)
+            case Right(f) => (s, f)
+          }
+        }.flatten
+      }
+
+      def acquire = ref.modify(_.acquire)
+
+      val useOne: Resource[F, Int] = Resource
+        .make(acquire) { case (id, _) => id.traverse_(release) }
+        .map { case (_, size) => size }
+
+      Resource.onFinalize[F](release(init)).as {
+        new Arc[F] {
+          override def lease: Resource[F, Int] = useOne
+
+          override def leases: F[Int] = ref.get.map(_.activeLeases.size)
+
+          override def add[A](r: Resource[F, A]): F[Option[A]] = F.uncancelable { poll =>
+            useOne.use {
+              case 0 => F.pure(None)
+              case _ =>
+                poll(r.allocated).flatMap { case (a, release) =>
+                  ref.update(s => s.copy(release = s.release *> release)).as(Some(a))
+                }
+            }
+          }
+
+          override def leaseAndAdd[A](r: Resource[F, A]): Resource[F, Option[A]] =
+            lease >> Resource.eval(add(r))
+        }
+      }
+    }
+  }
 }
 
 sealed trait Pull2[+F[_], +O, +A]
@@ -33,10 +92,10 @@ object Pull2 {
   final case class Uncons[F[_], O](
       fa: Pull2[F, O, Unit]
   ) extends Pull2[F, Nothing, Option[(fs2.Chunk[O], Pull2[F, O, Unit])]]
-  final case class FlatMapOutput[F[_], O, O2](
-      fa: Pull2[F, O, Unit],
-      f: O => Pull2[F, O2, Unit]
-  ) extends Pull2[F, O2, Unit]
+  // final case class FlatMapOutput[F[_], O, O2](
+  //     fa: Pull2[F, O, Unit],
+  //     f: O => Pull2[F, O2, Unit]
+  // ) extends Pull2[F, O2, Unit]
   final case class HandleErrorWith[F[_], O, A](
       fa: Pull2[F, O, A],
       f: Throwable => Pull2[F, O, A]
@@ -45,7 +104,10 @@ object Pull2 {
       fa: Pull2[F, O, A]
   ) extends Pull2[F, O, A]
   final case class Acquire[F[_], A](r: Resource[F, A]) extends Pull2[F, Nothing, Option[A]]
-  final case class GetArc[F[_]](arc: Arc[F]) extends Pull2[F, Nothing, Arc[F]]
+  final case class GetArc[F[_]]() extends Pull2[F, Nothing, Arc[F]]
+  final case class Unfree[F[_]]() extends Pull2[F, Nothing, Monad[F]]
+
+  def unfree[F[_]]: Pull2[F, Nothing, Monad[F]] = Unfree()
 
   def output[O](value: fs2.Chunk[O]): Pull2[Nothing, O, Unit] = Output(value)
 
@@ -53,17 +115,17 @@ object Pull2 {
 
   val done: Pull2[Nothing, Nothing, Unit] = Pure(())
 
-  def flatMapOutput[F[_], O, O2](
-      fa: Pull2[F, O, Unit],
-      f: O => Pull2[F, O2, Unit]
-  ): Pull2[F, O2, Unit] = FlatMapOutput(fa, f)
+  // def flatMapOutput[F[_], O, O2](
+  //     fa: Pull2[F, O, Unit],
+  //     f: O => Pull2[F, O2, Unit]
+  // ): Pull2[F, O2, Unit] = FlatMapOutput(fa, f)
 
   def compile[F[_], O, A, B](
       p: Pull2[F, O, A],
       init: B
   )(
       fold: (B, fs2.Chunk[O]) => B
-  )(implicit F: Sync[F]): F[(B, A)] = {
+  )(implicit F: Async[F]): F[(B, A)] = {
     val emptyChunk = fs2.Chunk.empty
 
     val leftUnit = ().asLeft[Nothing]
@@ -84,7 +146,7 @@ object Pull2 {
         getValue: Either[A2, Pull2[F, O2, A2]]
     )
 
-    var arc: Arc[F] = Arc.make[F]
+    var arc: Arc[F] = null
 
     def go[O2, A2](p: Pull2[F, O2, A2]): F[Deferral[O2, A2]] = F.defer {
       p match {
@@ -93,13 +155,14 @@ object Pull2 {
         case o: Output[O2]     => F.pure(Deferral(o.value, leftUnit))
         case uncons: Uncons[F, o] =>
           go[o, Unit](uncons.fa).map { d =>
-            Deferral(
-              emptyChunk,
-              Left {
-                if (d.values.isEmpty) None
-                else Some((d.values, fastSeq(d.getValue)))
-              }
-            )
+            d.getValue match {
+              // no values, no continuation
+              case Left(_) if d.values.isEmpty => Deferral(emptyChunk, Left(None))
+              // no values, continuation
+              case Right(p) if d.values.isEmpty => Deferral(emptyChunk, Right(Uncons(p)))
+              // values, any continuation
+              case _ => Deferral(emptyChunk, Left(Some((d.values, fastSeq(d.getValue)))))
+            }
           }
         case fm: FlatMap[F, O2, a, A2] =>
           go[O2, a](fm.fa).map { out =>
@@ -113,15 +176,16 @@ object Pull2 {
               }
             )
           }
-        case fmo: FlatMapOutput[F, o, O2] =>
-          go[o, Unit](fmo.fa).flatMap { out =>
-            go[O2, Unit](fastTraversePull(out.values.toList, fmo.f)).map { d =>
-              out.getValue match {
-                case Left(())   => d
-                case Right((p)) => Deferral(d.values, Right(fastSeq(d.getValue) >> FlatMapOutput(p, fmo.f)))
-              }
-            }
-          }
+        case unfree: Unfree[F] => F.pure(Deferral(emptyChunk, Left(F)))
+        // case fmo: FlatMapOutput[F, o, O2] =>
+        //   go[o, Unit](fmo.fa).flatMap { out =>
+        //     go[O2, Unit](fastTraversePull(out.values.toList, fmo.f)).map { d =>
+        //       out.getValue match {
+        //         case Left(())   => d
+        //         case Right((p)) => Deferral(d.values, Right(fastSeq(d.getValue) >> FlatMapOutput(p, fmo.f)))
+        //       }
+        //     }
+        //   }
         case he: HandleErrorWith[F, O2, A2] =>
           go[O2, A2](he.fa).attempt.flatMap {
             case Left(e)  => go(he.f(e))
@@ -136,13 +200,11 @@ object Pull2 {
                 go(sa.fa)
                   .map { d =>
                     val next = d.getValue.leftMap(Pure(_)).merge
-                    val guaranteed = HandleErrorWith(
-                      next,
-                      e => {
-                        arc = old
-                        eval(release) >> eval(F.raiseError(e))
-                      }
-                    )
+                    def reset: Pull2[F, Nothing, Unit] = {
+                      arc = old
+                      eval(release)
+                    }
+                    val guaranteed = HandleErrorWith(next <* reset, e => reset >> eval(F.raiseError(e)))
                     Deferral(d.values, Right(guaranteed))
                   }
                   .guarantee(release)
@@ -181,8 +243,8 @@ object Pull2 {
   }
 
   implicit class Pull2UnitOps[F[_], O](private val self: Pull2[F, O, Unit]) {
-    def flatMapOutput[O2](f: O => Pull2[F, O2, Unit]): Pull2[F, O2, Unit] =
-      Pull2.FlatMapOutput(self, f)
+    // def flatMapOutput[O2](f: O => Pull2[F, O2, Unit]): Pull2[F, O2, Unit] =
+    //   Pull2.FlatMapOutput(self, f)
 
     def uncons: Pull2[F, Nothing, Option[(fs2.Chunk[O], Pull2[F, O, Unit])]] =
       Pull2.Uncons(self)
@@ -190,10 +252,27 @@ object Pull2 {
 
   class Stream2[F[_], O](val pull: Pull2[F, O, Unit]) {
     def map[O2](f: O => O2): Stream2[F, O2] =
-      new Stream2(pull.flatMapOutput(o => Pull2.output(fs2.Chunk.singleton(f(o)))))
+      new Stream2(
+        pull.uncons.flatMap {
+          case None => done
+          case Some((hd, tl)) =>
+            output(hd.map(f)) >> new Stream2(tl).map(f).pull
+        }
+      )
 
     def flatMap[O2](f: O => Stream2[F, O2]): Stream2[F, O2] =
-      new Stream2(pull.flatMapOutput(o => f(o).pull))
+      new Stream2(
+        pull.uncons.flatMap {
+          case None => done
+          case Some((hd, tl)) =>
+            def go(xs: List[O]): Pull2[F, O2, Unit] =
+              xs match {
+                case Nil     => new Stream2(tl).flatMap(f).pull
+                case x :: xs => f(x).pull >> go(xs)
+              }
+            go(hd.toList)
+        }
+      )
 
     def ++(that: => Stream2[F, O]): Stream2[F, O] =
       new Stream2(pull >> that.pull)
@@ -206,7 +285,15 @@ object Pull2 {
       else this ++ repeatN(n - 1)
 
     def evalMap[A](f: O => F[A]): Stream2[F, A] =
-      new Stream2(pull.flatMapOutput(o => Pull2.eval(f(o)).flatMap(o => Pull2.output(fs2.Chunk.singleton(o)))))
+      new Stream2(
+        unfree[F].flatMap { implicit F =>
+          pull.uncons.flatMap {
+            case None => done
+            case Some((hd, tl)) =>
+              eval(hd.traverse(f)).flatMap(output[A](_)) >> new Stream2(tl).evalMap(f).pull
+          }
+        }
+      )
 
     def chunkMin(n: Int): Stream2[F, fs2.Chunk[O]] = {
       def go(
@@ -223,6 +310,9 @@ object Pull2 {
 
       new Stream2(go(Chunk.empty, pull))
     }
+
+    def handleErrorWith(f: Throwable => Stream2[F, O]): Stream2[F, O] =
+      new Stream2(Pull2.HandleErrorWith(pull, e => f(e).pull))
   }
 
   object Stream2 {
@@ -239,10 +329,21 @@ class PullV2Test extends CatsEffectSuite {
   test("yoou") {
     val p = Stream2[IO, Int](1).repeatN(100000).chunkMin(100).evalMap(x => IO(x.size))
 
-    fs2.Stream(1).covary[IO].repeatN(100000).chunkMin(100).evalMap(x => IO(x.size)).compile.drain.timed.flatMap { case (duration, _) =>
-      IO(println(duration))
-    } >> compile(p.pull, ())((_, _) => ()).void.timed.flatMap { case (duration, _) =>
-      IO(println(duration))
-    }
+    IO.println("CPS") >>
+      fs2.Stream(1).covary[IO].repeatN(100000).chunkMin(100).evalMap(x => IO(x.size)).compile.drain.timed.flatMap { case (duration, _) =>
+        IO(println(duration))
+      } >> IO.println("closure") >> compile(p.pull, ())((_, _) => ()).void.timed.flatMap { case (duration, _) =>
+        IO(println(duration))
+      }
+  }
+
+  test("err") {
+    val p = Stream2[IO, Int](1)
+      .repeatN(3)
+      .evalMap(i => IO.raiseError[Unit](new Exception("boom")))
+      .map(_ => Option.empty[Throwable])
+      .handleErrorWith(e => Stream2[IO, Option[Throwable]](Some(e)))
+
+    compile(p.pull, Chunk.empty[Option[Throwable]])((z, c) => z ++ c).map(println)
   }
 }
