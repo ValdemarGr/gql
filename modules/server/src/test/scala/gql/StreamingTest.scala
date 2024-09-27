@@ -25,6 +25,7 @@ import gql.ast._
 import gql.dsl.all._
 import cats.effect._
 import scala.concurrent.duration._
+import cats.data.Kleisli
 
 final case class Level1(value: Int)
 final case class Level2(value: Int)
@@ -333,4 +334,23 @@ class StreamingTest extends CatsEffectSuite {
         assert(clue(level2Users) == 0)
       }
   }
+
+  Stream
+    .resource(Resource.make(Kleisli((x: Int) => IO(x)))(_ => Kleisli((_: Int) => IO(()))))
+    .flatMap { _ =>
+      Stream
+        .resource(Resource.make(IO(()))(_ => IO(())))
+        .pull
+        .uncons1
+        .flatMap {
+          case None => Pull.done
+          case Some((hd, tl)) =>
+            Pull.extendScopeTo(Stream.unit.covary[IO]) >> Pull.output1(hd) >> tl.pull.echo
+        }
+        .stream
+        .translate(Kleisli.liftK[IO, Int])
+    }
+    .compile
+    .drain
+    .run(5)
 }

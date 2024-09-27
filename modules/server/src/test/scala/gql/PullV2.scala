@@ -7,12 +7,14 @@ import cats._
 import cats.effect._
 import munit.CatsEffectSuite
 import fs2.Chunk
+import cats.effect.std.Dispatcher
 
 trait Leasable[F[_]] { self =>
   def lease: Resource[F, Boolean]
+
   def mapK[G[_]](fk: F ~> G)(implicit F: MonadCancel[F, ?], G: MonadCancel[G, ?]): Leasable[G] =
     new Leasable[G] {
-      def lease: Resource[G, Boolean] = self.lease.mapK(fk)
+      override def lease: Resource[G, Boolean] = self.lease.mapK(fk)
     }
 }
 
@@ -121,20 +123,20 @@ object Pull2 {
       fa: Pull2[F, O, A]
   ) extends Pull2[F, O, A]
   final case class Acquire[F[_], A](r: Resource[F, A]) extends Pull2[F, Nothing, Option[A]]
-  // final case class Unfree[F[_]]() extends Pull2[F, Nothing, Concurrent[F]]
-  final case class GetLease[F[_]]() extends Pull2[F, Nothing, Resource[F, Boolean]]
-  final case class ReplaceContext[F[_]](
-      ctx: Context[F]
-  ) extends Pull2[F, Nothing, Unit]
-  final case class Translate[G[_], F[_], O, A](
-      fa: Pull2[G, O, A],
-      fk: G ~> F
-  ) extends Pull2[F, O, A]
+  final case class Unfree[F[_]]() extends Pull2[F, Nothing, Concurrent[F]]
+  final case class GetContext[F[_]]() extends Pull2[F, Nothing, Context[F]]
+  final case class ReplaceContext[F[_]](ctx: Context[F]) extends Pull2[F, Nothing, Unit]
   // runs the stream until the next output or termination (A)
   // returns the next evaluation as F
   final case class Step[F[_], O, A](
       fa: Pull2[F, O, A]
   ) extends Pull2[F, Nothing, F[Either[A, (fs2.Chunk[O], Pull2[F, O, A])]]]
+  final case class Translate[F[_], G[_], O, A](
+      pull: Pull2[G, O, A],
+      fk: G ~> F,
+      F: Async[F],
+      G: Async[G]
+  ) extends Pull2[F, O, A]
 
   // Uncons does not introduce any new possible stream formulations
   // but is significantly faster than Step since it doesn't need to track the context and unwind the stack
@@ -142,7 +144,7 @@ object Pull2 {
       fa: Pull2[F, O, Unit]
   ) extends Pull2[F, Nothing, Option[(fs2.Chunk[O], Pull2[F, O, Unit])]]
 
-  // def unfree[F[_]]: Pull2[F, Nothing, Concurrent[F]] = Unfree()
+  def unfree[F[_]]: Pull2[F, Nothing, Concurrent[F]] = Unfree()
 
   def output[O](value: fs2.Chunk[O]): Pull2[Nothing, O, Unit] = Output(value)
 
@@ -157,22 +159,116 @@ object Pull2 {
   ): Pull2[F, Nothing, F[Either[A, (fs2.Chunk[O], Pull2[F, O, A])]]] = Step(fa)
   // def step[F[_], O, A](fa: Pull2[F, O, A]): Pull2[F, Nothing, F[StepResult[F, O, A]]] = Step(fa)
 
-  def getLease[F[_]]: Pull2[F, Nothing, Resource[F, Boolean]] = GetLease()
+  def getContext[F[_]]: Pull2[F, Nothing, Context[F]] = GetContext()
 
   val done: Pull2[Nothing, Nothing, Unit] = Pure(())
 
-  final case class ReadonlyContext[F[_]](
-      arc: Leasable[F],
-      parents: List[Leasable[F]]
-  ) {
-    def mapK[G[_]](fk: F ~> G)(implicit F: MonadCancel[F, ?], G: MonadCancel[G, ?]): ReadonlyContext[G] =
-      ReadonlyContext(arc.mapK(fk), parents.map(_.mapK(fk)))
-  }
-
   final case class Context[F[_]](
       arc: Arc[F],
-      parents: List[Arc[F]]
+      parents: List[Leasable[F]]
   )
+
+  def shift[F[_], G[_]: Concurrent](
+      arc: Arc[F],
+      fk: G ~> F
+  )(implicit F: MonadCancel[F, ?]): Resource[F, Arc[G]] =
+    arc.attachResource(Arc.make[G].mapK(fk)).map(_.get)
+
+  final case class Unconsed[F[_], O2, A2](
+      ctx: Context[F],
+      cont: Either[A2, (fs2.Chunk[O2], Pull2[F, O2, A2])]
+  )
+
+  val leftUnit = ().asLeft[Nothing]
+
+  def stepThrough[F[_], O, A](
+      p: Pull2[F, O, A],
+      ctx: Context[F]
+  )(implicit F: Concurrent[F]): F[Unconsed[F, O, A]] = F.unit >> {
+    p match {
+      case Pure(a)          => F.pure(Unconsed(ctx, Left(a)))
+      case eval: Eval[F, A] => eval.fa.map(a => Unconsed(ctx, Left(a)))
+      case o: Output[O]     => F.pure(Unconsed(ctx, Right(o.value -> done)))
+      case uncons: Uncons[F, o] =>
+        stepThrough[F, o, Unit](uncons.fa, ctx).map { d =>
+          d.cont match {
+            case Left(_)         => Unconsed(d.ctx, Left(None))
+            case Right((hd, tl)) => Unconsed(d.ctx, Left(Some((hd, tl))))
+          }
+        }
+      case fm: FlatMap[F, O, a, A] =>
+        stepThrough[F, O, a](fm.fa, ctx).flatMap { out =>
+          out.cont match {
+            case Left(a)         => stepThrough(fm.f(a), out.ctx)
+            case Right((hd, tl)) => F.pure(Unconsed(out.ctx, Right(hd -> FlatMap(tl, fm.f))))
+          }
+        }
+      case _: Unfree[F] => F.pure(Unconsed(ctx, Left(F)))
+      case he: HandleErrorWith[F, O, A] =>
+        stepThrough[F, O, A](he.fa, ctx).attempt.flatMap {
+          case Left(e) => stepThrough(he.f(e), ctx)
+          case Right(d) =>
+            d.cont match {
+              case Left(_) => F.pure(d)
+              case Right((hd, tl)) =>
+                F.pure(Unconsed(d.ctx, Right(hd -> HandleErrorWith(tl, he.f))))
+            }
+        }
+      case _: GetContext[F]      => F.pure(Unconsed(ctx, Left(ctx)))
+      case rc: ReplaceContext[F] => F.pure(Unconsed(rc.ctx, leftUnit))
+      case sa: SubArc[F, O, A] =>
+        F.uncancelable { poll =>
+          poll(ctx.arc.attachResource(Arc.make[F]).map(_.get).allocated).flatMap { case (child, release) =>
+            val ctx2 = ctx.copy(arc = child, leaseParents = null) // parents = ctx.arc :: ctx.parents)
+            val fa = stepThrough(sa.fa, ctx2).flatMap[Unconsed[F, O, A]] { d =>
+              d.cont match {
+                case Left(a) => release.as(Unconsed(d.ctx, Left(a)))
+                case Right((hd, tl)) =>
+                  val whenDone = eval(release) <* ReplaceContext(ctx)
+                  F.pure(Unconsed(d.ctx, Right(hd -> (tl <* whenDone))))
+              }
+            }
+
+            poll(fa)
+          }
+        }
+      case ac: Acquire[F, a] =>
+        ctx.arc.attachResource(ac.r).allocated.map { case (a, _) => Unconsed(ctx, Left(a)) }
+      case s: Step[F, o, a] =>
+        val run = stepThrough(s.fa, ctx)
+
+        def find[O3, A3](d: Unconsed[F, O3, A3]): Either[A3, (fs2.Chunk[O3], Pull2[F, O3, A3])] =
+          d.cont match {
+            case Left(a)         => Left(a)
+            case Right((hd, tl)) => Right((hd, ReplaceContext(d.ctx) >> tl))
+          }
+
+        F.pure(Unconsed(ctx, Left(run.map(find))))
+      case translate: Translate[F, g, O, A] =>
+        implicit val G = translate.G
+        val fk = translate.fk
+        shift(ctx.arc, fk).allocated.flatMap { case (child, release) =>
+          Dispatcher.parallel[F](await = true)(translate.F).use { d =>
+            val leaseParents = ctx.parents.map { l =>
+              new Leasable[g] {
+                def lease: Resource[g, Boolean] = Resource.make {
+                  val (ga, cancel) = d.unsafeToFutureCancelable(l.lease.allocated)
+                  G.fromFutureCancelable(ga.map{ case (a, rel) => ((a, rel), (rel *> G.fromFuture(G.delay(cancel))))})
+                }
+              }
+            }
+            fk(stepThrough[g, O, A](p, Context(child, null))).flatMap { out =>
+              out.cont match {
+                case Left(a) => release.as(Unconsed[F, O, A](ctx, Left(a)))
+                case Right((hd, tl)) =>
+                  val fin = eval(release) <* ReplaceContext(ctx)
+                  F.pure(Unconsed[F, O, A](ctx, Right(hd -> ((Translate(tl, fk, translate.F, G): Pull2[F, O, A]) <* fin))))
+              }
+            }
+          }
+        }
+    }
+  }
 
   def compile[F[_], O, A, B](
       p: Pull2[F, O, A],
@@ -180,91 +276,14 @@ object Pull2 {
   )(
       fold: (B, fs2.Chunk[O]) => B
   )(implicit F: Async[F]): F[(B, A)] = Arc.make[F].use { initArc =>
-    val leftUnit = ().asLeft[Nothing]
-
-    final case class Unconsed[G[_], O2, A2](
-        ctx: Context[F],
-        cont: Either[A2, (fs2.Chunk[O2], Pull2[G, O2, A2])]
-    )
-
-    def go[G[_], O2, A2](
-        p: Pull2[G, O2, A2],
-        ctx: Context[F],
-        fk: G ~> F
-    ): F[Unconsed[G, O2, A2]] = F.defer {
-      p match {
-        case Pure(a)           => F.pure(Unconsed(ctx, Left(a)))
-        case eval: Eval[G, A2] => fk(eval.fa).map(a => Unconsed(ctx, Left(a)))
-        case o: Output[O2]     => F.pure(Unconsed(ctx, Right(o.value -> done)))
-        case uncons: Uncons[G, o] =>
-          go[G, o, Unit](uncons.fa, ctx, fk).map { d =>
-            d.cont match {
-              case Left(_)         => Unconsed(d.ctx, Left(None))
-              case Right((hd, tl)) => Unconsed(d.ctx, Left(Some((hd, tl))))
-            }
-          }
-        case fm: FlatMap[G, O2, a, A2] =>
-          go[G, O2, a](fm.fa, ctx, fk).flatMap { out =>
-            out.cont match {
-              case Left(a)         => go(fm.f(a), out.ctx, fk)
-              case Right((hd, tl)) => F.pure(Unconsed(out.ctx, Right(hd -> FlatMap(tl, fm.f))))
-            }
-          }
-        // case _: Unfree[G] => F.pure(Unconsed(ctx, Left(F)))
-        case he: HandleErrorWith[G, O2, A2] =>
-          go[G, O2, A2](he.fa, ctx, fk).attempt.flatMap {
-            case Left(e) => go(he.f(e), ctx, fk)
-            case Right(d) =>
-              d.cont match {
-                case Left(_) => F.pure(d)
-                case Right((hd, tl)) =>
-                  F.pure(Unconsed(d.ctx, Right(hd -> HandleErrorWith(tl, he.f))))
-              }
-          }
-        case _: GetLease[G]      => F.pure(Unconsed(ctx, Left(ctx.arc.lease)))
-        case rc: ReplaceContext[G] => F.pure(Unconsed(rc.ctx, leftUnit))
-        case sa: SubArc[F, O2, A2] =>
-          F.uncancelable { poll =>
-            poll(ctx.arc.attachResource(Arc.make[F]).map(_.get).allocated).flatMap { case (child, release) =>
-              val ctx2 = ctx.copy(arc = child, parents = ctx.arc :: ctx.parents)
-              val fa = go(sa.fa, ctx2).flatMap[Unconsed[O2, A2]] { d =>
-                d.cont match {
-                  case Left(a) => release.as(Unconsed(d.ctx, Left(a)))
-                  case Right((hd, tl)) =>
-                    val whenDone = eval(release) <* ReplaceContext(ctx)
-                    F.pure(Unconsed(d.ctx, Right(hd -> (tl <* whenDone))))
-                }
-              }
-
-              poll(fa)
-            }
-          }
-        case ac: Acquire[F, a] =>
-          ctx.arc.attachResource(ac.r).allocated.map { case (a, _) => Unconsed(ctx, Left(a)) }
-        case s: Step[F, o, a] =>
-          val run = go(s.fa, ctx)
-
-          def find[O3, A3](d: Unconsed[O3, A3]): Either[A3, (fs2.Chunk[O3], Pull2[F, O3, A3])] =
-            d.cont match {
-              case Left(a)         => Left(a)
-              case Right((hd, tl)) => Right((hd, ReplaceContext(d.ctx) >> tl))
-            }
-
-          F.pure(Unconsed(ctx, Left(run.map(find))))
-      }
-    }
-
-    def loop(
-        d: Unconsed[O, A],
-        b: B
-    ): F[(B, A)] = d.cont match {
+    def loop(d: Unconsed[F, O, A], b: B): F[(B, A)] = d.cont match {
       case Left(a) => F.pure((b, a))
       case Right((hd, tl)) =>
         val b2 = fold(b, hd)
-        go(tl, d.ctx).flatMap(loop(_, b2))
+        stepThrough(tl, d.ctx).flatMap(loop(_, b2))
     }
 
-    go(p, Context(initArc, Nil)).flatMap(x => loop(x, init))
+    stepThrough(p, Context(initArc, leaseParents = null)).flatMap(x => loop(x, init))
   }
 
   implicit def monad[F[_], O]: Monad[Pull2[F, O, *]] = new Monad[Pull2[F, O, *]] {
@@ -286,7 +305,8 @@ object Pull2 {
     def lease[F2[x] >: F[x]]: Pull2[F2, Nothing, Resource[F2, Arc[F2]]] =
       getContext[F2].flatMap { ctx =>
         unfree[F2].map { implicit F =>
-          Arc.make[F2].flatTap(_.attachResource((ctx.arc :: ctx.parents).traverse_(_.lease)))
+          ???
+          // Arc.make[F2].flatTap(_.attachResource((ctx.arc :: ctx.parents).traverse_(_.lease)))
         }
       }
 
@@ -335,10 +355,12 @@ object Pull2 {
 
     def evalMap[A](f: O => F[A]): Stream2[F, A] =
       new Stream2(
-        pull.uncons.flatMap {
-          case None => done
-          case Some((hd, tl)) =>
-            hd.traverse(x => eval(f(x))).flatMap(output[A](_)) >> new Stream2(tl).evalMap(f).pull
+        unfree[F].flatMap { implicit F =>
+          pull.uncons.flatMap {
+            case None => done
+            case Some((hd, tl)) =>
+              eval(hd.traverse(f)).flatMap(output[A](_)) >> new Stream2(tl).evalMap(f).pull
+          }
         }
       )
 
