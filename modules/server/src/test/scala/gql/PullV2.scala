@@ -7,7 +7,7 @@ import cats._
 import cats.effect._
 import munit.CatsEffectSuite
 import fs2.Chunk
-import cats.effect.std.Dispatcher
+import cats.arrow.FunctionK
 
 trait Leasable[F[_]] { self =>
   def lease: Resource[F, Boolean]
@@ -119,30 +119,31 @@ object Pull2 {
       fa: Pull2[F, O, A],
       f: Throwable => Pull2[F, O, A]
   ) extends Pull2[F, O, A]
-  final case class SubArc[F[_], O, A](
-      fa: Pull2[F, O, A]
-  ) extends Pull2[F, O, A]
   final case class Acquire[F[_], A](r: Resource[F, A]) extends Pull2[F, Nothing, Option[A]]
   final case class Unfree[F[_]]() extends Pull2[F, Nothing, Concurrent[F]]
   final case class GetContext[F[_]]() extends Pull2[F, Nothing, Context[F]]
   final case class ReplaceContext[F[_]](ctx: Context[F]) extends Pull2[F, Nothing, Unit]
   // runs the stream until the next output or termination (A)
   // returns the next evaluation as F
-  final case class Step[F[_], O, A](
-      fa: Pull2[F, O, A]
-  ) extends Pull2[F, Nothing, F[Either[A, (fs2.Chunk[O], Pull2[F, O, A])]]]
+  // final case class Step[F[_], O, A](
+  //     fa: Pull2[F, O, A]
+  // ) extends Pull2[F, Nothing, F[Either[A, (fs2.Chunk[O], Pull2[F, O, A])]]]
   final case class Translate[F[_], G[_], O, A](
       pull: Pull2[G, O, A],
       fk: G ~> F,
-      F: Async[F],
-      G: Async[G]
-  ) extends Pull2[F, O, A]
+      // gk is used very sparringly for scope tasks
+      // thus it's implementation does't need to be efficient or elegant
+      gk: F ~> G,
+      G: Concurrent[G]
+  ) extends Pull2[F, Nothing, A]
 
   // Uncons does not introduce any new possible stream formulations
   // but is significantly faster than Step since it doesn't need to track the context and unwind the stack
-  final case class Uncons[F[_], O](
-      fa: Pull2[F, O, Unit]
-  ) extends Pull2[F, Nothing, Option[(fs2.Chunk[O], Pull2[F, O, Unit])]]
+  // final case class Uncons[F[_], O](
+  //     fa: Pull2[F, O, Unit]
+  // ) extends Pull2[F, Nothing, Option[(fs2.Chunk[O], Pull2[F, O, Unit])]]
+
+  def pure[A](a: A): Pull2[Nothing, Nothing, A] = Pure(a)
 
   def unfree[F[_]]: Pull2[F, Nothing, Concurrent[F]] = Unfree()
 
@@ -154,12 +155,22 @@ object Pull2 {
 
   def acquire[F[_], A](r: Resource[F, A]): Pull2[F, Nothing, Option[A]] = Acquire(r)
 
-  def step[F[_], O, A](
-      fa: Pull2[F, O, A]
-  ): Pull2[F, Nothing, F[Either[A, (fs2.Chunk[O], Pull2[F, O, A])]]] = Step(fa)
-  // def step[F[_], O, A](fa: Pull2[F, O, A]): Pull2[F, Nothing, F[StepResult[F, O, A]]] = Step(fa)
+  // def step[F[_], O, A](
+  //     fa: Pull2[F, O, A]
+  // ): Pull2[F, Nothing, F[Either[A, (fs2.Chunk[O], Pull2[F, O, A])]]] = Step(fa)
 
   def getContext[F[_]]: Pull2[F, Nothing, Context[F]] = GetContext()
+
+  def translate[F[_], G[_], O, A](
+      pull: Pull2[G, O, A],
+      fk: G ~> F,
+      gk: F ~> G
+  )(implicit G: Concurrent[G]): Pull2[F, O, A] = Translate(pull, fk, gk, G)
+
+  def leaseAll[F[_]]: Pull2[F, Nothing, Resource[F, Boolean]] =
+    getContext[F].map { ctx =>
+      (ctx.arc :: ctx.parents).traverse(_.lease).map(_.foldLeft(true)(_ && _))
+    }
 
   val done: Pull2[Nothing, Nothing, Unit] = Pure(())
 
@@ -189,81 +200,50 @@ object Pull2 {
       case Pure(a)          => F.pure(Unconsed(ctx, Left(a)))
       case eval: Eval[F, A] => eval.fa.map(a => Unconsed(ctx, Left(a)))
       case o: Output[O]     => F.pure(Unconsed(ctx, Right(o.value -> done)))
-      case uncons: Uncons[F, o] =>
-        stepThrough[F, o, Unit](uncons.fa, ctx).map { d =>
-          d.cont match {
-            case Left(_)         => Unconsed(d.ctx, Left(None))
-            case Right((hd, tl)) => Unconsed(d.ctx, Left(Some((hd, tl))))
-          }
-        }
+      // case uncons: Uncons[F, o] =>
+      //   stepThrough[F, o, Unit](uncons.fa, ctx).map {
+      //     case Unconsed(ctx, Left(_))   => Unconsed(ctx, Left(None))
+      //     case Unconsed(ctx, Right(ht)) => Unconsed(ctx, Left(Some(ht)))
+      //   }
       case fm: FlatMap[F, O, a, A] =>
-        stepThrough[F, O, a](fm.fa, ctx).flatMap { out =>
-          out.cont match {
-            case Left(a)         => stepThrough(fm.f(a), out.ctx)
-            case Right((hd, tl)) => F.pure(Unconsed(out.ctx, Right(hd -> FlatMap(tl, fm.f))))
-          }
+        stepThrough[F, O, a](fm.fa, ctx).flatMap {
+          case Unconsed(ctx, Left(a))         => stepThrough(fm.f(a), ctx)
+          case Unconsed(ctx, Right((hd, tl))) => F.pure(Unconsed(ctx, Right(hd -> FlatMap(tl, fm.f))))
         }
       case _: Unfree[F] => F.pure(Unconsed(ctx, Left(F)))
       case he: HandleErrorWith[F, O, A] =>
         stepThrough[F, O, A](he.fa, ctx).attempt.flatMap {
           case Left(e) => stepThrough(he.f(e), ctx)
-          case Right(d) =>
-            d.cont match {
-              case Left(_) => F.pure(d)
-              case Right((hd, tl)) =>
-                F.pure(Unconsed(d.ctx, Right(hd -> HandleErrorWith(tl, he.f))))
-            }
+          case Right(Unconsed(ctx, Right((hd, tl)))) =>
+            F.pure(Unconsed(ctx, Right(hd -> HandleErrorWith(tl, he.f))))
+          case Right(d) => F.pure(d)
         }
       case _: GetContext[F]      => F.pure(Unconsed(ctx, Left(ctx)))
       case rc: ReplaceContext[F] => F.pure(Unconsed(rc.ctx, leftUnit))
-      case sa: SubArc[F, O, A] =>
-        F.uncancelable { poll =>
-          poll(ctx.arc.attachResource(Arc.make[F]).map(_.get).allocated).flatMap { case (child, release) =>
-            val ctx2 = ctx.copy(arc = child, leaseParents = null) // parents = ctx.arc :: ctx.parents)
-            val fa = stepThrough(sa.fa, ctx2).flatMap[Unconsed[F, O, A]] { d =>
-              d.cont match {
-                case Left(a) => release.as(Unconsed(d.ctx, Left(a)))
-                case Right((hd, tl)) =>
-                  val whenDone = eval(release) <* ReplaceContext(ctx)
-                  F.pure(Unconsed(d.ctx, Right(hd -> (tl <* whenDone))))
-              }
-            }
-
-            poll(fa)
-          }
-        }
       case ac: Acquire[F, a] =>
         ctx.arc.attachResource(ac.r).allocated.map { case (a, _) => Unconsed(ctx, Left(a)) }
-      case s: Step[F, o, a] =>
-        val run = stepThrough(s.fa, ctx)
+      // case s: Step[F, o, a] =>
+      //   val run = stepThrough(s.fa, ctx)
 
-        def find[O3, A3](d: Unconsed[F, O3, A3]): Either[A3, (fs2.Chunk[O3], Pull2[F, O3, A3])] =
-          d.cont match {
-            case Left(a)         => Left(a)
-            case Right((hd, tl)) => Right((hd, ReplaceContext(d.ctx) >> tl))
-          }
+      //   def find[O3, A3](d: Unconsed[F, O3, A3]): Either[A3, (fs2.Chunk[O3], Pull2[F, O3, A3])] =
+      //     d.cont match {
+      //       case Left(a)         => Left(a)
+      //       case Right((hd, tl)) => Right((hd, ReplaceContext(d.ctx) >> tl))
+      //     }
 
-        F.pure(Unconsed(ctx, Left(run.map(find))))
-      case translate: Translate[F, g, O, A] =>
-        implicit val G = translate.G
-        val fk = translate.fk
+      //   F.pure(Unconsed(ctx, Left(run.map(find))))
+      case tsl: Translate[F, g, O, A] =>
+        implicit val G = tsl.G
+        val fk = tsl.fk
+        val gk = tsl.gk
         shift(ctx.arc, fk).allocated.flatMap { case (child, release) =>
-          Dispatcher.parallel[F](await = true)(translate.F).use { d =>
-            val leaseParents = ctx.parents.map { l =>
-              new Leasable[g] {
-                def lease: Resource[g, Boolean] = Resource.make {
-                  val (ga, cancel) = d.unsafeToFutureCancelable(l.lease.allocated)
-                  G.fromFutureCancelable(ga.map{ case (a, rel) => ((a, rel), (rel *> G.fromFuture(G.delay(cancel))))})
-                }
-              }
-            }
-            fk(stepThrough[g, O, A](p, Context(child, null))).flatMap { out =>
-              out.cont match {
-                case Left(a) => release.as(Unconsed[F, O, A](ctx, Left(a)))
-                case Right((hd, tl)) =>
-                  val fin = eval(release) <* ReplaceContext(ctx)
-                  F.pure(Unconsed[F, O, A](ctx, Right(hd -> ((Translate(tl, fk, translate.F, G): Pull2[F, O, A]) <* fin))))
-              }
+          val newParents: List[Leasable[g]] = (ctx.arc :: ctx.parents).map(_.mapK(gk))
+          fk(stepThrough[g, O, A](tsl.pull, Context(child, newParents))).flatMap { out =>
+            out.cont match {
+              case Left(a) => release.as(Unconsed[F, O, A](ctx, Left(a)))
+              case Right((hd, tl)) =>
+                val fin = eval(release) <* ReplaceContext(ctx)
+                F.pure(Unconsed[F, O, A](ctx, Right(hd -> (translate(tl, fk, gk) <* fin))))
             }
           }
         }
@@ -283,7 +263,7 @@ object Pull2 {
         stepThrough(tl, d.ctx).flatMap(loop(_, b2))
     }
 
-    stepThrough(p, Context(initArc, leaseParents = null)).flatMap(x => loop(x, init))
+    stepThrough(p, Context(initArc, Nil)).flatMap(x => loop(x, init))
   }
 
   implicit def monad[F[_], O]: Monad[Pull2[F, O, *]] = new Monad[Pull2[F, O, *]] {
@@ -302,21 +282,32 @@ object Pull2 {
     def evalMap[F2[x] >: F[x], A2](f: A => F2[A2]): Pull2[F2, O, A2] =
       flatMap(a => Pull2.eval(f(a)))
 
-    def lease[F2[x] >: F[x]]: Pull2[F2, Nothing, Resource[F2, Arc[F2]]] =
-      getContext[F2].flatMap { ctx =>
-        unfree[F2].map { implicit F =>
-          ???
-          // Arc.make[F2].flatTap(_.attachResource((ctx.arc :: ctx.parents).traverse_(_.lease)))
-        }
-      }
+    // def unconsStep[F2[x] >: F[x], O2 >: O, A2 >: A]: Pull2[F2, Nothing, F2[Either[A2, (Chunk[O2], Pull2[F2, O2, A2])]]] =
+    //   step[F2, O2, A2](self)
 
-    def unconsStep[F2[x] >: F[x], O2 >: O, A2 >: A]: Pull2[F2, Nothing, F2[Either[A2, (Chunk[O2], Pull2[F2, O2, A2])]]] =
-      step[F2, O2, A2](self)
+    def transferAll[F2[x] >: F[x], O2 >: O, A2 >: A]: Pull2[F2, Nothing, Pull2[F2, O, Option[A]]] =
+      leaseAll[F2].map(acquire(_).flatMap {
+        case None | Some(false) => pure(None)
+        case Some(true)         => self.map(Some(_))
+      })
+
+    def transferLease[F2[x] >: F[x], O2 >: O, A2 >: A]: Pull2[F2, O, Pull2[F2, Nothing, Option[A]]] =
+      self.flatMap { a =>
+        leaseAll[F2].map(acquire(_).map {
+          case None | Some(false) => None
+          case Some(true)         => Some(a)
+        })
+      }
   }
 
   implicit class Pull2UnitOps[F[_], O](private val self: Pull2[F, O, Unit]) {
     def uncons: Pull2[F, Nothing, Option[(fs2.Chunk[O], Pull2[F, O, Unit])]] =
-      Pull2.Uncons(self)
+      getContext[F].flatMap { ctx =>
+        unfree[F].flatMap { implicit F =>
+          stepThrough[F, O, Unit](self, ctx)
+        }
+      }
+    Pull2.Uncons(self)
   }
 
   class Stream2[F[_], O](val pull: Pull2[F, O, Unit]) {
@@ -384,7 +375,11 @@ object Pull2 {
       new Stream2(Pull2.HandleErrorWith(pull, e => f(e).pull))
 
     def subArc: Stream2[F, O] =
-      new Stream2(Pull2.SubArc(pull))
+      new Stream2({
+        unfree[F].flatMap { implicit F =>
+          translate(pull, FunctionK.id[F], FunctionK.id[F])
+        }
+      })
 
     def interruptWhen(p: F[Unit])(implicit F: Async[F]): Stream2[F, O] =
       new Stream2({
@@ -434,12 +429,13 @@ class PullV2Test extends CatsEffectSuite {
   def infSeq(n: Int): Stream2[IO, Int] =
     Stream2[IO, Int](n) ++ infSeq(n + 1)
 
-  test("yoou") {
+  test("yoou".only) {
     val p = Stream2[IO, Int](1).repeatN(100000).chunkMin(100).evalMap(x => IO(x.size))
 
     IO.println("CPS") >>
-      fs2.Stream(1).covary[IO].repeatN(100000).chunkMin(100).evalMap(x => IO(x.size)).compile.drain.timed.flatMap { case (duration, _) =>
-        IO(println(duration))
+      fs2.Stream(1).covary[IO].repeatN(100000).chunkMin(100).evalMapChunk(x => IO(x.size)).compile.drain.timed.flatMap {
+        case (duration, _) =>
+          IO(println(duration))
       } >> IO.println("closure") >> p.drain.timed.flatMap { case (duration, _) =>
         IO(println(duration))
       }
