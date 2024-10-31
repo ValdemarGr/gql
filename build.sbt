@@ -242,9 +242,9 @@ lazy val http4sClient = project
   .settings(
     name := "gql-client-http4s",
     libraryDependencies ++= Seq(
-      "org.http4s" %% "http4s-circe" % "1.0.0-M39",
-      "org.http4s" %% "http4s-dsl" % "1.0.0-M39",
-      "org.http4s" %% "http4s-client" % "1.0.0-M39"
+      "org.http4s" %% "http4s-circe" % "1.0.0-M43",
+      "org.http4s" %% "http4s-dsl" % "1.0.0-M43",
+      "org.http4s" %% "http4s-client" % "1.0.0-M43"
     )
   )
 
@@ -296,10 +296,10 @@ lazy val serverHttp4s = project
   .settings(
     name := "gql-server-http4s",
     libraryDependencies ++= Seq(
-      "org.http4s" %% "http4s-server" % "1.0.0-M39",
-      "org.http4s" %% "http4s-circe" % "1.0.0-M39",
-      "org.http4s" %% "http4s-dsl" % "1.0.0-M39",
-      "org.http4s" %% "http4s-client" % "1.0.0-M39" % Test
+      "org.http4s" %% "http4s-server" % "1.0.0-M43",
+      "org.http4s" %% "http4s-circe" % "1.0.0-M43",
+      "org.http4s" %% "http4s-dsl" % "1.0.0-M43",
+      "org.http4s" %% "http4s-client" % "1.0.0-M43" % Test
     )
   )
   .dependsOn(server)
