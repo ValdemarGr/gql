@@ -378,10 +378,7 @@ object SchemaShape {
       }
 
     def renderModifierStack[G[_]](ms: ModifierStack[Toplevel[G, ?]]) =
-      ms.modifiers.foldLeft(Doc.text(ms.inner.name)) {
-        case (accum, Modifier.List)    => accum.tightBracketBy(Doc.char('['), Doc.char(']'))
-        case (accum, Modifier.NonNull) => accum + Doc.char('!')
-      }
+      Doc.text(ms.show(_.name))
 
     def renderArgValueDoc(av: ArgValue[?]): Doc = {
       val o = av.defaultValue.map(dv => Doc.text(" = ") + renderValueDoc(dv)).getOrElse(Doc.empty)
@@ -394,7 +391,7 @@ object SchemaShape {
         .map(_.entries)
         .map(nec =>
           Doc
-            .intercalate(Doc.comma + Doc.lineOrSpace, nec.toList.map(renderArgValueDoc))
+            .intercalate(Doc.comma + Doc.lineOrSpace, nec.toList.distinctBy(_.name).map(renderArgValueDoc))
             .tightBracketBy(Doc.char('('), Doc.char(')'))
         )
         .getOrElse(Doc.empty)
@@ -425,7 +422,7 @@ object SchemaShape {
             case Input(name, fields, desc) =>
               doc(desc) +
                 Doc.text(s"input $name") + (Doc.text(" {") + Doc.hardLine + Doc
-                  .intercalate(Doc.hardLine, fields.entries.toList.map(renderArgValueDoc))
+                  .intercalate(Doc.hardLine, fields.entries.toList.distinctBy(_.name).map(renderArgValueDoc))
                   .indent(2) + Doc.hardLine + Doc.text("}"))
             // Dont render built-in scalars
             case Scalar(name, _, _, desc) => doc(desc) + Doc.text(s"scalar $name")
