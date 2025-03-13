@@ -19,16 +19,40 @@ import gql.ast._
 import gql.dsl.all._
 import cats.effect._
 import munit.CatsEffectSuite
+import cats.implicits._
 
 final case class CustomScalar(value: String)
+
+final case class ContainerInner(values: List[String])
+
+final case class ContainerOuter(values: List[ContainerInner])
 
 class VariableTest extends CatsEffectSuite {
   implicit val customScalar: Scalar[CustomScalar] = stringScalar
     .eimap[CustomScalar](x => Right(CustomScalar(x)))(_.value)
     .rename("CustomScalar")
 
+  implicit val containerInner = input[ContainerInner](
+    "ContainerInner",
+    (
+      arg[List[String]]("values").map(ContainerInner.apply)
+    )
+  )
+
+  implicit val containerOuter = input[ContainerOuter](
+    "ContainerOuter",
+    (
+      arg[List[ContainerInner]]("values").map(ContainerOuter.apply)
+    )
+  )
+
   lazy val schemaShape = SchemaShape
-    .unit[IO](fields("getMeAString" -> lift(arg[CustomScalar]("cs"))((cs, _) => cs)))
+    .unit[IO](
+      fields(
+        "getMeAString" -> lift(arg[CustomScalar]("cs"))((cs, _) => cs),
+        "container" -> lift(arg[ContainerOuter]("c"))((_, _) => "")
+      )
+    )
 
   lazy val schema = Schema.simple(schemaShape).unsafeRunSync()
 
@@ -62,6 +86,24 @@ class VariableTest extends CatsEffectSuite {
           variables = Map("myVar" -> "Hello World".asJson)
         )
       }.isLeft
+    }
+  }
+
+  test("should succeed for nested variables") {
+    assert {
+      clue {
+        Compiler[IO].compile(
+          schema,
+          """
+            query MyQuery(
+              $ci: [ContainerInner!]!
+            ) {
+              container(c: { values: $ci })
+            }
+          """,
+          variables = Map("ci" -> List.empty[Int].asJson)
+        )
+      }.isRight
     }
   }
 }
