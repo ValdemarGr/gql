@@ -32,14 +32,14 @@ class VariableTest extends CatsEffectSuite {
     .eimap[CustomScalar](x => Right(CustomScalar(x)))(_.value)
     .rename("CustomScalar")
 
-  implicit val containerInner = input[ContainerInner](
+  implicit val containerInner: Input[ContainerInner] = input[ContainerInner](
     "ContainerInner",
     (
       arg[List[String]]("values").map(ContainerInner.apply)
     )
   )
 
-  implicit val containerOuter = input[ContainerOuter](
+  implicit val containerOuter: Input[ContainerOuter] = input[ContainerOuter](
     "ContainerOuter",
     (
       arg[List[ContainerInner]]("values").map(ContainerOuter.apply)
