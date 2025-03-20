@@ -10,7 +10,7 @@ ThisBuild / tlCiDocCheck := false
 ThisBuild / tlCiScalafmtCheck := false
 ThisBuild / tlUntaggedAreSnapshots := false
 
-ThisBuild / licenses := List("Apache-2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0"))
+ThisBuild / licenses := Seq(License.Apache2)
 ThisBuild / developers := List(
   Developer("valdemargr", "Valdemar Grange", "randomvald0069@gmail.com", url("https://github.com/valdemargr"))
 )
@@ -25,6 +25,8 @@ ThisBuild / mimaFailOnProblem := false
 ThisBuild / mimaPreviousArtifacts := Set.empty
 ThisBuild / tlSonatypeUseLegacyHost := true
 //ThisBuild / tlFatalWarnings := true
+
+ThisBuild / startYear := Some(2023)
 
 val dbStep = WorkflowStep.Use(
   ref = UseRef.Public("hoverkraft-tech", "compose-action", "v2.0.1")
