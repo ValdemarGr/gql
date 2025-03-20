@@ -40,7 +40,7 @@ ThisBuild / githubWorkflowAddedJobs ++= Seq(
     name = "Verify that the docs compile",
     scalas = List(scala213Version),
     steps = WorkflowStep.Use(
-      UseRef.Public("actions", "checkout", "v3"),
+      UseRef.Public("actions", "checkout", "v4"),
       name = Some("Checkout current branch (fast)"),
       params = Map("fetch-depth" -> "0")
     ) :: dbStep ::
@@ -57,7 +57,7 @@ ThisBuild / githubWorkflowAddedJobs ++= Seq(
     needs = List("compile-docs"),
     scalas = List(scala213Version),
     steps = WorkflowStep.Use(
-      UseRef.Public("actions", "checkout", "v3"),
+      UseRef.Public("actions", "checkout", "v4"),
       name = Some("Checkout current branch (fast)"),
       params = Map("fetch-depth" -> "0")
     ) :: dbStep ::
