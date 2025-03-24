@@ -166,13 +166,14 @@ class Generator[F[_]: Files](lg: Logger[F])(implicit
               val allOps = translated.collect { case op: ExecutableDefinition.Operation[PositionalInfo] => op }
 
               val genStub: F[EitherNec[String, SchemaShape[Pure, _, _, _]]] =
-                lg.log(s"Generating stub schema...") *>
-                  F.delay(SchemaUtil.stubSchema(e.schema)) <*
-                  lg.log(s"Done generating stub schema")
-              val errors = genStub.map(_.flatMap { stubSchema =>
+                lg.scoped("generating stub schema") {
+                  F.delay(SchemaUtil.stubSchema(e.schema))
+                }
+
+              val errors = EitherT(genStub).flatMap { stubSchema =>
                 allOps.parTraverse { op =>
                   val full: NonEmptyList[ExecutableDefinition[PositionalInfo]] = NonEmptyList(op, allFrags)
-                  val vars: ValidatedNec[String, Map[String, Json]] = op.o match {
+                  def vars: ValidatedNec[String, Map[String, Json]] = op.o match {
                     case QueryAst.OperationDefinition.Simple(_) => Map.empty.validNec
                     case QueryAst.OperationDefinition.Detailed(_, _, vds, _, _) =>
                       vds.toList
@@ -180,37 +181,51 @@ class Generator[F[_]: Files](lg: Logger[F])(implicit
                         .traverse(x => QueryValidation.generateVariableStub(x, e.schema))
                         .map(_.foldLeft(Map.empty[String, Json])(_ ++ _))
                   }
-                  vars.toEither.flatMap { variables =>
-                    RootPreparation
-                      .prepareRun(full, stubSchema, variables, None)
-                      .leftMap(_.map { pe =>
-                        val pos = pe.position.formatted
-                        val caretErrs = pe.caret.distinct
-                          .map { c =>
-                            val (msg, _, _) = ParserUtil.showVirtualTextLine(c.sourceQuery, c.caret.offset)
-                            s"in file ${c.input.query}\n" + msg
-                          }
-                        val msg = pe.message
-                        s"$msg at $pos\n${caretErrs.mkString_("\n")}"
-                      })
+                  val gennedVars = EitherT {
+                    lg.scoped(s"generating stub input vars") {
+                      F.delay(vars.toEither)
+                    }
+                  }
+
+                  gennedVars.flatMap { variables =>
+                    val fo: EitherT[F, NonEmptyChainImpl.Type[String], PreparedRoot[Pure, _, _, _]] = EitherT {
+                      F.delay {
+                        RootPreparation
+                          .prepareRun(full, stubSchema, variables, None)
+                          .leftMap(_.map { pe =>
+                            val pos = pe.position.formatted
+                            val caretErrs = pe.caret.distinct
+                              .map { c =>
+                                val (msg, _, _) = ParserUtil.showVirtualTextLine(c.sourceQuery, c.caret.offset)
+                                s"in file ${c.input.query}\n" + msg
+                              }
+                            val msg = pe.message
+                            s"$msg at $pos\n${caretErrs.mkString_("\n")}"
+                          })
+                      }
+                    }
+
+                    fo
                   }
                 }
-              })
+              }.value
 
               lazy val validateF: F[Either[Unit, List[PreparedRoot[Pure, _, _, _]]]] =
                 lg.log(s"Validating queries..., if this takes long you can skip validation") *>
-                  errors.flatMap(_.leftTraverse[F, Unit](E.raise(_)))
-              lg.log(s"Done validationg")
+                  errors.flatMap(_.leftTraverse[F, Unit](E.raise(_))) <*
+                  lg.log(s"Done validating")
 
               val writeF: F[Unit] =
                 xs.flatTraverse { case (_, (_, used, x, _)) =>
                   lg.log(s"writing to ${x.path}") *>
-                    writeStream(x.path, x.doc).compile.drain.as(used.toList)
+                    writeStream(x.path, x.doc).compile.drain.as(used.toList) <*
+                    lg.log(s"Done writing to ${x.path}")
                 }.flatMap(_.distinct.toNel.traverse_ { nel =>
                   lg.log(s"Generating shared types...") *>
                     F.delay(ga.generateInputs(e, nel.toList, packageName)).flatMap { st =>
                       lg.log(s"Writing shared types to $sharedPath") *>
-                        writeStream(sharedPath, st).compile.drain
+                        writeStream(sharedPath, st).compile.drain <*
+                        lg.log(s"Done writing shared types to $sharedPath")
                     }
                 })
 

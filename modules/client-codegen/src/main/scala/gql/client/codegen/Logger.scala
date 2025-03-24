@@ -17,9 +17,13 @@ package gql.client.codegen
 
 import cats.implicits._
 import cats.effect._
+import cats._
 
 trait Logger[F[_]] {
   def log(msg: String): F[Unit]
+
+  def scoped[A](ctx: String)(fa: F[A])(implicit F: Monad[F]): F[A] =
+    log(s"${ctx.capitalize}...") *> fa <* log(s"Done ${ctx}")
 }
 
 object Logger {
