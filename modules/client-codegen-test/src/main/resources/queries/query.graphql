@@ -29,6 +29,7 @@ query AlienQuery($name: String!, $struct: FindDogInput, $dogCommand: DogCommand!
     ... DogFragment
     ... PetFrag
   }
+  stacked
 }
 
 fragment DogFragment on Dog {

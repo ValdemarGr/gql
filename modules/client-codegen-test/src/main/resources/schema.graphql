@@ -3,6 +3,7 @@ type Query {
   findDog(searchBy: FindDogInput): Dog
   outputOnly: OutputOnly
   escaping(x: Escaping): String
+  stacked(parameter: [String!] = null): Boolean
 }
 
 enum OutputOnly {

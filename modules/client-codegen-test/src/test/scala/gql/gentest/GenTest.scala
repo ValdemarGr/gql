@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 Valdemar Grange
+ * Copyright 2023 Valdemar Grange
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +24,8 @@ import gql.ast._
 import munit.CatsEffectSuite
 import org.http4s.client.Client
 import org.http4s.Request
+import cats.data.NonEmptyList
+import cats.data.Ior
 
 class GenTest extends CatsEffectSuite {
   import GenTest._
@@ -42,6 +44,19 @@ class GenTest extends CatsEffectSuite {
     import org.http4s.implicits._
     val res = Request[IO](uri = uri"https://notreal.com/graphql").graphql(q, client)
     res.map(aq => assert(aq.dog.isDefined))
+  }
+
+  test("schema and it's stub should be equivalent") {
+    val s = sch.shape
+    val primitives = Set("String", "Int", "Boolean", "ID", "Float")
+    def f[A](m: Map[String, A]): Map[String, A] =
+      m.collect { case (k, v) if !primitives.contains(k) => k -> v }
+    (f(s.stub.ast) align f(s.ast)).foreach {
+      case (_, Ior.Both(x, y)) =>
+        if (x != y) fail(s"$x is not equal to $y")
+      case (k, Ior.Left(x))  => fail(s"$k is in stub but not in schema (${x})")
+      case (k, Ior.Right(x)) => fail(s"$k is in schema but not in stub (${x})")
+    }
   }
 }
 
@@ -230,7 +245,10 @@ object GenTest {
           "findDog" -> lift(arg[Option[FindDogInput]]("searchBy")) { case (x, _) =>
             x.flatMap(y => dogDatabase.get(y.name.getOrElse("Colt")))
           },
-          "escaping" -> lift(arg[Option[Escaping]]("x")) { case (x, _) => x.foldMap(_.tpe) }
+          "escaping" -> lift(arg[Option[Escaping]]("x")) { case (x, _) => x.foldMap(_.tpe) },
+          "stacked" -> lift(arg[Option[NonEmptyList[String]]]("woah", value.nullValue)) { case _ =>
+            true
+          }
         )
       )
       .addOutputTypes(cat)

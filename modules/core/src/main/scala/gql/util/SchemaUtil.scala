@@ -39,12 +39,14 @@ object SchemaUtil {
         e.description,
         e.name,
         None,
-        e.mappings.map { case (k, v) =>
-          EnumValueDefinition(v.description, k, None)
-        }
+        e.mappings
+          .map { case (k, v) =>
+            EnumValueDefinition(v.description, k, None)
+          }
+          .sortBy(_.name)
       )
 
-    def convertArg(a: Arg[?]) = a.entries.toNonEmptyList.map { av =>
+    def convertArg(a: Arg[?]) = a.entries.toNonEmptyList.sortBy(_.name).map { av =>
       InputValueDefinition(
         av.description,
         av.name,
@@ -54,7 +56,7 @@ object SchemaUtil {
       )
     }
 
-    val convertedInputs = d.inputs.values.toList.map {
+    val convertedInputs = d.inputs.values.toList.sortBy(_.name).map {
       case s: ast.Scalar[?] => convertScalar(s)
       case e: ast.Enum[?]   => convertEnum(e)
       case i: ast.Input[?] =>
@@ -70,37 +72,37 @@ object SchemaUtil {
       FieldDefinition(
         f.description,
         name,
-        f.arg.map(convertArg(_).toList).getOrElse(Nil),
+        f.arg.map(convertArg(_).toList).getOrElse(Nil).sortBy(_.name),
         ModifierStack.fromOut(f.output.value).map(_.name).toType,
         None
       )
     }
 
-    val convertedOutputs = d.outputs.values.toList.map {
+    val convertedOutputs = d.outputs.values.toList.sortBy(_.name).map {
       case s: ast.Scalar[?] => convertScalar(s)
       case e: ast.Enum[?]   => convertEnum(e)
       case o: ast.Type[F, ?] =>
         TypeDefinition.ObjectTypeDefinition(
           o.description,
           o.name,
-          o.implementations.map(_.implementation.value.name),
+          o.implementations.map(_.implementation.value.name).sorted,
           None,
-          o.fields.map { case (name, f) => convertField(name, f.asAbstract) }
+          o.fields.sortBy { case (n, _) => n }.map { case (name, f) => convertField(name, f.asAbstract) }
         )
       case u: ast.Union[F, ?] =>
         TypeDefinition.UnionTypeDefinition(
           u.description,
           u.name,
           None,
-          u.types.map(_.tpe.value.name)
+          u.types.map(_.tpe.value.name).sorted
         )
       case i: ast.Interface[F, ?] =>
         TypeDefinition.InterfaceTypeDefinition(
           i.description,
           i.name,
-          i.implementations.map(_.value.name),
+          i.implementations.map(_.value.name).sorted,
           None,
-          i.fields.map { case (name, f) => convertField(name, f.asAbstract) }
+          i.fields.sortBy { case (n, _) => n }.map { case (name, f) => convertField(name, f.asAbstract) }
         )
     }
 

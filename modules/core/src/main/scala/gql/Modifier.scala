@@ -61,7 +61,7 @@ final case class ModifierStack[+T](modifiers: List[Modifier], inner: T) {
 
   import gql.parser.{Type, NonNullType}
   def toType(implicit ev: T <:< String): Type =
-    modifiers.foldLeft(Type.Named(ev(inner)): Type) {
+    modifiers.reverse.foldLeft(Type.Named(ev(inner)): Type) {
       case (accum: NonNullType, Modifier.NonNull) => Type.NonNull(accum)
       case (accum, _)                             => Type.List(accum)
     }
