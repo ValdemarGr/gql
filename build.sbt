@@ -128,7 +128,7 @@ lazy val sharedSettings = Seq(
     "org.tpolecat" %% "sourcepos" % "1.1.0",
     "org.typelevel" %% "paiges-core" % "0.4.4",
     "org.scalameta" %% "munit" % "1.0.3" % Test,
-    "org.typelevel" %% "munit-cats-effect" % "2.0.0" % Test
+    "org.typelevel" %% "munit-cats-effect" % "2.1.0" % Test
   )
 )
 
