@@ -102,12 +102,14 @@ class QueryPreparation[F[_], C](
         (liftK(nextNodeId), rec[i, o](alg.step, "first")).mapN(PreparedStep.First.apply[F, i, o, c])
       case alg: Step.Alg.Argument[?, a] =>
         val expected = alg.arg.entries.toList.map(_.name).toSet
-        val fields = fieldMeta.fields.filter { case (k, _) => expected.contains(k) }
+        val fields = fieldMeta.fields
+          .filter { case (k, _) => expected.contains(k) }
+          .map { case (k, v) => k -> v.map(List(_)) }
         LazyT.liftF {
           WriterT {
             nextNodeId.flatMap { nid =>
               ap
-                .decodeArg(alg.arg, fields.fmap(_.map(List(_))), ambigiousEnum = false, context = Nil)
+                .decodeArg(alg.arg, fields, ambigiousEnum = false, context = Nil)
                 .map(a => (Chain(alg.arg -> a), PreparedStep.Lift[F, I, O](nid, _ => a)))
             }
           }
@@ -175,10 +177,18 @@ class QueryPreparation[F[_], C](
           case _                     => Chain.empty
         }
 
-        val providedArgNames = meta.fields.keySet
+        val providedArgNames = meta.fields.map { case (k, _) => k }.toSet
 
         val declaredArgs: Chain[Arg[?]] = collectArgs(field.resolve.underlying) ++ findArgs(field.output.value)
         val declaredArgNames = declaredArgs.toList.flatMap(_.entries.toList.map(_.name)).toSet
+
+        val duplicates = meta.fields
+          .groupBy { case (k, _) => k }
+          .collect { case (k, v) if v.size > 1 => k }
+          .toList
+        val checkDuplicatesF: G[Unit] =
+          if (duplicates.isEmpty) G.unit
+          else G.raise(s"Duplicate argument names found: ${duplicates.map(x => s"'$x'").mkString_(", ")}.", List(fi.caret))
 
         val tooMany = providedArgNames -- declaredArgNames
 
@@ -212,7 +222,9 @@ class QueryPreparation[F[_], C](
           )
         }
 
-        verifyTooManyF &> out
+        checkDuplicatesF >> {
+          verifyTooManyF &> out
+        }
       })
   }
 
@@ -374,5 +386,5 @@ final case class PartialFieldMeta[C](
     alias: Option[String],
     args: Option[QA.Arguments[C, AnyValue]]
 ) {
-  lazy val fields = args.map(_.nel.toList).getOrElse(Nil).map(x => x.name -> x.value).toMap
+  lazy val fields = args.map(_.nel.toList).getOrElse(Nil).map(x => x.name -> x.value)
 }

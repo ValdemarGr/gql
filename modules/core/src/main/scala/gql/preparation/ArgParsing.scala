@@ -92,7 +92,7 @@ class ArgParsing[C](variables: VariableMap[C]) {
                *  a! compat  V  -> fail
                * [a] compat  v! -> [a] compat v
                *  A  compat  v! -> A compat v
-               * [a] compat [v] -> [a] compat [v]
+               * [a] compat [v] -> a compat v
                * [a] compat  V  -> fail
                *  A  compat [v] -> fail
                */
@@ -163,7 +163,7 @@ class ArgParsing[C](variables: VariableMap[C]) {
         G.ambientField(name) {
           G.raiseEither(decoder(x.map(_ => ())), x.c)
         }
-      case (Input(_, fields, _), V.ObjectValue(xs, cs)) => decodeArg(fields, xs.toMap, ambigiousEnum, cs)
+      case (Input(_, fields, _), V.ObjectValue(xs, cs)) => decodeArg(fields, xs, ambigiousEnum, cs)
       case (a: InArr[a, c], V.ListValue(vs, cs)) =>
         vs.zipWithIndex
           .parTraverse { case (v, i) =>
@@ -180,41 +180,52 @@ class ArgParsing[C](variables: VariableMap[C]) {
 
   def decodeArg[A](
       arg: Arg[A],
-      values: Map[String, V[AnyValue, List[C]]],
+      values: List[(String, V[AnyValue, List[C]])],
       ambigiousEnum: Boolean,
       context: List[C]
   ): G[A] = {
-    val expected = arg.entries.toList.map(_.name).toSet
-    val provided = values.keySet
+    val duplicates = values
+      .groupBy { case (k, _) => k }
+      .collect { case (k, v) if v.size > 1 => k }
+      .toList
+    val duplicatesF: G[Unit] =
+      if (duplicates.isEmpty) G.unit
+      else G.raise(s"Duplicate argument names found: ${duplicates.map(x => s"'$x'").mkString_(", ")}.", context)
 
-    val tooMuch = provided -- expected
-    val tooMuchF: G[Unit] =
-      if (tooMuch.isEmpty) G.unit
-      else G.raise(s"Too many fields provided, unknown fields are ${tooMuch.toList.map(x => s"'$x'").mkString_(", ")}.", context)
+    duplicatesF >> G.defer {
+      val lookup = values.toMap
+      val expected = arg.entries.toList.map(_.name).toSet
+      val provided = lookup.keySet
 
-    val fv = arg.impl.parFoldMap[G, ValidatedNec[String, A]](new (Arg.Impl ~> G) {
-      def apply[B](fa: Arg.Impl[B]): G[B] = fa match {
-        case fa: ArgDecoder[a, B] =>
-          G.ambientField(fa.av.name) {
-            def compileWith(x: V[AnyValue, List[C]], default: Boolean) =
-              decodeIn[a](fa.av.input.value, x, ambigiousEnum)
-                .flatMap(a => G.raiseEither(fa.decode(ArgParam(default, a)), x.c))
+      val tooMuch = provided -- expected
+      val tooMuchF: G[Unit] =
+        if (tooMuch.isEmpty) G.unit
+        else G.raise(s"Too many fields provided, unknown fields are ${tooMuch.toList.map(x => s"'$x'").mkString_(", ")}.", context)
 
-            values
-              .get(fa.av.name)
-              .map(compileWith(_, false))
-              .orElse(fa.av.defaultValue.map(dv => compileWith(dv.as(Nil), true)))
-              .getOrElse {
-                fa.av.input.value match {
-                  case _: gql.ast.InOpt[a] => G.raiseEither(fa.decode(ArgParam(true, None)), context)
-                  case _ =>
-                    G.raise(s"Missing argument for '${fa.av.name}' and no default value was found.", context)
+      val fv = arg.impl.parFoldMap[G, ValidatedNec[String, A]](new (Arg.Impl ~> G) {
+        def apply[B](fa: Arg.Impl[B]): G[B] = fa match {
+          case fa: ArgDecoder[a, B] =>
+            G.ambientField(fa.av.name) {
+              def compileWith(x: V[AnyValue, List[C]], default: Boolean) =
+                decodeIn[a](fa.av.input.value, x, ambigiousEnum)
+                  .flatMap(a => G.raiseEither(fa.decode(ArgParam(default, a)), x.c))
+
+              lookup
+                .get(fa.av.name)
+                .map(compileWith(_, false))
+                .orElse(fa.av.defaultValue.map(dv => compileWith(dv.as(Nil), true)))
+                .getOrElse {
+                  fa.av.input.value match {
+                    case _: gql.ast.InOpt[a] => G.raiseEither(fa.decode(ArgParam(true, None)), context)
+                    case _ =>
+                      G.raise(s"Missing argument for '${fa.av.name}' and no default value was found.", context)
+                  }
                 }
-              }
-          }
-      }
-    })
+            }
+        }
+      })
 
-    tooMuchF &> fv.flatMap(v => G.raiseEither(v.toEither.leftMap(_.mkString_(", ")), context))
+      tooMuchF &> fv.flatMap(v => G.raiseEither(v.toEither.leftMap(_.mkString_(", ")), context))
+    }
   }
 }

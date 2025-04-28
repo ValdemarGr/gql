@@ -161,9 +161,9 @@ class FieldCollection[F[_], C](
       f: QA.Field[C],
       caret: C
   ): Alg[C, FieldInfo[F, C]] = {
-    val fields = f.arguments.toList.flatMap(_.nel.toList).map(x => x.name -> x.value).toMap
+    val fields = f.arguments.toList.flatMap(_.nel.toList).map(x => x.name -> x.value.map(List(_)))
     val verifyArgsF = qf.arg.parTraverse_ { case a: Arg[a] =>
-      ap.decodeArg[a](a, fields.fmap(_.map(List(_))), ambigiousEnum = false, context = List(caret)).void
+      ap.decodeArg[a](a, fields, ambigiousEnum = false, context = List(caret)).void
     }
 
     val c = f.caret

@@ -35,7 +35,7 @@ class DirectiveAlg[F[_], C](
           case None    => G.unit
         }
       case EmptyableArg.Lift(a) =>
-        val argFields = args.toList.flatMap(_.nel.toList).map(a => a.name -> a.value.map(List(_))).toMap
+        val argFields = args.toList.flatMap(_.nel.toList).map(a => a.name -> a.value.map(List(_)))
         ap.decodeArg(a, argFields, ambigiousEnum = false, context)
     }
   }

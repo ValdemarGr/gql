@@ -238,6 +238,9 @@ object Alg {
 
     def ambientIndex[A](index: Int)(fa: Alg[C, A]): Alg[C, A] =
       ambientEdge(GraphArc.Index(index))(fa)
+
+    def defer[A](fa: => Alg[C, A]): Alg[C, A] =
+      unit.flatMap(_ => fa)
   }
   object Ops {
     def apply[C] = new Ops[C] {}
