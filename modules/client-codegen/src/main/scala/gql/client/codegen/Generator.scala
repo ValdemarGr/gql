@@ -171,43 +171,48 @@ class Generator[F[_]: Files](lg: Logger[F])(implicit
                 }
 
               val errors = EitherT(genStub).flatMap { stubSchema =>
-                allOps.parTraverse { op =>
-                  val full: NonEmptyList[ExecutableDefinition[PositionalInfo]] = NonEmptyList(op, allFrags)
-                  def vars: ValidatedNec[String, Map[String, Json]] = op.o match {
-                    case QueryAst.OperationDefinition.Simple(_) => Map.empty.validNec
-                    case QueryAst.OperationDefinition.Detailed(_, _, vds, _, _) =>
-                      vds.toList
-                        .flatMap(_.nel.toList)
-                        .traverse(x => QueryValidation.generateVariableStub(x, e.schema))
-                        .map(_.foldLeft(Map.empty[String, Json])(_ ++ _))
-                  }
-                  val gennedVars = EitherT {
-                    lg.scoped(s"generating stub input vars") {
-                      F.delay(vars.toEither)
-                    }
-                  }
+                val unSuspend = lg.scoped("forcing discovery of types in stub schema") {
+                  F.delay(stubSchema.discover).void
+                }
 
-                  gennedVars.flatMap { variables =>
-                    val fo: EitherT[F, NonEmptyChainImpl.Type[String], PreparedRoot[Pure, _, _, _]] = EitherT {
-                      F.delay {
-                        RootPreparation
-                          .prepareRun(full, stubSchema, variables, None)
-                          .leftMap(_.map { pe =>
-                            val pos = pe.position.formatted
-                            val caretErrs = pe.caret.distinct
-                              .map { c =>
-                                val (msg, _, _) = ParserUtil.showVirtualTextLine(c.sourceQuery, c.caret.offset)
-                                s"in file ${c.input.query}\n" + msg
-                              }
-                            val msg = pe.message
-                            s"$msg at $pos\n${caretErrs.mkString_("\n")}"
-                          })
+                EitherT.liftF(unSuspend) *>
+                  allOps.parTraverse { op =>
+                    val full: NonEmptyList[ExecutableDefinition[PositionalInfo]] = NonEmptyList(op, allFrags)
+                    def vars: ValidatedNec[String, Map[String, Json]] = op.o match {
+                      case QueryAst.OperationDefinition.Simple(_) => Map.empty.validNec
+                      case QueryAst.OperationDefinition.Detailed(_, _, vds, _, _) =>
+                        vds.toList
+                          .flatMap(_.nel.toList)
+                          .traverse(x => QueryValidation.generateVariableStub(x, e.schema))
+                          .map(_.foldLeft(Map.empty[String, Json])(_ ++ _))
+                    }
+                    val gennedVars = EitherT {
+                      lg.scoped(s"generating stub input vars") {
+                        F.delay(vars.toEither)
                       }
                     }
 
-                    fo
+                    gennedVars.flatMap { variables =>
+                      val fo: EitherT[F, NonEmptyChainImpl.Type[String], PreparedRoot[Pure, _, _, _]] = EitherT {
+                        F.delay {
+                          RootPreparation
+                            .prepareRun(full, stubSchema, variables, None)
+                            .leftMap(_.map { pe =>
+                              val pos = pe.position.formatted
+                              val caretErrs = pe.caret.distinct
+                                .map { c =>
+                                  val (msg, _, _) = ParserUtil.showVirtualTextLine(c.sourceQuery, c.caret.offset)
+                                  s"in file ${c.input.query}\n" + msg
+                                }
+                              val msg = pe.message
+                              s"$msg at $pos\n${caretErrs.mkString_("\n")}"
+                            })
+                        }
+                      }
+
+                      fo
+                    }
                   }
-                }
               }.value
 
               lazy val validateF: F[Either[Unit, List[PreparedRoot[Pure, _, _, _]]]] =

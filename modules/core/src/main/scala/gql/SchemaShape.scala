@@ -323,16 +323,19 @@ object SchemaShape {
       }
 
     implicit lazy val parForState: Parallel[Effect] = Parallel.identity[Effect]
-    val program = shape.visit[Effect, Unit] {
-      // cycle avoidance
-      case VisitNode.Implementations(_)       => _ => modify(identity)
+
+    val visitor: VisitNode[F] => (Effect[Unit] => Effect[Unit]) = {
       case VisitNode.InNode(t: InToplevel[?]) => rec => modify(_.addToplevel(t.name, t)) >> rec
       case VisitNode.OutNode(t: OutToplevel[F, a]) =>
         rec =>
           val modF = modify(_.addToplevel(t.name, t))
           val fa = visitOutputTopelvel(t)
           modF >> fa >> rec
+      // explicitly avoid visiting the whole ast, stop at toplevels
+      case _ => _ => modify(identity)
     }
+
+    val program = shape.visit[Effect, Unit](PartialFunction.fromFunction(visitor))
 
     val positionGroups = shape.positions.groupBy(_.directive.name)
 
