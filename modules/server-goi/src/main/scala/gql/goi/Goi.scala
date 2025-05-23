@@ -198,11 +198,13 @@ object Goi {
         val fas = t.attributes.collect { case g: GoiAttribute[F, a, ?] => g }
         val n = t.name
 
-        fas match {
-          case Nil => H.pure(Nil)
-          case (x: GoiAttribute[F, a, id]) :: xs =>
-            if (xs.nonEmpty) R.raise(NonEmptyChain.one(s"More than one goi attribute found on `$n`"))
-            else H.pure(List(CollectedAttribute[F, a, id](n, x)))
+        Some {
+          fas match {
+            case Nil => H.pure(Nil)
+            case (x: GoiAttribute[F, a, id]) :: xs =>
+              if (xs.nonEmpty) R.raise(NonEmptyChain.one(s"More than one goi attribute found on `$n`"))
+              else H.pure(List(CollectedAttribute[F, a, id](n, x)))
+          }
         }
       }
 

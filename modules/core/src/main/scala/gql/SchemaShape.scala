@@ -48,7 +48,7 @@ final case class SchemaShape[F[_], Q, M, S](
   ): G[A] = SchemaShape.visit[F, G, A](this)(pf)
 
   def visitOnce[G[_]: Monad: Defer, A: Monoid](
-      pf: PartialFunction[SchemaShape.VisitNode[F], G[A]]
+      pf: PartialFunction[SchemaShape.VisitNode[F], Option[G[A]]]
   ): G[A] = SchemaShape.visitOnce[F, G, A](this)(pf)
 
   lazy val discover = SchemaShape.discover[F](this)
@@ -260,7 +260,7 @@ object SchemaShape {
 
   def visitOnce[F[_], G[_]: Monad: Defer, A](
       root: SchemaShape[F, ?, ?, ?]
-  )(pf: PartialFunction[VisitNode[F], G[A]])(implicit A: Monoid[A]): G[A] = {
+  )(pf: PartialFunction[VisitNode[F], Option[G[A]]])(implicit A: Monoid[A]): G[A] = {
     type H[B] = StateT[G, Set[String], B]
     val S = Stateful[H, Set[String]]
     val H = Monad[H]
@@ -274,8 +274,12 @@ object SchemaShape {
 
     visit[F, H, A](root) { e =>
       lazy val cont = e match {
-        case pf(g1) => (g2: H[A]) => StateT.liftF(g1).flatMap(a1 => g2.map(a2 => a1 |+| a2))
-        case _      => (g2: H[A]) => g2
+        case pf(o) =>
+          (g2: H[A]) =>
+            o.foldMapA { g1 =>
+              StateT.liftF(g1).flatMap(a1 => g2.map(a2 => a1 |+| a2))
+            }
+        case _ => (g2: H[A]) => g2
       }
 
       e match {
@@ -322,20 +326,13 @@ object SchemaShape {
         case _ => modify(identity)
       }
 
-    implicit lazy val parForState: Parallel[Effect] = Parallel.identity[Effect]
-
-    val visitor: VisitNode[F] => (Effect[Unit] => Effect[Unit]) = {
-      case VisitNode.InNode(t: InToplevel[?]) => rec => modify(_.addToplevel(t.name, t)) >> rec
-      case VisitNode.OutNode(t: OutToplevel[F, a]) =>
-        rec =>
-          val modF = modify(_.addToplevel(t.name, t))
-          val fa = visitOutputTopelvel(t)
-          modF >> fa >> rec
-      // explicitly avoid visiting the whole ast, stop at toplevels
-      case _ => _ => modify(identity)
+    val program = shape.visitOnce[Effect, Unit] {
+      // Theres a cyclic dependency between this and visit, break the cycle be not visiting implementations
+      case VisitNode.Implementations(_)       => None
+      case VisitNode.InNode(t: InToplevel[?]) => Some(modify(_.addToplevel(t.name, t)))
+      case VisitNode.OutToplevelNode(t) =>
+        Some(modify(_.addToplevel(t.name, t)) >> visitOutputTopelvel(t))
     }
-
-    val program = shape.visit[Effect, Unit](PartialFunction.fromFunction(visitor))
 
     val positionGroups = shape.positions.groupBy(_.directive.name)
 
