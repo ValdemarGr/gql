@@ -1,4 +1,4 @@
-val scala213Version = "2.13.12"
+val scala213Version = "2.13.16"
 
 ThisBuild / scalaVersion := scala213Version
 ThisBuild / crossScalaVersions := Seq(scala213Version, "3.3.0")
@@ -14,7 +14,7 @@ ThisBuild / licenses := Seq(License.Apache2)
 ThisBuild / developers := List(
   Developer("valdemargr", "Valdemar Grange", "randomvald0069@gmail.com", url("https://github.com/valdemargr"))
 )
-ThisBuild / headerLicense := Some(HeaderLicense.Custom("Copyright (c) 2023 Valdemar Grange"))
+ThisBuild / headerLicense := Some(HeaderLicense.Custom("Copyright (c) 2025 Valdemar Grange"))
 ThisBuild / headerEmptyLine := false
 
 // I might re-enable this later
@@ -23,7 +23,6 @@ ThisBuild / tlMimaPreviousVersions := Set.empty
 ThisBuild / mimaReportSignatureProblems := false
 ThisBuild / mimaFailOnProblem := false
 ThisBuild / mimaPreviousArtifacts := Set.empty
-ThisBuild / tlSonatypeUseLegacyHost := true
 //ThisBuild / tlFatalWarnings := true
 
 ThisBuild / startYear := Some(2023)
