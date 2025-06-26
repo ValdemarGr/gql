@@ -87,12 +87,14 @@ def validate(schema: SchemaShape[IO, ?, ?, ?]): Chain[Error] = {
   import VisitNode._
   val fa = schema.visitOnce[Eval, Chain[Error]]{
     case FieldNode(name, f: Field[IO, ?, ?]) =>
-      Eval.now {
-        f.attributes.collect{ case a: AuthorizedField => a } match {
-          case Nil => Chain(Error.MissingPermission(name))
-          case a :: Nil => Chain.empty
-          case ys => Chain(Error.MultiplePermissionLists(name, ys.map(_.permissions)))
-        }
+      Some {
+          Eval.now {
+            f.attributes.collect{ case a: AuthorizedField => a } match {
+              case Nil => Chain(Error.MissingPermission(name))
+              case a :: Nil => Chain.empty
+              case ys => Chain(Error.MultiplePermissionLists(name, ys.map(_.permissions)))
+            }
+          }
       }
   }
 
