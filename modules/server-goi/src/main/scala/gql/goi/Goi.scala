@@ -167,7 +167,7 @@ object Goi {
           G: NonEmptyTraverse[G]
       ): Field[F, Q, G[Option[Ior[String, Node]]]] =
         b.from(
-          arged(arg[G[ID[String]]]("id"))
+          arged[F, Q, G[ID[String]]](arg[G[ID[String]]]("id"))
             .evalMap(id => runIds[F, G](id.map(_.value), lookup, sts).value)
             .rethrow
         )(out)
