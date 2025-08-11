@@ -1,7 +1,7 @@
 val scala213Version = "2.13.16"
 
 ThisBuild / scalaVersion := scala213Version
-ThisBuild / crossScalaVersions := Seq(scala213Version, "3.3.0")
+ThisBuild / crossScalaVersions := Seq(scala213Version, "3.3.4")
 ThisBuild / organization := "io.github.valdemargr"
 
 ThisBuild / tlBaseVersion := "0.4"
