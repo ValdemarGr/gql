@@ -142,7 +142,7 @@ object DebugPrinter {
               "cont" -> continuationDoced.document(next)
             )
           )
-        case Continuation.Rethrow(inner) =>
+        case Continuation.Rethrow(_, inner) =>
           record(
             "Continuation.Rethrow",
             kvs(
