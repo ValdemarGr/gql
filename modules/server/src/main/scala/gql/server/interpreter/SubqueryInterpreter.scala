@@ -30,6 +30,8 @@ import io.circe.syntax._
 import org.typelevel.scalaccompat.annotation._
 import cats.effect.implicits._
 import cats.effect.kernel.Resource
+import scala.util.Success
+import scala.util.Failure
 
 class SubqueryInterpreter[F[_]](
     state: Ref[F, EvalState[F]],
@@ -42,8 +44,11 @@ class SubqueryInterpreter[F[_]](
   def submit(name: String, duration: FiniteDuration, size: Int): F[Unit] =
     sup.supervise(stats.updateStats(name, duration, size)).void
 
-  def rethrow[A](cont: Continuation[F, A]): Continuation[F, Ior[EvalFailure, A]] =
-    Continuation.Rethrow[F, A](cont)
+  def rethrow[A](
+      nodeId: NodeId,
+      cont: Continuation[F, A]
+  ): Continuation[F, Ior[EvalFailure, A]] =
+    Continuation.Rethrow[F, A](nodeId, cont)
 
   @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
   def interpretSelection[I](
@@ -100,7 +105,7 @@ class SubqueryInterpreter[F[_]](
       case fa: Continuation.Contramap[F, i, I] => goCont(fa.next, en.map(fa.f))
       case fa: Continuation.Rethrow[F, i] =>
         val x = en.value: Ior[EvalFailure, i]
-        x.left.traverse(x => errors.update(x +: _)) *>
+        x.left.traverse(x => errors.update(x +: _) *> subgraphBatches.multiplicityNode(fa.nodeId, 0)) *>
           x.right.traverse(x => goCont(fa.inner, en.setValue(x))).map(_.getOrElse(Json.Null))
     }
 
@@ -111,12 +116,22 @@ class SubqueryInterpreter[F[_]](
       en: EvalNode[F, I]
   ): F[Json] = {
     import PreparedStep._
+    def rt = rethrow[O](ps.nodeId, cont)
     ps match {
-      case Lift(_, f) => goCont(cont, en.map(f))
+      case Lift(_, f) =>
+        val res = en.map[Ior[EvalFailure, O]] { x =>
+          scala.util.Try(f(x)) match {
+            case Success(value) =>
+              value.rightIor[EvalFailure]
+            case Failure(exception) =>
+              EvalFailure.EffectResolution(en.cursor, Left(exception)).leftIor[O]
+          }
+        }
+        goCont(rt, res)
       case fa: EmbedEffect[F, i] =>
         val fb = en.value: F[i]
         runEffect(fb, fa.sei.edgeId, 1, e => EvalFailure.EffectResolution(en.cursor, Left(e)))
-          .flatMap(x => goCont(rethrow(cont), en.setValue(x)))
+          .flatMap(x => goCont(rt, en.setValue(x)))
       case alg: InlineBatch[F, k, o] =>
         val keys = en.value: Set[k]
         subgraphBatches
@@ -134,7 +149,7 @@ class SubqueryInterpreter[F[_]](
             case None    => F.pure(Json.Null)
           }
       case EmbedError(_) =>
-        goCont(rethrow(cont), en.setValue(en.value.leftMap(EvalFailure.Raised(en.cursor, _))))
+        goCont(rt, en.setValue(en.value.leftMap(EvalFailure.Raised(en.cursor, _))))
       case GetMeta(_, pm0) =>
         val pm = pm0.value
         goCont(cont, en.map(_ => FieldMeta(QueryMeta(en.cursor, pm.variables), pm.args, pm.pdf)))
@@ -161,7 +176,7 @@ class SubqueryInterpreter[F[_]](
           case (Left(t), _)  => EvalFailure.StreamHeadResolution(en.cursor, Left(t)).leftIor[i]
           case (Right(a), _) => a.rightIor[EvalFailure]
         }
-        subscribeStream[Ior[EvalFailure, i]](s2, rethrow(cont), en)
+        subscribeStream[Ior[EvalFailure, i]](s2, rt, en)
     }
   }
 

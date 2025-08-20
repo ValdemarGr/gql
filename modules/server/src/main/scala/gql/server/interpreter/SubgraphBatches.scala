@@ -115,7 +115,7 @@ object SubgraphBatches {
       case Continuation.Contramap(_, next) => countContinuation(state, next)
       case Continuation.Continue(step, next) =>
         countContinuation(state, next).flatMap(countStep(_, step))
-      case Continuation.Rethrow(inner) => countContinuation(state, inner)
+      case Continuation.Rethrow(_, inner) => countContinuation(state, inner)
     }
   }
 

@@ -83,11 +83,15 @@ object AlphaRenaming {
   @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
   def alphaContinuation[F[_], A](scope: Int, cont: Continuation[F, A]): Eval[Continuation[F, A]] = Eval.defer {
     cont match {
-      case Continuation.Done(prep) => alphaPrep(scope, prep).map[Continuation[F, A]](Continuation.Done(_))
+      case Continuation.Done(prep) =>
+        alphaPrep(scope, prep).map[Continuation[F, A]](Continuation.Done(_))
       case Continuation.Continue(step, cont) =>
         (alphaStep(scope, step), alphaContinuation(scope, cont)).mapN[Continuation[F, A]](Continuation.Continue(_, _))
-      case Continuation.Contramap(f, cont) => alphaContinuation(scope, cont).map[Continuation[F, A]](Continuation.Contramap(f, _))
-      case r: Continuation.Rethrow[F, i]   => alphaContinuation(scope, r.inner).map[Continuation[F, A]](Continuation.Rethrow(_))
+      case Continuation.Contramap(f, cont) =>
+        alphaContinuation(scope, cont).map[Continuation[F, A]](Continuation.Contramap(f, _))
+      case r: Continuation.Rethrow[F, i] =>
+        alphaContinuation(scope, r.inner)
+          .map[Continuation[F, A]](Continuation.Rethrow(r.nodeId.alpha(scope), _))
     }
   }
 }
