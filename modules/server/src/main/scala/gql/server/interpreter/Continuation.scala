@@ -35,5 +35,5 @@ object Continuation {
   final case class Rethrow[F[_], I](
       nodeId: NodeId,
       inner: Continuation[F, I]
-  ) extends Continuation[F, Ior[EvalFailure, I]]
+  ) extends Continuation[F, Option[Ior[EvalFailure, I]]]
 }

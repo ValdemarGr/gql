@@ -47,7 +47,7 @@ class SubqueryInterpreter[F[_]](
   def rethrow[A](
       nodeId: NodeId,
       cont: Continuation[F, A]
-  ): Continuation[F, Ior[EvalFailure, A]] =
+  ): Continuation[F, Option[Ior[EvalFailure, A]]] =
     Continuation.Rethrow[F, A](nodeId, cont)
 
   @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
@@ -104,9 +104,11 @@ class SubqueryInterpreter[F[_]](
       case fa: Continuation.Continue[F, I, c]  => goStep[I, c](fa.step, fa.next, en)
       case fa: Continuation.Contramap[F, i, I] => goCont(fa.next, en.map(fa.f))
       case fa: Continuation.Rethrow[F, i] =>
-        val x = en.value: Ior[EvalFailure, i]
-        x.left.traverse(x => errors.update(x +: _) *> subgraphBatches.multiplicityNode(fa.nodeId, 0)) *>
-          x.right.traverse(x => goCont(fa.inner, en.setValue(x))).map(_.getOrElse(Json.Null))
+        val x = en.value: Option[Ior[EvalFailure, i]]
+        val value = x.flatMap(_.right).traverse(x => goCont(fa.inner, en.setValue(x))).map(_.getOrElse(Json.Null))
+        val err = x.traverse_(_.left.traverse_(x => errors.update(x +: _)))
+        val doesntContinue = F.whenA(x.forall(_.right.isEmpty))(subgraphBatches.multiplicityNode(fa.nodeId, 0))
+        doesntContinue *> err *> value
     }
 
   @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
@@ -127,29 +129,25 @@ class SubqueryInterpreter[F[_]](
               EvalFailure.EffectResolution(en.cursor, Left(exception)).leftIor[O]
           }
         }
-        goCont(rt, res)
+        goCont(rt, res.map(_.some))
       case fa: EmbedEffect[F, i] =>
         val fb = en.value: F[i]
         runEffect(fb, fa.sei.edgeId, 1, e => EvalFailure.EffectResolution(en.cursor, Left(e)))
-          .flatMap(x => goCont(rt, en.setValue(x)))
-      case alg: InlineBatch[F, k, o] =>
-        val keys = en.value: Set[k]
-        subgraphBatches
-          .inlineBatch(alg, keys, en.cursor)
-          .flatMap {
-            case Some(x) => goCont(cont, en.setValue(x.filter { case (k, _) => keys.contains(k) }))
-            case None    => F.pure(Json.Null)
-          }
+          .flatMap(x => goCont(rt, en.setValue(Some(x))))
       case alg: Batch[F, k, v] =>
         val keys = en.value: Set[k]
         subgraphBatches
           .batch(alg.ubi, keys, en.cursor)
-          .flatMap {
-            case Some(x) => goCont(cont, en.setValue(x.filter { case (k, _) => keys.contains(k) }))
-            case None    => F.pure(Json.Null)
-          }
+          .map(_.map(_.filter { case (k, _) => keys.contains(k) }))
+          .flatMap(y => goCont(rt, en.setValue(y.map(_.rightIor))))
+      case alg: InlineBatch[F, k, o] =>
+        val keys = en.value: Set[k]
+        subgraphBatches
+          .inlineBatch(alg, keys, en.cursor)
+          .map(_.map(_.filter { case (k, _) => keys.contains(k) }))
+          .flatMap(y => goCont(rt, en.setValue(y.map(_.rightIor))))
       case EmbedError(_) =>
-        goCont(rt, en.setValue(en.value.leftMap(EvalFailure.Raised(en.cursor, _))))
+        goCont(rt, en.setValue(en.value.leftMap(EvalFailure.Raised(en.cursor, _)).some))
       case GetMeta(_, pm0) =>
         val pm = pm0.value
         goCont(cont, en.map(_ => FieldMeta(QueryMeta(en.cursor, pm.variables), pm.args, pm.pdf)))
@@ -171,12 +169,14 @@ class SubqueryInterpreter[F[_]](
         goStep(alg.step, cont.contramap[o2](o2 => (o2, c2)), en.setValue(i2))
       case _: EmbedStream[F, i] =>
         val stream = en.value: fs2.Stream[F, i]
-        val s2 = stream.attempt.zipWithIndex.map {
-          case (Left(t), 0)  => EvalFailure.StreamTailResolution(en.cursor, Left(t)).leftIor[i]
-          case (Left(t), _)  => EvalFailure.StreamHeadResolution(en.cursor, Left(t)).leftIor[i]
-          case (Right(a), _) => a.rightIor[EvalFailure]
-        }
-        subscribeStream[Ior[EvalFailure, i]](s2, rt, en)
+        val s2 = stream.attempt.zipWithIndex
+          .map {
+            case (Left(t), 0)  => EvalFailure.StreamTailResolution(en.cursor, Left(t)).leftIor[i]
+            case (Left(t), _)  => EvalFailure.StreamHeadResolution(en.cursor, Left(t)).leftIor[i]
+            case (Right(a), _) => a.rightIor[EvalFailure]
+          }
+          .map(_.some)
+        subscribeStream[Option[Ior[EvalFailure, i]]](s2, rt, en.map(_.some))
     }
   }
 

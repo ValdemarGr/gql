@@ -64,9 +64,8 @@ object SubgraphBatches {
   @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
   def countStep[F[_]](state: State, step: PreparedStep[F, ?, ?]): Eval[State] = Eval.defer {
     import PreparedStep._
-    step match {
-      case Lift(_, _) | EmbedError(_) | GetMeta(_, _) | EmbedEffect(_) | EmbedStream(_) =>
-        Eval.now(state.copy(accum = state.accum + (MulitplicityNode(step.nodeId) -> state.childBatches)))
+    val s2 = step match {
+      case Lift(_, _) | EmbedError(_) | GetMeta(_, _) | EmbedEffect(_) | EmbedStream(_) => Eval.now(state)
       case Compose(_, l, r) =>
         countStep(state, r).flatMap(countStep(_, l))
       case alg: Choose[F, ?, ?, ?, ?] =>
@@ -83,6 +82,7 @@ object SubgraphBatches {
       case alg: Batch[F, ?, ?]       => Eval.now(state.copy(childBatches = state.childBatches + BatchNodeId(alg.nodeId)))
       case alg: InlineBatch[F, ?, ?] => Eval.now(state.copy(childBatches = state.childBatches + BatchNodeId(alg.nodeId)))
     }
+    s2.map(s => s.copy(accum = s.accum + (MulitplicityNode(step.nodeId) -> s.childBatches)))
   }
 
   def countCont[F[_]](ps: PreparedStep[F, ?, ?], cont: Prepared[F, ?]): Eval[State] = Eval.defer {
