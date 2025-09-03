@@ -55,13 +55,13 @@ object QueryInterpreter {
 
   def apply[F[_]](
       schemaState: SchemaState[F],
-      ss: Ref[F, EvalState[F]],
+      streamingApi: Resource[F, StreamingApi[F]],
       throttle: F ~> F,
       sup: Supervisor[F]
   )(implicit stats: Statistics[F], planner: Planner[F], F: Async[F]) =
     new QueryInterpreter[F] {
       def interpretOne[A](input: Input[F, A], sgb: SubgraphBatches[F], errors: Ref[F, Chain[EvalFailure]]): F[Json] = {
-        val go = new SubqueryInterpreter(ss, sup, stats, throttle, errors, sgb)
+        val go = new SubqueryInterpreter(streamingApi, sup, stats, throttle, errors, sgb)
         go.goCont(input.continuation, input.data)
       }
 
