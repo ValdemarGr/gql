@@ -18,13 +18,12 @@ package gql
 import cats.implicits._
 import io.circe._
 import io.circe.syntax._
-import fs2.{Stream, Pull}
+import fs2.Stream
 import munit.CatsEffectSuite
 import gql._
 import gql.ast._
 import gql.dsl.all._
 import cats.effect._
-import scala.concurrent.duration._
 import gql.resolver.Resolver
 
 class BatchWithErrorsTest extends CatsEffectSuite {

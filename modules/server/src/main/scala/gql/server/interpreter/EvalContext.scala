@@ -15,7 +15,6 @@
  */
 package gql.server.interpreter
 
-import cats.implicits._
 import cats.effect._
 import gql.Cursor
 
@@ -52,11 +51,10 @@ object EvalNode {
     EvalNode[F, A](Cursor.empty, value, Set.empty, Resource.pure(Some(1)), F.never)
 }
 
-final case class EvalState[F[_]](
-    // None if we are currently not consuming
-    values: Option[List[EvalState.Entry[F, ?]]],
-    ps: EvalState.ProduceConsume[F]
-)
+trait StreamingApi[F[_]] {
+  // awaits until an entry can be pushed, then pushes it and awaits execution
+  def pushEntry[A](entry: EvalState.Entry[F, A]): F[Unit]
+}
 
 object EvalState {
   final case class Entry[F[_], A](
@@ -66,24 +64,4 @@ object EvalState {
       cont: Continuation[F, A],
       a: EvalNode[F, A]
   )
-
-  final case class ProduceConsume[F[_]](
-      consumed: F[Unit],
-      notifyConsumed: F[Unit],
-      produced: F[Unit],
-      notifyProduced: F[Unit]
-  )
-  object ProduceConsume {
-    def make[F[_]](implicit F: Async[F]): F[ProduceConsume[F]] =
-      for {
-        consumedD <- F.deferred[Unit]
-        producedD <- F.deferred[Unit]
-      } yield ProduceConsume(consumedD.get, consumedD.complete(()).void, producedD.get, producedD.complete(()).void)
-  }
-
-  def init[F[_]](implicit F: Async[F]): F[Ref[F, EvalState[F]]] =
-    for {
-      ps <- ProduceConsume.make[F]
-      ref <- F.ref(EvalState[F](Some(Nil), ps))
-    } yield ref
 }

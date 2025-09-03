@@ -34,7 +34,7 @@ import scala.util.Success
 import scala.util.Failure
 
 class SubqueryInterpreter[F[_]](
-    state: Ref[F, EvalState[F]],
+    streamingApi: Resource[F, StreamingApi[F]],
     sup: Supervisor[F],
     stats: Statistics[F],
     throttle: F ~> F,
@@ -201,47 +201,38 @@ class SubqueryInterpreter[F[_]](
     tok <- F.unique
     d <- F.deferred[Json]
 
-    background = {
+    background = Stream.resource(streamingApi).flatMap { api =>
       def mkEn(isKilled: F[Unit], leaseThis: Resource[F, Option[Int]], a: A): EvalNode[F, A] =
         en.addParentPath(tok).setInterruptContext(isKilled).setParentLease(leaseThis).setValue(a)
 
-      def tryUpdate(poll: Poll[F], lease: Resource[F, Option[Int]], c: EvalNode[F, A]): F[Unit] =
-        state.modify { s =>
-          s.values match {
-            // If we are not consuming, we await next and try again
-            case None =>
-              (s, (poll(s.ps.consumed) >> tryUpdate(poll, lease, c)))
-            // If we are consuming, publish the value and await next consumption
-            case Some(xs) =>
-              (
-                s.copy(values = Some(EvalState.Entry(tok, cont, c) :: xs)),
-                s.ps.notifyProduced >> poll(s.ps.consumed)
-              )
-          }
-        }.flatten
-
-      def go(a: A, handle: (EvalNode[F, A], Resource[F, Option[Int]]) => F[Unit]): Stream[F, F[Unit]] =
+      def alloc(a: A): Stream[F, (F[Unit], EvalNode[F, A])] =
         for {
           killSig <- Stream.eval(F.deferred[Unit])
-          kill = killSig.complete(()).void
           leaseScope <- fs2.UnsafeFs2Access.leaseScope[F].flatMap(Pull.output1(_)).streamNoScope
           safeLease <- Stream.resource(SharedResource.make[F](leaseScope))
-          _ <- Stream.eval(handle(mkEn(kill, safeLease, a), safeLease))
-        } yield kill
+        } yield (killSig.complete(()).void, mkEn(killSig.get, safeLease, a))
 
       def walk(xs: Stream[F, A], kill: F[Unit]): Stream[F, Unit] =
         xs.pull.uncons1.flatMap {
           case None => Pull.done
           case Some((hd, tl)) =>
             Pull.eval(kill) >>
-              go(hd, (en, sl) => F.uncancelable(tryUpdate(_, sl, en)).void).flatMap(walk(tl, _)).pull.echo
+              alloc(hd)
+                .flatMap { case (killThis, en) =>
+                  Stream.eval(api.pushEntry(EvalState.Entry(tok, cont, en))) >> walk(tl, killThis)
+                }
+                .pull
+                .echo
         }.streamNoScope
 
       val sout = stream.pull.uncons1.flatMap {
         case None => Pull.done
         case Some((hd, tl)) =>
-          go(hd, (en, _) => goCont(cont, en).flatMap(d.complete(_)).void)
-            .flatMap(x => walk(tl, x).interruptWhen((en.interruptContext).attempt))
+          alloc(hd)
+            .flatMap { case (killThis, en) =>
+              Stream.eval(goCont(cont, en).flatMap(d.complete(_))).void *>
+                walk(tl, killThis).interruptWhen((en.interruptContext).attempt)
+            }
             .pull
             .echo
       }.streamNoScope
