@@ -219,7 +219,8 @@ class SubqueryInterpreter[F[_]](
             Pull.eval(kill) >>
               alloc(hd)
                 .flatMap { case (killThis, en) =>
-                  Stream.eval(api.pushEntry(EvalState.Entry(tok, cont, en))) >> walk(tl, killThis)
+                  Stream.eval(api.pushEntry(EvalState.Entry(tok, cont, en))) >>
+                    walk(tl, killThis)
                 }
                 .pull
                 .echo
@@ -229,8 +230,8 @@ class SubqueryInterpreter[F[_]](
         case None => Pull.done
         case Some((hd, tl)) =>
           alloc(hd)
-            .flatMap { case (killThis, en) =>
-              Stream.eval(goCont(cont, en).flatMap(d.complete(_))).void *>
+            .flatMap { case (killThis, en0) =>
+              Stream.eval(goCont(cont, en0).flatMap(d.complete(_))).void *>
                 walk(tl, killThis).interruptWhen((en.interruptContext).attempt)
             }
             .pull

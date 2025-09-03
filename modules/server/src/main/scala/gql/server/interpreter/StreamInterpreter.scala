@@ -103,6 +103,7 @@ object StreamInterpreter {
               .take(1)
               .compile
               .lastOrError
+            _ <- debug(s"proceeding with isDead = $isDead")
 
             // okay, time to prepare and execute the batch
             res <-
