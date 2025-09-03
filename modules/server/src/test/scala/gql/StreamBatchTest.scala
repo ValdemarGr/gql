@@ -18,7 +18,7 @@ package gql
 import cats.implicits._
 import io.circe._
 import io.circe.syntax._
-import fs2.{Stream, Pull}
+import fs2.Stream
 import munit.CatsEffectSuite
 import gql._
 import gql.ast._
