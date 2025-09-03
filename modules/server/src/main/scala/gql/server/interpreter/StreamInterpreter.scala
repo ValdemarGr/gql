@@ -76,14 +76,6 @@ object StreamInterpreter {
         takeOne: Boolean = false,
         throttle: F ~> F = FunctionK.id[F]
     ): Stream[F, Result] = {
-      // sealed trait StateVariant
-      // object StateVariant {
-      //   case class Executing(done: Deferred[F, Unit]) extends StateVariant
-      //   case class Accumulating(
-      //       entries: List[EvalState.Entry[F, ?]],
-      //       done: Deferred[F, Unit]
-      //   ) extends StateVariant
-      // }
       case class St(
           entries: Option[List[EvalState.Entry[F, ?]]],
           nextAccumulation: Deferred[F, Unit],
