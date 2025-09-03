@@ -159,6 +159,7 @@ class StreamingTest extends CatsEffectSuite {
     """
 
     query(q)
+      // .map{x => println(x);x}
       .take(5)
       .map { jo =>
         Json.fromJsonObject(jo).field("data").field("level1").field("level2").field("value").int

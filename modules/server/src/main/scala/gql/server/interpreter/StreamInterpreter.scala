@@ -129,7 +129,7 @@ object StreamInterpreter {
                   sig.modify { st =>
                     st.entries match {
                       case None     => (st, st.nextAccumulation.get >> pushEntry[B](entry))
-                      case Some(xs) => (st.copy(entries = Some(entry :: xs)), F.unit)
+                      case Some(xs) => (st.copy(entries = Some(entry :: xs)), st.nextAccumulation.get)
                     }
                   }.flatten
               }
