@@ -99,7 +99,11 @@ object NatchezTracer {
             planner.plan(naive).flatTap { plan =>
               Trace[F].put(
                 "graphql.planner.plan.totalCost" -> plan.totalCost,
-                "graphql.planner.plan.optimized" -> plan.optimizedCost
+                "graphql.planner.plan.optimized" -> plan.optimizedCost,
+                "graphql.planner.plan.numBatches" -> plan.batches.size,
+                "graphql.planner.plan.avgBatchSize" ->
+                  plan.batches.iterator.map { case (ns, _) => ns.size }.sum.toFloat /
+                  plan.batches.size.toFloat
               )
             }
         }
