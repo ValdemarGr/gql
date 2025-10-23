@@ -47,7 +47,7 @@ class StreamBatchTest extends CatsEffectSuite {
               }
               .andThen(intB.all[List])
               .map(_.flatten.map(_.toString))
-              .streamMap(xs => fs2.Stream(xs).lift[IO].repeat.meteredStartImmediately(200.millis))
+              .streamMap(xs => fs2.Stream(xs).lift[IO].meteredStartImmediately(200.millis))
               .andThen(stringB.all[List])
               .map(_.flatten)
           }
