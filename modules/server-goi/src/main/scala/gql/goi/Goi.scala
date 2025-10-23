@@ -176,8 +176,11 @@ object Goi {
         shape.query.copy(
           fields = shape.query.fields ::: fields[F, Q](
             "node" -> nodeField[Id](optIorNode),
-            "nodes" ->
-              nodeField[NonEmptyList](gql.ast.gqlOutArrForTraversable(NonEmptyTraverse[NonEmptyList], optIorNode))
+            "nodes" -> {
+              type A = Option[Ior[String, Node]]
+              val t = OutArr[F, A, NonEmptyList[A], A](optIorNode, _.toList, Resolver.id)
+              nodeField[NonEmptyList](t)
+            }
           )
         )
       )

@@ -303,13 +303,10 @@ abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
         F: Applicative[F],
         Q: Queryable[F],
         tpe: => Out[F, G[H[QueryContext[C]]]]
-    ) =
-      contBoundaryFull[G, H, B, C, D, ArgType, ArgType](EmptyableArg.Lift(a), connection)(f)(EmptyableArg.Lift(a))(continue)(
-        implicitly,
-        implicitly,
-        implicitly,
-        tpe
-      )
+    ) = {
+      implicit def tpe2: Out[F, G[H[QueryContext[C]]]] = tpe
+      contBoundaryFull[G, H, B, C, D, ArgType, ArgType](EmptyableArg.Lift(a), connection)(f)(EmptyableArg.Lift(a))(continue)
+    }
 
     def contBoundary[G[_]: Reassociateable, H[_], B, C, D](connection: Connection[F])(
         f: A => Query[G, Query.Select[B]]
@@ -317,16 +314,10 @@ abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
         F: Applicative[F],
         Q: Queryable[F],
         tpe: => Out[F, G[H[QueryContext[C]]]]
-    ) =
-      contBoundaryFull[G, H, B, C, D, Unit, Unit](EmptyableArg.Empty, connection)((i, _) => f(i))(EmptyableArg.Empty)((i, _) =>
-        continue(i)
-      )(
-        implicitly,
-        implicitly,
-        implicitly,
-        tpe
-      )
-
+    ) = {
+      implicit def tpe2: Out[F, G[H[QueryContext[C]]]] = tpe
+      contBoundaryFull[G, H, B, C, D, Unit, Unit](EmptyableArg.Empty, connection)((i, _) => f(i))(EmptyableArg.Empty)((i, _) => continue(i))
+    }
     def query[G[_], B](f: A => Query[G, Query.Select[B]])(implicit
         tpe: => Out[F, G[B]]
     ): Field[F, QueryContext[A], G[B]] =
@@ -349,22 +340,30 @@ abstract class QueryDsl[QA <: QueryAlgebra](val algebra: QA) { self =>
 
     def runField[G[_], I, B, ArgType](connection: Connection[F], arg: Arg[ArgType])(
         q: (NonEmptyList[I], ArgType) => Query[G, (Query.Select[I], B)]
-    )(implicit F: Applicative[F], Q: Queryable[F], tpe: => Out[F, G[QueryContext[B]]]) =
-      self.runField(connection, arg)(q)(Q, F, tpe)
+    )(implicit F: Applicative[F], Q: Queryable[F], tpe: => Out[F, G[QueryContext[B]]]) = {
+      implicit def tpe2: Out[F, G[QueryContext[B]]] = tpe
+      self.runField(connection, arg)(q)
+    }
 
     def runField[G[_], I, B](connection: Connection[F])(
         q: NonEmptyList[I] => Query[G, (Query.Select[I], B)]
-    )(implicit F: Applicative[F], Q: Queryable[F], tpe: => Out[F, G[QueryContext[B]]]) =
-      self.runField(connection)(q)(Q, F, tpe)
+    )(implicit F: Applicative[F], Q: Queryable[F], tpe: => Out[F, G[QueryContext[B]]]) = {
+      implicit def tpe2: Out[F, G[QueryContext[B]]] = tpe
+      self.runField(connection)(q)
+    }
 
     def runFieldSingle[G[_], I, B, ArgType](connection: Connection[F], arg: Arg[ArgType])(
         q: (I, ArgType) => Query[G, B]
-    )(implicit F: Applicative[F], Q: Queryable[F], tpe: => Out[F, G[QueryContext[B]]]) =
-      self.runFieldSingle(connection, arg)(q)(Q, F, tpe)
+    )(implicit F: Applicative[F], Q: Queryable[F], tpe: => Out[F, G[QueryContext[B]]]) = {
+      implicit def tpe2: Out[F, G[QueryContext[B]]] = tpe
+      self.runFieldSingle(connection, arg)(q)
+    }
 
     def runFieldSingle[G[_], I, B](connection: Connection[F])(
         q: I => Query[G, B]
-    )(implicit F: Applicative[F], Q: Queryable[F], tpe: => Out[F, G[QueryContext[B]]]) =
-      self.runFieldSingle(connection)(q)(Q, F, tpe)
+    )(implicit F: Applicative[F], Q: Queryable[F], tpe: => Out[F, G[QueryContext[B]]]) = {
+      implicit def tpe2: Out[F, G[QueryContext[B]]] = tpe
+      self.runFieldSingle(connection)(q)
+    }
   }
 }

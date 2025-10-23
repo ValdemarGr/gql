@@ -190,14 +190,21 @@ object SchemaUtil {
     def implementation[A](s: String): EitherNec[String, Implementation[Pure, A, ?]] =
       partitionType(s) match {
         case i: InterfaceType =>
-          Right(Implementation(Eval.always(convertInterface(i).toOption.get))(_ => Ior.right(Option.empty[A])))
+          convertInterface(i).toOption match {
+            case x: Option[Interface[fs2.Pure, a]] =>
+              Right(Implementation(Eval.always(x.get))(_ => Ior.right(Option.empty[A])))
+          }
         case _ => s"Expected interface, got object `${s}`".leftNec
       }
 
-    def variant[A](s: String) =
+    def variant(s: String) =
       partitionType(s) match {
         case i: ObjectType =>
-          Right(Variant(Eval.always(convertObject(i).toOption.get))((_: Unit) => Ior.right(None)))
+          // scala 3 doesn't allow wildcards in by-name parameters
+          convertObject(i).toOption match {
+            case x: Option[Type[fs2.Pure, a]] =>
+              Right(Variant(Eval.always(x.get))((_: Unit) => Ior.right(None)))
+          }
         case _ => s"Expected object type, got something else `${s}`".leftNec
       }
 
@@ -224,7 +231,7 @@ object SchemaUtil {
         case ObjectType(i)    => convertObject(ObjectType(i))
         case InterfaceType(i) => convertInterface(InterfaceType(i))
         case UnionType(x) =>
-          val variants = x.types.parTraverse(variant[Unit])
+          val variants = x.types.parTraverse(variant)
           variants.map(Union[fs2.Pure, Unit](x.name, _))
         case x: EnumType   => Right(convertEnum(x))
         case x: ScalarType => Right(convertScalar(x))

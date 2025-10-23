@@ -187,8 +187,10 @@ object ShowMissingKeys {
   def showForKey[A: Show](prefix: String): ShowMissingKeys[A] =
     showFull(xs => s"$prefix: ${xs.map(_.show).mkString_(", ")}")
 
-  def show[A](showKey: A => String, prefix: String): ShowMissingKeys[A] =
-    showForKey[A](prefix)(Show.show(showKey))
+  def show[A](showKey: A => String, prefix: String): ShowMissingKeys[A] = {
+    implicit val ShowKey: Show[A] = Show.show(showKey)
+    showForKey[A](prefix)
+  }
 }
 
 trait ResolverInstances {

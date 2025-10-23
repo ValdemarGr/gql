@@ -649,7 +649,11 @@ object Reassociateable extends ReassociateableLowPrio1 {
   implicit def reassociateStep[F[_], G[_]](implicit F: Reassociateable[F], G: Reassociateable[G]): Reassociateable[λ[X => F[G[X]]]] = {
     type H[A] = F[G[A]]
     new Reassociateable[H] {
-      val instance = Nested.catsDataTraverseForNested(F.traverse, G.traverse)
+      val instance = {
+        implicit val Ftr: Traverse[F] = F.traverse
+        implicit val Gtr: Traverse[G] = G.traverse
+        Nested.catsDataTraverseForNested[F, G]
+      }
       def traverse = new Traverse[H] {
         override def foldLeft[A, B](fa: H[A], b: B)(f: (B, A) => B): B =
           instance.foldLeft(Nested(fa), b)(f)

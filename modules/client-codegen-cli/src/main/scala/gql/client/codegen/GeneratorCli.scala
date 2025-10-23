@@ -38,7 +38,30 @@ object GeneratorCli
       queries: NonEmptyList[Query],
       packageName: Option[String]
   )
-  val kvPairs =
+  val kvPairs = {
+    implicit val arg: Argument[Input] = Argument.from[Input]("json-input") { str =>
+      implicit val decoderForPath: Decoder[Path] = Decoder.decodeString.emap { str =>
+        Either.catchNonFatal(Path(str)).leftMap(_.getMessage)
+      }
+
+      implicit val queryDec: Decoder[Query] = Decoder.instance[Query] { c =>
+        (
+          c.downField("query").as[Path],
+          c.downField("output").as[Option[Path]]
+        ).mapN(Query.apply)
+      }
+
+      implicit val inputDec: Decoder[Input] = Decoder.instance[Input] { c =>
+        (
+          c.get[Path]("schema"),
+          c.get[Path]("shared"),
+          c.get[NonEmptyList[Query]]("queries"),
+          c.get[Option[String]]("packageName")
+        ).mapN(Input.apply)
+      }
+
+      io.circe.parser.decode[Input](str).leftMap(_.show).toValidatedNel
+    }
     Opts.options[Input](
       "input",
       help = """|Path to the GraphQL schemas and query files, given as json value.
@@ -57,31 +80,8 @@ object GeneratorCli
                 |"queries" should be the collection of queries that you want to generate code for
                 |"packageName" is the package name for the generated code
                 |Omitting "output" will generate the file beside the input query""".stripMargin
-    ) {
-      Argument.from[Input]("json-input") { str =>
-        implicit val decoderForPath: Decoder[Path] = Decoder.decodeString.emap { str =>
-          Either.catchNonFatal(Path(str)).leftMap(_.getMessage)
-        }
-
-        implicit val queryDec: Decoder[Query] = Decoder.instance[Query] { c =>
-          (
-            c.downField("query").as[Path],
-            c.downField("output").as[Option[Path]]
-          ).mapN(Query.apply)
-        }
-
-        implicit val inputDec: Decoder[Input] = Decoder.instance[Input] { c =>
-          (
-            c.get[Path]("schema"),
-            c.get[Path]("shared"),
-            c.get[NonEmptyList[Query]]("queries"),
-            c.get[Option[String]]("packageName")
-          ).mapN(Input.apply)
-        }
-
-        io.circe.parser.decode[Input](str).leftMap(_.show).toValidatedNel
-      }
-    }
+    )
+  }
 
   val validateOpt = Opts.flag("validate", "validate the schema and queries").orFalse
 

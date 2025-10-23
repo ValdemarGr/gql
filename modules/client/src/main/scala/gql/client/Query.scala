@@ -141,8 +141,10 @@ object Query {
   def queryDecoder[A](ss: SelectionSet[A]): Decoder[A] =
     Decoder.instance(_.get[A]("data")(Dec.decoderForSelectionSet(ss)))
 
-  def queryResultDecoder[A](ss: SelectionSet[A]): Decoder[QueryResult[A]] =
-    QueryResult.decoder(Dec.decoderForSelectionSet(ss))
+  def queryResultDecoder[A](ss: SelectionSet[A]): Decoder[QueryResult[A]] = {
+    implicit val dec: Decoder[A] = Dec.decoderForSelectionSet(ss)
+    QueryResult.decoder[A]
+  }
 
   def findSelectionFragments[A](selection: Selection[A]): List[Fragment[?]] = selection match {
     case f: FragmentSpread[a] => f.fr :: findFragments(f.fr.subSelection)
