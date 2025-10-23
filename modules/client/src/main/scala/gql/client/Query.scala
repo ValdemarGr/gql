@@ -142,7 +142,7 @@ object Query {
     Decoder.instance(_.get[A]("data")(Dec.decoderForSelectionSet(ss)))
 
   def queryResultDecoder[A](ss: SelectionSet[A]): Decoder[QueryResult[A]] = {
-    implicit val dec: Decoder[A] = Dec.decoderForSelectionSet(ss)
+    implicit def dec: Decoder[A] = Dec.decoderForSelectionSet(ss)
     QueryResult.decoder[A]
   }
 

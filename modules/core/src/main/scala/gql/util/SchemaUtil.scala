@@ -190,9 +190,10 @@ object SchemaUtil {
     def implementation[A](s: String): EitherNec[String, Implementation[Pure, A, ?]] =
       partitionType(s) match {
         case i: InterfaceType =>
-          convertInterface(i).toOption match {
-            case x: Option[Interface[fs2.Pure, a]] =>
-              Right(Implementation(Eval.always(x.get))(_ => Ior.right(Option.empty[A])))
+          val f = (_: Unit) => convertInterface(i).toOption.get
+          f match {
+            case g: (Unit => Interface[fs2.Pure, a]) =>
+              Right(Implementation(Eval.always(g(())))(_ => Ior.right(Option.empty[A])))
           }
         case _ => s"Expected interface, got object `${s}`".leftNec
       }
@@ -201,9 +202,10 @@ object SchemaUtil {
       partitionType(s) match {
         case i: ObjectType =>
           // scala 3 doesn't allow wildcards in by-name parameters
-          convertObject(i).toOption match {
-            case x: Option[Type[fs2.Pure, a]] =>
-              Right(Variant(Eval.always(x.get))((_: Unit) => Ior.right(None)))
+          val f = (_: Unit) => convertObject(i).toOption.get
+          f match {
+            case g: (Unit => Type[fs2.Pure, a]) =>
+              Right(Variant(Eval.always(g(())))((_: Unit) => Ior.right(None)))
           }
         case _ => s"Expected object type, got something else `${s}`".leftNec
       }

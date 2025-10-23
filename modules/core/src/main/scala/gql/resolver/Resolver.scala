@@ -188,7 +188,7 @@ object ShowMissingKeys {
     showFull(xs => s"$prefix: ${xs.map(_.show).mkString_(", ")}")
 
   def show[A](showKey: A => String, prefix: String): ShowMissingKeys[A] = {
-    implicit val ShowKey: Show[A] = Show.show(showKey)
+    implicit def showKey0: Show[A] = Show.show(showKey)
     showForKey[A](prefix)
   }
 }

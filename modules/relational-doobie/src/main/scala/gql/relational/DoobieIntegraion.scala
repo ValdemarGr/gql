@@ -46,7 +46,7 @@ object DoobieIntegraion extends QueryAlgebra {
   type Connection[F[_]] = Transactor[F]
   implicit def doobieQueryable[F[_]: MonadCancelThrow]: Queryable[F] = new Queryable[F] {
     def apply[A](query: Frag, decoder: Decoder[A], connection: Connection[F]): F[List[A]] = {
-      implicit val dec: Decoder[A] = decoder
+      implicit def dec: Decoder[A] = decoder
       query.query[A].to[List].transact(connection)
     }
   }

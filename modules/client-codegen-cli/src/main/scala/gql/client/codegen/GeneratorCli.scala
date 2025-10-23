@@ -39,7 +39,7 @@ object GeneratorCli
       packageName: Option[String]
   )
   val kvPairs = {
-    implicit val arg: Argument[Input] = Argument.from[Input]("json-input") { str =>
+    implicit def arg: Argument[Input] = Argument.from[Input]("json-input") { str =>
       implicit val decoderForPath: Decoder[Path] = Decoder.decodeString.emap { str =>
         Either.catchNonFatal(Path(str)).leftMap(_.getMessage)
       }
