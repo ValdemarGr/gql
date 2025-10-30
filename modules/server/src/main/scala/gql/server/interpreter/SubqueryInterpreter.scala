@@ -77,7 +77,7 @@ class SubqueryInterpreter[F[_]](
   ): F[Json] =
     s match {
       case PreparedLeaf(_, _, enc) => F.pure(enc(en.value))
-      case Selection(_, xs, _)     => interpretSelection(xs, en).map(_.toList.toMap.asJson)
+      case Selection(_, xs, _)     => interpretSelection(xs, en).map(ys => JsonObject(ys.toList: _*).asJson)
       case lst: PreparedList[F, a, I, b] =>
         val sq = lst.toSeq(en.value)
         subgraphBatches.multiplicityNode(lst.id, sq.size) *>
