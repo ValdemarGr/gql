@@ -91,7 +91,7 @@ object Arg {
       Arg(fa.impl.map(_.map(f)))
 
     override def ap[A, B](ff: Arg[A => B])(fa: Arg[A]): Arg[B] =
-      Arg((fa.impl, ff.impl).mapN(_ ap _))
+      Arg((ff.impl, fa.impl).mapN((f, a) => a.ap(f)))
   }
 }
 
