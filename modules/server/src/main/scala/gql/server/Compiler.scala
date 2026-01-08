@@ -137,10 +137,11 @@ object Compiler {
     ): Application[F] = {
       implicit val s = schema.statistics
       implicit val p = schema.planner
+      val _ = debug
 
       compileWithInterpreter(
         ps,
-        StreamInterpreter[F](schema.state, debug, accumulate),
+        StreamInterpreter[F](schema.state, accumulate),
         queryInput,
         mutationInput,
         subscriptionInput

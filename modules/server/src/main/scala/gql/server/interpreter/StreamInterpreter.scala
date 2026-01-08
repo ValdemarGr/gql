@@ -28,6 +28,7 @@ import fs2.Stream
 import scala.concurrent.duration.FiniteDuration
 import cats.arrow.FunctionK
 import cats.effect.std.Supervisor
+import cats.effect.std.Queue
 import fs2.concurrent.SignallingRef
 
 /** The [[StreamInterpreter]] is resposible for:
@@ -37,8 +38,16 @@ import fs2.concurrent.SignallingRef
   *
   * For actual query excution, take a look at [[QueryInterpreter]].
   */
+
 trait StreamInterpreter[F[_]] {
   import StreamInterpreter._
+
+  def interpretStream0[A](
+      root: A,
+      selection: Selection[F, A],
+      takeOne: Boolean = false,
+      throttle: F ~> F = FunctionK.id[F]
+  ): Resource[F, ResultStream[F]]
 
   def interpretStream[A](
       root: A,
@@ -55,6 +64,14 @@ trait StreamInterpreter[F[_]] {
 }
 
 object StreamInterpreter {
+  final case class AwaitEvents[F[_]](
+      await: F[Option[ResultStream[F]]]
+  )
+
+  final case class ResultStream[F[_]](
+      evalNext: F[(Result, AwaitEvents[F])]
+  )
+
   final case class Result(
       errors: Chain[EvalFailure],
       data: JsonObject
@@ -64,122 +81,136 @@ object StreamInterpreter {
 
   def apply[F[_]: Statistics: Planner](
       schemaState: SchemaState[F],
-      debug: DebugPrinter[F],
       accumulate: Option[FiniteDuration]
   )(implicit F: Async[F]): StreamInterpreter[F] = new StreamInterpreter[F] {
     override def interpretSync[A](root: A, selection: Selection[F, A], throttle: F ~> F): F[Result] =
       interpretStream(root, selection, takeOne = true, throttle).take(1).compile.lastOrError
+
+    override def interpretStream0[A](
+        root: A,
+        selection: Selection[F, A],
+        takeOne: Boolean = false,
+        throttle: F ~> F = FunctionK.id[F]
+    ): Resource[F, ResultStream[F]] = {
+      case class StreamingApiState(
+          awaitExecution: Deferred[F, Unit],
+          entries: List[EvalState.Entry[F, ?]]
+      )
+
+      for {
+        state <- Resource.eval {
+          Deferred[F, Unit].flatMap(dx0 => Ref[F].of(StreamingApiState(dx0, Nil)))
+        }
+        newEntries <- Resource.eval(Queue.bounded[F, Unit](1))
+        api = new StreamingApi[F] {
+          def pushEntry[B](entry: EvalState.Entry[F, B]): F[Unit] = ???
+          def submit[B](cont: Continuation[F, B], node: EvalNode[F, B]): F[Unit] =
+            state.modify { s =>
+              (
+                s.copy(entries = EvalState.Entry[F, B](cont, node) :: s.entries),
+                newEntries.offer(()) *> s.awaitExecution.get
+              )
+            }.flatten
+        }
+        _ <- Resource.onFinalize {
+          F.delay(println("StreamInterpreter: Root ResourceSupervisor finalized"))
+        }
+        rootRs <- ResourceSupervisor.make[F].map(x => Arc.pure[F, ResourceSupervisor[F]](x))
+        _ = println(s"root is ${rootRs.value}")
+        sup <- Supervisor[F]
+        counter <- Resource.eval(SignallingRef[F].of(0))
+      } yield {
+        val interpreter = QueryInterpreter[F](schemaState, throttle, sup, api, counter)
+
+        def next(prev: JsonObject): F[Option[ResultStream[F]]] = {
+          val exec = for {
+            _ <- accumulate.traverse_(d => Temporal[F].sleep(d))
+            doneExecNext <- Deferred[F, Unit]
+            state <- state.getAndSet(StreamingApiState(doneExecNext, Nil))
+            entries = state.entries
+            opened0 <- rootRs.value.lease {
+              entries.traverse(e => e.a.active.shareOpt.map(_.map(_ => e)))
+            }
+            lease = opened0._1
+            opened = opened0._2
+
+            nextResult: Option[ResultStream[F]] <-
+              opened.collect { case Some(x) => x }.toNel match {
+                case None => rootRs.value.release(lease).as(None)
+                case Some(relevant) =>
+                  F.pure(Some {
+                    val inputs = relevant.map { case (entr: EvalState.Entry[F, a]) =>
+                      QueryInterpreter.Input[F, a](entr.cont, entr.a)
+                    }
+
+                    ResultStream[F] {
+                      interpreter.interpretAll(inputs).flatMap { results =>
+                        val patched = results.data.toList.foldLeftM(prev) { case (accum, (pos, patch)) =>
+                          F.fromEither {
+                            stitchInto(accum.asJson, patch, pos, Cursor.empty).value.value
+                          }.map(_.asObject.get)
+                        }
+
+                        rootRs.value.release(lease) *>
+                          state.awaitExecution.complete(()) *>
+                          patched.map { jo =>
+                            (
+                              Result(results.errors, jo),
+                              AwaitEvents(next(jo))
+                            )
+                          }
+                      }
+                    }
+                  })
+              }
+          } yield nextResult
+
+          val r = F.race(
+            counter.discrete.find(_ === 0).compile.drain,
+            newEntries.take
+          )
+
+          r.flatMap {
+            case Left(_) => F.pure(None)
+            case Right(_) =>
+              exec.flatMap {
+                case None    => next(prev)
+                case Some(r) => F.pure(Some(r))
+              }
+          }
+        }
+
+        ResultStream[F] {
+          val initial = QueryInterpreter.Input.root(root, selection, rootRs)
+          interpreter.interpretAll(NonEmptyList.one(initial)).map { initRes =>
+            val jo: JsonObject = initRes.data.map { case (_, j) => j }.reduceLeft(_ deepMerge _).asObject.get
+            val result0 = Result(initRes.errors, jo)
+
+            (result0, AwaitEvents(next(jo)))
+          }
+        }
+      }
+    }
 
     override def interpretStream[A](
         root: A,
         selection: Selection[F, A],
         takeOne: Boolean = false,
         throttle: F ~> F = FunctionK.id[F]
-    ): Stream[F, Result] = {
-      case class St(
-          entries: Option[List[EvalState.Entry[F, ?]]],
-          nextAccumulation: Deferred[F, Unit],
-          leases: Int
-      )
-      Stream.eval(Deferred[F, Unit].flatMap(d => SignallingRef.of[F, St](St(None, d, 0)))).flatMap { sig =>
-        Stream.resource(Supervisor[F]).flatMap { sup =>
-          def doRound: F[Option[Resource[F, List[EvalState.Entry[F, ?]]]]] = for {
-            // notify that we are interested in more entries now
-            // we reset the deferred for the next round
-            d <- Deferred[F, Unit]
-            _ <- sig
-              .modify(st => (st.copy(entries = Some(Nil), nextAccumulation = d), st.nextAccumulation.complete(())))
-              .flatten
-
-            // wait for streams to produce something
-            _ <- debug("awaiting updates")
-            isDead <- sig.discrete
-              .evalMapFilter[F, Boolean] { s =>
-                // something came, wait and accumulate to batch
-                if (s.entries.toList.flatten.nonEmpty) accumulate.traverse_(F.sleep(_)).as(Some(false))
-                else if (s.leases == 0) F.pure(Some(true))
-                else F.pure(None)
-              }
-              .take(1)
-              .compile
-              .lastOrError
-            _ <- debug(s"proceeding with isDead = $isDead")
-
-            // okay, time to prepare and execute the batch
-            res <-
-              if (isDead) F.pure(None)
-              else
-                sig.modify { x =>
-                  // if we reached this, then we know that x is defined
-                  val allValues = x.entries.toList.flatten
-                  val updatedKeys = allValues.map(_.token).toSet
-                  val relevant = allValues.filter(x => (x.a.parentLeases - x.token).intersect(updatedKeys).isEmpty)
-                  val ts: Resource[F, List[EvalState.Entry[F, _]]] =
-                    relevant.traverse(e => e.a.parentLease.map(_.as(e))).map(_.flatten)
-                  (x.copy(entries = None), Some(ts))
-                }
-          } yield res
-
-          val streamingApi = Resource
-            .make[F, Unit](sig.update(st => st.copy(leases = st.leases + 1))) { _ =>
-              sig.update(st => st.copy(leases = st.leases - 1))
+    ): Stream[F, Result] =
+      Stream
+        .resource(interpretStream0(root, selection, takeOne, throttle))
+        .flatMap { rec =>
+          def unpack(rs: ResultStream[F]): Stream[F, Result] =
+            Stream.eval(rs.evalNext).flatMap { case (result, goNext) =>
+              Stream(result) ++
+                Stream
+                  .eval(goNext.await)
+                  .flatMap(Stream.fromOption(_))
+                  .flatMap(unpack)
             }
-            .as {
-              new StreamingApi[F] {
-                def pushEntry[B](entry: EvalState.Entry[F, B]): F[Unit] =
-                  sig.modify { st =>
-                    st.entries match {
-                      case None     => (st, st.nextAccumulation.get >> pushEntry[B](entry))
-                      case Some(xs) => (st.copy(entries = Some(entry :: xs)), st.nextAccumulation.get)
-                    }
-                  }.flatten
-              }
-            }
-
-          val interpreter = QueryInterpreter[F](schemaState, streamingApi, throttle, sup)
-
-          val initial = QueryInterpreter.Input.root(root, selection)
-
-          val changelog = Stream
-            .repeatEval(doRound)
-            .collectWhile { case Some(r) => r }
-            .evalMap(_.use { xs =>
-              xs.toNel.traverse { nel =>
-                val inputs = nel.map { case (entr: EvalState.Entry[F, a]) =>
-                  QueryInterpreter.Input[F, a](entr.cont, entr.a)
-                }
-
-                debug(s"interpreting for ${inputs.size} inputs") >>
-                  interpreter
-                    .interpretAll(inputs)
-                    .map { res => (res.data.toList, res.errors) } <*
-                  debug("done interpreting")
-              }
-            })
-            .unNone
-
-          Stream.eval(interpreter.interpretAll(NonEmptyList.one(initial))).flatMap { res =>
-            val jo: JsonObject = res.data.map { case (_, j) => j }.reduceLeft(_ deepMerge _).asObject.get
-
-            Stream.emit(Result(res.errors, jo)) ++
-              changelog
-                .evalMapAccumulate(jo) { case (prevJo, (jsons, errs)) =>
-                  // Patch the previously emitted json data
-                  val stitched = jsons.foldLeftM(prevJo) { case (accum, (pos, patch)) =>
-                    Temporal[F]
-                      .fromEither {
-                        stitchInto(accum.asJson, patch, pos, Cursor.empty).value.value
-                      }
-                      .map(_.asObject.get)
-                  }
-
-                  stitched.map(o => (o, Result(errs, o)))
-                }
-                .map { case (_, x) => x }
-          }
+          unpack(rec)
         }
-      }
-    }
   }
 
   final case class StitchFailure(

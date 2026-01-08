@@ -15,28 +15,16 @@
  */
 package gql.server.interpreter
 
-import cats.effect._
 import gql.Cursor
 
 final case class EvalNode[F[_], +A](
     cursor: Cursor,
     value: A,
-    parentLeases: Set[Unique.Token],
-    parentLease: Resource[F, Option[Int]],
-    interruptContext: F[Unit]
+    active: Arc[F, ResourceSupervisor[F]]
 ) {
   def map[B](f: A => B): EvalNode[F, B] = copy(value = f(value))
 
   def setValue[B](value: B): EvalNode[F, B] = copy(value = value)
-
-  def addParentPath(token: Unique.Token): EvalNode[F, A] =
-    copy(parentLeases = parentLeases + token)
-
-  def setParentLease(lease: Resource[F, Option[Int]]): EvalNode[F, A] =
-    copy(parentLease = lease)
-
-  def setInterruptContext(context: F[Unit]): EvalNode[F, A] =
-    copy(interruptContext = context)
 
   def modify(f: Cursor => Cursor): EvalNode[F, A] = copy(cursor = f(cursor))
 
@@ -44,22 +32,22 @@ final case class EvalNode[F[_], +A](
     copy(cursor = f(cursor), value)
 
   def succeed[B](value: B): EvalNode[F, B] = succeed(value, identity)
+
+  def setActive(active: Arc[F, ResourceSupervisor[F]]): EvalNode[F, A] =
+    copy(active = active)
 }
 
 object EvalNode {
-  def empty[F[_], A](value: A)(implicit F: Async[F]) =
-    EvalNode[F, A](Cursor.empty, value, Set.empty, Resource.pure(Some(1)), F.never)
+  def empty[F[_], A](value: A, active: Arc[F, ResourceSupervisor[F]]): EvalNode[F, A] =
+    EvalNode[F, A](Cursor.empty, value, active)
 }
 
 trait StreamingApi[F[_]] {
-  // awaits until an entry can be pushed, then pushes it and awaits execution
-  def pushEntry[A](entry: EvalState.Entry[F, A]): F[Unit]
+  def submit[A](cont: Continuation[F, A], node: EvalNode[F, A]): F[Unit]
 }
 
 object EvalState {
   final case class Entry[F[_], A](
-      // id of the node in the tree
-      token: Unique.Token,
       // the continuation of the node
       cont: Continuation[F, A],
       a: EvalNode[F, A]

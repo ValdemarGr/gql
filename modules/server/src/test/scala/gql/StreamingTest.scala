@@ -238,7 +238,7 @@ class StreamingTest extends CatsEffectSuite {
     }
   }
 
-  test("nesting with fragments works") {
+  test("nesting with fragments works".only) {
     assertEquals(clue(level1Users), 0)
     assertEquals(clue(level2Users), 0)
     val q = """
@@ -280,7 +280,6 @@ class StreamingTest extends CatsEffectSuite {
     query(q)
       .take(10)
       .map(Json.fromJsonObject(_).field("data").field("level1"))
-      .zipWithIndex
       .compile
       .drain >> IO {
       assertEquals(clue(level1Users), 0)

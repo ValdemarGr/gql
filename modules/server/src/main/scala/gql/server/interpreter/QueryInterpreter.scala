@@ -25,6 +25,7 @@ import gql.server.planner._
 import gql._
 import gql.preparation._
 import cats.effect.std.Supervisor
+import fs2.concurrent.SignallingRef
 
 /** The [[QueryInterpreter]] will prepare a query for execution by inspecting the ast and planning the query accordingly. Once all inputs
   * have been prepared, the execution AST is passed to the [[SubqueryInterpreter]] for evaluation.
@@ -44,8 +45,12 @@ object QueryInterpreter {
   )
 
   object Input {
-    def root[F[_]: Async, A](data: A, cont: Prepared[F, A]): Input[F, A] =
-      Input(Continuation.Done(cont), EvalNode.empty(data))
+    def root[F[_], A](
+        data: A,
+        cont: Prepared[F, A],
+        rootScope: Arc[F, ResourceSupervisor[F]]
+    ): Input[F, A] =
+      Input(Continuation.Done(cont), EvalNode.empty(data, rootScope))
   }
 
   final case class Results(
@@ -55,13 +60,14 @@ object QueryInterpreter {
 
   def apply[F[_]](
       schemaState: SchemaState[F],
-      streamingApi: Resource[F, StreamingApi[F]],
       throttle: F ~> F,
-      sup: Supervisor[F]
+      sup: Supervisor[F],
+      api: StreamingApi[F],
+      counter: SignallingRef[F, Int]
   )(implicit stats: Statistics[F], planner: Planner[F], F: Async[F]) =
     new QueryInterpreter[F] {
       def interpretOne[A](input: Input[F, A], sgb: SubgraphBatches[F], errors: Ref[F, Chain[EvalFailure]]): F[Json] = {
-        val go = new SubqueryInterpreter(streamingApi, sup, stats, throttle, errors, sgb)
+        val go = new SubqueryInterpreter(sup, stats, throttle, errors, sgb, api, counter)
         go.goCont(input.continuation, input.data)
       }
 

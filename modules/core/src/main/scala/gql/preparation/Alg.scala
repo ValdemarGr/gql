@@ -212,7 +212,7 @@ object Alg {
         case Left(pes) => Alg.RaiseError(pes.map(f))
       }
 
-    def appendMessage[A](message: String)(fa: Alg[C, A]): Alg[C, A] =
+    def appendMessage[A](message: => String)(fa: Alg[C, A]): Alg[C, A] =
       modifyError[A](d => d.copy(message = d.message + "\n" + message))(fa)
 
     def pure[A](a: A): Alg[Nothing, A] = Alg.Pure(a)
