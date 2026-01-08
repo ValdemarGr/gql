@@ -20,7 +20,7 @@ import gql.Cursor
 final case class EvalNode[F[_], +A](
     cursor: Cursor,
     value: A,
-    active: Arc[F, ResourceSupervisor[F]]
+    active: Res[F]
 ) {
   def map[B](f: A => B): EvalNode[F, B] = copy(value = f(value))
 
@@ -33,12 +33,12 @@ final case class EvalNode[F[_], +A](
 
   def succeed[B](value: B): EvalNode[F, B] = succeed(value, identity)
 
-  def setActive(active: Arc[F, ResourceSupervisor[F]]): EvalNode[F, A] =
+  def setActive(active: Res[F]): EvalNode[F, A] =
     copy(active = active)
 }
 
 object EvalNode {
-  def empty[F[_], A](value: A, active: Arc[F, ResourceSupervisor[F]]): EvalNode[F, A] =
+  def empty[F[_], A](value: A, active: Res[F]): EvalNode[F, A] =
     EvalNode[F, A](Cursor.empty, value, active)
 }
 

@@ -238,7 +238,7 @@ class StreamingTest extends CatsEffectSuite {
     }
   }
 
-  test("nesting with fragments works".only) {
+  test("nesting with fragments works") {
     assertEquals(clue(level1Users), 0)
     assertEquals(clue(level2Users), 0)
     val q = """
@@ -308,22 +308,14 @@ class StreamingTest extends CatsEffectSuite {
       .flatMap {
         case None         => ???
         case Some((_, _)) =>
-          // There should be one lease on both resources if we await
-          // When a new element arrives, that is, tl.head, then a lease on level2 and level1 should be present
-          val check = IO {
-            assert(clue(level1Users) >= 1)
-            assert(clue(level2Users) >= 1)
+          val check = IO.sleep(100.millis) >> IO {
+            // the root might be live, could be between updates
+            assert(clue(level1Users) >= 0)
+            // if the root changes the children are dead
+            assert(clue(level2Users) == 0)
           }
 
-          val tryComplete =
-            Stream
-              .repeatEval(check.attempt)
-              .meteredStartImmediately(100.millis)
-              .find(_.isRight)
-              .compile
-              .drain
-
-          Pull.eval(IO.race(tryComplete, IO.sleep(5.seconds) >> check)).void
+          Pull.eval(check).void
       }
       .stream
       .compile

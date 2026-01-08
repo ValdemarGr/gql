@@ -103,7 +103,6 @@ object StreamInterpreter {
         }
         newEntries <- Resource.eval(Queue.bounded[F, Unit](1))
         api = new StreamingApi[F] {
-          def pushEntry[B](entry: EvalState.Entry[F, B]): F[Unit] = ???
           def submit[B](cont: Continuation[F, B], node: EvalNode[F, B]): F[Unit] =
             state.modify { s =>
               (
@@ -112,11 +111,7 @@ object StreamInterpreter {
               )
             }.flatten
         }
-        _ <- Resource.onFinalize {
-          F.delay(println("StreamInterpreter: Root ResourceSupervisor finalized"))
-        }
-        rootRs <- ResourceSupervisor.make[F].map(x => Arc.pure[F, ResourceSupervisor[F]](x))
-        _ = println(s"root is ${rootRs.value}")
+        rootScope <- Res.make[F]
         sup <- Supervisor[F]
         counter <- Resource.eval(SignallingRef[F].of(0))
       } yield {
@@ -128,17 +123,19 @@ object StreamInterpreter {
             doneExecNext <- Deferred[F, Unit]
             state <- state.getAndSet(StreamingApiState(doneExecNext, Nil))
             entries = state.entries
-            opened0 <- rootRs.value.lease {
-              entries.traverse(e => e.a.active.shareOpt.map(_.map(_ => e)))
-            }
-            lease = opened0._1
-            opened = opened0._2
-
-            nextResult: Option[ResultStream[F]] <-
-              opened.collect { case Some(x) => x }.toNel match {
-                case None => rootRs.value.release(lease).as(None)
-                case Some(relevant) =>
-                  F.pure(Some {
+            (res: Option[ResultStream[F]]) <- rootScope
+              .lease {
+                entries.traverse { e =>
+                  e.a.active.keepAlive.map {
+                    case false => None
+                    case true  => Some(e)
+                  }
+                }
+              }
+              .use {
+                case None => F.canceled.as(Option.empty[ResultStream[F]]) // root dead, stop
+                case Some((openedLease, opened)) =>
+                  val opt = opened.collect { case Some(x) => x }.toNel.map { relevant =>
                     val inputs = relevant.map { case (entr: EvalState.Entry[F, a]) =>
                       QueryInterpreter.Input[F, a](entr.cont, entr.a)
                     }
@@ -151,7 +148,7 @@ object StreamInterpreter {
                           }.map(_.asObject.get)
                         }
 
-                        rootRs.value.release(lease) *>
+                        rootScope.release(openedLease) *>
                           state.awaitExecution.complete(()) *>
                           patched.map { jo =>
                             (
@@ -161,9 +158,11 @@ object StreamInterpreter {
                           }
                       }
                     }
-                  })
+                  }
+
+                  F.pure(opt)
               }
-          } yield nextResult
+          } yield res
 
           val r = F.race(
             counter.discrete.find(_ === 0).compile.drain,
@@ -181,7 +180,7 @@ object StreamInterpreter {
         }
 
         ResultStream[F] {
-          val initial = QueryInterpreter.Input.root(root, selection, rootRs)
+          val initial = QueryInterpreter.Input.root(root, selection, rootScope)
           interpreter.interpretAll(NonEmptyList.one(initial)).map { initRes =>
             val jo: JsonObject = initRes.data.map { case (_, j) => j }.reduceLeft(_ deepMerge _).asObject.get
             val result0 = Result(initRes.errors, jo)

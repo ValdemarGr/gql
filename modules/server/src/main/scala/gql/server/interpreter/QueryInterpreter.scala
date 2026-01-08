@@ -48,7 +48,7 @@ object QueryInterpreter {
     def root[F[_], A](
         data: A,
         cont: Prepared[F, A],
-        rootScope: Arc[F, ResourceSupervisor[F]]
+        rootScope: Res[F]
     ): Input[F, A] =
       Input(Continuation.Done(cont), EvalNode.empty(data, rootScope))
   }

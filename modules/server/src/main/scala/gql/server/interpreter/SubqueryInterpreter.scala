@@ -200,80 +200,37 @@ class SubqueryInterpreter[F[_]](
       en: EvalNode[F, ?]
   ): F[Json] = for {
     initialObject <- F.deferred[EvalNode[F, A]]
-    // parent must be alive during evaluation pass, anything else is a bug
 
-    // killSignal <- F.deferred[Unit]
-    // stopped <- F.deferred[Unit]
-    _ <- en.active.value.lease {
-      val id = java.util.UUID.randomUUID()
+    b <- en.active.leaseNow {
       val stream2 =
-        Stream.bracket(F.delay(println(s"Starting subscription stream $id (${en.active.value})")))(_ =>
-          F.delay(println(s"Ending subscription stream $id"))
-        ) >>
-          Stream.bracket(counter.update(_ + 1))(_ => counter.update(_ - 1)) >> stream
+        Stream.bracket(counter.update(_ + 1))(_ => counter.update(_ - 1)) >> stream
 
       stream2
-        .evalFold(Option.empty[ResourceSupervisor.Lease]) { case (prevLease, a) =>
-          // parent might currently be closing unless we take a lease
-          // enstablishes a parent -> child resource tree
-          en.active.shareOpt.use(_.traverse { parent =>
-            // submit a and await completion
-            // even if parent is canceled, child can live on until the arc is released
-            val id = java.util.UUID.randomUUID()
-            parent
-              .lease(
-                Arc
-                  .of(
-                    ResourceSupervisor
-                      .make[F]
-                      .flatTap(rs => Resource.make(F.delay(println(s"opening rs $rs on ${parent}")))(_ => F.delay(println(s"closing rs $rs"))))
-                  )
-                  .onFinalize(F.delay(println(s"closing arc $id")))
-              )
-              .flatMap { case (newLease, childRs) =>
+        .evalFold(Option.empty[Res.Lease]) { case (prevLease, a) =>
+          prevLease.traverse_(en.active.release) *>
+            en.active
+              .lease(Res.make[F])
+              .use(alloc => F.pure(alloc)) // Res is safe to use after free
+              .flatMap(_.traverse { case (newLease, childRs) =>
                 val en2 = en.setValue(a).setActive(childRs)
                 val fa = prevLease match {
                   // previous bug DON'T RECURSE into goCont here. This causes a memory leak since
-                  // the GC can't know that once initalObject.tryGet is none, the other case is never reachable
-                  case None     => initialObject.complete(en2).void
-                  case Some(pl) => parent.release(pl) >> api.submit(cont, en2)
+                  // the GC can't know that once initalObject is none, the other case is never reachable
+                  case None    => initialObject.complete(en2).void
+                  case Some(_) => api.submit(cont, en2) // root leases
                 }
                 fa.as(newLease)
-              }
-          })
+              })
         }
         .compile
         .lastOrError
-        .flatMap(_.traverse_(en.active.value.release)) // release last lease
-        .onError(x => F.delay(println(x)))
+        .flatMap(_.traverse_ { lease =>
+          // release last lease, maybe child exhausts without parent dying
+          en.active.release(lease)
+        })
         .background
-        .onFinalize(F.delay(println(s"should close $id")))
-        .onError(x => Resource.eval(F.delay(println(x))))
-
-      /* You might think that we need to block the parent (active) rs
-       * from freeing during initial (current) evaluation, Lets show by induction that it is not necessary:
-       *
-       * 1. Evaluation started at parent -> parent lease is held by the evaluation algorithm
-       * 2. Parent was opened during this evaluation pass -> parent's parent is held by the evaluation algorithm
-       * 3. -||- -> parent's parent's parent is held by the evaluation algorithm
-       */
-
     }
+    _ = assert(b, "StreamInterpreter: parent resource must be alive to start stream subscription")
     res <- initialObject.get.flatMap(en2 => goCont(cont, en2))
-
-    // _ <- sup.supervise(background.compile.drain)
-    // to fix stream resource safety
-    // interruptStream <- F.deferred[Unit]
-    // streamDone <- F.deferred[Unit]
-    // _ <- F.uncancelable { _ =>
-    //   val killStream = interruptStream.complete(()).void
-    //   val markDone = streamDone.complete(()).void
-    //   val s = background.interruptWhen(interruptStream.get.attempt).compile.drain.guarantee(markDone)
-    //   sup
-    //     .supervise(F.never[Unit].guarantee(killStream *> streamDone.get))
-    //     .onError(_ => killStream.void) *> s.start.void
-    // }
-
-    // o <- d.get
   } yield res
 }
