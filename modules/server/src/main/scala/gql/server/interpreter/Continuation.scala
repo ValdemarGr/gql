@@ -23,9 +23,11 @@ sealed trait Continuation[F[_], -I] {
     Continuation.Contramap[F, I, I2](f, this)
 }
 object Continuation {
-  final case class Done[F[_], I](prep: Prepared[F, I]) extends Continuation[F, I]
+  final case class Done[F[_], I](
+      prep: Prepared[F, I, Stage.Execution]
+  ) extends Continuation[F, I]
   final case class Continue[F[_], I, C](
-      step: PreparedStep[F, I, C],
+      step: PreparedStep[F, I, C, Stage.Execution],
       next: Continuation[F, C]
   ) extends Continuation[F, I]
   final case class Contramap[F[_], I, I2](

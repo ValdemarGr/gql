@@ -80,11 +80,6 @@ object PreparedStep {
       right: PreparedStep[F, A, O, S]
   ) extends AnyRef
       with PreparedStep[F, I, O, S]
-  final case class GetMeta[F[_], I, +S <: Stage](
-      nodeId: NodeId,
-      meta: Eval[PreparedMeta[F, S]]
-  ) extends AnyRef
-      with PreparedStep[Nothing, I, FieldMeta[F], Stage.Execution]
   final case class First[F[_], I, O, C, +S <: Stage](
       nodeId: NodeId,
       step: PreparedStep[F, I, O, S]
@@ -112,6 +107,20 @@ object PreparedStep {
       nodeId: NodeId,
       sub: Alg[C, A]
   ) extends PreparedStep[F, I, A, Stage.Compilation[C]]
+
+  // first pass requires variables
+  final case class PrecompileMeta[F[_], I, C](
+      nodeId: NodeId,
+      meta: Eval[Alg[C, PreparedMeta[F, Stage]]]
+  ) extends AnyRef
+      with PreparedStep[Nothing, I, FieldMeta[F], Stage.Compilation[C]]
+
+  // second pass has substituted variables
+  final case class EvalMeta[F[_], I](
+      nodeId: NodeId,
+      meta: Eval[PreparedMeta[F, Stage]]
+  ) extends AnyRef
+      with PreparedStep[Nothing, I, FieldMeta[F], Stage.Execution]
 }
 
 sealed trait Prepared[+F[_], I, +S <: Stage]
@@ -144,18 +153,27 @@ final case class PreparedLeaf[F[_], I, +S <: Stage](
     encode: I => Json
 ) extends Prepared[F, I, S]
 
+sealed trait ParsedArgs[+S <: Stage]
+object ParsedArgs {
+  final case class Compilation[C]() extends ParsedArgs[Stage.Compilation[C]]
+  final case class Execution(
+      args: Map[Arg[?], Any]
+  ) extends ParsedArgs[Stage.Execution]
+}
+
 final case class PreparedDataField[+F[_], A, B, +S <: Stage](
     nodeId: NodeId,
     name: String,
     alias: Option[String],
     cont: PreparedCont[F, A, B, S],
     source: ast.Field[F, A, B],
-    parsedArgs: Map[Arg[?], Any]
+    parsedArgs: ParsedArgs[S]
+    // parsedArgs: Map[Arg[?], Any]
 ) extends PreparedField[F, A, S] {
   lazy val outputName = alias.getOrElse(name)
 
-  def arg[C](a: Arg[C]): Option[C] =
-    parsedArgs.get(a).asInstanceOf[Option[C]]
+  // def arg[C](a: Arg[C]): Option[C] =
+  //   parsedArgs.get(a).asInstanceOf[Option[C]]
 }
 
 sealed trait Specialization[F[_], A, B, +S <: Stage] {
