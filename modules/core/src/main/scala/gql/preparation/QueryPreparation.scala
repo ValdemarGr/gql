@@ -34,8 +34,9 @@ class QueryPreparation[F[_], C](
 ) {
   type G[A] = Alg[C, A]
   val G = Alg.Ops[C]
+  type Comp = Stage.Compilation[C]
   type Write[A] = WriterT[G, Chain[(Arg[?], Any)], A]
-  type Analyze[A] = LazyT[Write, PreparedMeta[F], A]
+  type Analyze[A] = LazyT[Write, PreparedMeta[F, Comp], A]
   implicit val L: Applicative[Analyze] = LazyT.applicativeForParallelLazyT
 
   def liftK[A](fa: G[A]): Analyze[A] = LazyT.liftF(WriterT.liftF(fa))
@@ -44,7 +45,7 @@ class QueryPreparation[F[_], C](
 
   def findImplementations[A](
       s: Selectable[F, A]
-  ): List[Specialization[F, A, ?]] = s match {
+  ): List[Specialization[F, A, ?, Comp]] = s match {
     case t: Type[F, ?] => List(Specialization.Type(t))
     case u: Union[F, ?] =>
       u.types.toList.map { case x: gql.ast.Variant[F, A, b] =>
@@ -68,13 +69,13 @@ class QueryPreparation[F[_], C](
       step: Step[F, I, O],
       fieldMeta: PartialFieldMeta[C],
       uec: UniqueEdgeCursor
-  ): Analyze[PreparedStep[F, I, O]] = {
+  ): Analyze[PreparedStep[F, I, O, Comp]] = {
     val nextId = liftK(nextNodeId).map(StepEffectId(_, uec))
 
     def rec[I2, O2](
         step: Step[F, I2, O2],
         edge: String
-    ): Analyze[PreparedStep[F, I2, O2]] =
+    ): Analyze[PreparedStep[F, I2, O2, Comp]] =
       prepareStep[I2, O2](step, fieldMeta, uec append edge)
 
     step match {
@@ -83,7 +84,7 @@ class QueryPreparation[F[_], C](
       case alg: Step.Alg.Compose[F, i, a, o] =>
         val left = rec[i, a](alg.left, "compose-left")
         val right = rec[a, o](alg.right, "compose-right")
-        (liftK(nextNodeId), left, right).mapN(PreparedStep.Compose.apply[F, i, a, o])
+        (liftK(nextNodeId), left, right).mapN(PreparedStep.Compose.apply[F, i, a, o, Comp])
       case _: Step.Alg.EmbedEffect[F, i] =>
         nextId.map(PreparedStep.EmbedEffect[F, i](_))
       case _: Step.Alg.EmbedStream[F, i] =>
@@ -91,15 +92,15 @@ class QueryPreparation[F[_], C](
       case alg: Step.Alg.Choose[F, a, b, c, d] =>
         val left = rec[a, c](alg.fac, "choice-left")
         val right = rec[b, d](alg.fab, "choice-right")
-        (liftK(nextNodeId), left, right).mapN(PreparedStep.Choose.apply[F, a, b, c, d])
+        (liftK(nextNodeId), left, right).mapN(PreparedStep.Choose.apply[F, a, b, c, d, Comp])
       case _: Step.Alg.GetMeta[?, i] =>
-        (liftK(nextNodeId), LazyT.id[Write, PreparedMeta[F]]).mapN(PreparedStep.GetMeta.apply[F, I])
+        (liftK(nextNodeId), LazyT.id[Write, PreparedMeta[F, Comp]]).mapN(PreparedStep.GetMeta.apply[F, I, Comp])
       case alg: Step.Alg.Batch[F, k, v] =>
         liftK(G.nextId.map(i => PreparedStep.Batch[F, k, v](alg.id, UniqueBatchInstance(NodeId(i)))))
       case alg: Step.Alg.InlineBatch[F, k, v] =>
         nextId.map(PreparedStep.InlineBatch[F, k, v](alg.run, _))
       case alg: Step.Alg.First[F, i, o, c] =>
-        (liftK(nextNodeId), rec[i, o](alg.step, "first")).mapN(PreparedStep.First.apply[F, i, o, c])
+        (liftK(nextNodeId), rec[i, o](alg.step, "first")).mapN(PreparedStep.First.apply[F, i, o, c, Comp])
       case alg: Step.Alg.Argument[?, a] =>
         val expected = alg.arg.entries.toList.map(_.name).toSet
         val fields = fieldMeta.fields
@@ -123,7 +124,7 @@ class QueryPreparation[F[_], C](
       t: Out[F, A],
       fieldMeta: PartialFieldMeta[C],
       uec: UniqueEdgeCursor
-  ): Analyze[Prepared[F, A]] =
+  ): Analyze[Prepared[F, A, Comp]] =
     (t, fi.selections.toNel) match {
       case (out: gql.ast.OutArr[F, a, c, b], _) =>
         val innerStep: Step[F, a, b] = out.resolver.underlying
@@ -140,7 +141,7 @@ class QueryPreparation[F[_], C](
           PreparedOption(nid, PreparedCont(s, c))
         }
       case (s: Selectable[F, a], Some(ss)) =>
-        liftK(prepareSelectable[A](s, ss).widen[Prepared[F, A]])
+        liftK(prepareSelectable[A](s, ss).widen[Prepared[F, A, Comp]])
       case (e: Enum[a], None) =>
         liftK(nextNodeId).map(PreparedLeaf(_, e.name, x => Json.fromString(e.revm(x))))
       case (s: Scalar[a], None) =>
@@ -157,7 +158,7 @@ class QueryPreparation[F[_], C](
       fi: MergedFieldInfo[F, C],
       field: Field[F, I, O],
       currentTypename: String
-  ): G[List[PreparedDataField[F, I, ?]]] = {
+  ): G[List[PreparedDataField[F, I, ?, Comp]]] = {
     da
       .foldDirectives[Position.Field[F, *]][List, (Field[F, I, ?], MergedFieldInfo[F, C])](fi.directives, List(fi.caret))(
         (field, fi)
@@ -207,7 +208,7 @@ class QueryPreparation[F[_], C](
           prepare(fi, field.output.value, meta, rootUniqueName append "in-root")
         ).tupled
 
-        val pdfF: LazyT[G, PreparedMeta[F], PreparedDataField[F, I, ?]] =
+        val pdfF: LazyT[G, PreparedMeta[F, Comp], PreparedDataField[F, I, ?, Comp]] =
           (liftK(nextNodeId), preparedF).tupled.mapF(_.run.map { case (w, f) =>
             f.andThen { case (nid, (x, y)) =>
               PreparedDataField(nid, fi.name, fi.alias, PreparedCont(x, y), field, w.toList.toMap)
@@ -235,7 +236,7 @@ class QueryPreparation[F[_], C](
     // We need to find all implementations of the base type
     val concreteBaseMap = findImplementations[A](base).map(x => x.target.name -> x).toMap
 
-    val concreteBase: List[(String, Specialization[F, A, ?])] =
+    val concreteBase: List[(String, Specialization[F, A, ?, Comp])] =
       concreteBaseMap.toList
 
     type Typename = String
@@ -307,23 +308,24 @@ class QueryPreparation[F[_], C](
 
     // For every concrete implementation of the ast type (possible type)
     // We find the selection for that type (and omit it if the type was not selected)
-    val collected: G[List[MergedSpecialization[F, A, ?, C]]] = concreteBase.parFlatTraverse { case (k, (sp: Specialization[F, A, b])) =>
-      val t = sp.target
-      merged.get(k).toList.traverse { fields =>
-        fields.toNonEmptyList
-          .parTraverse { f =>
-            if (f.name === "__typename")
-              G.pure(PairedFieldSelection[F, b, C](f, gql.dsl.field.lift[b](_ => t.name)))
-            else {
-              t.fieldMap.get(f.name) match {
-                case None =>
-                  G.raise[PairedFieldSelection[F, b, C]](s"Could not find field '${f.name}' on type `${t.name}`.", Nil)
-                case Some(field) => G.pure(PairedFieldSelection[F, b, C](f, field))
+    val collected: G[List[MergedSpecialization[F, A, ?, C]]] = concreteBase.parFlatTraverse {
+      case (k, (sp: Specialization[F, A, b, Comp])) =>
+        val t = sp.target
+        merged.get(k).toList.traverse { fields =>
+          fields.toNonEmptyList
+            .parTraverse { f =>
+              if (f.name === "__typename")
+                G.pure(PairedFieldSelection[F, b, C](f, gql.dsl.field.lift[b](_ => t.name)))
+              else {
+                t.fieldMap.get(f.name) match {
+                  case None =>
+                    G.raise[PairedFieldSelection[F, b, C]](s"Could not find field '${f.name}' on type `${t.name}`.", Nil)
+                  case Some(field) => G.pure(PairedFieldSelection[F, b, C](f, field))
+                }
               }
             }
-          }
-          .map(fields => MergedSpecialization[F, A, b, C](sp, fields))
-      }
+            .map(fields => MergedSpecialization[F, A, b, C](sp, fields))
+        }
     }
 
     collected.flatMap { xs =>
@@ -341,17 +343,17 @@ class QueryPreparation[F[_], C](
   def prepareSelectable[A](
       s: Selectable[F, A],
       sis: NonEmptyList[SelectionInfo[F, C]]
-  ): G[Selection[F, A]] =
+  ): G[Selection[F, A, Comp]] =
     mergeImplementations[A](s, sis)
       .flatMap { impls =>
-        impls.parTraverse[G, PreparedSpecification[F, A, ?]] { case impl: MergedSpecialization[F, A, b, C] =>
+        impls.parTraverse[G, PreparedSpecification[F, A, ?, Comp]] { case impl: MergedSpecialization[F, A, b, C] =>
           val fa = impl.selections.toList.parFlatTraverse { sel =>
             sel.field match {
               case field: Field[F, b2, t] => prepareField[b, t](sel.info, field, impl.spec.typename)
             }
           }
 
-          nextNodeId.flatMap(nid => fa.map(xs => PreparedSpecification[F, A, b](nid, impl.spec, xs)))
+          nextNodeId.flatMap(nid => fa.map(xs => PreparedSpecification[F, A, b, Comp](nid, impl.spec, xs)))
         }
       }
       .flatMap(xs => nextNodeId.map(nid => Selection(nid, xs.toList, s)))
@@ -378,7 +380,7 @@ final case class MergedImplementation[G[_], A, B, C](
 )
 
 final case class MergedSpecialization[G[_], A, B, C](
-    spec: Specialization[G, A, B],
+    spec: Specialization[G, A, B, Stage.Compilation[C]],
     selections: NonEmptyList[PairedFieldSelection[G, B, C]]
 )
 

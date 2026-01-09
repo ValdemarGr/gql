@@ -41,6 +41,9 @@ object Alg {
 
   final case class GetVars[C, A]() extends Alg[C, VariableMap[C]]
 
+  final case class Resume[C, A](fa: PartialEvalRes[C, A]) extends Alg[C, A]
+  final case class Force[C, A](fa: Alg[C, A]) extends Alg[C, PartialEvalRes[C, A]]
+
   final case class Pure[A](a: A) extends Alg[Nothing, A]
   final case class FlatMap[C, A, B](
       fa: Alg[C, A],
@@ -98,16 +101,31 @@ object Alg {
       override def monad: Monad[Alg[C, *]] = monadErrorForPreparationAlg[C]
     }
 
-  sealed trait PartialEvalRes[C, B]
+  sealed trait PartialEvalRes[C, +B] {
+    // // skolem type gymnastics avioder
+    // def itIsCovariantISwear[B2 >: B]: PartialEvalRes[C, B2] =
+    //   this.asInstanceOf[PartialEvalRes[C, B2]]
+  }
 
-  sealed trait EvalResult[C, B] extends PartialEvalRes[C, B]
+  sealed trait EvalResult[C, +B] extends PartialEvalRes[C, B]
 
   object PartialEvalRes {
-    final case class Result[C, B](value: B) extends EvalResult[C, B]
-    final case class Errors[C, B](pes: NonEmptyChain[PositionalError[C]]) extends EvalResult[C, B]
-    final case class NeedVars[C, B](
-        cc: VariableMap[C] => State[S, EvalResult[C, B]]
-    ) extends PartialEvalRes[C, B]
+    final case class Result[C, +B](value: B) extends EvalResult[C, B]
+    final case class Errors[C, +B](pes: NonEmptyChain[PositionalError[C]]) extends EvalResult[C, B]
+
+    // covariance gymnastics
+    sealed trait NeedVars[C, +B] extends PartialEvalRes[C, B] {
+      def cc[B2 >: B]: VariableMap[C] => State[S, EvalResult[C, B2]]
+    }
+    final case class NeedVarsImpl[C, B](
+        cont: VariableMap[C] => State[S, EvalResult[C, B]]
+    ) extends NeedVars[C, B] {
+      def cc_evidence[B2 >: B]: VariableMap[C] => State[S, EvalResult[C, B2]] =
+        cont.andThen(_.map(x => x))
+      // faster
+      def cc[B2 >: B]: VariableMap[C] => State[S, EvalResult[C, B2]] =
+        cont.asInstanceOf[VariableMap[C] => State[S, EvalResult[C, B2]]]
+    }
   }
 
   final case class LocalState(
@@ -138,9 +156,9 @@ object Alg {
             case P.Errors(pes) => State.pure(P.Errors(pes))
             case P.Result(a)   => rec[B](bind.f(a), loc)
             // fuse the need vars
-            case P.NeedVars(cont) =>
+            case P.NeedVarsImpl(cont) =>
               State.pure {
-                P.NeedVars { v =>
+                P.NeedVarsImpl[C, B] { v =>
                   cont(v).flatMap {
                     case P.Errors(pes) => State.pure(P.Errors(pes))
                     case P.Result(a) =>
@@ -148,7 +166,7 @@ object Alg {
                         case P.Errors(pes) => State.pure(P.Errors(pes))
                         case P.Result(b)   => State.pure(P.Result(b))
                         // fusion
-                        case P.NeedVars(contB) => contB(v)
+                        case nv: P.NeedVars[C, B] => nv.cc(v)
                       }
                   }
                 }
@@ -174,12 +192,12 @@ object Alg {
             (l, r) match {
               case (l: EvalResult[C, a], r: EvalResult[C, a => B]) => combineER(l, r)
 
-              case (P.NeedVars(contL), P.NeedVars(contR)) =>
-                P.NeedVars[C, B](v => (contL(v), contR(v)).mapN(combineER))
-              case (P.NeedVars(contL), r: EvalResult[C, a => B]) =>
-                P.NeedVars[C, B](contL.andThen(_.map(l2 => combineER(l2, r))))
-              case (l: EvalResult[C, a], P.NeedVars(contR)) =>
-                P.NeedVars[C, B](contR.andThen(_.map(r2 => combineER(l, r2))))
+              case (P.NeedVarsImpl(contL), P.NeedVarsImpl(contR)) =>
+                P.NeedVarsImpl[C, B](v => (contL(v), contR(v)).mapN(combineER))
+              case (P.NeedVarsImpl(contL), r: EvalResult[C, a => B]) =>
+                P.NeedVarsImpl[C, B](contL.andThen(_.map(l2 => combineER(l2, r))))
+              case (l: EvalResult[C, a], P.NeedVarsImpl(contR)) =>
+                P.NeedVarsImpl[C, B](contR.andThen(_.map(r2 => combineER(l, r2))))
             }
 
           (rec(parAp.fa, loc), rec(parAp.fab, loc)).mapN(combine)
@@ -198,10 +216,12 @@ object Alg {
             }
             res match {
               case er: EvalResult[C, a] => from(er)
-              case P.NeedVars(cont)     => P.NeedVars(v => cont(v).map(from))
+              case P.NeedVarsImpl(cont) => P.NeedVarsImpl(v => cont(v).map(from))
             }
           }
-        case GetVars() => State.pure(P.NeedVars[C, B](v => State.pure(P.Result(v))))
+        case GetVars()            => State.pure(P.NeedVarsImpl[C, B](v => State.pure(P.Result(v))))
+        case resume: Resume[C, B] => State.pure(resume.fa)
+        case force: Force[C, a]   => rec(force.fa, loc).map(x => P.Result(x))
       }
     }
 
@@ -215,7 +235,7 @@ object Alg {
 
     res match {
       case er: EvalResult[C, A] => fromEr(er)
-      case P.NeedVars(cont)     => O.NonCacheable[C, A](vm => fromEr(cont(vm).runA(s).value).result)
+      case P.NeedVarsImpl(cont) => O.NonCacheable[C, A](vm => fromEr(cont(vm).runA(s).value).result)
     }
   }
 
@@ -376,6 +396,15 @@ object Alg {
 
     def getVariables: Alg[C, VariableMap[C]] =
       Alg.GetVars()
+
+    def resume[A](fa: PartialEvalRes[C, A]): Alg[C, A] =
+      Alg.Resume(fa)
+
+    def force[A](fa: Alg[C, A]): Alg[C, PartialEvalRes[C, A]] =
+      Alg.Force(fa)
+
+    def pause[A](fa: Alg[C, A]): Alg[C, Alg[C, A]] =
+      force(fa).map(resume)
   }
   object Ops {
     def apply[C] = new Ops[C] {}
