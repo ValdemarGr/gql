@@ -319,7 +319,7 @@ object Validation {
           .traverse_[G, Unit] { case (a: ArgValue[a], pv) =>
             (new ArgParsing[Unit](Map.empty))
               .decodeIn[a](a.input.value, pv.map(List(_)), ambigiousEnum = false)
-              .run match {
+              .runToCompletion(Map.empty) match {
               case Left(errs) =>
                 errs.traverse_ { err =>
                   val suf = err.position

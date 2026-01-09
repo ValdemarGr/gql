@@ -48,7 +48,7 @@ object LazyT {
     LazyT(F.pure(f))
 
   // never used, for demonstration purposes
-  def applicativeForApplicativeLazyT[F[_]: Applicative, A]: Applicative[LazyT[F, A, *]] =
+  private def applicativeForApplicativeLazyT[F[_]: Applicative, A]: Applicative[LazyT[F, A, *]] =
     new Applicative[LazyT[F, A, *]] {
       override def ap[C, B](ff: LazyT[F, A, C => B])(fa: LazyT[F, A, C]): LazyT[F, A, B] =
         LazyT((ff.fb, fa.fb).mapN { (gf, ga) => (ea: Eval[A]) => gf(ea).apply(ga(ea)) })

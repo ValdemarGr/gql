@@ -29,17 +29,15 @@ import org.typelevel.scalaccompat.annotation._
 class QueryPreparation[F[_], C](
     ap: ArgParsing[C],
     da: DirectiveAlg[F, C],
-    variables: VariableMap[C],
     implementations: SchemaShape.Implementations[F]
 ) {
   type G[A] = Alg[C, A]
   val G = Alg.Ops[C]
   type Comp = Stage.Compilation[C]
-  type Write[A] = WriterT[G, Chain[(Arg[?], Any)], A]
-  type Analyze[A] = LazyT[Write, PreparedMeta[F, Comp], A]
+  type Analyze[A] = LazyT[G, Alg[C, PreparedMeta[F, Comp]], A]
   implicit val L: Applicative[Analyze] = LazyT.applicativeForParallelLazyT
 
-  def liftK[A](fa: G[A]): Analyze[A] = LazyT.liftF(WriterT.liftF(fa))
+  def liftK[A](fa: G[A]): Analyze[A] = LazyT.liftF(fa)
 
   val nextNodeId = G.nextId.map(NodeId(_))
 
@@ -94,7 +92,8 @@ class QueryPreparation[F[_], C](
         val right = rec[b, d](alg.fab, "choice-right")
         (liftK(nextNodeId), left, right).mapN(PreparedStep.Choose.apply[F, a, b, c, d, Comp])
       case _: Step.Alg.GetMeta[?, i] =>
-        (liftK(nextNodeId), LazyT.id[Write, PreparedMeta[F, Comp]]).mapN(PreparedStep.GetMeta.apply[F, I, Comp])
+        (liftK(nextNodeId), LazyT.id[G, Alg[C, PreparedMeta[F, Comp]]])
+          .mapN(PreparedStep.PrecompileMeta.apply[F, I, C])
       case alg: Step.Alg.Batch[F, k, v] =>
         liftK(G.nextId.map(i => PreparedStep.Batch[F, k, v](alg.id, UniqueBatchInstance(NodeId(i)))))
       case alg: Step.Alg.InlineBatch[F, k, v] =>
@@ -107,12 +106,10 @@ class QueryPreparation[F[_], C](
           .filter { case (k, _) => expected.contains(k) }
           .map { case (k, v) => k -> v.map(List(_)) }
         LazyT.liftF {
-          WriterT {
-            nextNodeId.flatMap { nid =>
-              ap
-                .decodeArg(alg.arg, fields, ambigiousEnum = false, context = Nil)
-                .map(a => (Chain(alg.arg -> a), PreparedStep.Lift[F, I, O](nid, _ => a)))
-            }
+          nextNodeId.flatMap { nid =>
+            ap
+              .decodeArg(alg.arg, fields, ambigiousEnum = false, context = Nil)
+              .map(a => PreparedStep.Lift[F, I, O](nid, _ => a))
           }
         }
     }
@@ -208,19 +205,21 @@ class QueryPreparation[F[_], C](
           prepare(fi, field.output.value, meta, rootUniqueName append "in-root")
         ).tupled
 
-        val pdfF: LazyT[G, PreparedMeta[F, Comp], PreparedDataField[F, I, ?, Comp]] =
-          (liftK(nextNodeId), preparedF).tupled.mapF(_.run.map { case (w, f) =>
+        val pdfF: LazyT[G, Alg[C, PreparedMeta[F, Comp]], PreparedDataField[F, I, ?, Comp]] =
+          (liftK(nextNodeId), preparedF).tupled.mapF(_.map { f =>
             f.andThen { case (nid, (x, y)) =>
-              PreparedDataField(nid, fi.name, fi.alias, PreparedCont(x, y), field, w.toList.toMap)
+              PreparedDataField(nid, fi.name, fi.alias, PreparedCont(x, y), field, ParsedArgs.Compilation[C]())
             }
           })
 
         val out = pdfF.runWithValue { pdf =>
-          PreparedMeta(
-            variables.map { case (k, v) => k -> v.copy(value = v.value.map(_.void)) },
-            meta.args.map(_.map(_ => ())),
-            pdf
-          )
+          G.getVariables.map { vars =>
+            PreparedMeta(
+              vars.map { case (k, v) => k -> v.copy(value = v.value.map(_.void)) },
+              meta.args.map(_.map(_ => ())),
+              pdf
+            )
+          }
         }
 
         checkDuplicatesF >> {
