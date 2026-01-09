@@ -133,7 +133,7 @@ class RootPreparation[F[_], C] {
         case QA.OperationDefinition.Detailed(ot, _, _, _, ss) => (ot, ss)
       }
 
-      def runWith[A](o: gql.ast.Type[F, A]): G[Selection[F, A]] =
+      def runWith[A](o: gql.ast.Type[F, A]): G[Selection[F, A, Stage.Compilation[C]]] =
         variables(od, variableMap, schema).flatMap { vm =>
           val ap = new ArgParsing[C](vm)
           val da = new DirectiveAlg[F, C](schema.discover.positions, ap)
@@ -156,7 +156,7 @@ class RootPreparation[F[_], C] {
           // )
           // val FM = FieldMerging[F, C]
           // val QP = QueryPreparation[F, G, C](vm, schema.discover.implementations)
-          val prog: G[Selection[F, A]] = fc.collectSelectionInfo(o, ss).flatMap {
+          val prog: G[Selection[F, A, Stage.Compilation[C]]] = fc.collectSelectionInfo(o, ss).flatMap {
             case x :: xs =>
               val r = NonEmptyList(x, xs)
               fm.checkSelectionsMerge(r) >> qp.prepareSelectable(o, r)
@@ -202,7 +202,7 @@ object RootPreparation {
 
 sealed trait PreparedRoot[G[_], Q, M, S]
 object PreparedRoot {
-  final case class Query[G[_], Q, M, S](query: Selection[G, Q]) extends PreparedRoot[G, Q, M, S]
-  final case class Mutation[G[_], Q, M, S](mutation: Selection[G, M]) extends PreparedRoot[G, Q, M, S]
-  final case class Subscription[G[_], Q, M, S](subscription: Selection[G, S]) extends PreparedRoot[G, Q, M, S]
+  final case class Query[G[_], Q, M, S](query: Selection[G, Q, Stage.Compilation[?]]) extends PreparedRoot[G, Q, M, S]
+  final case class Mutation[G[_], Q, M, S](mutation: Selection[G, M, Stage.Compilation[?]]) extends PreparedRoot[G, Q, M, S]
+  final case class Subscription[G[_], Q, M, S](subscription: Selection[G, S, Stage.Compilation[?]]) extends PreparedRoot[G, Q, M, S]
 }
