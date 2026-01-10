@@ -24,13 +24,13 @@ import cats.implicits._
 import org.typelevel.scalaccompat.annotation._
 
 trait Analyzer[F[_]] {
-  def analyzeStep[G[_]](step: PreparedStep[G, ?, ?]): F[Unit]
+  def analyzeStep[G[_]](step: PreparedStep[G, ?, ?, ?]): F[Unit]
 
-  def analyzeFields[G[_]](prepared: List[PreparedField[G, ?]]): F[Unit]
+  def analyzeFields[G[_]](prepared: List[PreparedField[G, ?, ?]]): F[Unit]
 
-  def analyzePrepared[G[_]](p: Prepared[G, ?]): F[Unit]
+  def analyzePrepared[G[_]](p: Prepared[G, ?, ?]): F[Unit]
 
-  def analyzeCont[G[_]](edges: PreparedStep[G, ?, ?], cont: Prepared[G, ?]): F[Unit]
+  def analyzeCont[G[_]](edges: PreparedStep[G, ?, ?, ?], cont: Prepared[G, ?, ?]): F[Unit]
 }
 
 object Analyzer {
@@ -70,8 +70,8 @@ object Analyzer {
 
     new Analyzer[F] {
       @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
-      def analyzeStep[G[_]](step: PreparedStep[G, ?, ?]): F[Unit] = {
-        def goParallel(l: PreparedStep[G, ?, ?], r: PreparedStep[G, ?, ?]): F[Unit] = {
+      def analyzeStep[G[_]](step: PreparedStep[G, ?, ?, ?]): F[Unit] = {
+        def goParallel(l: PreparedStep[G, ?, ?, ?], r: PreparedStep[G, ?, ?, ?]): F[Unit] = {
           // A parallel op is disjunctive so the parent must be the same for both branches
           // This creates a diamond shape in the graph
           // Parent -> Left -> Child
@@ -90,10 +90,11 @@ object Analyzer {
 
         import PreparedStep._
         step match {
-          case Lift(_, _) | EmbedError(_) | GetMeta(_, _) => F.unit
-          case Compose(_, l, r)                           => analyzeStep[G](l) *> analyzeStep[G](r)
-          case alg: Choose[G, ?, ?, ?, ?]                 => goParallel(alg.fac, alg.fbd)
-          case alg: First[G, ?, ?, ?]                     => analyzeStep[G](alg.step)
+          case Lift(_, _) | EmbedError(_) | PrecompileMeta(_, _) | EvalMeta(_, _) | SubstVars(_, _) =>
+            F.unit
+          case Compose(_, l, r)              => analyzeStep[G](l) *> analyzeStep[G](r)
+          case alg: Choose[G, ?, ?, ?, ?, ?] => goParallel(alg.fac, alg.fbd)
+          case alg: First[G, ?, ?, ?, ?]     => analyzeStep[G](alg.step)
           case Batch(_, _) | EmbedEffect(_) | EmbedStream(_) | InlineBatch(_, _) =>
             val (name, id) = step match {
               case Batch(id, nid)      => (s"batch_${id.id}", nid.id)
@@ -127,7 +128,7 @@ object Analyzer {
         }
       }
 
-      def analyzeFields[G[_]](prepared: List[PreparedField[G, ?]]): F[Unit] =
+      def analyzeFields[G[_]](prepared: List[PreparedField[G, ?, ?]]): F[Unit] =
         prepared.traverse_ { p =>
           local {
             p match {
@@ -138,14 +139,14 @@ object Analyzer {
         }
 
       @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
-      def analyzePrepared[G[_]](p: Prepared[G, ?]): F[Unit] = p match {
-        case PreparedLeaf(_, _, _)       => F.unit
-        case Selection(_, fields, _)     => analyzeFields[G](fields)
-        case l: PreparedList[G, ?, ?, ?] => analyzeCont[G](l.of.edges, l.of.cont)
-        case o: PreparedOption[G, ?, ?]  => analyzeCont[G](o.of.edges, o.of.cont)
+      def analyzePrepared[G[_]](p: Prepared[G, ?, ?]): F[Unit] = p match {
+        case PreparedLeaf(_, _, _)          => F.unit
+        case Selection(_, fields, _)        => analyzeFields[G](fields)
+        case l: PreparedList[G, ?, ?, ?, ?] => analyzeCont[G](l.of.edges, l.of.cont)
+        case o: PreparedOption[G, ?, ?, ?]  => analyzeCont[G](o.of.edges, o.of.cont)
       }
 
-      def analyzeCont[G[_]](edges: PreparedStep[G, ?, ?], cont: Prepared[G, ?]): F[Unit] =
+      def analyzeCont[G[_]](edges: PreparedStep[G, ?, ?, ?], cont: Prepared[G, ?, ?]): F[Unit] =
         analyzeStep[G](edges) *> analyzePrepared[G](cont)
     }
   }

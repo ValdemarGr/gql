@@ -53,11 +53,11 @@ class SubqueryInterpreter[F[_]](
 
   @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
   def interpretSelection[I](
-      fields: List[PreparedField[F, I]],
+      fields: List[PreparedField[F, I, Stage.Execution]],
       en: EvalNode[F, I]
   ): F[Chain[(String, Json)]] =
     Chain.fromSeq(fields).parFlatTraverse {
-      case fa: PreparedSpecification[F, I, a] =>
+      case fa: PreparedSpecification[F, I, a, Stage.Execution] =>
         val x = fa.specialization.specify(en.value)
         val v = x.right.flatten
         val sub = subgraphBatches.multiplicityNode(fa.nodeId, v.size.toInt)
@@ -66,20 +66,20 @@ class SubqueryInterpreter[F[_]](
           x.right.flatten
             .parTraverse(a => interpretSelection[a](fa.selection, en.setValue(a)))
             .map(_.getOrElse(Chain.empty))
-      case df: PreparedDataField[F, I, a] =>
+      case df: PreparedDataField[F, I, a, Stage.Execution] =>
         interpretEffect(df.cont.edges, df.cont.cont, en.modify(_.field(df.outputName)))
           .map(j => Chain(df.outputName -> j))
     }
 
   @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
   def interpretPrepared[I](
-      s: Prepared[F, I],
+      s: Prepared[F, I, Stage.Execution],
       en: EvalNode[F, I]
   ): F[Json] =
     s match {
       case PreparedLeaf(_, _, enc) => F.pure(enc(en.value))
       case Selection(_, xs, _)     => interpretSelection(xs, en).map(ys => JsonObject(ys.toList: _*).asJson)
-      case lst: PreparedList[F, a, I, b] =>
+      case lst: PreparedList[F, a, I, b, Stage.Execution] =>
         val sq = lst.toSeq(en.value)
         subgraphBatches.multiplicityNode(lst.id, sq.size) *>
           sq.zipWithIndex
@@ -87,7 +87,7 @@ class SubqueryInterpreter[F[_]](
               interpretEffect[a, b](lst.of.edges, lst.of.cont, en.modify(_.index(i)).setValue(a))
             }
             .map(Json.arr(_: _*))
-      case opt: PreparedOption[F, i, a] =>
+      case opt: PreparedOption[F, i, a, Stage.Execution] =>
         val en2: Option[i] = en.value
         subgraphBatches.multiplicityNode(opt.id, en2.size.toInt) *>
           en2
@@ -114,7 +114,7 @@ class SubqueryInterpreter[F[_]](
 
   @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
   def goStep[I, O](
-      ps: PreparedStep[F, I, O],
+      ps: PreparedStep[F, I, O, Stage.Execution],
       cont: Continuation[F, O],
       en: EvalNode[F, I]
   ): F[Json] = {
@@ -149,12 +149,12 @@ class SubqueryInterpreter[F[_]](
           .flatMap(y => goCont(rt, en.setValue(y.map(_.rightIor))))
       case EmbedError(_) =>
         goCont(rt, en.setValue(en.value.leftMap(EvalFailure.Raised(en.cursor, _)).some))
-      case GetMeta(_, pm0) =>
+      case EvalMeta(_, pm0) =>
         val pm = pm0.value
         goCont(cont, en.map(_ => FieldMeta(QueryMeta(en.cursor, pm.variables), pm.args, pm.pdf)))
-      case alg: Compose[F, I, a, O] =>
+      case alg: Compose[F, I, a, O, Stage.Execution] =>
         goStep(alg.left, Continuation.Continue(alg.right, cont), en)
-      case alg: Choose[F, a, b, c, d] =>
+      case alg: Choose[F, a, b, c, d, Stage.Execution] =>
         val e = en.value: Either[a, b]
         val record =
           if (en.value.isLeft) subgraphBatches.multiplicityNode(alg.fbd.nodeId, 0)
@@ -165,7 +165,7 @@ class SubqueryInterpreter[F[_]](
             case Right(b) => goStep(alg.fbd, cont.contramap[d](Right(_)), en.setValue(b))
           }
         }
-      case alg: First[F, i2, o2, c2] =>
+      case alg: First[F, i2, o2, c2, Stage.Execution] =>
         val (i2, c2) = en.value: (i2, c2)
         goStep(alg.step, cont.contramap[o2](o2 => (o2, c2)), en.setValue(i2))
       case _: EmbedStream[F, i] =>
@@ -188,8 +188,8 @@ class SubqueryInterpreter[F[_]](
     }
 
   def interpretEffect[I0, O0](
-      ps: PreparedStep[F, I0, O0],
-      cont: Prepared[F, O0],
+      ps: PreparedStep[F, I0, O0, Stage.Execution],
+      cont: Prepared[F, O0, Stage.Execution],
       en: EvalNode[F, I0]
   ): F[Json] =
     goStep[I0, O0](ps, Continuation.Done(cont), en)

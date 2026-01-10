@@ -47,7 +47,8 @@ object LazyT {
   def lift[F[_], A, B](f: Eval[A] => B)(implicit F: Applicative[F]): LazyT[F, A, B] =
     LazyT(F.pure(f))
 
-  def applicativeForApplicativeLazyT[F[_]: Applicative, A]: Applicative[LazyT[F, A, *]] =
+  // never used, for demonstration purposes
+  private def applicativeForApplicativeLazyT[F[_]: Applicative, A]: Applicative[LazyT[F, A, *]] =
     new Applicative[LazyT[F, A, *]] {
       override def ap[C, B](ff: LazyT[F, A, C => B])(fa: LazyT[F, A, C]): LazyT[F, A, B] =
         LazyT((ff.fb, fa.fb).mapN { (gf, ga) => (ea: Eval[A]) => gf(ea).apply(ga(ea)) })

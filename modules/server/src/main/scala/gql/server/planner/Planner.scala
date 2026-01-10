@@ -43,7 +43,7 @@ object Planner {
           case (best, _)                                                            => best
         }
         .map { case (bestPlan, _) => bestPlan }
-        .map(_.map { case (k, v) => (NodeId(k.id), (v.nodes.map(n => NodeId(n.id)), v.end)) })
+        .map(_.map { case (k, v) => (k, (v.nodes, v.end)) })
         .getOrElse(Map.empty)
 
       OptimizedDAG(tree, plan)
@@ -67,9 +67,7 @@ object Planner {
       PlanEnumeration.Family(hd.cost, gs.map { case (_, x) => x.id }.toSet)
     }
 
-    val rl = tree.reverseLookup.map { case (k, vs) =>
-      NodeId(k.id) -> vs.toList.toSet
-    }
+    val rl = tree.reverseLookup.map { case (k, vs) => k -> vs.toList.toSet }
 
     val nodes = (trivialFamilies ++ batchFamilies).toArray
 

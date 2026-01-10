@@ -23,6 +23,8 @@ import gql.resolver._
 package object preparation {
   type VariableMap[C] = Map[String, Variable[C]]
 
+  type TypeMap = Map[String, gql.parser.Type]
+
   def pValueName(v: V[AnyValue, ?]): String = {
     import V._
     v match {
