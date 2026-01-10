@@ -23,7 +23,6 @@ import cats.data._
 import org.typelevel.scalaccompat.annotation._
 
 sealed trait Alg[+C, +A] {
-  def run[C2 >: C]: EitherNec[PositionalError[C2], A] = Alg.run(this)
   def runToCompletion[C2 >: C](vm: VariableMap[C2]): EitherNec[PositionalError[C2], A] =
     Alg.runToCompletion(this, vm)
 }
