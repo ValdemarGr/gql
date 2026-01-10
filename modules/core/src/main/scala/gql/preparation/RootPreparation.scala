@@ -197,13 +197,9 @@ class RootPreparation[F[_], C] {
             case x :: xs =>
               val r = NonEmptyList(x, xs)
               fm.checkSelectionsMerge(r) >> qp.prepareSelectable(o, r)
-            case _ => G.nextId.map(NodeId(_)).map(Selection(_, Nil, o))
+            case _ => G.nextId.map(NodeId(_, None)).map(Selection(_, Nil, o))
           }
-          (prog, G.usedVariables).tupled.flatMap { case (res, used) =>
-            val unused = tm.keySet -- used
-            if (unused.nonEmpty) G.raise(s"Unused variables: ${unused.map(str => s"'$str'").mkString(", ")}", Nil)
-            else G.pure(res)
-          }
+          prog
         }
 
         ot match {
@@ -237,23 +233,21 @@ object RootPreparation {
     val RUQ = RunnableQuery
     val RP = RootPrep
     def pq[A](contstruct: Selection[F, A, Stage.Execution] => RunnableQuery[F, Q, M, S, C])(
-        sel: Selection[F, A, Stage.Compilation[C]],
-        evaluator: Alg.Evaluator
+        sel: Selection[F, A, Stage.Compilation[C]]
     ): PreparedQuery[F, Q, M, S, C] =
-      PreparedQuery(vm => evaluator.runToCompletion(SubstitueVariables.substSel(vm, sel).map(contstruct), vm))
+      PreparedQuery(vm => Alg.runToCompletion(SubstitueVariables.substSel(sel), vm).map(contstruct))
     def cacheable[A](construct: Selection[F, A, Stage.Execution] => RunnableQuery[F, Q, M, S, C])(
-        sel: Selection[F, A, Stage.Compilation[C]],
-        evaluator: Alg.Evaluator
+        sel: Selection[F, A, Stage.Compilation[C]]
     ): PreparedQuery[F, Q, M, S, C] =
-      pq(construct)(sel, evaluator)
+      pq(construct)(sel)
 
-    Alg.partialEvaluate(fa) match {
-      case Alg.Outcome0.Now(value, e) =>
+    Alg.eval(fa) match {
+      case Alg.Outcome0.Now(value) =>
         value.map { rp =>
           val out = rp match {
-            case RP.Query(q)        => cacheable[Q](RUQ.Query(_))(q, e)
-            case RP.Mutation(m)     => cacheable[M](RUQ.Mutation(_))(m, e)
-            case RP.Subscription(s) => cacheable[S](RUQ.Subscription(_))(s, e)
+            case RP.Query(q)        => cacheable[Q](RUQ.Query(_))(q)
+            case RP.Mutation(m)     => cacheable[M](RUQ.Mutation(_))(m)
+            case RP.Subscription(s) => cacheable[S](RUQ.Subscription(_))(s)
           }
           RootQuery.Cacheable[F, Q, M, S, C](rp, out)
         }
@@ -262,11 +256,10 @@ object RootPreparation {
           RootQuery.RequiresVariables[F, Q, M, S, C] {
             PreparedQuery[F, Q, M, S, C] { vm =>
               val n = f(vm)
-              val e = n.evaluator
               n.result.flatMap {
-                case RP.Query(q)        => pq[Q](RUQ.Query(_))(q, e).run(vm)
-                case RP.Mutation(m)     => pq[M](RUQ.Mutation(_))(m, e).run(vm)
-                case RP.Subscription(s) => pq[S](RUQ.Subscription(_))(s, e).run(vm)
+                case RP.Query(q)        => pq[Q](RUQ.Query(_))(q).run(vm)
+                case RP.Mutation(m)     => pq[M](RUQ.Mutation(_))(m).run(vm)
+                case RP.Subscription(s) => pq[S](RUQ.Subscription(_))(s).run(vm)
               }
             }
           }

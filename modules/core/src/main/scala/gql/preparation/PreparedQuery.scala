@@ -34,12 +34,11 @@ object Stage {
 
 sealed trait PreparedField[+F[_], A, +S <: Stage] extends Product with Serializable
 
-final case class NodeId(id: NonEmptyList[Int]) extends AnyVal {
-  def alpha(i: Int): NodeId = NodeId(i :: id)
-}
-
-object NodeId {
-  def apply(i: Int): NodeId = NodeId(NonEmptyList.one(i))
+final case class NodeId(
+    id: Alg.UniqueId,
+    sub: Option[Int]
+) {
+  def alpha(i: Int): NodeId = NodeId(id, Some(i))
 }
 
 final case class StepEffectId(

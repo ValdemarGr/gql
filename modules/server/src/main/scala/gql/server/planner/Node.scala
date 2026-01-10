@@ -125,7 +125,6 @@ final case class OptimizedDAG(
 
     def go(nodes: List[NodeId]): String = {
       nodes
-        .sortBy(_.id)
         .map { n0 =>
           val n = lookup(n0)
           val nEnd = endTimes(n.id)

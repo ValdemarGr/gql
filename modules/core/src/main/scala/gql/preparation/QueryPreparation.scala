@@ -39,7 +39,7 @@ class QueryPreparation[F[_], C](
 
   def liftK[A](fa: G[A]): Analyze[A] = LazyT.liftF(fa)
 
-  val nextNodeId = G.nextId.map(NodeId(_))
+  val nextNodeId = G.nextId.map(NodeId(_, None))
 
   def findImplementations[A](
       s: Selectable[F, A]
@@ -95,7 +95,7 @@ class QueryPreparation[F[_], C](
         (liftK(nextNodeId), LazyT.id[G, Alg[C, PreparedMeta[F, Comp]]])
           .mapN(PreparedStep.PrecompileMeta.apply[F, I, C])
       case alg: Step.Alg.Batch[F, k, v] =>
-        liftK(G.nextId.map(i => PreparedStep.Batch[F, k, v](alg.id, UniqueBatchInstance(NodeId(i)))))
+        liftK(nextNodeId.map(id => PreparedStep.Batch[F, k, v](alg.id, UniqueBatchInstance(id))))
       case alg: Step.Alg.InlineBatch[F, k, v] =>
         nextId.map(PreparedStep.InlineBatch[F, k, v](alg.run, _))
       case alg: Step.Alg.First[F, i, o, c] =>

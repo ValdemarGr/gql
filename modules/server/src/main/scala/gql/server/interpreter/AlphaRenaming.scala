@@ -35,6 +35,7 @@ object AlphaRenaming {
         case alg: EvalMeta[f, a]          => now(EvalMeta[f, a](alg.nodeId.alpha(scope), alg.meta))
         case alg: InlineBatch[F, k, v]    => now(InlineBatch[F, k, v](alg.run, alg.sei.alpha(scope)))
         case alg: Batch[F, k, v]          => now(Batch[F, k, v](alg.id, alg.ubi.alpha(scope)))
+        case alg: SubstVars[F, i, a, c]   => now(SubstVars[F, i, a, c](alg.nodeId.alpha(scope), alg.sub))
         case alg: Compose[F, A, a, B, s] =>
           (alphaStep(scope, alg.left), alphaStep(scope, alg.right))
             .mapN(Compose[F, A, a, B, s](alg.nodeId.alpha(scope), _, _))

@@ -35,126 +35,124 @@ class ArgParsing[C](typeMap: TypeMap) {
   ): G[A] = {
     (a, value) match {
       case (_, V.VariableValue(vn, cs)) =>
-        G.useVariable(vn) *> {
-          val typeNotFound = G.raise(
-            s"Variable '$$$vn' was not declared and provided as a possible variable for this operation. Hint add the variable to the variables list of the operation '(..., $$$vn: ${ModifierStack
-                .fromIn(a)
-                .show(_.name)})' and provide a value in the variables parameter.",
-            cs
-          )
-          typeMap.get(vn) match {
-            case None => typeNotFound
-            case Some(tpe) =>
-              val vt: ModifierStack[String] = ModifierStack.fromType(tpe)
-              val at = ModifierStack.fromIn(a)
+        val typeNotFound = G.raise(
+          s"Variable '$$$vn' was not declared and provided as a possible variable for this operation. Hint add the variable to the variables list of the operation '(..., $$$vn: ${ModifierStack
+              .fromIn(a)
+              .show(_.name)})' and provide a value in the variables parameter.",
+          cs
+        )
+        typeMap.get(vn) match {
+          case None => typeNotFound
+          case Some(tpe) =>
+            val vt: ModifierStack[String] = ModifierStack.fromType(tpe)
+            val at = ModifierStack.fromIn(a)
 
-              def showType(xs: List[Modifier], name: String): String =
-                ModifierStack(xs, name).show(identity)
+            def showType(xs: List[Modifier], name: String): String =
+              ModifierStack(xs, name).show(identity)
 
-              def showVarType(xs: List[Modifier]): String =
-                showType(xs, vt.inner)
+            def showVarType(xs: List[Modifier]): String =
+              showType(xs, vt.inner)
 
-              def showArgType(xs: List[Modifier]): String =
-                showType(xs, at.inner.name)
+            def showArgType(xs: List[Modifier]): String =
+              showType(xs, at.inner.name)
 
-              lazy val prefix =
-                s"Variable '$$${vn}' of type `${vt.show(identity)}` was not compatible with expected argument type `${at.map(_.name).show(identity)}`"
+            lazy val prefix =
+              s"Variable '$$${vn}' of type `${vt.show(identity)}` was not compatible with expected argument type `${at.map(_.name).show(identity)}`"
 
-              def remaining(vs: List[Modifier], as: List[Modifier]): String =
-                if (vs.size == vt.modifiers.size && as.size == at.modifiers.size) "."
-                else
-                  s". The remaining type for the variable `${showVarType(vs)}` is not compatible with the remaining type for the argument `${showArgType(as)}`"
+            def remaining(vs: List[Modifier], as: List[Modifier]): String =
+              if (vs.size == vt.modifiers.size && as.size == at.modifiers.size) "."
+              else
+                s". The remaining type for the variable `${showVarType(vs)}` is not compatible with the remaining type for the argument `${showArgType(as)}`"
 
-              def showModifier(m: Option[Modifier]): String = m match {
-                case None                   => "no modifiers"
-                case Some(Modifier.NonNull) => "a non-null modifier"
-                case Some(Modifier.List)    => "a list modifier"
-              }
+            def showModifier(m: Option[Modifier]): String = m match {
+              case None                   => "no modifiers"
+              case Some(Modifier.NonNull) => "a non-null modifier"
+              case Some(Modifier.List)    => "a list modifier"
+            }
 
-              /*
-               * We must verify if the variable may occur here by comparing the type of the variable with the type of the arg
-               * If we don't do this, variables will be structurally typed
-               * Var should be more constrained than the arg
-               * a ::= [a] | a! | A
-               * v ::= [v] | v! | V
-               * a compat v ::= ok | fail
-               *
-               *  a  compat  v  -> outcome
-               * --------------------------
-               *  A  compat  V  -> ok
-               *  a! compat  v! -> a compat v
-               *  a! compat [v] -> fail
-               *  a! compat  V  -> fail
-               * [a] compat  v! -> [a] compat v
-               *  A  compat  v! -> A compat v
-               * [a] compat [v] -> a compat v
-               * [a] compat  V  -> fail
-               *  A  compat [v] -> fail
-               */
-              def verifyTypeShape(argShape: List[Modifier], varShape: List[Modifier]): G[Unit] =
-                (argShape, varShape) match {
-                  // A compat V
-                  case (Nil, Nil) => G.unit
-                  // a! compat v! -> ok
-                  case (Modifier.NonNull :: xs, Modifier.NonNull :: ys) => verifyTypeShape(xs, ys)
-                  // a! compat ([v] | V) -> fail
-                  case (Modifier.NonNull :: _, (Modifier.List :: _) | Nil) =>
-                    G.raise(
-                      s"${prefix}, because the argument expected a not-null (!) modifier, but was given ${showModifier(
-                          varShape.headOption
-                        )}${remaining(varShape, argShape)}",
-                      cs
-                    )
-                  // ([a] | A) compat v! -> ok
-                  case (xs, Modifier.NonNull :: ys) => verifyTypeShape(xs, ys)
-                  // [a] compat [v] -> ok
-                  case (Modifier.List :: xs, Modifier.List :: ys) => verifyTypeShape(xs, ys)
-                  // [a] compat V -> fail
-                  case (Modifier.List :: _, Nil) =>
-                    G.raise(
-                      s"${prefix}, because the argumented expected a list modifier ([A]) but no more modifiers were provided${remaining(varShape, argShape)}",
-                      cs
-                    )
-                  // A compat [v] -> fail
-                  case (Nil, Modifier.List :: _) =>
-                    G.raise(
-                      s"${prefix}, because the argumented expected no more modifiers but was given a list modifier ([A])${remaining(varShape, argShape)}",
-                      cs
-                    )
-                }
-
-              val verifiedF: G[Unit] = verifyTypeShape(at.modifiers, vt.modifiers)
-
-              val verifiedTypenameF: G[Unit] =
-                if (vt.inner === at.inner.name) G.unit
-                else
+            /*
+             * We must verify if the variable may occur here by comparing the type of the variable with the type of the arg
+             * If we don't do this, variables will be structurally typed
+             * Var should be more constrained than the arg
+             * a ::= [a] | a! | A
+             * v ::= [v] | v! | V
+             * a compat v ::= ok | fail
+             *
+             *  a  compat  v  -> outcome
+             * --------------------------
+             *  A  compat  V  -> ok
+             *  a! compat  v! -> a compat v
+             *  a! compat [v] -> fail
+             *  a! compat  V  -> fail
+             * [a] compat  v! -> [a] compat v
+             *  A  compat  v! -> A compat v
+             * [a] compat [v] -> a compat v
+             * [a] compat  V  -> fail
+             *  A  compat [v] -> fail
+             */
+            def verifyTypeShape(argShape: List[Modifier], varShape: List[Modifier]): G[Unit] =
+              (argShape, varShape) match {
+                // A compat V
+                case (Nil, Nil) => G.unit
+                // a! compat v! -> ok
+                case (Modifier.NonNull :: xs, Modifier.NonNull :: ys) => verifyTypeShape(xs, ys)
+                // a! compat ([v] | V) -> fail
+                case (Modifier.NonNull :: _, (Modifier.List :: _) | Nil) =>
                   G.raise(
-                    s"${prefix}, typename of the variable '${vt.inner}' was not the same as the argument typename '${at.inner.name}'",
+                    s"${prefix}, because the argument expected a not-null (!) modifier, but was given ${showModifier(
+                        varShape.headOption
+                      )}${remaining(varShape, argShape)}",
                     cs
                   )
-
-              val parseActual = G.getVariables.flatMap { variables =>
-                variables.get(vn) match {
-                  case None =>
-                    System.err.println(
-                      s"Internal error: variable '$$$vn' not found during parsing despite being in the type map."
-                    )
-                    typeNotFound
-                  case Some(v) if v.tpe != tpe =>
-                    System.err.println(
-                      s"Internal error: variable '$$$vn' type mismatch during parsing despite being in the type map. Expected `${tpe}`, got `${v.tpe}`."
-                    )
-                    typeNotFound
-                  case Some(v) =>
-                    v.value match {
-                      case Right(pval) => decodeIn(a, pval.map(c2 => c2 :: cs), ambigiousEnum = false)
-                      case Left(j)     => decodeIn(a, V.fromJson(j).as(cs), ambigiousEnum = true)
-                    }
-                }
+                // ([a] | A) compat v! -> ok
+                case (xs, Modifier.NonNull :: ys) => verifyTypeShape(xs, ys)
+                // [a] compat [v] -> ok
+                case (Modifier.List :: xs, Modifier.List :: ys) => verifyTypeShape(xs, ys)
+                // [a] compat V -> fail
+                case (Modifier.List :: _, Nil) =>
+                  G.raise(
+                    s"${prefix}, because the argumented expected a list modifier ([A]) but no more modifiers were provided${remaining(varShape, argShape)}",
+                    cs
+                  )
+                // A compat [v] -> fail
+                case (Nil, Modifier.List :: _) =>
+                  G.raise(
+                    s"${prefix}, because the argumented expected no more modifiers but was given a list modifier ([A])${remaining(varShape, argShape)}",
+                    cs
+                  )
               }
 
-              verifiedF >> verifiedTypenameF >> parseActual
-          }
+            val verifiedF: G[Unit] = verifyTypeShape(at.modifiers, vt.modifiers)
+
+            val verifiedTypenameF: G[Unit] =
+              if (vt.inner === at.inner.name) G.unit
+              else
+                G.raise(
+                  s"${prefix}, typename of the variable '${vt.inner}' was not the same as the argument typename '${at.inner.name}'",
+                  cs
+                )
+
+            val parseActual = G.getVariables.flatMap { variables =>
+              variables.get(vn) match {
+                case None =>
+                  System.err.println(
+                    s"Internal error: variable '$$$vn' not found during parsing despite being in the type map."
+                  )
+                  typeNotFound
+                case Some(v) if v.tpe != tpe =>
+                  System.err.println(
+                    s"Internal error: variable '$$$vn' type mismatch during parsing despite being in the type map. Expected `${tpe}`, got `${v.tpe}`."
+                  )
+                  typeNotFound
+                case Some(v) =>
+                  v.value match {
+                    case Right(pval) => decodeIn(a, pval.map(c2 => c2 :: cs), ambigiousEnum = false)
+                    case Left(j)     => decodeIn(a, V.fromJson(j).as(cs), ambigiousEnum = true)
+                  }
+              }
+            }
+
+            verifiedF >> verifiedTypenameF >> parseActual
         }
       case (e @ Enum(name, _, _), v) =>
         val fa: G[(String, List[C])] = v match {
