@@ -433,7 +433,7 @@ object Validation {
                         case (Some(ld), Some(rd)) =>
                           (new FieldMerging[Unit])
                             .compareValues(ld, rd, None)
-                            .run
+                            .runToCompletion(Map.empty)
                             .swap
                             .toOption
                             .traverse_(_.traverse_ { pe =>
