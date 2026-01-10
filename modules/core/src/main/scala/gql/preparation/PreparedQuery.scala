@@ -34,7 +34,7 @@ object Stage {
 
 sealed trait PreparedField[+F[_], A, +S <: Stage] extends Product with Serializable
 
-final case class NodeId(id: Int)
+final case class NodeId(id: Alg.UniqueId)
 
 final case class StepEffectId(
     nodeId: NodeId,
