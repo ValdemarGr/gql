@@ -27,6 +27,7 @@ import org.http4s.websocket.WebSocketFrame
 import org.typelevel.ci._
 import gql.graphqlws.GraphqlWSServer
 import scala.concurrent.duration._
+import fs2.concurrent.SignallingRef
 
 object implicits {
   implicit lazy val cd: Decoder[QueryParameters] = Decoder.instance[QueryParameters] { c =>
@@ -125,29 +126,38 @@ object Http4sRoutes {
     import io.circe.syntax._
 
     HttpRoutes.of[F] { case GET -> Root / `path` =>
-      F.uncancelable { _ =>
-        GraphqlWSServer[F](connectionInit).allocated.flatMap { case ((toClient, fromClient), close) =>
-          val toSend = toClient.evalMap[F, WebSocketFrame] {
-            case Left(te) => F.fromEither(WebSocketFrame.Close(te.code.code, te.message))
-            case Right(x) => F.pure(WebSocketFrame.Text(x.asJson.noSpaces))
-          }
-          wsb
-            .withOnClose(close)
-            .withFilterPingPongs(true)
-            .withHeaders(Headers(Header.Raw(ci"Sec-WebSocket-Protocol", "graphql-transport-ws")))
-            .build(
-              toSend.mergeHaltL(fs2.Stream.awakeEvery[F](pingInterval).as(WebSocketFrame.Ping())),
-              _.evalMap[F, Option[String]] {
-                case WebSocketFrame.Text(x, true) => F.pure(Some(x))
-                case _: WebSocketFrame.Close      => F.pure(None)
-                // case c: WebSocketFrame.Close if c.closeCode == 1000 => F.pure(None)
-                case other => F.raiseError(new Exception(s"Unexpected frame: $other"))
-              }.unNone
-                .evalMap(x => F.fromEither(io.circe.parser.decode[GraphqlWS.FromClient](x)))
-                .through(fromClient)
-            )
-        }
-      }
+      for {
+        state <- SignallingRef[F].of(Option.empty[fs2.Pipe[F, GraphqlWS.FromClient, Unit]])
+        response <- wsb
+          .withFilterPingPongs(true)
+          .withHeaders(Headers(Header.Raw(ci"Sec-WebSocket-Protocol", "graphql-transport-ws")))
+          .build(
+            fs2.Stream.resource(GraphqlWSServer[F](connectionInit)).flatMap { case (toClient, fromClient) =>
+              val toSend = toClient.evalMap[F, WebSocketFrame] {
+                case Left(te) => F.fromEither(WebSocketFrame.Close(te.code.code, te.message))
+                case Right(x) => F.pure(WebSocketFrame.Text(x.asJson.noSpaces))
+              }
+              fs2.Stream.eval(state.set(Some(fromClient))) >>
+                toSend.mergeHaltL(fs2.Stream.awakeEvery[F](pingInterval).as(WebSocketFrame.Ping()))
+            },
+            fromClient =>
+              state.discrete
+                .collectFirst { case Some(pipe) => pipe }
+                .flatMap { pipe =>
+                  val stream = fromClient
+                    .evalMap[F, Option[String]] {
+                      case WebSocketFrame.Text(x, true) => F.pure(Some(x))
+                      case _: WebSocketFrame.Close      => F.pure(None)
+                      // case c: WebSocketFrame.Close if c.closeCode == 1000 => F.pure(None)
+                      case other => F.raiseError(new Exception(s"Unexpected frame: $other"))
+                    }
+                    .unNone
+                    .evalMap(x => F.fromEither(io.circe.parser.decode[GraphqlWS.FromClient](x)))
+
+                  stream.through(pipe)
+                }
+          )
+      } yield response
     }
   }
 }

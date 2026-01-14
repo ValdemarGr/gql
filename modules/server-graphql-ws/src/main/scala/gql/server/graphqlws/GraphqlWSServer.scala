@@ -57,7 +57,7 @@ object GraphqlWSServer {
       F: Async[F]
   ): Resource[F, (fs2.Stream[F, Either[TechnicalError, FromServer]], fs2.Stream[F, FromClient] => fs2.Stream[F, Unit])] = {
     Supervisor[F].evalMap { sup =>
-      Queue.bounded[F, Message](1024).flatMap { toClient =>
+      Queue.bounded[F, Message](64).flatMap { toClient =>
         F.ref[State[F]](State.Connecting()).flatMap { state =>
           import scala.concurrent.duration._
           val timeoutF =
