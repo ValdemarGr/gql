@@ -131,12 +131,8 @@ object StreamInterpreter {
               .lease {
                 entries.traverse { e =>
                   e.a.active.keepAlive.map {
-                    case false =>
-                      println(s"Resource for cursor ${e.a.cursor} is closed, skipping update.")
-                      None
-                    case true =>
-                      println(s"Resource for cursor ${e.a.cursor} is alive, including update.")
-                      Some(e)
+                    case false => None
+                    case true  => Some(e)
                   }
                 }
               }
@@ -160,7 +156,7 @@ object StreamInterpreter {
                           patched.map { jo =>
                             (
                               Result(results.errors, jo),
-                              AwaitEvents(F.delay(println("complete next")) >> state.awaitExecution.complete(()) *> next(jo))
+                              AwaitEvents(state.awaitExecution.complete(()) *> next(jo))
                             )
                           }
                       }

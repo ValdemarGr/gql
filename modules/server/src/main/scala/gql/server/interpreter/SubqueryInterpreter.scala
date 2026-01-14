@@ -207,7 +207,6 @@ class SubqueryInterpreter[F[_]](
 
       stream2
         .flatMap { a =>
-          println(a)
           Stream.resource(Res.make[F]).evalMap { streamRes =>
             val en2 = en.setValue(a).setActive(streamRes)
             // both cases must block for the next element until execution has been completed
@@ -215,15 +214,12 @@ class SubqueryInterpreter[F[_]](
               // previous bug DON'T RECURSE into goCont here. This causes a memory leak since
               // the GC can't know that once initalObject is none, the other case is never reachable
               case None =>
-                println("initial complete")
                 // order is important, we must get the current execution blocker
                 // since submitting initial object can theoretically cause execution to be executed immideately
                 api.awaitExecution {
                   initialObject.complete(Some(en2)).void
-                } >> F.delay(println("initial submitted"))
-              case Some(_) => 
-                println("continuing")
-                api.submitAndAwaitExecution(cont, en2) >> F.delay(println("continued"))
+                }
+              case Some(_) => api.submitAndAwaitExecution(cont, en2)
             }
           }
         }
