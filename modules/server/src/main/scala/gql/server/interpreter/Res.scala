@@ -1,5 +1,6 @@
 package gql.server.interpreter
 
+import scala.concurrent.duration.*
 import cats.implicits.*
 import cats.effect.*
 import cats.effect.std.Semaphore
@@ -26,7 +27,6 @@ object Res {
       sem <- Resource.eval(Semaphore[F](permits.toLong))
       state <- Resource.eval(Ref[F].of(Map.empty[Lease, F[Unit]]))
       _ <- Resource.onFinalize {
-        // never release again, subsequent leases will fail with dead
         sem.acquireN(permits.toLong) >>
           state.modify { s =>
             (Map.empty, s.values.toList.sequence_)
@@ -67,7 +67,7 @@ object Res {
             case true =>
               F.uncancelable { _ =>
                 state.modify { m =>
-                  (m - lease, m(lease))
+                  (m - lease, m.get(lease).sequence_)
                 }.flatten
               }
           }

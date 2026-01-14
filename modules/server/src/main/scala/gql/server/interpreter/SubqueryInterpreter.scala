@@ -199,38 +199,43 @@ class SubqueryInterpreter[F[_]](
       cont: Continuation[F, A],
       en: EvalNode[F, ?]
   ): F[Json] = for {
-    initialObject <- F.deferred[EvalNode[F, A]]
+    initialObject <- F.deferred[Option[EvalNode[F, A]]]
 
     b <- en.active.leaseNow {
       val stream2 =
         Stream.bracket(counter.update(_ + 1))(_ => counter.update(_ - 1)) >> stream
 
       stream2
-        .evalFold(Option.empty[Res.Lease]) { case (prevLease, a) =>
-          prevLease.traverse_(en.active.release) *>
-            en.active
-              .lease(Res.make[F])
-              .use(alloc => F.pure(alloc)) // Res is safe to use after free
-              .flatMap(_.traverse { case (newLease, childRs) =>
-                val en2 = en.setValue(a).setActive(childRs)
-                val fa = prevLease match {
-                  // previous bug DON'T RECURSE into goCont here. This causes a memory leak since
-                  // the GC can't know that once initalObject is none, the other case is never reachable
-                  case None    => initialObject.complete(en2).void
-                  case Some(_) => api.submit(cont, en2) // root leases
-                }
-                fa.as(newLease)
-              })
+        .flatMap { a =>
+          println(a)
+          Stream.resource(Res.make[F]).evalMap { streamRes =>
+            val en2 = en.setValue(a).setActive(streamRes)
+            // both cases must block for the next element until execution has been completed
+            initialObject.tryGet.flatMap {
+              // previous bug DON'T RECURSE into goCont here. This causes a memory leak since
+              // the GC can't know that once initalObject is none, the other case is never reachable
+              case None =>
+                println("initial complete")
+                // order is important, we must get the current execution blocker
+                // since submitting initial object can theoretically cause execution to be executed immideately
+                api.awaitExecution {
+                  initialObject.complete(Some(en2)).void
+                } >> F.delay(println("initial submitted"))
+              case Some(_) => 
+                println("continuing")
+                api.submitAndAwaitExecution(cont, en2) >> F.delay(println("continued"))
+            }
+          }
         }
         .compile
-        .lastOrError
-        .flatMap(_.traverse_ { lease =>
-          // release last lease, maybe child exhausts without parent dying
-          en.active.release(lease)
-        })
+        .drain
+        .guarantee(initialObject.complete(None).void)
         .background
     }
     _ = assert(b, "StreamInterpreter: parent resource must be alive to start stream subscription")
-    res <- initialObject.get.flatMap(en2 => goCont(cont, en2))
+    res <- initialObject.get.flatMap {
+      case None      => F.canceled >> F.pure(Json.Null)
+      case Some(en2) => goCont(cont, en2)
+    }
   } yield res
 }

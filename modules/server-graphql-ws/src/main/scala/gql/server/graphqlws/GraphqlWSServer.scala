@@ -131,15 +131,15 @@ object GraphqlWSServer {
 
                                       val bgFiber =
                                         sup.supervise {
-                                          (
-                                            s.map(x => Right(FromServer.Next(id, x))) ++
-                                              fs2.Stream(Right(Bidirectional.Complete(id))) ++
-                                              fs2.Stream.exec(cleanupF)
-                                          )
+                                          s.map(x => Right(FromServer.Next(id, x)))
                                             .enqueueUnterminated(toClient)
                                             .compile
                                             .drain
-                                            .guarantee(release)
+                                            .guarantee {
+                                              release >>
+                                                toClient.offer(Right(Bidirectional.Complete(id))) >>
+                                                cleanupF
+                                            }
                                         }
 
                                       bgFiber.flatMap { fib =>

@@ -16,6 +16,8 @@
 package gql.server.interpreter
 
 import gql.Cursor
+import cats._
+import cats.implicits._
 
 final case class EvalNode[F[_], +A](
     cursor: Cursor,
@@ -43,7 +45,12 @@ object EvalNode {
 }
 
 trait StreamingApi[F[_]] {
-  def submit[A](cont: Continuation[F, A], node: EvalNode[F, A]): F[Unit]
+  def submitAndAwaitExecution[A](cont: Continuation[F, A], node: EvalNode[F, A]): F[Unit]
+
+  def currentExecution: F[F[Unit]]
+
+  def awaitExecution(fa: F[Unit])(implicit F: Monad[F]): F[Unit] =
+    currentExecution.flatMap(await => fa *> await)
 }
 
 object EvalState {

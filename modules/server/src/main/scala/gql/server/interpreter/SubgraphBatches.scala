@@ -52,12 +52,31 @@ object SubgraphBatches {
   final case class State(
       childBatches: Set[BatchNodeId],
       accum: Map[MulitplicityNode, Set[BatchNodeId]]
-  )
+  ) {
+    def +(m: (MulitplicityNode, Set[BatchNodeId])): State = {
+      assert(!accum.contains(m._1), s"Node ${m._1.id} counted multiple times")
+      copy(accum = accum + m)
+    }
+    def -(m: MulitplicityNode): State = {
+      copy(accum = accum - m)
+    }
+  }
   object State {
     def empty = State(Set.empty, Map.empty)
     implicit val monoid: Monoid[State] = new Monoid[State] {
       def empty = State.empty
-      def combine(x: State, y: State) = State(x.childBatches ++ y.childBatches, x.accum ++ y.accum)
+      def combine(x: State, y: State) = {
+        val z = x.accum.foldLeft(y.accum) { case (acc, (k, v)) =>
+          acc.get(k) match {
+            case Some(v2) =>
+              assert(v == v2, s"Multiplicity node ${k.id} has different batch sets")
+              acc
+            case None =>
+              acc + (k -> v)
+          }
+        }
+        State(x.childBatches ++ y.childBatches, z)
+      }
     }
   }
 
@@ -73,16 +92,18 @@ object SubgraphBatches {
           s1 <- countStep(state, alg.fac)
           s2 <- countStep(state, alg.fbd)
           s1Unique = s1.childBatches -- s2.childBatches
-          s1Out = s1.copy(accum = s1.accum + (MulitplicityNode(alg.fac.nodeId) -> s1Unique))
+          s1K = MulitplicityNode(alg.fac.nodeId)
+          s1Out = (s1 - s1K) + (s1K -> s1Unique)
 
           s2Unique = s2.childBatches -- s1.childBatches
-          s2Out = s2.copy(accum = s2.accum + (MulitplicityNode(alg.fbd.nodeId) -> s2Unique))
+          s2K = MulitplicityNode(alg.fbd.nodeId)
+          s2Out = (s2 - s2K) + (s2K -> s2Unique)
         } yield s1Out |+| s2Out
       case alg: First[F, ?, ?, ?]    => countStep(state, alg.step)
       case alg: Batch[F, ?, ?]       => Eval.now(state.copy(childBatches = state.childBatches + BatchNodeId(alg.nodeId)))
       case alg: InlineBatch[F, ?, ?] => Eval.now(state.copy(childBatches = state.childBatches + BatchNodeId(alg.nodeId)))
     }
-    s2.map(s => s.copy(accum = s.accum + (MulitplicityNode(step.nodeId) -> s.childBatches)))
+    s2.map(s => s + (MulitplicityNode(step.nodeId) -> s.childBatches))
   }
 
   def countCont[F[_]](ps: PreparedStep[F, ?, ?], cont: Prepared[F, ?]): Eval[State] = Eval.defer {
@@ -94,7 +115,7 @@ object SubgraphBatches {
       case PreparedDataField(_, _, _, cont, _, _) => countCont(cont.edges, cont.cont)
       case PreparedSpecification(nid, _, selection) =>
         selection.foldMapA(countField(_)).map { s =>
-          s.copy(accum = s.accum + (MulitplicityNode(nid) -> s.childBatches))
+          s + (MulitplicityNode(nid) -> s.childBatches)
         }
     }
   }
@@ -104,9 +125,9 @@ object SubgraphBatches {
       case PreparedLeaf(_, _, _)   => Eval.now(State(Set.empty, Map.empty))
       case Selection(_, fields, _) => fields.foldMapA(countField(_))
       case PreparedList(id, of, _) =>
-        countCont(of.edges, of.cont).map(s => s.copy(accum = s.accum + (MulitplicityNode(id) -> s.childBatches)))
+        countCont(of.edges, of.cont).map(s => s + (MulitplicityNode(id) -> s.childBatches))
       case PreparedOption(id, of) =>
-        countCont(of.edges, of.cont).map(s => s.copy(accum = s.accum + (MulitplicityNode(id) -> s.childBatches)))
+        countCont(of.edges, of.cont).map(s => s + (MulitplicityNode(id) -> s.childBatches))
     }
   }
 
@@ -116,7 +137,9 @@ object SubgraphBatches {
       case Continuation.Contramap(_, next) => countContinuation(state, next)
       case Continuation.Continue(step, next) =>
         countContinuation(state, next).flatMap(countStep(_, step))
-      case Continuation.Rethrow(_, inner) => countContinuation(state, inner)
+      case Continuation.Rethrow(nodeId, inner) =>
+        countContinuation(state, inner)
+          .map(s => s + (MulitplicityNode(nodeId) -> s.childBatches))
     }
   }
 
@@ -218,6 +241,7 @@ object SubgraphBatches {
               inputSubmission = bf.inputSubmission
             ) -> F.unit
           } else {
+            assert(!(newPending < 0), s"Pending inputs went negative for batch family")
             val empty = BatchFamily[F, K, V](
               pendingInputs = 0,
               inputSubmission = none
@@ -264,9 +288,10 @@ object SubgraphBatches {
             if (n === 1) F.unit
             else {
               val toAdd = n - 1
-              countState.accum
-                .get(MulitplicityNode(mulId))
-                .traverse_(_.toList.traverse_(batches(_).modify(modifyFamily(_, toAdd)).flatten))
+              countState
+                .accum(MulitplicityNode(mulId))
+                .toList
+                .traverse_(batches(_).modify(modifyFamily(_, toAdd)).flatten)
             }
           }
 

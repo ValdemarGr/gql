@@ -99,17 +99,21 @@ object StreamInterpreter {
 
       for {
         state <- Resource.eval {
-          Deferred[F, Unit].flatMap(dx0 => Ref[F].of(StreamingApiState(dx0, Nil)))
+          Deferred[F, Unit].flatMap { d =>
+            Ref[F].of(StreamingApiState(d, Nil))
+          }
         }
         newEntries <- Resource.eval(Queue.bounded[F, Unit](1))
         api = new StreamingApi[F] {
-          def submit[B](cont: Continuation[F, B], node: EvalNode[F, B]): F[Unit] =
+          def submitAndAwaitExecution[B](cont: Continuation[F, B], node: EvalNode[F, B]): F[Unit] =
             state.modify { s =>
               (
                 s.copy(entries = EvalState.Entry[F, B](cont, node) :: s.entries),
-                newEntries.offer(()) *> s.awaitExecution.get
+                newEntries.tryOffer(()).void >> s.awaitExecution.get
               )
             }.flatten
+
+          def currentExecution: F[F[Unit]] = state.get.map(_.awaitExecution.get)
         }
         rootScope <- Res.make[F]
         sup <- Supervisor[F]
@@ -127,8 +131,12 @@ object StreamInterpreter {
               .lease {
                 entries.traverse { e =>
                   e.a.active.keepAlive.map {
-                    case false => None
-                    case true  => Some(e)
+                    case false =>
+                      println(s"Resource for cursor ${e.a.cursor} is closed, skipping update.")
+                      None
+                    case true =>
+                      println(s"Resource for cursor ${e.a.cursor} is alive, including update.")
+                      Some(e)
                   }
                 }
               }
@@ -149,11 +157,10 @@ object StreamInterpreter {
                         }
 
                         rootScope.release(openedLease) *>
-                          state.awaitExecution.complete(()) *>
                           patched.map { jo =>
                             (
                               Result(results.errors, jo),
-                              AwaitEvents(next(jo))
+                              AwaitEvents(F.delay(println("complete next")) >> state.awaitExecution.complete(()) *> next(jo))
                             )
                           }
                       }
@@ -185,7 +192,16 @@ object StreamInterpreter {
             val jo: JsonObject = initRes.data.map { case (_, j) => j }.reduceLeft(_ deepMerge _).asObject.get
             val result0 = Result(initRes.errors, jo)
 
-            (result0, AwaitEvents(next(jo)))
+            val reset0 = Deferred[F, Unit].flatMap { d =>
+              state.modify { s =>
+                assert(
+                  s.entries.isEmpty,
+                  "Initial execution should not have any pending entries, everything should be blocked on awaitExecution."
+                )
+                (s.copy(awaitExecution = d), s.awaitExecution.complete(()))
+              }.flatten
+            }
+            (result0, AwaitEvents(reset0 >> next(jo)))
           }
         }
       }
