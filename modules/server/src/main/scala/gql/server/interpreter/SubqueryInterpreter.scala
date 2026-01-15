@@ -201,6 +201,11 @@ class SubqueryInterpreter[F[_]](
   ): F[Json] = for {
     initialObject <- F.deferred[Option[EvalNode[F, A]]]
 
+    // historically had some issues with fs2 streams not closing, signalling internal interruption seems to help
+    interruptStream <- F.deferred[Unit]
+    _ <- en.active.leaseNow {
+      Resource.onFinalize[F](interruptStream.complete(()).void)
+    }
     b <- en.active.leaseNow {
       val stream2 =
         Stream.bracket(counter.update(_ + 1))(_ => counter.update(_ - 1)) >> stream
@@ -223,6 +228,7 @@ class SubqueryInterpreter[F[_]](
             }
           }
         }
+        .interruptWhen(interruptStream.get.attempt)
         .compile
         .drain
         .guarantee(initialObject.complete(None).void)

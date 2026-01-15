@@ -1,9 +1,9 @@
 package gql.server.interpreter
 
-import scala.concurrent.duration.*
 import cats.implicits.*
 import cats.effect.*
 import cats.effect.std.Semaphore
+import cats.effect.implicits.*
 
 import Res.*
 trait Res[F[_]] {
@@ -29,7 +29,7 @@ object Res {
       _ <- Resource.onFinalize {
         sem.acquireN(permits.toLong) >>
           state.modify { s =>
-            (Map.empty, s.values.toList.sequence_)
+            (Map.empty, s.values.toList.parSequence_)
           }.flatten
       }
       api = new Res[F] {
