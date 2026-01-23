@@ -53,8 +53,8 @@ object DebugPrinter {
     def record(name: String, d: Doc): Doc =
       recordBy(name, Doc.char('('), Doc.char(')'), d)
 
-    def preparedFieldDoced[F[_]]: Document[PreparedField[F, ?]] =
-      Document.instance[PreparedField[F, ?]] {
+    def preparedFieldDoced[F[_]]: Document[PreparedField[F, ?, ?]] =
+      Document.instance[PreparedField[F, ?, ?]] {
         case PreparedSpecification(_, spec, sels) =>
           record(
             "PreparedSpecification",
@@ -79,8 +79,8 @@ object DebugPrinter {
           )
       }
 
-    def preparedDoced[F[_]]: Document[Prepared[F, ?]] =
-      Document.instance[Prepared[F, ?]] {
+    def preparedDoced[F[_]]: Document[Prepared[F, ?, ?]] =
+      Document.instance[Prepared[F, ?, ?]] {
         case Selection(_, fields, _) =>
           record(
             "Selection",
@@ -91,8 +91,8 @@ object DebugPrinter {
         case PreparedLeaf(_, name, _) => record("PreparedLeaf", Doc.text(name))
       }
 
-    def preparedContDoced[F[_]]: Document[PreparedCont[F, ?, ?]] =
-      Document.instance[PreparedCont[F, ?, ?]] { pc =>
+    def preparedContDoced[F[_]]: Document[PreparedCont[F, ?, ?, ?]] =
+      Document.instance[PreparedCont[F, ?, ?, ?]] { pc =>
         record(
           "PreparedCont",
           kvs(
@@ -102,9 +102,9 @@ object DebugPrinter {
         )
       }
 
-    def preparedStepDoced[F[_]]: Document[PreparedStep[F, ?, ?]] = {
+    def preparedStepDoced[F[_]]: Document[PreparedStep[F, ?, ?, ?]] = {
       import PreparedStep._
-      Document.instance[PreparedStep[F, ?, ?]] {
+      Document.instance[PreparedStep[F, ?, ?, ?]] {
         case Lift(_, _)        => Doc.text("Lift(...)")
         case EmbedEffect(_)    => Doc.text("EmbedEffect")
         case InlineBatch(_, _) => Doc.text("InlineBatch")
@@ -113,8 +113,12 @@ object DebugPrinter {
         case EmbedError(_) => Doc.text("EmbedError")
         case Compose(_, left, right) =>
           record("Compose", kvs("left" -> preparedStepDoced.document(left), "right" -> preparedStepDoced.document(right)))
-        case GetMeta(_, meta) =>
-          record("GetMeta", kvs("meta" -> Doc.text(meta.toString())))
+        case EvalMeta(_, meta) =>
+          record("EvalMeta", kvs("meta" -> Doc.text(meta.toString())))
+        case SubstVars(_, _) =>
+          Doc.text("SubstVars(...)")
+        case PrecompileMeta(_, meta) =>
+          record("PrecompileMeta", kvs("meta" -> Doc.text(meta.toString())))
         case First(_, step) =>
           record("First", kvs("step" -> preparedStepDoced.document(step)))
         case Batch(id, globalEdgeId) =>

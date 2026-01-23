@@ -81,13 +81,14 @@ object SubgraphBatches {
   }
 
   @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
-  def countStep[F[_]](state: State, step: PreparedStep[F, ?, ?]): Eval[State] = Eval.defer {
+  def countStep[F[_]](state: State, step: PreparedStep[F, ?, ?, ?]): Eval[State] = Eval.defer {
     import PreparedStep._
     val s2 = step match {
-      case Lift(_, _) | EmbedError(_) | GetMeta(_, _) | EmbedEffect(_) | EmbedStream(_) => Eval.now(state)
+      case Lift(_, _) | EmbedError(_) | PrecompileMeta(_, _) | EvalMeta(_, _) | EmbedEffect(_) | EmbedStream(_) | SubstVars(_, _) =>
+        Eval.now(state)
       case Compose(_, l, r) =>
         countStep(state, r).flatMap(countStep(_, l))
-      case alg: Choose[F, ?, ?, ?, ?] =>
+      case alg: Choose[F, ?, ?, ?, ?, ?] =>
         for {
           s1 <- countStep(state, alg.fac)
           s2 <- countStep(state, alg.fbd)
@@ -99,18 +100,19 @@ object SubgraphBatches {
           s2K = MulitplicityNode(alg.fbd.nodeId)
           s2Out = (s2 - s2K) + (s2K -> s2Unique)
         } yield s1Out |+| s2Out
-      case alg: First[F, ?, ?, ?]    => countStep(state, alg.step)
+      case alg: First[F, ?, ?, ?, ?] => countStep(state, alg.step)
       case alg: Batch[F, ?, ?]       => Eval.now(state.copy(childBatches = state.childBatches + BatchNodeId(alg.nodeId)))
       case alg: InlineBatch[F, ?, ?] => Eval.now(state.copy(childBatches = state.childBatches + BatchNodeId(alg.nodeId)))
     }
     s2.map(s => s + (MulitplicityNode(step.nodeId) -> s.childBatches))
   }
 
-  def countCont[F[_]](ps: PreparedStep[F, ?, ?], cont: Prepared[F, ?]): Eval[State] = Eval.defer {
-    countPrep(cont).flatMap(countStep(_, ps))
-  }
+  def countCont[F[_]](
+      ps: PreparedStep[F, ?, ?, ?],
+      cont: Prepared[F, ?, ?]
+  ): Eval[State] = Eval.defer(countPrep(cont).flatMap(countStep(_, ps)))
 
-  def countField[F[_]](pf: PreparedField[F, ?]): Eval[State] = Eval.defer {
+  def countField[F[_]](pf: PreparedField[F, ?, ?]): Eval[State] = Eval.defer {
     pf match {
       case PreparedDataField(_, _, _, cont, _, _) => countCont(cont.edges, cont.cont)
       case PreparedSpecification(nid, _, selection) =>
@@ -120,7 +122,7 @@ object SubgraphBatches {
     }
   }
 
-  def countPrep[F[_]](prep: Prepared[F, ?]): Eval[State] = Eval.defer {
+  def countPrep[F[_]](prep: Prepared[F, ?, ?]): Eval[State] = Eval.defer {
     prep match {
       case PreparedLeaf(_, _, _)   => Eval.now(State(Set.empty, Map.empty))
       case Selection(_, fields, _) => fields.foldMapA(countField(_))

@@ -20,7 +20,7 @@ import cats.parse.Caret
 import cats.data._
 import cats.implicits._
 
-final case class PositionalError[C](position: Cursor, caret: List[C], message: String)
+final case class PositionalError[+C](position: Cursor, caret: List[C], message: String)
 
 object PositionalError {
   import io.circe.syntax._
