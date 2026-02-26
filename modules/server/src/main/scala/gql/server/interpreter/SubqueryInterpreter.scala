@@ -260,7 +260,7 @@ class NewImpl[F[_]](
     stats: Statistics[F],
     throttle: F ~> F,
     errors: Ref[F, Chain[EvalFailure]],
-    subgraphBatches: SubgraphBatches[F],
+    batches: QueryPlanBatches[F],
     api: StreamingApi2[F],
     counter: SignallingRef[F, Int],
     streamingAdditions: collection.Map[NodeId, ArraySeq[StepEvalNode[F, Either[Throwable, ?], ?]]]
@@ -371,11 +371,29 @@ class NewImpl[F[_]](
               submit(fa.sei.edgeId.asString, t, 1).as(ArraySeq(en.setValue(x)))
           }
         }
-      case alg: Batch[F, k, v]       => ???
-      case alg: InlineBatch[F, k, o] => ???
+      case alg: Batch[F, k, v] =>
+        val keys: ArraySeq[EvalNode[F, Set[k]]] = xs.map(_.en)
+        batches.submitBatch(alg, keys).map {
+          case None => ArraySeq.empty[StepEN[O, S]]
+          case Some(res) =>
+            xs.map(en => en.map(current => res.filter { case (k, _) => current.contains(k) }))
+        }
+      case alg: InlineBatch[F, k, o] =>
+        val keys: ArraySeq[EvalNode[F, Set[k]]] = xs.map(_.en)
+        val keySet = keys.iterator.flatMap(_.value).toSet
+        throttle(alg.run(keySet).attempt).flatMap {
+          case Left(err) =>
+            errors
+              .update(_.append(EvalFailure.BatchResolution(Chain.fromSeq(keys.map(_.cursor)), err)))
+              .as(ArraySeq.empty[StepEN[O, S]])
+          case Right(res) =>
+            F.pure {
+              xs.map(en => en.map(current => res.filter { case (k, _) => current.contains(k) }))
+            }
+        }
       case EmbedError(_) =>
         val ens = xs: ArraySeq[StepEN[Ior[String, O], S]]
-        val errs = xs.flatMap(en => en.value.left.map(EvalFailure.Raised(en.cursor, _)))
+        val errs = ens.flatMap(en => en.value.left.map(EvalFailure.Raised(en.cursor, _)))
         val nonErrs = ens.flatMap(en => en.value.toOption.map(en.setValue))
         errors.update(Chain.fromSeq(errs) ++ _).as(nonErrs)
       case GetMeta(_, pm0) =>
