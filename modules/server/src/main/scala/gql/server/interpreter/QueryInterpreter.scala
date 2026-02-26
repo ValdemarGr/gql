@@ -26,6 +26,7 @@ import gql._
 import gql.preparation._
 import cats.effect.std.Supervisor
 import fs2.concurrent.SignallingRef
+import scala.collection.immutable.ArraySeq
 
 /** The [[QueryInterpreter]] will prepare a query for execution by inspecting the ast and planning the query accordingly. Once all inputs
   * have been prepared, the execution AST is passed to the [[SubqueryInterpreter]] for evaluation.
@@ -90,6 +91,37 @@ object QueryInterpreter {
           interpreterErrors <- errors.get
           allErrors = batchErrors ++ interpreterErrors
         } yield Results(results, allErrors)
+      }
+
+      val plan: OptimizedDAG = ???
+      val rootRes: Res[F] = ???
+      def interpretAll0(
+          fullEvaluation: Boolean,
+          root: Prepared[F, Unit],
+          delta: StreamingAdditions[F]
+      ): F[Results] = {
+        for {
+          errors <- F.ref(Chain.empty[EvalFailure])
+          qb <- QueryPlanBatches.make[F](
+            schemaState,
+            plan,
+            stats,
+            errors,
+            throttle
+          )
+          inter = new NewImpl(
+            sup,
+            stats,
+            throttle,
+            errors,
+            qb,
+            ???,
+            counter,
+            delta
+          )
+          flats <- inter.interpretPrepared(root, ArraySeq(EvalNode.empty((), rootRes)).filter(_ => fullEvaluation))
+          errs <- errors.get
+        } yield Results(NonEmptyList.fromListUnsafe(flats.toList).map(x => (x.cursor, x.value)), errs)
       }
     }
 

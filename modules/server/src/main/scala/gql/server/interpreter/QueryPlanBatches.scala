@@ -38,7 +38,7 @@ object QueryPlanBatches {
       schemaState: SchemaState[F],
       plan: OptimizedDAG,
       stats: Statistics[F],
-      errors: Ref[F, Chain[EvalFailure.BatchResolution]],
+      errors: Ref[F, Chain[EvalFailure]],
       throttle: F ~> F
   )(implicit F: Async[F]) = {
     // assign arbitary ids to the batches

@@ -255,6 +255,10 @@ final case class StepEvalNode[F[_], +I, S](
   def map[B](f: I => B): StepEvalNode[F, B, S] = copy(en = en.map(f))
 }
 
+final case class StreamingAdditions[F[_]](
+    streamingAdditions: collection.Map[NodeId, ArraySeq[StepEvalNode[F, Either[Throwable, ?], ?]]]
+)
+
 class NewImpl[F[_]](
     sup: Supervisor[F],
     stats: Statistics[F],
@@ -263,7 +267,7 @@ class NewImpl[F[_]](
     batches: QueryPlanBatches[F],
     api: StreamingApi2[F],
     counter: SignallingRef[F, Int],
-    streamingAdditions: collection.Map[NodeId, ArraySeq[StepEvalNode[F, Either[Throwable, ?], ?]]]
+    streamingAdditions: StreamingAdditions[F]
 )(implicit F: Async[F]) {
   type StepEN[I, S] = StepEvalNode[F, I, S]
   def stepEN[I, S](en: EvalNode[F, I], state: S): StepEN[I, S] = StepEvalNode(en, state)
@@ -416,7 +420,7 @@ class NewImpl[F[_]](
           val s2 = stream.attempt
           subscribeStream(ps.nodeId, s2, en)
         }.map { subbed =>
-          val delta = streamingAdditions
+          val delta = streamingAdditions.streamingAdditions
             .getOrElse(ps.nodeId, ArraySeq.empty)
           subbed.appendedAll(delta.asInstanceOf[subbed.type])
         }.flatMap { all =>
