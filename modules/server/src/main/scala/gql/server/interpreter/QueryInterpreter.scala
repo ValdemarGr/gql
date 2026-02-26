@@ -65,65 +65,72 @@ object QueryInterpreter {
       sup: Supervisor[F],
       api: StreamingApi[F],
       counter: SignallingRef[F, Int]
-  )(implicit stats: Statistics[F], planner: Planner[F], F: Async[F]) =
-    new QueryInterpreter[F] {
-      def interpretOne[A](input: Input[F, A], sgb: SubgraphBatches[F], errors: Ref[F, Chain[EvalFailure]]): F[Json] = {
-        val go = new SubqueryInterpreter(sup, stats, throttle, errors, sgb, api, counter)
-        go.goCont(input.continuation, input.data)
-      }
+  )(implicit stats: Statistics[F], planner: Planner[F], F: Async[F]) = {
+    val root: Prepared[F, Unit] = ???
+    val sapi: StreamingApi2[F] = ???
+    val rootRes: Res[F] = ???
+    Analyzer
+      .analyzeWith[F, Unit](_.analyzePrepared(root))
+      .flatMap(planner.plan(_))
+      .map { plan =>
+        new QueryInterpreter[F] {
+          def interpretOne[A](input: Input[F, A], sgb: SubgraphBatches[F], errors: Ref[F, Chain[EvalFailure]]): F[Json] = {
+            val go = new SubqueryInterpreter(sup, stats, throttle, errors, sgb, api, counter)
+            go.goCont(input.continuation, input.data)
+          }
 
-      def interpretAll(inputs: NonEmptyList[Input[F, ?]]): F[Results] = {
-        /* We perform an alpha renaming for every input to ensure that every node is distinct
-         */
-        val indexed = inputs.mapWithIndex { case (input, i) =>
-          input.copy(continuation = AlphaRenaming.alphaContinuation(i, input.continuation).value)
+          def interpretAll(inputs: NonEmptyList[Input[F, ?]]): F[Results] = {
+            /* We perform an alpha renaming for every input to ensure that every node is distinct
+             */
+            val indexed = inputs.mapWithIndex { case (input, i) =>
+              input.copy(continuation = AlphaRenaming.alphaContinuation(i, input.continuation).value)
+            }
+            for {
+              costTree <- indexed.foldMapA(input => analyzeCost[F](input.continuation))
+              planned <- planner.plan(costTree)
+              counts = indexed.foldMap { in =>
+                SubgraphBatches.countContinuation(SubgraphBatches.State.empty, in.continuation)
+              }.value
+              sb <- SubgraphBatches.make[F](schemaState, counts, planned, stats, throttle)
+              errors <- F.ref(Chain.empty[EvalFailure])
+              results <- indexed.parTraverse(input => interpretOne(input, sb, errors) tupleLeft input.data.cursor)
+              batchErrors <- sb.getErrors
+              interpreterErrors <- errors.get
+              allErrors = batchErrors ++ interpreterErrors
+            } yield Results(results, allErrors)
+          }
+
+          def interpretAll0(
+              fullEvaluation: Boolean,
+              root: Prepared[F, Unit],
+              delta: StreamingAdditions[F]
+          ): F[Results] = {
+            for {
+              errors <- F.ref(Chain.empty[EvalFailure])
+              qb <- QueryPlanBatches.make[F](
+                schemaState,
+                plan,
+                stats,
+                errors,
+                throttle
+              )
+              inter = new NewImpl(
+                sup,
+                stats,
+                throttle,
+                errors,
+                qb,
+                sapi,
+                counter,
+                delta
+              )
+              flats <- inter.interpretPrepared(root, ArraySeq(EvalNode.empty((), rootRes)).filter(_ => fullEvaluation))
+              errs <- errors.get
+            } yield Results(NonEmptyList.fromListUnsafe(flats.toList).map(x => (x.cursor, x.value)), errs)
+          }
         }
-        for {
-          costTree <- indexed.foldMapA(input => analyzeCost[F](input.continuation))
-          planned <- planner.plan(costTree)
-          counts = indexed.foldMap { in =>
-            SubgraphBatches.countContinuation(SubgraphBatches.State.empty, in.continuation)
-          }.value
-          sb <- SubgraphBatches.make[F](schemaState, counts, planned, stats, throttle)
-          errors <- F.ref(Chain.empty[EvalFailure])
-          results <- indexed.parTraverse(input => interpretOne(input, sb, errors) tupleLeft input.data.cursor)
-          batchErrors <- sb.getErrors
-          interpreterErrors <- errors.get
-          allErrors = batchErrors ++ interpreterErrors
-        } yield Results(results, allErrors)
       }
-
-      val plan: OptimizedDAG = ???
-      val rootRes: Res[F] = ???
-      def interpretAll0(
-          fullEvaluation: Boolean,
-          root: Prepared[F, Unit],
-          delta: StreamingAdditions[F]
-      ): F[Results] = {
-        for {
-          errors <- F.ref(Chain.empty[EvalFailure])
-          qb <- QueryPlanBatches.make[F](
-            schemaState,
-            plan,
-            stats,
-            errors,
-            throttle
-          )
-          inter = new NewImpl(
-            sup,
-            stats,
-            throttle,
-            errors,
-            qb,
-            ???,
-            counter,
-            delta
-          )
-          flats <- inter.interpretPrepared(root, ArraySeq(EvalNode.empty((), rootRes)).filter(_ => fullEvaluation))
-          errs <- errors.get
-        } yield Results(NonEmptyList.fromListUnsafe(flats.toList).map(x => (x.cursor, x.value)), errs)
-      }
-    }
+  }
 
   def analyzeCost[F[_]: Monad: Statistics](cont: Continuation[F, ?]): F[NodeTree] = {
     Analyzer.analyzeWith[F, Unit] { analyzer =>

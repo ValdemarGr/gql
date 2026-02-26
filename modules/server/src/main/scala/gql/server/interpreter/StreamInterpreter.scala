@@ -118,9 +118,8 @@ object StreamInterpreter {
         rootScope <- Res.make[F]
         sup <- Supervisor[F]
         counter <- Resource.eval(SignallingRef[F].of(0))
+        interpreter <- Resource.eval(QueryInterpreter[F](schemaState, throttle, sup, api, counter))
       } yield {
-        val interpreter = QueryInterpreter[F](schemaState, throttle, sup, api, counter)
-
         def next(prev: JsonObject): F[Option[ResultStream[F]]] = {
           val exec = for {
             _ <- accumulate.traverse_(d => Temporal[F].sleep(d))
