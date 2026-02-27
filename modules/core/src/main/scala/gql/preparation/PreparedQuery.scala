@@ -30,10 +30,6 @@ sealed trait PreparedField[+F[_], A] extends Product with Serializable
 
 final case class NodeId(id: Int)
 
-object NodeId {
-  def apply(i: Int): NodeId = NodeId(i)
-}
-
 final case class StepEffectId(
     nodeId: NodeId,
     edgeId: UniqueEdgeCursor
