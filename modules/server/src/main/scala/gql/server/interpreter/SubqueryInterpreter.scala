@@ -92,7 +92,13 @@ class SubqueryInterpreter[F[_]](
   ): F[ArraySeq[EvalNode[F, Json]]] =
     s match {
       case PreparedLeaf(_, _, enc) => F.pure(xs.map(en => en.setValue(enc(en.value))))
-      case Selection(_, ys, _)     => interpretSelection(ArraySeq.from(ys), xs)
+      case Selection(_, ys, _) =>
+        interpretSelection(ArraySeq.from(ys), xs).map { res =>
+          // all paths to selections must exist, spec
+          val empties = xs.map(en => en.setValue(Json.obj()))
+          // empties come first
+          empties.appendedAll(res)
+        }
       case lst: PreparedList[F, a, I, b] =>
         val (empties, execs) = xs.partitionEither { en =>
           val ys = lst.toSeq(en.value)
