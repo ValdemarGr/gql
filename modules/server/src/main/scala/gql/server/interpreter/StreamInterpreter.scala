@@ -128,11 +128,7 @@ object StreamInterpreter {
         def patch(res: QueryInterpreter.Results, prev: JsonObject): JsonObject = {
           val errPatches = res.errors.flatMap(_.paths).map(p => (p, Json.Null))
           (errPatches ++ Chain.fromSeq(res.data)).toList.foldLeft(prev) { case (accum, (pos, patch)) =>
-            applyPatch(
-              accum,
-              pos,
-              patch
-            )
+            applyPatch(accum, pos, patch)
           }
         }
 
