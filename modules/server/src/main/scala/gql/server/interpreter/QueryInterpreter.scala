@@ -65,23 +65,8 @@ object QueryInterpreter {
           ): F[Results] = {
             for {
               errors <- F.ref(Chain.empty[EvalFailure])
-              qb <- QueryPlanBatches.make[F](
-                schemaState,
-                plan,
-                stats,
-                errors,
-                throttle
-              )
-              inter = new SubqueryInterpreter(
-                sup,
-                stats,
-                throttle,
-                errors,
-                qb,
-                api,
-                counter,
-                delta
-              )
+              qb <- QueryPlanBatches.make[F](schemaState, plan, stats, errors, throttle)
+              inter = new SubqueryInterpreter(sup, stats, throttle, errors, qb, api, counter, delta)
               flats <- inter.interpretPrepared(
                 root,
                 ArraySeq.from(values.map(a => EvalNode.empty(a, rootRes)))
