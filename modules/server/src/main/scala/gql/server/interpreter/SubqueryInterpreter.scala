@@ -67,7 +67,7 @@ class SubqueryInterpreter[F[_]](
   def interpretSelection[I](
       fields: ArraySeq[PreparedField[F, I]],
       xs: ArraySeq[EvalNode[F, I]]
-  ): F[ArraySeq[EvalNode[F, Json]]] = {
+  ): F[ArraySeq[EvalNode[F, PatchOp]]] = {
     fields.parFlatTraverse {
       case fa: PreparedSpecification[F, I, a] =>
         val ys = xs.map(en => (en, fa.specialization.specify(en.value)))
@@ -83,19 +83,20 @@ class SubqueryInterpreter[F[_]](
   def interpretCont[I, O](
       pc: PreparedCont[F, I, O],
       xs: ArraySeq[EvalNode[F, I]]
-  ): F[ArraySeq[EvalNode[F, Json]]] =
+  ): F[ArraySeq[EvalNode[F, PatchOp]]] =
     interpretEffect(pc.edges, xs).flatMap(interpretPrepared(pc.cont, _))
 
   def interpretPrepared[I](
       s: Prepared[F, I],
       xs: ArraySeq[EvalNode[F, I]]
-  ): F[ArraySeq[EvalNode[F, Json]]] =
+  ): F[ArraySeq[EvalNode[F, PatchOp]]] =
     s match {
-      case PreparedLeaf(_, _, enc) => F.pure(xs.map(en => en.setValue(enc(en.value))))
+      case PreparedLeaf(_, _, enc) => F.pure(xs.map(en => en.setValue(PatchOp.Set(enc(en.value)))))
       case Selection(_, ys, _) =>
         interpretSelection(ArraySeq.from(ys), xs).map { res =>
           // all paths to selections must exist, spec
-          val empties = xs.map(en => en.setValue(Json.obj()))
+          // we do if not exists here since an error might have set the path already
+          val empties = xs.map(en => en.setValue(PatchOp.IfNotExists(Json.obj())))
           // empties come first
           empties.appendedAll(res)
         }
@@ -111,14 +112,14 @@ class SubqueryInterpreter[F[_]](
             }
           }
         }
-        val emptiesFixed = empties.map(en => en.setValue(Json.arr()))
+        val emptiesFixed = empties.map(en => en.setValue(PatchOp.Set(Json.arr())))
         interpretCont(lst.of, execs.flatten).map(_.appendedAll(emptiesFixed))
       case opt: PreparedOption[F, i, a] =>
         // must do explicit null, spec
         val zs: ArraySeq[EvalNode[F, Option[i]]] = xs
         val (nones, somes) = zs.partitionEither { z =>
           z.value match {
-            case None    => Left(z.setValue(Json.Null))
+            case None    => Left(z.setValue(PatchOp.Set(Json.Null)))
             case Some(i) => Right(z.setValue(i))
           }
         }

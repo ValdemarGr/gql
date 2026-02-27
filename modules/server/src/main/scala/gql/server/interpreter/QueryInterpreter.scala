@@ -41,7 +41,7 @@ trait QueryInterpreter[F[_], A] {
 
 object QueryInterpreter {
   final case class Results(
-      data: List[(Cursor, Json)],
+      data: List[(Cursor, PatchOp)],
       errors: Chain[EvalFailure]
   )
 
