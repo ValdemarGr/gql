@@ -66,6 +66,7 @@ class DirectiveTest extends CatsEffectSuite {
     val q = """
       query HeroNameQuery {
         hero {
+          __typename
           name @include(if: false)
           id @include(if: false)
         }
@@ -76,7 +77,9 @@ class DirectiveTest extends CatsEffectSuite {
       """
       {
         "data": {
-          "hero": {}
+          "hero": {
+            "__typename": "Droid"
+          }
         }
       }
       """

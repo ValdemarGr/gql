@@ -94,7 +94,7 @@ object StreamInterpreter {
     ): Resource[F, ResultStream[F]] = {
       case class StreamingApiState(
           awaitExecution: Deferred[F, Unit],
-          entries: List[EvalState.Entry[F, ?]]
+          entries: List[EvalState.Entry[F]]
       )
 
       for {
@@ -105,10 +105,13 @@ object StreamInterpreter {
         }
         newEntries <- Resource.eval(Queue.bounded[F, Unit](1))
         api = new StreamingApi[F] {
-          def submitAndAwaitExecution[B](cont: Continuation[F, B], node: EvalNode[F, B]): F[Unit] =
+          def submitAndAwaitExecution(
+              ident: NodeId,
+              sen: StepEvalNode[F, Either[Throwable, ?], ?]
+          ): F[Unit] =
             state.modify { s =>
               (
-                s.copy(entries = EvalState.Entry[F, B](cont, node) :: s.entries),
+                s.copy(entries = EvalState.Entry[F](ident, sen) :: s.entries),
                 newEntries.tryOffer(()).void >> s.awaitExecution.get
               )
             }.flatten
@@ -118,8 +121,21 @@ object StreamInterpreter {
         rootScope <- Res.make[F]
         sup <- Supervisor[F]
         counter <- Resource.eval(SignallingRef[F].of(0))
-        interpreter <- Resource.eval(QueryInterpreter[F](schemaState, throttle, sup, api, counter))
+        interpreter <- Resource.eval {
+          QueryInterpreter[F, A](selection, schemaState, throttle, sup, api, counter, rootScope)
+        }
       } yield {
+        def patch(res: QueryInterpreter.Results, prev: JsonObject): JsonObject = {
+          val errPatches = res.errors.flatMap(_.paths).map(p => (p, Json.Null))
+          (errPatches ++ Chain.fromSeq(res.data)).toList.foldLeft(prev) { case (accum, (pos, patch)) =>
+            applyPatch(
+              accum,
+              pos,
+              patch
+            )
+          }
+        }
+
         def next(prev: JsonObject): F[Option[ResultStream[F]]] = {
           val exec = for {
             _ <- accumulate.traverse_(d => Temporal[F].sleep(d))
@@ -129,7 +145,7 @@ object StreamInterpreter {
             (res: Option[ResultStream[F]]) <- rootScope
               .lease {
                 entries.traverse { e =>
-                  e.a.active.keepAlive.map {
+                  e.node.en.active.keepAlive.map {
                     case false => None
                     case true  => Some(e)
                   }
@@ -139,26 +155,27 @@ object StreamInterpreter {
                 case None => F.canceled.as(Option.empty[ResultStream[F]]) // root dead, stop
                 case Some((openedLease, opened)) =>
                   val opt = opened.collect { case Some(x) => x }.toNel.map { relevant =>
-                    val inputs = relevant.map { case (entr: EvalState.Entry[F, a]) =>
-                      QueryInterpreter.Input[F, a](entr.cont, entr.a)
-                    }
+                    val lookup = relevant.toList.groupMap(_.nodeId)(_.node)
+                    // val inputs = relevant.map { case (entr: EvalState.Entry[F, a]) =>
+                    //   QueryInterpreter.Input[F, a](entr.cont, entr.a)
+                    // }
 
                     ResultStream[F] {
-                      interpreter.interpretAll(inputs).flatMap { results =>
-                        val patched = results.data.toList.foldLeftM(prev) { case (accum, (pos, patch)) =>
-                          F.fromEither {
-                            stitchInto(accum.asJson, patch, pos, Cursor.empty).value.value
-                          }.map(_.asObject.get)
-                        }
+                      interpreter
+                        .interpret(
+                          Nil,
+                          StreamingAdditions(lookup)
+                        )
+                        .flatMap { results =>
+                          val jo = patch(results, prev)
 
-                        rootScope.release(openedLease) *>
-                          patched.map { jo =>
+                          rootScope.release(openedLease).as {
                             (
                               Result(results.errors, jo),
                               AwaitEvents(state.awaitExecution.complete(()) *> next(jo))
                             )
                           }
-                      }
+                        }
                     }
                   }
 
@@ -182,22 +199,27 @@ object StreamInterpreter {
         }
 
         ResultStream[F] {
-          val initial = QueryInterpreter.Input.root(root, selection, rootScope)
-          interpreter.interpretAll(NonEmptyList.one(initial)).map { initRes =>
-            val jo: JsonObject = initRes.data.map { case (_, j) => j }.reduceLeft(_ deepMerge _).asObject.get
-            val result0 = Result(initRes.errors, jo)
+          interpreter
+            .interpret(
+              List(root),
+              StreamingAdditions(Map.empty)
+            )
+            .map { initRes =>
+              val jo = patch(initRes, JsonObject.empty)
+              // initRes.data.map { case (_, j) => j }.reduceLeft(_ deepMerge _).asObject.get
+              val result0 = Result(initRes.errors, jo)
 
-            val reset0 = Deferred[F, Unit].flatMap { d =>
-              state.modify { s =>
-                assert(
-                  s.entries.isEmpty,
-                  "Initial execution should not have any pending entries, everything should be blocked on awaitExecution."
-                )
-                (s.copy(awaitExecution = d), s.awaitExecution.complete(()))
-              }.flatten
+              val reset0 = Deferred[F, Unit].flatMap { d =>
+                state.modify { s =>
+                  assert(
+                    s.entries.isEmpty,
+                    "Initial execution should not have any pending entries, everything should be blocked on awaitExecution."
+                  )
+                  (s.copy(awaitExecution = d), s.awaitExecution.complete(()))
+                }.flatten
+              }
+              (result0, AwaitEvents(reset0 >> next(jo)))
             }
-            (result0, AwaitEvents(reset0 >> next(jo)))
-          }
         }
       }
     }
@@ -221,6 +243,48 @@ object StreamInterpreter {
             }
           unpack(rec)
         }
+  }
+
+  def applyPatch(data: JsonObject, path: Cursor, value: Json): JsonObject = {
+    def go(
+        current: Option[Json],
+        remainingPath: Cursor
+    ): Eval[Json] = Eval.defer {
+      remainingPath.uncons match {
+        case None => Eval.now(value)
+        case Some((p, tl)) =>
+          p match {
+            case GraphArc.Field(name) =>
+              val jo = current match {
+                case Some(j) =>
+                  j.asObject.getOrElse {
+                    assert(j.isNull)
+                    JsonObject.empty
+                  }
+                case None => JsonObject.empty
+              }
+              go(jo(name), tl).map { newValue =>
+                jo.add(name, newValue).asJson
+              }
+            case GraphArc.Index(index) =>
+              val ja = current match {
+                case Some(j) =>
+                  j.asArray.getOrElse {
+                    assert(j.isNull)
+                    Vector.empty
+                  }
+                case None => Vector.empty
+              }
+              go(ja.get(index.toLong), tl).map { newValue =>
+                // println("Patching array at index " + index + " with new value " + newValue)
+                val padded = ja.padTo(index + 1, Json.Null).updated(index, newValue)
+                // println("Padded array: " + padded)
+                padded.asJson
+              }
+          }
+      }
+    }
+    go(Some(data.asJson), path).value.asObject.get
   }
 
   final case class StitchFailure(

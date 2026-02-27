@@ -46,18 +46,9 @@ object EvalNode {
 }
 
 trait StreamingApi[F[_]] {
-  def submitAndAwaitExecution[A](cont: Continuation[F, A], node: EvalNode[F, A]): F[Unit]
-
-  def currentExecution: F[F[Unit]]
-
-  def awaitExecution(fa: F[Unit])(implicit F: Monad[F]): F[Unit] =
-    currentExecution.flatMap(await => fa *> await)
-}
-
-trait StreamingApi2[F[_]] {
-  def submitAndAwaitExecution[A](
+  def submitAndAwaitExecution(
       ident: NodeId,
-      sen: StepEvalNode[F, ?, ?]
+      sen: StepEvalNode[F, Either[Throwable, ?], ?]
   ): F[Unit]
 
   def currentExecution: F[F[Unit]]
@@ -67,9 +58,11 @@ trait StreamingApi2[F[_]] {
 }
 
 object EvalState {
-  final case class Entry[F[_], A](
-      // the continuation of the node
-      cont: Continuation[F, A],
-      a: EvalNode[F, A]
+  final case class Entry[F[_]](
+      nodeId: NodeId,
+      node: StepEvalNode[F, Either[Throwable, ?], ?]
+      // // the continuation of the node
+      // cont: Continuation[F, A],
+      // a: EvalNode[F, A]
   )
 }

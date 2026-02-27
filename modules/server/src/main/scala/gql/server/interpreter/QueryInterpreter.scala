@@ -15,7 +15,6 @@
  */
 package gql.server.interpreter
 
-import cats.effect.implicits._
 import cats.effect._
 import cats.implicits._
 import cats._
@@ -31,78 +30,37 @@ import scala.collection.immutable.ArraySeq
 /** The [[QueryInterpreter]] will prepare a query for execution by inspecting the ast and planning the query accordingly. Once all inputs
   * have been prepared, the execution AST is passed to the [[SubqueryInterpreter]] for evaluation.
   */
-trait QueryInterpreter[F[_]] {
+trait QueryInterpreter[F[_], A] {
   import QueryInterpreter._
 
-  def interpretOne[A](input: Input[F, A], sgb: SubgraphBatches[F], errors: Ref[F, Chain[EvalFailure]]): F[Json]
-
-  def interpretAll(inputs: NonEmptyList[Input[F, ?]]): F[Results]
+  def interpret(
+      values: List[A],
+      delta: StreamingAdditions[F]
+  ): F[Results]
 }
 
 object QueryInterpreter {
-  final case class Input[F[_], A](
-      continuation: Continuation[F, A],
-      data: EvalNode[F, A]
-  )
-
-  object Input {
-    def root[F[_], A](
-        data: A,
-        cont: Prepared[F, A],
-        rootScope: Res[F]
-    ): Input[F, A] =
-      Input(Continuation.Done(cont), EvalNode.empty(data, rootScope))
-  }
-
   final case class Results(
-      data: NonEmptyList[(Cursor, Json)],
+      data: List[(Cursor, Json)],
       errors: Chain[EvalFailure]
   )
 
-  def apply[F[_]](
+  def apply[F[_], A](
+      root: Prepared[F, A],
       schemaState: SchemaState[F],
       throttle: F ~> F,
       sup: Supervisor[F],
       api: StreamingApi[F],
-      counter: SignallingRef[F, Int]
+      counter: SignallingRef[F, Int],
+      rootRes: Res[F]
   )(implicit stats: Statistics[F], planner: Planner[F], F: Async[F]) = {
-    val root: Prepared[F, Unit] = ???
-    val sapi: StreamingApi2[F] = ???
-    val rootRes: Res[F] = ???
     Analyzer
       .analyzeWith[F, Unit](_.analyzePrepared(root))
       .flatMap(planner.plan(_))
       .map { plan =>
-        new QueryInterpreter[F] {
-          def interpretOne[A](input: Input[F, A], sgb: SubgraphBatches[F], errors: Ref[F, Chain[EvalFailure]]): F[Json] = {
-            val go = new SubqueryInterpreter(sup, stats, throttle, errors, sgb, api, counter)
-            go.goCont(input.continuation, input.data)
-          }
-
-          def interpretAll(inputs: NonEmptyList[Input[F, ?]]): F[Results] = {
-            /* We perform an alpha renaming for every input to ensure that every node is distinct
-             */
-            val indexed = inputs.mapWithIndex { case (input, i) =>
-              input.copy(continuation = AlphaRenaming.alphaContinuation(i, input.continuation).value)
-            }
-            for {
-              costTree <- indexed.foldMapA(input => analyzeCost[F](input.continuation))
-              planned <- planner.plan(costTree)
-              counts = indexed.foldMap { in =>
-                SubgraphBatches.countContinuation(SubgraphBatches.State.empty, in.continuation)
-              }.value
-              sb <- SubgraphBatches.make[F](schemaState, counts, planned, stats, throttle)
-              errors <- F.ref(Chain.empty[EvalFailure])
-              results <- indexed.parTraverse(input => interpretOne(input, sb, errors) tupleLeft input.data.cursor)
-              batchErrors <- sb.getErrors
-              interpreterErrors <- errors.get
-              allErrors = batchErrors ++ interpreterErrors
-            } yield Results(results, allErrors)
-          }
-
-          def interpretAll0(
-              fullEvaluation: Boolean,
-              root: Prepared[F, Unit],
+        new QueryInterpreter[F, A] {
+          def interpret(
+              values: List[A],
               delta: StreamingAdditions[F]
           ): F[Results] = {
             for {
@@ -114,35 +72,24 @@ object QueryInterpreter {
                 errors,
                 throttle
               )
-              inter = new NewImpl(
+              inter = new SubqueryInterpreter(
                 sup,
                 stats,
                 throttle,
                 errors,
                 qb,
-                sapi,
+                api,
                 counter,
                 delta
               )
-              flats <- inter.interpretPrepared(root, ArraySeq(EvalNode.empty((), rootRes)).filter(_ => fullEvaluation))
+              flats <- inter.interpretPrepared(
+                root,
+                ArraySeq.from(values.map(a => EvalNode.empty(a, rootRes)))
+              )
               errs <- errors.get
-            } yield Results(NonEmptyList.fromListUnsafe(flats.toList).map(x => (x.cursor, x.value)), errs)
+            } yield Results(flats.toList.map(x => (x.cursor, x.value)), errs)
           }
         }
       }
-  }
-
-  def analyzeCost[F[_]: Monad: Statistics](cont: Continuation[F, ?]): F[NodeTree] = {
-    Analyzer.analyzeWith[F, Unit] { analyzer =>
-      def contCost(cont: Continuation[F, ?]): Analyzer.H[F, Unit] =
-        cont match {
-          case Continuation.Done(prep)             => analyzer.analyzePrepared(prep)
-          case fa: Continuation.Continue[F, ?, ?]  => analyzer.analyzeStep(fa.step) *> contCost(fa.next)
-          case fa: Continuation.Contramap[F, ?, ?] => contCost(fa.next)
-          case fa: Continuation.Rethrow[F, ?]      => contCost(fa.inner)
-        }
-
-      contCost(cont)
-    }
   }
 }

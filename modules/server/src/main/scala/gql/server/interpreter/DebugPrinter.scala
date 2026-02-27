@@ -123,32 +123,5 @@ object DebugPrinter {
           record("Choose", kvs("fac" -> preparedStepDoced.document(fac), "fbc" -> preparedStepDoced.document(fbc)))
       }
     }
-
-    def continuationDoced[F[_]]: Document[Continuation[F, ?]] = cont =>
-      cont match {
-        case Continuation.Done(p) => record("Continuation.Done", preparedDoced.document(p))
-        case Continuation.Continue(step, next) =>
-          record(
-            "Continuation.Continue",
-            kvs(
-              "step" -> preparedStepDoced.document(step),
-              "cont" -> continuationDoced.document(next)
-            )
-          )
-        case Continuation.Contramap(_, next) =>
-          record(
-            "Continuation.Contramap",
-            kvs(
-              "cont" -> continuationDoced.document(next)
-            )
-          )
-        case Continuation.Rethrow(_, inner) =>
-          record(
-            "Continuation.Rethrow",
-            kvs(
-              "inner" -> continuationDoced.document(inner)
-            )
-          )
-      }
   }
 }

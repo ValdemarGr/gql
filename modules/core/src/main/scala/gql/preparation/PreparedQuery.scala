@@ -28,20 +28,16 @@ import scala.collection.immutable._
 
 sealed trait PreparedField[+F[_], A] extends Product with Serializable
 
-final case class NodeId(id: NonEmptyList[Int]) extends AnyVal {
-  def alpha(i: Int): NodeId = NodeId(i :: id)
-}
+final case class NodeId(id: Int)
 
 object NodeId {
-  def apply(i: Int): NodeId = NodeId(NonEmptyList.one(i))
+  def apply(i: Int): NodeId = NodeId(i)
 }
 
 final case class StepEffectId(
     nodeId: NodeId,
     edgeId: UniqueEdgeCursor
-) {
-  def alpha(i: Int): StepEffectId = StepEffectId(nodeId.alpha(i), edgeId)
-}
+)
 
 sealed trait PreparedStep[+F[_], -I, +O] extends Product with Serializable {
   def nodeId: NodeId
@@ -189,9 +185,7 @@ final case class PreparedMeta[+F[_]](
     pdf: PreparedDataField[F, ?, ?]
 )
 
-final case class UniqueBatchInstance[K, V](id: NodeId) extends AnyRef {
-  def alpha(i: Int): UniqueBatchInstance[K, V] = UniqueBatchInstance(id.alpha(i))
-}
+final case class UniqueBatchInstance[K, V](id: NodeId) extends AnyRef
 
 final case class UniqueEdgeCursor(path: NonEmptyChain[String]) {
   def append(name: String): UniqueEdgeCursor = UniqueEdgeCursor(path append name)
