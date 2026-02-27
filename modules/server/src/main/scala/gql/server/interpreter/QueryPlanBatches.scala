@@ -103,8 +103,8 @@ object QueryPlanBatches {
                           val cs = Chain.fromSeq(execMe.cursors.flatten)
                           errors.update(Chain.one(EvalFailure.BatchResolution(cs, e)) ++ _).as(None)
                         case Right((dur, res)) =>
-                          stats.updateStats(s"batch_${execMe.bk.id}", dur, keySet.size)
-                          F.pure(Some(res))
+                          stats.updateStats(s"batch_${execMe.bk.id}", dur, keySet.size) *>
+                            F.pure(Some(res))
                       }
                       .flatMap { res =>
                         execMe.listeners.traverse_(_(res))
