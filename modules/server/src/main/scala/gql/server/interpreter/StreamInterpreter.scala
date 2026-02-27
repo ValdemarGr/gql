@@ -286,40 +286,4 @@ object StreamInterpreter {
     }
     go(Some(data.asJson), path).value.asObject.get
   }
-
-  final case class StitchFailure(
-      currentPath: Cursor,
-      remainingPath: Cursor,
-      msg: String
-  ) extends Exception(msg) {
-    override def toString = s"StitchFailure($currentPath, $remainingPath, $msg)"
-
-    override def getMessage(): String = toString
-  }
-  def stitchInto(oldTree: Json, subTree: Json, remainingPath: Cursor, currentPath: Cursor): EitherT[Eval, StitchFailure, Json] = {
-    remainingPath.uncons match {
-      case None => EitherT.pure(subTree)
-      case Some((p, tl)) =>
-        val newCurrent = currentPath.add(p)
-        def err(msg: String) = StitchFailure(newCurrent, tl, msg)
-        p match {
-          case GraphArc.Field(name) =>
-            for {
-              oldObj <-
-                EitherT.fromOption[Eval](oldTree.asObject, err(s"Expected object at $name, but got ${oldTree.name}"))
-              oldValue <-
-                EitherT.fromOption[Eval](oldObj(name), err(s"Expected field $name in object, but found nothing"))
-              newSubTree <- stitchInto(oldValue, subTree, tl, newCurrent)
-            } yield oldObj.add(name, newSubTree).asJson
-          case GraphArc.Index(index) =>
-            for {
-              oldArr <-
-                EitherT.fromOption[Eval](oldTree.asArray, err(s"expected array at, but found ${oldTree.name}"))
-              atIndex <-
-                EitherT.fromOption[Eval](oldArr.get(index.toLong), err(s"expected array at $index, but found nothing"))
-              newSubTree <- stitchInto(atIndex, subTree, tl, newCurrent)
-            } yield oldArr.updated(index, newSubTree).asJson
-        }
-    }
-  }
 }

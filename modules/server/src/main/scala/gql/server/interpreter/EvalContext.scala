@@ -61,8 +61,5 @@ object EvalState {
   final case class Entry[F[_]](
       nodeId: NodeId,
       node: StepEvalNode[F, Either[Throwable, ?], ?]
-      // // the continuation of the node
-      // cont: Continuation[F, A],
-      // a: EvalNode[F, A]
   )
 }
