@@ -276,9 +276,7 @@ object StreamInterpreter {
                 case None => Vector.empty
               }
               go(ja.get(index.toLong), tl).map { newValue =>
-                // println("Patching array at index " + index + " with new value " + newValue)
                 val padded = ja.padTo(index + 1, Json.Null).updated(index, newValue)
-                // println("Padded array: " + padded)
                 padded.asJson
               }
           }
