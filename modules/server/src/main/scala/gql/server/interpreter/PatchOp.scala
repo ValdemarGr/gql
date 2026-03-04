@@ -16,6 +16,12 @@
 package gql.server.interpreter
 
 import io.circe.Json
+import gql.Cursor
+
+final case class Patch(
+    path: Cursor,
+    value: Json
+)
 
 sealed trait PatchOp {
   def value: Json

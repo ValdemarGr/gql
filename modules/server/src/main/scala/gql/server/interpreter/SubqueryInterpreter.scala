@@ -67,14 +67,15 @@ class SubqueryInterpreter[F[_]](
   def interpretSelection[I](
       fields: ArraySeq[PreparedField[F, I]],
       xs: ArraySeq[EvalNode[F, I]]
-  ): F[ArraySeq[EvalNode[F, PatchOp]]] = {
+  ): F[ArraySeq[Patch]] = {
     fields.parFlatTraverse {
       case fa: PreparedSpecification[F, I, a] =>
         val ys = xs.map(en => (en, fa.specialization.specify(en.value)))
         val errs = ys.flatMap { case (en, ior) => ior.left.map(EvalFailure.Raised(en.cursor, _)) }
         val matches = ys.flatMap { case (en, ior) => ior.right.flatten.map(a => en.setValue(a)) }
+        val nulls = ys.collect { case (en, Ior.Left(_)) => Patch(en.cursor, Json.Null) }
         errors.update(Chain.fromSeq(errs) ++ _) *>
-          interpretSelection(ArraySeq.from(fa.selection), matches)
+          interpretSelection(ArraySeq.from(fa.selection), matches).map(nulls.appendedAll(_))
       case df: PreparedDataField[F, I, a] =>
         interpretCont(df.cont, xs.map(_.modify(_.field(df.outputName))))
     }
@@ -83,25 +84,24 @@ class SubqueryInterpreter[F[_]](
   def interpretCont[I, O](
       pc: PreparedCont[F, I, O],
       xs: ArraySeq[EvalNode[F, I]]
-  ): F[ArraySeq[EvalNode[F, PatchOp]]] =
-    interpretEffect(pc.edges, xs).flatMap(interpretPrepared(pc.cont, _))
+  ): F[ArraySeq[Patch]] =
+    goStep(pc.edges, xs).flatMap { case (ys, patches) =>
+      interpretPrepared(pc.cont, ys).map(patches.appendedAll(_))
+    }
 
   def interpretPrepared[I](
       s: Prepared[F, I],
       xs: ArraySeq[EvalNode[F, I]]
-  ): F[ArraySeq[EvalNode[F, PatchOp]]] =
+  ): F[ArraySeq[Patch]] =
     s match {
-      case PreparedLeaf(_, _, enc) => F.pure(xs.map(en => en.setValue(PatchOp.Set(enc(en.value)))))
+      case PreparedLeaf(_, _, enc) => F.pure(xs.map(en => Patch(en.cursor, enc(en.value))))
       case Selection(_, ys, _) =>
         interpretSelection(ArraySeq.from(ys), xs).map { res =>
-          // all paths to selections must exist, spec
-          // we do if not exists here since an error might have set the path already
-          val empties = xs.map(en => en.setValue(PatchOp.IfNotExists(Json.obj())))
-          // empties come first
+          val empties = xs.map(en => Patch(en.cursor, Json.obj()))
           empties.appendedAll(res)
         }
       case lst: PreparedList[F, a, I, b] =>
-        val prefixes = xs.map(en => en.setValue(PatchOp.Set(Json.arr())))
+        val prefixes = xs.map(en => Patch(en.cursor, Json.arr()))
         val values = xs.flatMap { en =>
           lst.toSeq(en.value).zipWithIndex.map { case (a, i) => en.setValue(a).modify(_.index(i)) }
         }
@@ -111,112 +111,118 @@ class SubqueryInterpreter[F[_]](
         val zs: ArraySeq[EvalNode[F, Option[i]]] = xs
         val (nones, somes) = zs.partitionEither { z =>
           z.value match {
-            case None    => Left(z.setValue(PatchOp.Set(Json.Null)))
+            case None    => Left(Patch(z.cursor, Json.Null))
             case Some(i) => Right(z.setValue(i))
           }
         }
         interpretCont(opt.of, somes).map(_.appendedAll(nones))
     }
 
-  def interpretEffect[I0, O0](
+  def goStep[I0, O0](
       ps: PreparedStep[F, I0, O0],
       xs: ArraySeq[EvalNode[F, I0]]
-  ): F[ArraySeq[EvalNode[F, O0]]] =
-    goStep(ps, xs.map(en => stepEN(en, ()))).map(_.map(_.en))
-
-  def goStep[I, O, S](
-      ps: PreparedStep[F, I, O],
-      xs: ArraySeq[StepEN[I, S]]
-  ): F[ArraySeq[StepEN[O, S]]] = {
-    import PreparedStep._
-    ps match {
-      case Lift(_, f) =>
-        xs.flatTraverse { en =>
-          scala.util.Try(f(en.value)) match {
-            case Success(value) => F.pure(ArraySeq(en.setValue(value)))
-            case Failure(exception) =>
-              errors
-                .update(Chain.one(EvalFailure.EffectResolution(en.cursor, Left(exception))) ++ _)
-                .as(ArraySeq.empty[StepEN[O, S]])
-          }
-        }
-      case alg: First[F, i2, o2, c2] =>
-        val ys: ArraySeq[StepEN[(i2, c2), S]] = xs
-        val zs = ys.map { en =>
-          val (i2, c2) = en.value
-          stepEN[i2, (c2, S)](en.en.setValue(i2), (c2, en.state))
-        }
-        goStep(alg.step, zs).map(_.map { en =>
-          val o2 = en.value
-          val (c2, s) = en.state
-          stepEN[O, S](en.en.setValue((o2, c2)), s)
-        })
-      case fa: EmbedEffect[F, i] =>
-        xs.parFlatTraverse { en =>
-          val fb = en.value: F[i]
-          throttle(fb.timed.attempt).flatMap {
-            case Left(err) =>
-              errors
-                .update(_.append(EvalFailure.EffectResolution(en.cursor, Left(err))))
-                .as(ArraySeq.empty[StepEN[O, S]])
-            case Right((t, x)) =>
-              submit(fa.sei.edgeId.asString, t, 1).as(ArraySeq(en.setValue(x)))
-          }
-        }
-      case alg: Batch[F, k, v] =>
-        val keys: ArraySeq[EvalNode[F, Set[k]]] = xs.map(_.en)
-        batches.submitBatch(alg, keys).map {
-          case None => ArraySeq.empty[StepEN[O, S]]
-          case Some(res) =>
-            xs.map(en => en.map(current => res.filter { case (k, _) => current.contains(k) }))
-        }
-      case alg: InlineBatch[F, k, o] =>
-        val keys: ArraySeq[EvalNode[F, Set[k]]] = xs.map(_.en)
-        val keySet = keys.iterator.flatMap(_.value).toSet
-        throttle(alg.run(keySet).attempt).flatMap {
-          case Left(err) =>
-            errors
-              .update(_.append(EvalFailure.BatchResolution(Chain.fromSeq(keys.map(_.cursor)), err)))
-              .as(ArraySeq.empty[StepEN[O, S]])
-          case Right(res) =>
-            F.pure {
-              xs.map(en => en.map(current => res.filter { case (k, _) => current.contains(k) }))
+  ): F[(ArraySeq[EvalNode[F, O0]], ArraySeq[Patch])] = {
+    // Either is not ergonomic to do here
+    F.ref(Chain.empty[Patch]).flatMap { nulls =>
+      def reportErrors(ef: EvalFailure*): F[Unit] =
+        errors.update(_ ++ Chain.fromSeq(ef)) *>
+          nulls.update(_ ++ Chain.fromSeq(ef).flatMap(_.paths).map(p => Patch(p, Json.Null)))
+      def go[I, O, S](
+          ps: PreparedStep[F, I, O],
+          xs: ArraySeq[StepEN[I, S]]
+      ): F[ArraySeq[StepEN[O, S]]] = {
+        import PreparedStep._
+        ps match {
+          case Lift(_, f) =>
+            xs.flatTraverse { en =>
+              scala.util.Try(f(en.value)) match {
+                case Success(value) => F.pure(ArraySeq(en.setValue(value)))
+                case Failure(exception) =>
+                  reportErrors(EvalFailure.EffectResolution(en.cursor, Left(exception)))
+                    .as(ArraySeq.empty[StepEN[O, S]])
+              }
+            }
+          case alg: First[F, i2, o2, c2] =>
+            val ys: ArraySeq[StepEN[(i2, c2), S]] = xs
+            val zs = ys.map { en =>
+              val (i2, c2) = en.value
+              stepEN[i2, (c2, S)](en.en.setValue(i2), (c2, en.state))
+            }
+            go(alg.step, zs).map(_.map { en =>
+              val o2 = en.value
+              val (c2, s) = en.state
+              stepEN[O, S](en.en.setValue((o2, c2)), s)
+            })
+          case fa: EmbedEffect[F, i] =>
+            xs.parFlatTraverse { en =>
+              val fb = en.value: F[i]
+              throttle(fb.timed.attempt).flatMap {
+                case Left(err) =>
+                  reportErrors(EvalFailure.EffectResolution(en.cursor, Left(err)))
+                    .as(ArraySeq.empty[StepEN[O, S]])
+                case Right((t, x)) =>
+                  submit(fa.sei.edgeId.asString, t, 1).as(ArraySeq(en.setValue(x)))
+              }
+            }
+          case alg: Batch[F, k, v] =>
+            val keys: ArraySeq[EvalNode[F, Set[k]]] = xs.map(_.en)
+            batches.submitBatch(alg, keys).map {
+              case None => ArraySeq.empty[StepEN[O, S]]
+              case Some(res) =>
+                xs.map(en => en.map(current => res.filter { case (k, _) => current.contains(k) }))
+            }
+          case alg: InlineBatch[F, k, o] =>
+            val keys: ArraySeq[EvalNode[F, Set[k]]] = xs.map(_.en)
+            val keySet = keys.iterator.flatMap(_.value).toSet
+            throttle(alg.run(keySet).attempt).flatMap {
+              case Left(err) =>
+                reportErrors(EvalFailure.BatchResolution(Chain.fromSeq(keys.map(_.cursor)), err))
+                  .as(ArraySeq.empty[StepEN[O, S]])
+              case Right(res) =>
+                F.pure {
+                  xs.map(en => en.map(current => res.filter { case (k, _) => current.contains(k) }))
+                }
+            }
+          case EmbedError(_) =>
+            val ens = xs: ArraySeq[StepEN[Ior[String, O], S]]
+            val errs = ens.flatMap(en => en.value.left.map(EvalFailure.Raised(en.cursor, _)))
+            val nonErrs = ens.flatMap(en => en.value.toOption.map(en.setValue))
+            reportErrors(errs: _*).as(nonErrs)
+          case GetMeta(_, pm0) =>
+            val pm = pm0.value
+            F.pure(xs.map(en => en.setValue(FieldMeta(QueryMeta(en.cursor, pm.variables), pm.args, pm.pdf))))
+          case alg: Compose[F, I, a, O] =>
+            go(alg.left, xs).flatMap(go(alg.right, _))
+          case alg: Choose[F, a, b, c, d] =>
+            val (lefts, rights) = xs.partitionEither { en =>
+              (en.value: Either[a, b]) match {
+                case Left(a)  => Left(en.setValue(a))
+                case Right(b) => Right(en.setValue(b))
+              }
+            }
+            (go(alg.fac, lefts), go(alg.fbd, rights))
+              .parMapN((l, r) => l.map(_.map(_.asLeft[d])) appendedAll r.map(_.map(_.asRight[c])))
+          case _: EmbedStream[F, i] =>
+            xs.parTraverse { en =>
+              val stream = en.value: fs2.Stream[F, i]
+              val s2 = stream.attempt
+              subscribeStream(ps.nodeId, s2, en)
+            }.map { subbed =>
+              val delta = streamingAdditions.streamingAdditions
+                .getOrElse(ps.nodeId, List.empty)
+              subbed.appendedAll(ArraySeq.from(delta).asInstanceOf[subbed.type])
+            }.flatMap { all =>
+              val errs = all
+                .flatMap(en => en.value.left.toOption.map(e => EvalFailure.StreamHeadResolution(en.cursor, Left(e))))
+              val values = all.flatMap(en => en.value.toOption.map(en.setValue))
+              reportErrors(errs: _*).as(values)
             }
         }
-      case EmbedError(_) =>
-        val ens = xs: ArraySeq[StepEN[Ior[String, O], S]]
-        val errs = ens.flatMap(en => en.value.left.map(EvalFailure.Raised(en.cursor, _)))
-        val nonErrs = ens.flatMap(en => en.value.toOption.map(en.setValue))
-        errors.update(Chain.fromSeq(errs) ++ _).as(nonErrs)
-      case GetMeta(_, pm0) =>
-        val pm = pm0.value
-        F.pure(xs.map(en => en.setValue(FieldMeta(QueryMeta(en.cursor, pm.variables), pm.args, pm.pdf))))
-      case alg: Compose[F, I, a, O] =>
-        goStep(alg.left, xs).flatMap(goStep(alg.right, _))
-      case alg: Choose[F, a, b, c, d] =>
-        val (lefts, rights) = xs.partitionEither { en =>
-          (en.value: Either[a, b]) match {
-            case Left(a)  => Left(en.setValue(a))
-            case Right(b) => Right(en.setValue(b))
-          }
-        }
-        (goStep(alg.fac, lefts), goStep(alg.fbd, rights))
-          .parMapN((l, r) => l.map(_.map(_.asLeft[d])) appendedAll r.map(_.map(_.asRight[c])))
-      case _: EmbedStream[F, i] =>
-        xs.parTraverse { en =>
-          val stream = en.value: fs2.Stream[F, i]
-          val s2 = stream.attempt
-          subscribeStream(ps.nodeId, s2, en)
-        }.map { subbed =>
-          val delta = streamingAdditions.streamingAdditions
-            .getOrElse(ps.nodeId, List.empty)
-          subbed.appendedAll(ArraySeq.from(delta).asInstanceOf[subbed.type])
-        }.flatMap { all =>
-          val errs = all
-            .flatMap(en => en.value.left.toOption.map(e => EvalFailure.StreamHeadResolution(en.cursor, Left(e))))
-          val values = all.flatMap(en => en.value.toOption.map(en.setValue))
-          errors.update(Chain.fromSeq(errs) ++ _).as(values)
-        }
+      }
+
+      go(ps, xs.map(en => stepEN(en, ())))
+        .map(_.map(_.en))
+        .flatMap(ys => nulls.get.map(ns => (ys, ArraySeq.from(ns.toList))))
     }
   }
 

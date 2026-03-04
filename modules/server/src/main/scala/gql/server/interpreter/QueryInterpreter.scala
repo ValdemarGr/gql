@@ -19,7 +19,6 @@ import cats.effect._
 import cats.implicits._
 import cats._
 import cats.data._
-import io.circe._
 import gql.server.planner._
 import gql._
 import gql.preparation._
@@ -41,7 +40,7 @@ trait QueryInterpreter[F[_], A] {
 
 object QueryInterpreter {
   final case class Results(
-      data: List[(Cursor, PatchOp)],
+      data: List[Patch],
       errors: Chain[EvalFailure]
   )
 
@@ -72,7 +71,7 @@ object QueryInterpreter {
                 ArraySeq.from(values.map(a => EvalNode.empty(a, rootRes)))
               )
               errs <- errors.get
-            } yield Results(flats.toList.map(x => (x.cursor, x.value)), errs)
+            } yield Results(flats.toList, errs)
           }
         }
       }

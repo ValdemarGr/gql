@@ -126,8 +126,7 @@ object StreamInterpreter {
         }
       } yield {
         def patch(res: QueryInterpreter.Results, prev: JsonObject): JsonObject = {
-          val errPatches = res.errors.flatMap(_.paths).map(p => (p, PatchOp.Set(Json.Null)))
-          (errPatches ++ Chain.fromSeq(res.data)).toList.foldLeft(prev) { case (accum, (pos, patch)) =>
+          Chain.fromSeq(res.data).toList.foldLeft(prev) { case (accum, Patch(pos, patch)) =>
             applyPatch(accum, pos, patch)
           }
         }
@@ -241,23 +240,13 @@ object StreamInterpreter {
         }
   }
 
-  def applyPatch(data: JsonObject, path: Cursor, value: PatchOp): JsonObject = {
+  def applyPatch(data: JsonObject, path: Cursor, value: Json): JsonObject = {
     def go(
         current: Option[Json],
         remainingPath: Cursor
     ): Eval[Json] = Eval.defer {
       remainingPath.uncons match {
-        case None =>
-          Eval.now {
-            value match {
-              case PatchOp.Set(j) => j
-              case PatchOp.IfNotExists(j) =>
-                current match {
-                  case Some(c) => c
-                  case None    => j
-                }
-            }
-          }
+        case None => Eval.now(value)
         case Some((p, tl)) =>
           p match {
             case GraphArc.Field(name) =>
