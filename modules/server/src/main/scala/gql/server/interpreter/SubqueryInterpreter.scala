@@ -101,19 +101,11 @@ class SubqueryInterpreter[F[_]](
           empties.appendedAll(res)
         }
       case lst: PreparedList[F, a, I, b] =>
-        val (empties, execs) = xs.partitionEither { en =>
-          val ys = lst.toSeq(en.value)
-          if (ys.isEmpty) Left(en)
-          else {
-            Right {
-              ys.zipWithIndex.map { case (a, i) =>
-                en.setValue(a).modify(_.index(i))
-              }
-            }
-          }
+        val prefixes = xs.map(en => en.setValue(PatchOp.Set(Json.arr())))
+        val values = xs.flatMap { en =>
+          lst.toSeq(en.value).zipWithIndex.map { case (a, i) => en.setValue(a).modify(_.index(i)) }
         }
-        val emptiesFixed = empties.map(en => en.setValue(PatchOp.Set(Json.arr())))
-        interpretCont(lst.of, execs.flatten).map(_.appendedAll(emptiesFixed))
+        interpretCont(lst.of, values).map(prefixes.appendedAll(_))
       case opt: PreparedOption[F, i, a] =>
         // must do explicit null, spec
         val zs: ArraySeq[EvalNode[F, Option[i]]] = xs
