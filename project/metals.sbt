@@ -8,6 +8,6 @@ addSbtPlugin("org.scalameta" % "sbt-metals" % "1.6.2")
 
 // This plugin adds the BSP debug capability to sbt server.
 
-addSbtPlugin("ch.epfl.scala" % "sbt-debug-adapter" % "4.2.8")
+addSbtPlugin("ch.epfl.scala" % "sbt-debug-adapter" % "4.2.12")
 
 // format: on
