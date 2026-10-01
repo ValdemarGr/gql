@@ -19,6 +19,8 @@ import fs2.{Pure, Stream}
 import cats.implicits._
 import cats._
 import gql.preparation._
+import gql.resolver.Step.BatchKey
+import scala.collection.mutable
 
 trait Planner[F[_]] { self =>
   def plan(naive: NodeTree): F[OptimizedDAG]
@@ -32,21 +34,39 @@ trait Planner[F[_]] { self =>
 object Planner {
   def apply[F[_]](implicit F: Applicative[F]) = new Planner[F] {
     def plan(tree: NodeTree): F[OptimizedDAG] = F.pure {
-      // The best solution has lease amount of nodes in the contracted DAG
-      val plan = enumerateAllPlanner[F](tree)
-        .map(plan => (plan, plan.values.toSet.size))
-        .take(1)
-        .compile
-        .fold(Option.empty[(Map[NodeId, PlanEnumeration.Batch], Int)]) {
-          case (None, (nextPlan, s))                                                => Some((nextPlan, s))
-          case (Some((_, bestSize)), (nextPlan, nextSize)) if (nextSize < bestSize) => Some((nextPlan, nextSize))
-          case (best, _)                                                            => best
-        }
-        .map { case (bestPlan, _) => bestPlan }
-        .map(_.map { case (k, v) => (NodeId(k.id), (v.nodes.map(n => NodeId(n.id)), v.end)) })
-        .getOrElse(Map.empty)
+      val all = tree.all.toArray
+      val nodeIds = mutable.HashMap.from(all.iterator.zipWithIndex.map { case (node, i) => node.id -> i })
+      val families = mutable.HashMap.empty[Either[NodeId, BatchKey[?, ?]], Int]
+      val costs = mutable.ArrayBuffer.empty[Double]
+      val nodes = Array.tabulate(all.length) { i =>
+        val node = all(i)
+        val key = node.batchId.fold[Either[NodeId, BatchKey[?, ?]]](Left(node.id))(batch => Right(batch.batcherId))
+        val family = families.getOrElseUpdate(
+          key, {
+            costs.addOne(node.cost)
+            costs.size - 1
+          }
+        )
+        BatchPlanner.Node(i, family, mutable.BitSet.empty)
+      }
+      all.indices.foreach { i =>
+        all(i).parents.foreach(parent => nodes(nodeIds(parent)).children.addOne(i))
+      }
 
-      OptimizedDAG(tree, plan)
+      val endTimes = mutable.HashMap.empty[NodeId, Double]
+      val batches = BatchPlanner
+        .solve(BatchPlanner.Problem(nodes))
+        .iterator
+        .map { case (family, batch) =>
+          val participants = batch.iterator.map(i => all(i).id).toSet
+          val parentEnd =
+            batch.iterator.flatMap(i => all(i).parents.iterator).map(endTimes(_)).maxOption.getOrElse(0d)
+          val end = PlanEnumeration.EndTime(parentEnd + costs(family))
+          participants.foreach(nodeId => endTimes.update(nodeId, end.time))
+          (participants, end)
+        }
+        .toSet
+      OptimizedDAG(tree, batches)
     }
   }
 

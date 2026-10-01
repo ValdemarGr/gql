@@ -17,8 +17,8 @@ package gql.server.planner
 
 import cats._
 import gql.preparation._
-import cats.data._
 import cats.implicits._
+import scala.collection.mutable
 import scala.io.AnsiColor
 
 final case class BatchRef[K, V](
@@ -36,7 +36,7 @@ final case class Node(
 )
 
 final case class NodeTree(all: List[Node]) {
-  lazy val lookup = all.map(n => n.id -> n).toMap
+  lazy val lookup = all.iterator.map(n => n.id -> n).toMap
 
   lazy val roots = all.filter(_.parents.isEmpty)
 
@@ -46,19 +46,32 @@ final case class NodeTree(all: List[Node]) {
 
   lazy val endTimes: Map[NodeId, Double] = {
     val l = lookup
+    val cache = mutable.HashMap.empty[NodeId, Double]
+    cache.sizeHint(l.size)
+    val toVisit = mutable.Stack.empty[(Node, Iterator[NodeId])]
 
-    def go(id: NodeId): State[Map[NodeId, Double], Double] =
-      State.inspect { (cache: Map[NodeId, Double]) => cache.get(id) }.flatMap {
-        case Some(e) => State.pure(e)
-        case None =>
-          val n = l(id)
-          n.parents.toList
-            .traverse(go)
-            .map(_.maxOption.getOrElse(0d) + n.cost)
-            .flatTap(e => State.modify(_ + (id -> e)))
+    all.foreach { node =>
+      if (!cache.contains(node.id)) {
+        val n = l(node.id)
+        toVisit.push((n, n.parents.iterator))
+        while (toVisit.nonEmpty) {
+          val (current, parents) = toVisit.top
+          if (parents.hasNext) {
+            val parent = parents.next()
+            if (!cache.contains(parent)) {
+              val p = l(parent)
+              toVisit.push((p, p.parents.iterator))
+            }
+          } else {
+            val end = current.parents.iterator.map(cache(_)).maxOption.getOrElse(0d) + current.cost
+            cache.update(current.id, end)
+            toVisit.pop()
+          }
+        }
       }
+    }
 
-    all.traverse_(x => go(x.id)).runS(Map.empty).value
+    Map.from(cache)
   }
 }
 
@@ -71,9 +84,11 @@ object NodeTree {
 
 final case class OptimizedDAG(
     tree: NodeTree,
-    plan: OptimizedDAG.Plan
+    batches: Set[(Set[NodeId], PlanEnumeration.EndTime)]
 ) {
-  lazy val batches: Set[(Set[NodeId], PlanEnumeration.EndTime)] = plan.values.toSet
+  lazy val plan: OptimizedDAG.Plan = batches.iterator.flatMap { batch =>
+    batch._1.iterator.map(_ -> batch)
+  }.toMap
 
   lazy val batchesWithCosts: List[(Double, Set[NodeId])] =
     batches.toList.map { case (b, _) => (tree.lookup(b.head).cost, b) }
