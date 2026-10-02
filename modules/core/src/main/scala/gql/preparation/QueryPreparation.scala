@@ -29,7 +29,6 @@ import org.typelevel.scalaccompat.annotation._
 class QueryPreparation[F[_], C](
     ap: ArgParsing[C],
     da: DirectiveAlg[F, C],
-    variables: VariableMap[C],
     implementations: SchemaShape.Implementations[F]
 ) {
   type G[A] = Alg[C, A]
@@ -214,17 +213,19 @@ class QueryPreparation[F[_], C](
             }
           })
 
-        val out = pdfF.runWithValue { pdf =>
-          PreparedMeta(
-            variables.map { case (k, v) => k -> v.copy(value = v.value.map(_.void)) },
-            meta.args.map(_.map(_ => ())),
-            pdf
-          )
+        val out = pdfF.fb.flatMap { constructor =>
+          G.getVariables.flatMap { variables =>
+            LazyT[G, PreparedMeta[F], PreparedDataField[F, I, ?]](G.pure(constructor)).runWithValue { pdf =>
+              PreparedMeta(
+                variables.map { case (k, v) => k -> v.copy(value = v.value.map(_.void)) },
+                meta.args.map(_.map(_ => ())),
+                pdf
+              )
+            }
+          }
         }
 
-        checkDuplicatesF >> {
-          verifyTooManyF &> out
-        }
+        checkDuplicatesF.parProductR(verifyTooManyF).parProductR(out)
       })
   }
 
@@ -342,19 +343,21 @@ class QueryPreparation[F[_], C](
       s: Selectable[F, A],
       sis: NonEmptyList[SelectionInfo[F, C]]
   ): G[Selection[F, A]] =
-    mergeImplementations[A](s, sis)
-      .flatMap { impls =>
-        impls.parTraverse[G, PreparedSpecification[F, A, ?]] { case impl: MergedSpecialization[F, A, b, C] =>
-          val fa = impl.selections.toList.parFlatTraverse { sel =>
-            sel.field match {
-              case field: Field[F, b2, t] => prepareField[b, t](sel.info, field, impl.spec.typename)
+    nextNodeId.flatMap { selectionId =>
+      mergeImplementations[A](s, sis)
+        .flatMap { impls =>
+          impls.parTraverse[G, PreparedSpecification[F, A, ?]] { case impl: MergedSpecialization[F, A, b, C] =>
+            val fa = impl.selections.toList.parFlatTraverse { sel =>
+              sel.field match {
+                case field: Field[F, b2, t] => prepareField[b, t](sel.info, field, impl.spec.typename)
+              }
             }
-          }
 
-          nextNodeId.flatMap(nid => fa.map(xs => PreparedSpecification[F, A, b](nid, impl.spec, xs)))
+            nextNodeId.flatMap(nid => fa.map(xs => PreparedSpecification[F, A, b](nid, impl.spec, xs)))
+          }
         }
-      }
-      .flatMap(xs => nextNodeId.map(nid => Selection(nid, xs.toList, s)))
+        .map(xs => Selection(selectionId, xs.toList, s))
+    }
 }
 
 final case class MergedFieldInfo[G[_], C](

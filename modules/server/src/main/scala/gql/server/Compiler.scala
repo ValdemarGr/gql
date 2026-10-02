@@ -111,18 +111,20 @@ object Compiler {
         accumulate: Option[FiniteDuration] = Some(5.millis)
     ): Outcome[F] =
       parsePrep(schema, cp)
+        .flatMap(_.run(cp.variables.getOrElse(Map.empty)))
         .map(compilePrepared(schema, _, queryInput, mutationInput, subscriptionInput, debug, accumulate))
 
     def parsePrep[Q, M, S](
         schema: Schema[F, Q, M, S],
         cp: QueryParameters
-    ): Either[CompilationError, PreparedRoot[F, Q, M, S]] =
+    ): Either[CompilationError, CacheableQuery[F, Q, M, S]] =
       gql.parser.parseQuery(cp.query) match {
         case Left(pe) => Left(CompilationError.Parse(pe))
         case Right(q) =>
-          RootPreparation.prepareRun(q, schema.shape, cp.variables.getOrElse(Map.empty), cp.operationName) match {
+          RootPreparation.prepareCacheable(q, schema.shape, cp.operationName) match {
             case Left(pe) => Left(CompilationError.Preparation(pe))
-            case Right(x) => Right(x)
+            case Right(run) =>
+              Right(CacheableQuery(cp.query, cp.operationName, vars => run(vars).leftMap(CompilationError.Preparation(_))))
           }
       }
 

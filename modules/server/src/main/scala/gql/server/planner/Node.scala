@@ -99,6 +99,7 @@ final case class OptimizedDAG(
 
   def show(ansiColors: Boolean = false) = {
     val lookup = tree.lookup
+    val nodeOrder = tree.all.iterator.zipWithIndex.map { case (node, i) => node.id -> i }.toMap
     val endTimes = tree.endTimes
     val children = tree.reverseLookup
 
@@ -130,7 +131,7 @@ final case class OptimizedDAG(
 
     def go(nodes: List[NodeId]): String = {
       nodes
-        .sortBy(_.id)
+        .sortBy(nodeOrder)
         .map { n0 =>
           val n = lookup(n0)
           val nEnd = endTimes(n.id)
