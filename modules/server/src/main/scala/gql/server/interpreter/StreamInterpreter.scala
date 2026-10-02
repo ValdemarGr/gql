@@ -44,21 +44,21 @@ trait StreamInterpreter[F[_]] {
 
   def interpretStream0[A](
       root: A,
-      selection: Selection[F, A, Stage.Execution],
+      selection: Selection[F, A],
       takeOne: Boolean = false,
       throttle: F ~> F = FunctionK.id[F]
   ): Resource[F, ResultStream[F]]
 
   def interpretStream[A](
       root: A,
-      selection: Selection[F, A, Stage.Execution],
+      selection: Selection[F, A],
       takeOne: Boolean = false,
       throttle: F ~> F = FunctionK.id[F]
   ): Stream[F, Result]
 
   def interpretSync[A](
       root: A,
-      selection: Selection[F, A, Stage.Execution],
+      selection: Selection[F, A],
       throttle: F ~> F = FunctionK.id[F]
   ): F[Result]
 }
@@ -83,16 +83,12 @@ object StreamInterpreter {
       schemaState: SchemaState[F],
       accumulate: Option[FiniteDuration]
   )(implicit F: Async[F]): StreamInterpreter[F] = new StreamInterpreter[F] {
-    override def interpretSync[A](
-        root: A,
-        selection: Selection[F, A, Stage.Execution],
-        throttle: F ~> F
-    ): F[Result] =
+    override def interpretSync[A](root: A, selection: Selection[F, A], throttle: F ~> F): F[Result] =
       interpretStream(root, selection, takeOne = true, throttle).take(1).compile.lastOrError
 
     override def interpretStream0[A](
         root: A,
-        selection: Selection[F, A, Stage.Execution],
+        selection: Selection[F, A],
         takeOne: Boolean = false,
         throttle: F ~> F = FunctionK.id[F]
     ): Resource[F, ResultStream[F]] = {
@@ -225,7 +221,7 @@ object StreamInterpreter {
 
     override def interpretStream[A](
         root: A,
-        selection: Selection[F, A, Stage.Execution],
+        selection: Selection[F, A],
         takeOne: Boolean = false,
         throttle: F ~> F = FunctionK.id[F]
     ): Stream[F, Result] =

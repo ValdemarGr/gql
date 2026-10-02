@@ -26,13 +26,7 @@ import cats.Eval
 import gql.ast
 import scala.collection.immutable._
 
-sealed trait Stage
-object Stage {
-  sealed trait Compilation[+C] extends Stage
-  sealed trait Execution extends Compilation[Nothing]
-}
-
-sealed trait PreparedField[+F[_], A, +S <: Stage] extends Product with Serializable
+sealed trait PreparedField[+F[_], A] extends Product with Serializable
 
 final case class NodeId(id: Alg.UniqueId)
 
@@ -41,7 +35,7 @@ final case class StepEffectId(
     edgeId: UniqueEdgeCursor
 )
 
-sealed trait PreparedStep[+F[_], -I, +O, +S <: Stage] extends Product with Serializable {
+sealed trait PreparedStep[+F[_], -I, +O] extends Product with Serializable {
   def nodeId: NodeId
 }
 object PreparedStep {
@@ -49,167 +43,142 @@ object PreparedStep {
       nodeId: NodeId,
       f: I => O
   ) extends AnyRef
-      with PreparedStep[F, I, O, Stage.Execution]
+      with PreparedStep[F, I, O]
   final case class EmbedEffect[F[_], I](
       sei: StepEffectId
   ) extends AnyRef
-      with PreparedStep[F, F[I], I, Stage.Execution] {
+      with PreparedStep[F, F[I], I] {
     def nodeId: NodeId = sei.nodeId
   }
   final case class EmbedStream[F[_], I](
       sei: StepEffectId
   ) extends AnyRef
-      with PreparedStep[F, fs2.Stream[F, I], I, Stage.Execution] {
+      with PreparedStep[F, fs2.Stream[F, I], I] {
     def nodeId: NodeId = sei.nodeId
   }
   final case class EmbedError[F[_], I](
       nodeId: NodeId
   ) extends AnyRef
-      with PreparedStep[F, Ior[String, I], I, Stage.Execution]
-  final case class Compose[F[_], I, A, O, +S <: Stage](
+      with PreparedStep[F, Ior[String, I], I]
+  final case class Compose[F[_], I, A, O](
       nodeId: NodeId,
-      left: PreparedStep[F, I, A, S],
-      right: PreparedStep[F, A, O, S]
+      left: PreparedStep[F, I, A],
+      right: PreparedStep[F, A, O]
   ) extends AnyRef
-      with PreparedStep[F, I, O, S]
-  final case class First[F[_], I, O, C, +S <: Stage](
+      with PreparedStep[F, I, O]
+  final case class GetMeta[F[_], I](
       nodeId: NodeId,
-      step: PreparedStep[F, I, O, S]
+      meta: Eval[PreparedMeta[F]]
   ) extends AnyRef
-      with PreparedStep[F, (I, C), (O, C), S]
+      with PreparedStep[Nothing, I, FieldMeta[F]]
+  final case class First[F[_], I, O, C](
+      nodeId: NodeId,
+      step: PreparedStep[F, I, O]
+  ) extends AnyRef
+      with PreparedStep[F, (I, C), (O, C)]
   final case class Batch[F[_], K, V](
       id: Step.BatchKey[K, V],
       ubi: UniqueBatchInstance[K, V]
   ) extends AnyRef
-      with PreparedStep[F, Set[K], Map[K, V], Stage.Execution] {
+      with PreparedStep[F, Set[K], Map[K, V]] {
     def nodeId: NodeId = ubi.id
   }
   final case class InlineBatch[F[_], K, V](
       run: Set[K] => F[Map[K, V]],
       sei: StepEffectId
-  ) extends PreparedStep[F, Set[K], Map[K, V], Stage.Execution] {
+  ) extends PreparedStep[F, Set[K], Map[K, V]] {
     def nodeId: NodeId = sei.nodeId
   }
-  final case class Choose[F[_], A, B, C, D, +S <: Stage](
+  final case class Choose[F[_], A, B, C, D](
       nodeId: NodeId,
-      fac: PreparedStep[F, A, C, S],
-      fbd: PreparedStep[F, B, D, S]
-  ) extends PreparedStep[F, Either[A, B], Either[C, D], S]
-  final case class SubstVars[F[_], I, A, C](
-      nodeId: NodeId,
-      arg: Arg[A],
-      sub: Alg[C, A]
-  ) extends PreparedStep[F, I, A, Stage.Compilation[C]]
-
-  // first pass requires variables
-  final case class PrecompileMeta[F[_], I, C](
-      nodeId: NodeId,
-      meta: Eval[Alg[C, PreparedMeta[F, Stage]]]
-  ) extends AnyRef
-      with PreparedStep[Nothing, I, FieldMeta[F], Stage.Compilation[C]]
-
-  // second pass has substituted variables
-  final case class EvalMeta[F[_], I](
-      nodeId: NodeId,
-      meta: Eval[PreparedMeta[F, Stage.Execution]]
-  ) extends AnyRef
-      with PreparedStep[Nothing, I, FieldMeta[F], Stage.Execution]
+      fac: PreparedStep[F, A, C],
+      fbd: PreparedStep[F, B, D]
+  ) extends PreparedStep[F, Either[A, B], Either[C, D]]
 }
 
-sealed trait Prepared[+F[_], I, +S <: Stage]
+sealed trait Prepared[+F[_], I]
 
-final case class PreparedCont[+F[_], I, A, +S <: Stage](
-    edges: PreparedStep[F, I, A, S],
-    cont: Prepared[F, A, S]
+final case class PreparedCont[+F[_], I, A](
+    edges: PreparedStep[F, I, A],
+    cont: Prepared[F, A]
 )
 
-final case class Selection[F[_], I, +S <: Stage](
+final case class Selection[F[_], I](
     nodeId: NodeId,
-    fields: List[PreparedField[F, I, S]],
+    fields: List[PreparedField[F, I]],
     source: ast.Selectable[F, I]
-) extends Prepared[F, I, S]
+) extends Prepared[F, I]
 
-final case class PreparedList[F[_], A, C, B, +S <: Stage](
+final case class PreparedList[F[_], A, C, B](
     id: NodeId,
-    of: PreparedCont[F, A, B, S],
+    of: PreparedCont[F, A, B],
     toSeq: C => Seq[A]
-) extends Prepared[F, C, S]
+) extends Prepared[F, C]
 
-final case class PreparedOption[F[_], I, O, +S <: Stage](
+final case class PreparedOption[F[_], I, O](
     id: NodeId,
-    of: PreparedCont[F, I, O, S]
-) extends Prepared[F, Option[I], S]
+    of: PreparedCont[F, I, O]
+) extends Prepared[F, Option[I]]
 
-final case class PreparedLeaf[F[_], I, +S <: Stage](
+final case class PreparedLeaf[F[_], I](
     nodeId: NodeId,
     name: String,
     encode: I => Json
-) extends Prepared[F, I, S]
+) extends Prepared[F, I]
 
-sealed trait ParsedArgs[+S <: Stage]
-object ParsedArgs {
-  final case class Compilation[C]() extends ParsedArgs[Stage.Compilation[C]]
-  final case class Execution(
-      args: Map[Arg[?], Any]
-  ) extends ParsedArgs[Stage.Execution]
-}
-
-final case class PreparedDataField[+F[_], A, B, +S <: Stage](
+final case class PreparedDataField[+F[_], A, B](
     nodeId: NodeId,
     name: String,
     alias: Option[String],
-    cont: PreparedCont[F, A, B, S],
+    cont: PreparedCont[F, A, B],
     source: ast.Field[F, A, B],
-    parsedArgs: ParsedArgs[S]
-) extends PreparedField[F, A, S] {
+    parsedArgs: Map[Arg[?], Any]
+) extends PreparedField[F, A] {
   lazy val outputName = alias.getOrElse(name)
 
   def arg[C](a: Arg[C]): Option[C] =
-    (parsedArgs: ParsedArgs[Stage]) match {
-      case ParsedArgs.Execution(args)   => args.get(a).asInstanceOf[Option[C]]
-      case _: ParsedArgs.Compilation[?] => None
-    }
+    parsedArgs.get(a).asInstanceOf[Option[C]]
 }
 
-sealed trait Specialization[F[_], A, B, +S <: Stage] {
+sealed trait Specialization[F[_], A, B] {
   def specify(a: A): Ior[String, Option[B]]
   def source: ast.Selectable[F, A]
   def target: ast.Type[F, B]
   def typename = target.name
 }
 object Specialization {
-  final case class Type[F[_], A, +S <: Stage](
+  final case class Type[F[_], A](
       source: ast.Type[F, A]
-  ) extends Specialization[F, A, A, S] {
+  ) extends Specialization[F, A, A] {
     def target: ast.Type[F, A] = source
     def specify(a: A): Ior[String, Option[A]] = a.rightIor.map(_.some)
   }
-  final case class Union[F[_], A, B, +S <: Stage](
+  final case class Union[F[_], A, B](
       source: ast.Union[F, A],
       variant: ast.Variant[F, A, B]
-  ) extends Specialization[F, A, B, S] {
+  ) extends Specialization[F, A, B] {
     def target = variant.tpe.value
     def specify(a: A): Ior[String, Option[B]] = variant.specify(a)
   }
-  final case class Interface[F[_], A, B, +S <: Stage](
+  final case class Interface[F[_], A, B](
       target: ast.Type[F, B],
       impl: ast.Implementation[F, B, A]
-  ) extends Specialization[F, A, B, S] {
+  ) extends Specialization[F, A, B] {
     def source = impl.implementation.value
     def specify(a: A): Ior[String, Option[B]] = impl.specify(a)
   }
 }
 
-final case class PreparedSpecification[F[_], I, A, +S <: Stage](
+final case class PreparedSpecification[F[_], I, A](
     nodeId: NodeId,
-    specialization: Specialization[F, I, A, S],
-    selection: List[PreparedDataField[F, A, ?, S]]
-) extends PreparedField[F, I, S]
+    specialization: Specialization[F, I, A],
+    selection: List[PreparedDataField[F, A, ?]]
+) extends PreparedField[F, I]
 
-final case class PreparedMeta[+F[_], +S <: Stage](
+final case class PreparedMeta[+F[_]](
     variables: VariableMap[Unit],
     args: Option[QA.Arguments[Unit, AnyValue]],
-    pdf: PreparedDataField[F, ?, ?, S]
+    pdf: PreparedDataField[F, ?, ?]
 )
 
 final case class UniqueBatchInstance[K, V](id: NodeId) extends AnyRef

@@ -65,24 +65,24 @@ class SubqueryInterpreter[F[_]](
     sup.supervise(stats.updateStats(name, duration, size)).void
 
   def interpretSelection[I](
-      fields: ArraySeq[PreparedField[F, I, Stage.Execution]],
+      fields: ArraySeq[PreparedField[F, I]],
       xs: ArraySeq[EvalNode[F, I]]
   ): F[ArraySeq[Patch]] = {
     fields.parFlatTraverse {
-      case fa: PreparedSpecification[F, I, a, Stage.Execution] =>
+      case fa: PreparedSpecification[F, I, a] =>
         val ys = xs.map(en => (en, fa.specialization.specify(en.value)))
         val errs = ys.flatMap { case (en, ior) => ior.left.map(EvalFailure.Raised(en.cursor, _)) }
         val matches = ys.flatMap { case (en, ior) => ior.right.flatten.map(a => en.setValue(a)) }
         val nulls = ys.collect { case (en, Ior.Left(_)) => Patch(en.cursor, Json.Null) }
         errors.update(Chain.fromSeq(errs) ++ _) *>
           interpretSelection(ArraySeq.from(fa.selection), matches).map(nulls.appendedAll(_))
-      case df: PreparedDataField[F, I, a, Stage.Execution] =>
+      case df: PreparedDataField[F, I, a] =>
         interpretCont(df.cont, xs.map(_.modify(_.field(df.outputName))))
     }
   }
 
   def interpretCont[I, O](
-      pc: PreparedCont[F, I, O, Stage.Execution],
+      pc: PreparedCont[F, I, O],
       xs: ArraySeq[EvalNode[F, I]]
   ): F[ArraySeq[Patch]] =
     goStep(pc.edges, xs).flatMap { case (ys, patches) =>
@@ -90,7 +90,7 @@ class SubqueryInterpreter[F[_]](
     }
 
   def interpretPrepared[I](
-      s: Prepared[F, I, Stage.Execution],
+      s: Prepared[F, I],
       xs: ArraySeq[EvalNode[F, I]]
   ): F[ArraySeq[Patch]] =
     s match {
@@ -100,13 +100,13 @@ class SubqueryInterpreter[F[_]](
           val empties = xs.map(en => Patch(en.cursor, Json.obj()))
           empties.appendedAll(res)
         }
-      case lst: PreparedList[F, a, I, b, Stage.Execution] =>
+      case lst: PreparedList[F, a, I, b] =>
         val prefixes = xs.map(en => Patch(en.cursor, Json.arr()))
         val values = xs.flatMap { en =>
           lst.toSeq(en.value).zipWithIndex.map { case (a, i) => en.setValue(a).modify(_.index(i)) }
         }
         interpretCont(lst.of, values).map(prefixes.appendedAll(_))
-      case opt: PreparedOption[F, i, a, Stage.Execution] =>
+      case opt: PreparedOption[F, i, a] =>
         // must do explicit null, spec
         val zs: ArraySeq[EvalNode[F, Option[i]]] = xs
         val (nones, somes) = zs.partitionEither { z =>
@@ -119,7 +119,7 @@ class SubqueryInterpreter[F[_]](
     }
 
   def goStep[I0, O0](
-      ps: PreparedStep[F, I0, O0, Stage.Execution],
+      ps: PreparedStep[F, I0, O0],
       xs: ArraySeq[EvalNode[F, I0]]
   ): F[(ArraySeq[EvalNode[F, O0]], ArraySeq[Patch])] = {
     // Either is not ergonomic to do here
@@ -128,7 +128,7 @@ class SubqueryInterpreter[F[_]](
         errors.update(_ ++ Chain.fromSeq(ef)) *>
           nulls.update(_ ++ Chain.fromSeq(ef).flatMap(_.paths).map(p => Patch(p, Json.Null)))
       def go[I, O, S](
-          ps: PreparedStep[F, I, O, Stage.Execution],
+          ps: PreparedStep[F, I, O],
           xs: ArraySeq[StepEN[I, S]]
       ): F[ArraySeq[StepEN[O, S]]] = {
         import PreparedStep._
@@ -142,7 +142,7 @@ class SubqueryInterpreter[F[_]](
                     .as(ArraySeq.empty[StepEN[O, S]])
               }
             }
-          case alg: First[F, i2, o2, c2, Stage.Execution] =>
+          case alg: First[F, i2, o2, c2] =>
             val ys: ArraySeq[StepEN[(i2, c2), S]] = xs
             val zs = ys.map { en =>
               val (i2, c2) = en.value
@@ -188,12 +188,12 @@ class SubqueryInterpreter[F[_]](
             val errs = ens.flatMap(en => en.value.left.map(EvalFailure.Raised(en.cursor, _)))
             val nonErrs = ens.flatMap(en => en.value.toOption.map(en.setValue))
             reportErrors(errs: _*).as(nonErrs)
-          case EvalMeta(_, pm0) =>
+          case GetMeta(_, pm0) =>
             val pm = pm0.value
             F.pure(xs.map(en => en.setValue(FieldMeta(QueryMeta(en.cursor, pm.variables), pm.args, pm.pdf))))
-          case alg: Compose[F, I, a, O, Stage.Execution] =>
+          case alg: Compose[F, I, a, O] =>
             go(alg.left, xs).flatMap(go(alg.right, _))
-          case alg: Choose[F, a, b, c, d, Stage.Execution] =>
+          case alg: Choose[F, a, b, c, d] =>
             val (lefts, rights) = xs.partitionEither { en =>
               (en.value: Either[a, b]) match {
                 case Left(a)  => Left(en.setValue(a))

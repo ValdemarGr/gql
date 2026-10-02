@@ -45,7 +45,7 @@ object QueryInterpreter {
   )
 
   def apply[F[_], A](
-      root: Prepared[F, A, Stage.Execution],
+      root: Prepared[F, A],
       schemaState: SchemaState[F],
       throttle: F ~> F,
       sup: Supervisor[F],

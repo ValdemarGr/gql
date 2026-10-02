@@ -15,11 +15,12 @@
  */
 package gql
 
+import cats.Eval
 import cats.effect.IO
 import cats.implicits._
 import gql.ast._
 import gql.dsl.all._
-import gql.preparation.{PreparedDataField, PreparedRoot, PreparedSpecification, Selection}
+import gql.preparation.{MergedFieldInfo, PreparedDataField, PreparedRoot, PreparedSpecification, Selection}
 import gql.resolver.Resolver
 import io.circe.{Json, JsonObject}
 import munit.CatsEffectSuite
@@ -62,10 +63,10 @@ class QueryCacheTest extends CatsEffectSuite {
               assertEquals(meta.astNode.arg(argument), Some(value))
               assertEquals(meta.astNode.name, "owner")
               val selection = meta.astNode.cont.cont match {
-                case fields: Selection[IO, ?, ?] =>
+                case fields: Selection[IO, ?] =>
                   fields.fields.flatMap {
-                    case field: PreparedDataField[IO, ?, ?, ?]    => List(field.outputName)
-                    case spec: PreparedSpecification[IO, ?, ?, ?] => spec.selection.map(_.outputName)
+                    case field: PreparedDataField[IO, ?, ?]    => List(field.outputName)
+                    case spec: PreparedSpecification[IO, ?, ?] => spec.selection.map(_.outputName)
                   }
                 case _ => fail("Expected owner selection")
               }
@@ -120,6 +121,46 @@ class QueryCacheTest extends CatsEffectSuite {
         assertEquals(preparations.get(), 1)
       }
     } yield ()
+  }
+
+  test("cache reuses queries with no variables") {
+    val query = "{ echo(value: 7) }"
+    val preparations = new AtomicInteger(0)
+    for {
+      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 1) { (text, operationName) =>
+        preparations.incrementAndGet()
+        prepare(text, operationName)
+      }
+      first <- cache.compile(QueryParameters(query, None, None)).flatMap(execute)
+      second <- cache.compile(QueryParameters(query, Some(Map.empty), None)).flatMap(execute)
+      _ <- IO {
+        assertEquals(first, JsonObject("echo" -> Json.fromInt(7)))
+        assertEquals(second, first)
+        assertEquals(preparations.get(), 1)
+      }
+    } yield ()
+  }
+
+  test("binding does not repeat static output preparation") {
+    val outputReads = new AtomicInteger(0)
+    val field = Field[IO, Unit, Int](
+      Resolver.argument[IO, Unit, Int](argument),
+      Eval.always {
+        outputReads.incrementAndGet()
+        intScalar
+      }
+    )
+    val countedSchema = Schema.simple(SchemaShape.unit[IO](fields("echo" -> field))).unsafeRunSync()
+    val cached = compiler
+      .parsePrep(countedSchema, QueryParameters(echo, None, None))
+      .fold(error => fail(error.toString), identity)
+    val preparedReads = outputReads.get()
+    assert(preparedReads > 0)
+
+    assert(cached.run(firstVars).isRight)
+    assertEquals(outputReads.get(), preparedReads)
+    assert(cached.run(secondVars).isRight)
+    assertEquals(outputReads.get(), preparedReads)
   }
 
   test("preparation ignores supplied variables until run") {
@@ -177,6 +218,71 @@ class QueryCacheTest extends CatsEffectSuite {
     }
   }
 
+  test("deferred argument errors accumulate with structural sibling errors") {
+    val query = "query Echo($n: Int!) { positive(value: $n) unknown }"
+    compiler.compile(schema, query, variables = Map("n" -> Json.fromInt(-1))) match {
+      case Left(CompilationError.Preparation(errors)) =>
+        val messages = errors.toChain.toList.map(_.message)
+        assertEquals(messages.count(_ == "Must be positive"), 1)
+        assertEquals(messages.count(_.contains("unknown")), 1)
+        assertEquals(messages.size, 2)
+      case _ => fail("Expected accumulated argument and structural errors")
+    }
+  }
+
+  test("nested structural errors preserve deferred argument checks") {
+    val query = "query Echo($n: Int!) { abstract { positive(value: $n) unknown } }"
+    compiler.compile(schema, query, variables = Map("n" -> Json.fromInt(-1))) match {
+      case Left(CompilationError.Preparation(errors)) =>
+        val all = errors.toChain.toList
+        assertEquals(all.count(_.message == "Must be positive"), 1)
+        assertEquals(all.count(_.message.contains("unknown")), 1)
+        assertEquals(all.size, 2)
+        assertEquals(all.find(_.message == "Must be positive").map(_.position), Some(Cursor.empty.field("abstract").field("positive")))
+      case _ => fail("Expected nested argument and structural errors")
+    }
+  }
+
+  test("field directives execute after collection argument validation") {
+    val calls = new AtomicInteger(0)
+    val rejection = Position.Field[IO, Unit](
+      Directive[Unit]("reject"),
+      new Position.FieldHandler[IO, Unit] {
+        def apply[I, C](
+            value: Unit,
+            field: Field[IO, I, ?],
+            info: MergedFieldInfo[IO, C]
+        ): Either[String, List[(Field[IO, I, ?], MergedFieldInfo[IO, C])]] = {
+          calls.incrementAndGet()
+          Left("Directive rejects")
+        }
+      }
+    )
+    val shape = SchemaShape
+      .unit[IO](
+        fields("positive" -> lift(positiveArgument)((value, _) => value), "plain" -> lift(_ => 1))
+      )
+      .copy(positions = List(rejection))
+    val directiveSchema = Schema.simple(shape).unsafeRunSync()
+    val query = "query Echo($n: Int!) { positive(value: $n) plain @reject }"
+    val cached = compiler
+      .parsePrep(directiveSchema, QueryParameters(query, None, None))
+      .fold(error => fail(error.toString), identity)
+    assertEquals(calls.get(), 0)
+
+    cached.run(Map("n" -> Json.fromInt(-1))) match {
+      case Left(CompilationError.Preparation(errors)) => assertEquals(errors.toChain.toList.map(_.message), List("Must be positive"))
+      case _                                          => fail("Expected argument error before directive execution")
+    }
+    assertEquals(calls.get(), 0)
+
+    cached.run(firstVars) match {
+      case Left(CompilationError.Preparation(errors)) => assertEquals(errors.toChain.toList.map(_.message), List("Directive rejects"))
+      case _                                          => fail("Expected directive rejection after valid arguments")
+    }
+    assertEquals(calls.get(), 1)
+  }
+
   test("cached metadata uses variables from each binding") {
     val query = "query Echo($n: Int!) { echo(value: $n) meta }"
     for {
@@ -213,7 +319,7 @@ class QueryCacheTest extends CatsEffectSuite {
         assert(a.nodeId.id eq b.nodeId.id)
         assertEquals(a.fields.size, b.fields.size)
         a.fields.zip(b.fields).foreach {
-          case (x: PreparedSpecification[IO, ?, ?, ?], y: PreparedSpecification[IO, ?, ?, ?]) =>
+          case (x: PreparedSpecification[IO, ?, ?], y: PreparedSpecification[IO, ?, ?]) =>
             assert(x.nodeId.id eq y.nodeId.id)
             assertEquals(x.selection.map(_.outputName), y.selection.map(_.outputName))
             x.selection.zip(y.selection).foreach { case (xf, yf) =>
