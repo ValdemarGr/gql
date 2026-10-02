@@ -107,10 +107,6 @@ object Alg {
       override def monad: Monad[Alg[C, *]] = monadErrorForPreparationAlg[C]
     }
 
-  def useVariables[C](names: NonEmptyChain[String]): Alg[C, Unit] = Alg.UseVariables(names)
-  def pure[C, A](a: A): Alg[C, A] = Alg.Pure(a)
-  def raiseErrors[C](errors: NonEmptyChain[PositionalError[C]]): Alg[C, Nothing] = Alg.RaiseError(errors)
-
   final case class State(
       readVariables: Chain[String],
       writtenVariables: Chain[String],
@@ -118,9 +114,10 @@ object Alg {
       cursor: Cursor
   )
   def run[C, A0](fa: Alg[C, A0]): EitherNec[PositionalError[C], Variables[C] => EitherNec[PositionalError[C], A0]] = {
+    val G = Ops[C]
     def liftResult[B](result: Result[C, B], vars: Option[Variables[C]]): Eval[Alg[C, B]] = result match {
       case Result.Success(value, usedVariables) =>
-        Eval.now(NonEmptyChain.fromChain(usedVariables).traverse_(useVariables[C](_)) *> pure(value))
+        Eval.now(NonEmptyChain.fromChain(usedVariables).traverse_(G.useVariables) *> G.pure(value))
       case Result.Failure(errors) => Eval.now(Alg.RaiseError(errors))
       case Result.NeedVars(f) =>
         vars match {
@@ -258,6 +255,9 @@ object Alg {
 
     def raiseError(pe: PositionalError[C]): Alg[C, Nothing] =
       Alg.RaiseError(NonEmptyChain.one(pe))
+
+    def raiseErrors(errors: NonEmptyChain[PositionalError[C]]): Alg[C, Nothing] =
+      Alg.RaiseError(errors)
 
     def raise[A](message: String, carets: List[C]): Alg[C, A] =
       cursorAsk.flatMap(c => raiseError(PositionalError(c, carets, message)))

@@ -35,6 +35,7 @@ class FieldCollection[F[_], C](
 ) {
   type G[A] = Alg[C, A]
   val G = Alg.Ops[C]
+  type Collect[A] = WriterT[G, Chain[PositionalError[C]], A]
 
   def inFragment[A](
       fragmentName: String,
@@ -102,133 +103,138 @@ class FieldCollection[F[_], C](
     }
   }
 
-  def traverseSelectionSet[A: Monoid](
-      sel: Selectable[F, ?],
-      ss: QA.SelectionSet[C]
-  )(
-      fields: (Selectable[F, ?], List[(C, QA.Field[C])]) => G[A],
-      inNamedFragment: (A, String) => A
-  ): G[A] = {
-    val all = ss.selections
-    val fieldSelections = all.collect { case QA.Selection.FieldSelection(field, c) => (c, field) }
-
-    val inlines = all
-      .collect { case QA.Selection.InlineFragmentSelection(f, c) => (c, f) }
-      .parTraverse { case (caret, f) =>
-        da.foldDirectives[Position.InlineFragmentSpread](f.directives, List(caret))(f) { case (f, p: Position.InlineFragmentSpread[a], d) =>
-          da.parseArg(p, d.arguments, List(caret)).map(p.handler(_, f)).flatMap(G.raiseEither(_, List(caret)))
-        }.flatMap(_.parTraverse { f =>
-          f.typeCondition.traverse(matchType(_, sel, caret)).map(_.getOrElse(sel)).flatMap { t =>
-            traverseSelectionSet(t, f.selectionSet)(fields, inNamedFragment)
-          }
-        }.map(_.combineAll))
-      }
-      .map(_.combineAll)
-
-    val spreads = all
-      .collect { case QA.Selection.FragmentSpreadSelection(f, c) => (c, f) }
-      .parTraverse { case (caret, f) =>
-        da.foldDirectives[Position.FragmentSpread](f.directives, List(caret))(f) { case (f, p: Position.FragmentSpread[a], d) =>
-          da.parseArg(p, d.arguments, List(caret)).map(p.handler(_, f)).flatMap(G.raiseEither(_, List(caret)))
-        }.flatMap(_.parTraverse { spread =>
-          val name = spread.fragmentName
-          inFragment(name, List(caret)) { f =>
-            matchType(f.typeCnd, sel, f.caret).flatMap { t =>
-              traverseSelectionSet(t, f.selectionSet)(fields, inNamedFragment).map(inNamedFragment(_, name))
-            }
-          }
-        }.map(_.combineAll))
-      }
-      .map(_.combineAll)
-
-    List(fields(sel, fieldSelections), inlines, spreads).parSequence.map(_.combineAll)
-  }
-
   def collectSelectionInfo(
       sel: Selectable[F, ?],
       ss: QA.SelectionSet[C]
-  ): G[List[SelectionInfo[F, C]]] =
-    traverseSelectionSet[List[SelectionInfo[F, C]]](sel, ss)(
-      (sel, fields) => {
-        val actualFields = sel.abstractFieldMap + ("__typename" -> AbstractField(None, Eval.now(stringScalar), None))
-        fields
-          .parTraverse { case (caret, field) =>
-            actualFields.get(field.name) match {
-              case None    => G.raise[FieldInfo[F, C]](s"Field '${field.name}' is not a member of `${sel.name}`.", List(caret))
-              case Some(f) => G.ambientField(field.name)(collectFieldInfo(f, field, caret))
-            }
-          }
-          .map(_.toNel.toList.map(SelectionInfo(sel, _, None)))
-      },
-      (selections, name) => selections.map(_.copy(fragmentName = Some(name)))
-    )
+  ): Collect[List[SelectionInfo[F, C]]] = {
+    val all = ss.selections
+    val actualFields = sel.abstractFieldMap + ("__typename" -> AbstractField(None, Eval.now(stringScalar), None))
 
-  def validateSelectionSet(sel: Selectable[F, ?], ss: QA.SelectionSet[C]): G[Unit] =
-    traverseSelectionSet[Unit](sel, ss)(
-      (sel, fields) => {
-        val actualFields = sel.abstractFieldMap + ("__typename" -> AbstractField(None, Eval.now(stringScalar), None))
-        fields.parTraverse_ { case (caret, field) =>
-          actualFields.get(field.name) match {
-            case None => G.raise[Unit](s"Field '${field.name}' is not a member of `${sel.name}`.", List(caret))
-            case Some(f) =>
-              G.ambientField(field.name) {
-                val arguments = field.arguments.toList.flatMap(_.nel.toList).map(x => x.name -> x.value.map(List(_)))
-                val validateArgs = f.arg.parTraverse_ { case arg: Arg[a] =>
-                  ap.decodeArg(arg, arguments, ambigiousEnum = false, context = List(caret)).void
-                }
-                val inner = InverseModifierStack.fromOut(f.output.value).inner
-                val validateOutput: G[Unit] = inner match {
-                  case s: Selectable[F, ?] =>
-                    G.raiseOpt(
-                      field.selectionSet,
-                      s"Field `${field.name}` of type `${inner.name}` must have a selection set.",
-                      List(field.caret)
-                    ).flatMap(validateSelectionSet(s, _))
-                  case _: Enum[?] =>
-                    if (field.selectionSet.isEmpty) G.unit
-                    else G.raise(s"Field `${field.name}` of enum type `${inner.name}` must not have a selection set.", List(field.caret))
-                  case _: Scalar[?] =>
-                    if (field.selectionSet.isEmpty) G.unit
-                    else G.raise(s"Field `${field.name}` of scalar type `${inner.name}` must not have a selection set.", List(field.caret))
-                }
-                validateArgs.parProductR(validateOutput)
-              }
-          }
+    val fields = all
+      .collect { case QA.Selection.FieldSelection(field, c) => (c, field) }
+      .parTraverse { case (caret, field) =>
+        actualFields.get(field.name) match {
+          case None =>
+            recordErrors(G.raise[Unit](s"Field '${field.name}' is not a member of `${sel.name}`.", List(caret)))
+              .as(Option.empty[FieldInfo[F, C]])
+          case Some(f) =>
+            WriterT(G.ambientField(field.name)(collectFieldInfo(f, field, caret).run)).map(_.some)
         }
-      },
-      (_, _) => ()
-    )
+      }
+      .map(_.flatten.toNel.toList.map(SelectionInfo(sel, _, None)))
+
+    val inlines = all
+      .collect { case QA.Selection.InlineFragmentSelection(f, c) => (c, f) }
+      .parFlatTraverse { case (caret, f) =>
+        collectOrEmpty {
+          WriterT
+            .liftF[G, Chain[PositionalError[C]], List[QA.InlineFragment[C]]](
+              da.foldDirectives[Position.InlineFragmentSpread](f.directives, List(caret))(f) {
+                case (f, p: Position.InlineFragmentSpread[a], d) =>
+                  da.parseArg(p, d.arguments, List(caret)).map(p.handler(_, f)).flatMap(G.raiseEither(_, List(caret)))
+              }
+            )
+            .flatMap(_.parFlatTraverse { f =>
+              collectOrEmpty {
+                WriterT
+                  .liftF[G, Chain[PositionalError[C]], Selectable[F, ?]](
+                    f.typeCondition.traverse(matchType(_, sel, caret)).map(_.getOrElse(sel))
+                  )
+                  .flatMap(t => collectSelectionInfo(t, f.selectionSet))
+              }
+            })
+        }
+      }
+
+    val spreads = all
+      .collect { case QA.Selection.FragmentSpreadSelection(f, c) => (c, f) }
+      .parFlatTraverse { case (caret, f) =>
+        collectOrEmpty {
+          WriterT
+            .liftF[G, Chain[PositionalError[C]], List[QA.FragmentSpread[C]]](
+              da.foldDirectives[Position.FragmentSpread](f.directives, List(caret))(f) { case (f, p: Position.FragmentSpread[a], d) =>
+                da.parseArg(p, d.arguments, List(caret)).map(p.handler(_, f)).flatMap(G.raiseEither(_, List(caret)))
+              }
+            )
+            .flatMap(_.parFlatTraverse { spread =>
+              collectOrEmpty {
+                WriterT(
+                  inFragment(spread.fragmentName, List(caret)) { f =>
+                    WriterT
+                      .liftF[G, Chain[PositionalError[C]], Selectable[F, ?]](matchType(f.typeCnd, sel, f.caret))
+                      .flatMap(t => collectSelectionInfo(t, f.selectionSet))
+                      .map(_.map(_.copy(fragmentName = Some(spread.fragmentName))))
+                      .run
+                  }
+                )
+              }
+            })
+        }
+      }
+
+    List(fields, inlines, spreads).parFlatSequence
+  }
+
+  def recordErrors(fa: G[Unit]): Collect[Unit] =
+    WriterT(fa.attempt.map {
+      case Left(errors) => (errors.toChain, ())
+      case Right(())    => (Chain.empty, ())
+    })
+
+  def collectOrEmpty[A: Monoid](fa: Collect[A]): Collect[A] =
+    fa.handleErrorWith(errors => WriterT.tell[G, Chain[PositionalError[C]]](errors.toChain).as(Monoid[A].empty))
+
+  def validateSelectionInfo(selections: List[SelectionInfo[F, C]]): G[Unit] =
+    selections.parTraverse_(_.fields.parTraverse_ { field =>
+      G.cursorOver(
+        field.path, {
+          val arguments = field.args.toList.flatMap(_.nel.toList).map(x => x.name -> x.value.map(List(_)))
+          val validateArgs = field.definition.arg.parTraverse_ { case arg: Arg[a] =>
+            ap.decodeArg(arg, arguments, ambigiousEnum = false, context = List(field.caret)).void
+          }
+          val validateChildren = field.tpe.inner match {
+            case s: TypeInfo.Selectable[F, C] => validateSelectionInfo(s.selection)
+            case _                           => G.unit
+          }
+          validateArgs.parProductR(validateChildren)
+        }
+      )
+    })
 
   def collectFieldInfo(
       qf: AbstractField[F, ?],
       f: QA.Field[C],
       caret: C
-  ): Alg[C, FieldInfo[F, C]] = {
-    val c = f.caret
-    val x = f.selectionSet
+  ): Collect[FieldInfo[F, C]] = {
     val ims = InverseModifierStack.fromOut(qf.output.value)
     val tl = ims.inner
-    val i: G[TypeInfo[F, C]] = tl match {
+    val output: Collect[TypeInfo[F, C]] = tl match {
       case s: Selectable[F, ?] =>
-        G.raiseOpt(
-          x,
-          s"Field `${f.name}` of type `${tl.name}` must have a selection set.",
-          List(c)
-        ).flatMap(ss => collectSelectionInfo(s, ss))
-          .map(TypeInfo.Selectable(tl.name, _))
+        f.selectionSet match {
+          case Some(ss) => collectSelectionInfo(s, ss).map(TypeInfo.Selectable(tl.name, _))
+          case None =>
+            recordErrors(G.raise[Unit](s"Field `${f.name}` of type `${tl.name}` must have a selection set.", List(f.caret)))
+              .as(TypeInfo.Selectable(tl.name, Nil))
+        }
       case _: Enum[?] =>
-        if (x.isEmpty) G.pure(TypeInfo.Enum(tl.name))
-        else G.raise(s"Field `${f.name}` of enum type `${tl.name}` must not have a selection set.", List(c))
+        val check =
+          if (f.selectionSet.isEmpty) G.unit
+          else G.raise[Unit](s"Field `${f.name}` of enum type `${tl.name}` must not have a selection set.", List(f.caret))
+        recordErrors(check).as(TypeInfo.Enum(tl.name))
       case _: Scalar[?] =>
-        if (x.isEmpty)
-          G.pure(TypeInfo.Scalar(tl.name))
-        else G.raise(s"Field `${f.name}` of scalar type `${tl.name}` must not have a selection set.", List(c))
+        val check =
+          if (f.selectionSet.isEmpty) G.unit
+          else G.raise[Unit](s"Field `${f.name}` of scalar type `${tl.name}` must not have a selection set.", List(f.caret))
+        recordErrors(check).as(TypeInfo.Scalar(tl.name))
     }
 
-    i.flatMap { fi =>
-      G.cursorAsk.map(c => FieldInfo[F, C](f.name, f.alias, f.arguments, ims.copy(inner = fi), f.directives, caret, c))
+    output.flatMap { fi =>
+      WriterT
+        .liftF[G, Chain[PositionalError[C]], Cursor](G.cursorAsk)
+        .map(path => FieldInfo[F, C](f.name, f.alias, f.arguments, ims.copy(inner = fi), f.directives, caret, path, qf))
     }
   }
+
 }
 
 sealed trait TypeInfo[+G[_], +C] {
@@ -253,7 +259,8 @@ final case class FieldInfo[G[_], C](
     tpe: InverseModifierStack[TypeInfo[G, C]],
     directives: Option[QA.Directives[C, AnyValue]],
     caret: C,
-    path: Cursor
+    path: Cursor,
+    definition: AbstractField[G, ?]
 ) {
   lazy val outputName: String = alias.getOrElse(name)
 }

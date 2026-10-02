@@ -21,6 +21,7 @@ import cats.implicits._
 import gql.ast._
 import gql.dsl.all._
 import gql.preparation.{MergedFieldInfo, PreparedDataField, PreparedRoot, PreparedSpecification, Selection}
+import gql.parser.{QueryAst => QA}
 import gql.resolver.Resolver
 import io.circe.{Json, JsonObject}
 import munit.CatsEffectSuite
@@ -297,6 +298,101 @@ class QueryCacheTest extends CatsEffectSuite {
     }
   }
 
+  test("unknown named fragments preserve deferred sibling argument validation") {
+    val query = "query Echo($n: Int!) { positive(value: $n) ... Missing }"
+    val cached = prepare(query, None).fold(error => fail(error.toString), identity)
+
+    cached.run(Map("n" -> Json.fromInt(-1))) match {
+      case Left(CompilationError.Preparation(errors)) =>
+        val all = errors.toChain.toList
+        assertEquals(all.count(_.message == "Unknown fragment name 'Missing'."), 1)
+        assertEquals(all.count(_.message == "Must be positive"), 1)
+        assertEquals(all.size, 2)
+        assertEquals(all.find(_.message == "Must be positive").map(_.position), Some(Cursor.empty.field("positive")))
+        assertEquals(all.find(_.message == "Unknown fragment name 'Missing'.").map(_.position), Some(Cursor.empty))
+      case _ => fail("Expected fragment and deferred argument validation errors")
+    }
+
+    cached.run(firstVars) match {
+      case Left(CompilationError.Preparation(errors)) =>
+        assertEquals(errors.toChain.toList.map(_.message), List("Unknown fragment name 'Missing'."))
+      case _ => fail("Expected unknown fragment error")
+    }
+  }
+
+  test("malformed known output retains deferred argument validation") {
+    val query = "query Echo($n: Int!) { abstract { positive(value: $n) { invalid } } }"
+    val cached = prepare(query, None).fold(error => fail(error.toString), identity)
+    val cursor = Cursor.empty.field("abstract").field("positive")
+
+    cached.run(Map("n" -> Json.fromInt(-1))) match {
+      case Left(CompilationError.Preparation(errors)) =>
+        val all = errors.toChain.toList
+        assertEquals(all.count(_.message == "Must be positive"), 1)
+        assertEquals(all.count(_.message.contains("must not have a selection set")), 1)
+        assertEquals(all.size, 2)
+        assertEquals(all.map(_.position).toSet, Set(cursor))
+      case _ => fail("Expected output shape and argument validation errors")
+    }
+
+    cached.run(firstVars) match {
+      case Left(CompilationError.Preparation(errors)) =>
+        val all = errors.toChain.toList
+        assertEquals(all.size, 1)
+        assert(all.head.message.contains("must not have a selection set"))
+        assertEquals(all.head.position, cursor)
+      case _ => fail("Expected output shape error")
+    }
+  }
+
+  test("validation and build share normalized fragment handlers") {
+    val inlineCalls = new AtomicInteger(0)
+    val namedCalls = new AtomicInteger(0)
+    val directive = Directive[Unit]("observe")
+    val inline = Position.InlineFragmentSpread[Unit](
+      directive,
+      new Position.QueryHandler[QA.InlineFragment, Unit] {
+        def apply[C](value: Unit, query: QA.InlineFragment[C]): Either[String, List[QA.InlineFragment[C]]] = {
+          inlineCalls.incrementAndGet()
+          Right(List(query))
+        }
+      }
+    )
+    val named = Position.FragmentSpread[Unit](
+      directive,
+      new Position.QueryHandler[QA.FragmentSpread, Unit] {
+        def apply[C](value: Unit, query: QA.FragmentSpread[C]): Either[String, List[QA.FragmentSpread[C]]] = {
+          namedCalls.incrementAndGet()
+          Right(List(query))
+        }
+      }
+    )
+    val shape = SchemaShape
+      .unit[IO](fields("positive" -> lift(positiveArgument)((value, _) => value), "echo" -> lift(argument)((value, _) => value)))
+      .copy(positions = List(inline, named))
+    val fragmentSchema = Schema.simple(shape).unsafeRunSync()
+    val query = """query Echo($n: Int!) {
+      ... @observe { inline: positive(value: $n) }
+      ... EchoFields @observe
+    }
+    fragment EchoFields on Query { named: echo(value: $n) }"""
+    val cached = compiler
+      .parsePrep(fragmentSchema, QueryParameters(query, None, None))
+      .fold(error => fail(error.toString), identity)
+    assertEquals(inlineCalls.get(), 1)
+    assertEquals(namedCalls.get(), 1)
+
+    assert(cached.run(firstVars).isRight)
+    assert(cached.run(secondVars).isRight)
+    cached.run(Map("n" -> Json.fromInt(-1))) match {
+      case Left(CompilationError.Preparation(errors)) =>
+        assertEquals(errors.toChain.toList.map(_.message), List("Must be positive"))
+      case _ => fail("Expected normalized fragment argument validation error")
+    }
+    assertEquals(inlineCalls.get(), 1)
+    assertEquals(namedCalls.get(), 1)
+  }
+
   test("static field directives are cached while validation errors retain precedence") {
     val calls = new AtomicInteger(0)
     val rejection = Position.Field[IO, Unit](
@@ -410,6 +506,26 @@ class QueryCacheTest extends CatsEffectSuite {
       _ <- IO {
         assertEquals(hidden, JsonObject("echo" -> Json.fromInt(1)))
         assertEquals(shown, JsonObject("echo" -> Json.fromInt(2), "optional" -> Json.fromInt(9)))
+      }
+    } yield ()
+  }
+
+  test("cached inline and named fragment directives bind hidden shown hidden independently") {
+    val query = """query Echo($n: Int!, $show: Boolean!) {
+      echo(value: $n)
+      ... @include(if: $show) { inline: echo(value: 9) }
+      ... Optional @include(if: $show)
+    }
+    fragment Optional on Query { named: echo(value: 8) }"""
+    for {
+      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 1)(prepare)
+      hidden <- cache.compile(QueryParameters(query, Some(firstVars + ("show" -> Json.False)), None)).flatMap(execute)
+      shown <- cache.compile(QueryParameters(query, Some(secondVars + ("show" -> Json.True)), None)).flatMap(execute)
+      hiddenAgain <- cache.compile(QueryParameters(query, Some(firstVars + ("show" -> Json.False)), None)).flatMap(execute)
+      _ <- IO {
+        assertEquals(hidden, JsonObject("echo" -> Json.fromInt(1)))
+        assertEquals(shown, JsonObject("echo" -> Json.fromInt(2), "inline" -> Json.fromInt(9), "named" -> Json.fromInt(8)))
+        assertEquals(hiddenAgain, hidden)
       }
     } yield ()
   }

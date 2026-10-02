@@ -171,17 +171,16 @@ class RootPreparation[F[_], C] {
       val fm = new FieldMerging[C]
       val qp = new QueryPreparation[F, C](ap, da, schema.discover.implementations)
 
-      val build = fc.collectSelectionInfo(o, ss).flatMap {
-        case x :: xs =>
-          val selections = NonEmptyList(x, xs)
-          fm.checkSelectionsMerge(selections).parProductR(qp.prepareSelectable(o, selections))
-        case _ => G.nextId.map(NodeId(_)).map(Selection(_, Nil, o))
+      val prepared = fc.collectSelectionInfo(o, ss).run.flatMap { case (errors, selections) =>
+        val structure = NonEmptyChain.fromChain(errors).traverse_(G.raiseErrors)
+        val validation = structure.parProductR(fc.validateSelectionInfo(selections))
+        val build = selections.toNel match {
+          case Some(selections) => fm.checkSelectionsMerge(selections).parProductR(qp.prepareSelectable(o, selections))
+          case None             => G.nextId.map(NodeId(_)).map(Selection(_, Nil, o))
+        }
+        // Validation owns shared decoding errors; construction still runs independently.
+        validation.parProductR(build.attempt).flatMap(_.fold(G.raiseErrors, G.pure(_)))
       }
-      // Both passes run independently; validation owns shared decoding errors.
-      val prepared = fc
-        .validateSelectionSet(o, ss)
-        .parProductR(build.attempt)
-        .flatMap(_.fold(Alg.raiseErrors[C], G.pure(_)))
 
       prepared.flatMap { result =>
         G.usedVariables.flatMap { used =>
