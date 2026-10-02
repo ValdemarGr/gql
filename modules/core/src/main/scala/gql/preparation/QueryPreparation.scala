@@ -107,9 +107,13 @@ class QueryPreparation[F[_], C](
           .map { case (k, v) => k -> v.map(List(_)) }
         LazyT.liftF {
           nextNodeId.flatMap { nid =>
-            ap
-              .decodeArg(alg.arg, fields, ambigiousEnum = false, context = Nil)
-              .map(a => PreparedStep.Lift[F, I, O](nid, _ => a))
+            G.force(ap.decodeArg(alg.arg, fields, ambigiousEnum = false, context = Nil))
+              .flatMap {
+                case done: Alg.Staged.Done[C, a] =>
+                  G.resume(done).map(value => PreparedStep.SubstVars[F, I, O, C](nid, alg.arg, G.pure(value)))
+                case deferred: Alg.Staged.Deferred[C, a] =>
+                  G.pure(PreparedStep.SubstVars[F, I, O, C](nid, alg.arg, G.resume(deferred)))
+              }
           }
         }
     }

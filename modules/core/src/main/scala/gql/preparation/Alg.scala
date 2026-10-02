@@ -20,7 +20,7 @@ import cats.implicits._
 import cats._
 import cats.arrow.FunctionK
 import cats.data._
-import org.typelevel.scalaccompat.annotation._
+import scala.collection.immutable.HashSet
 
 sealed trait Alg[+C, +A] {
   def runToCompletion[C2 >: C](vm: VariableMap[C2]): EitherNec[PositionalError[C2], A] =
@@ -30,6 +30,9 @@ object Alg {
   trait UniqueId
 
   case object NextId extends Alg[Nothing, UniqueId]
+
+  final case class UseVariable(name: String) extends Alg[Nothing, Unit]
+  final case class UsedVariables() extends Alg[Nothing, Set[String]]
 
   case object CycleAsk extends Alg[Nothing, Set[String]]
   final case class CycleOver[C, A](name: String, fa: Alg[C, A]) extends Alg[C, A]
@@ -41,8 +44,8 @@ object Alg {
 
   final case class GetVars[C, A]() extends Alg[C, VariableMap[C]]
 
-  final case class Resume[C, A](fa: PartialEvalRes[C, A]) extends Alg[C, A]
-  final case class Force[C, A](fa: Alg[C, A]) extends Alg[C, PartialEvalRes[C, A]]
+  final case class Resume[C, A](fa: Staged[C, A]) extends Alg[C, A]
+  final case class Force[C, A](fa: Alg[C, A]) extends Alg[C, Staged[C, A]]
 
   final case class Pure[A](a: A) extends Alg[Nothing, A]
   final case class FlatMap[C, A, B](
@@ -101,17 +104,31 @@ object Alg {
       override def monad: Monad[Alg[C, *]] = monadErrorForPreparationAlg[C]
     }
 
-  sealed trait PartialEvalRes[C, +B]
+  sealed trait Staged[C, +A] {
+    private[Alg] def complete(vm: VariableMap[C], used: Set[String]): Eval[Staged.Done[C, A]] =
+      this match {
+        case done: Staged.Done[C, A] =>
+          Eval.now(
+            if (used.isEmpty) done
+            else if (done.usedVariables.isEmpty) done.copy(usedVariables = used)
+            else done.copy(usedVariables = used ++ done.usedVariables)
+          )
+        case Staged.Deferred(cont) => Eval.defer(cont(vm, used))
+      }
 
-  sealed trait EvalResult[C, +B] extends PartialEvalRes[C, B]
+    def runToCompletion(vm: VariableMap[C]): EitherNec[PositionalError[C], A] =
+      complete(vm, Set.empty).value.result
+  }
 
-  object PartialEvalRes {
-    final case class Result[C, +B](value: B) extends EvalResult[C, B]
-    final case class Errors[C, +B](pes: NonEmptyChain[PositionalError[C]]) extends EvalResult[C, B]
+  object Staged {
+    final case class Done[C, +A](
+        result: EitherNec[PositionalError[C], A],
+        usedVariables: Set[String] = Set.empty
+    ) extends Staged[C, A]
 
-    final case class NeedVars[C, +B](
-        cont: VariableMap[C] => Eval[EvalResult[C, B]]
-    ) extends PartialEvalRes[C, B]
+    final case class Deferred[C, +A](
+        cont: (VariableMap[C], Set[String]) => Eval[Done[C, A]]
+    ) extends Staged[C, A]
   }
 
   final case class LocalState(
@@ -119,197 +136,89 @@ object Alg {
       cursor: Cursor
   )
 
-  def eval[C, A](alg0: Alg[C, A]): Outcome0[C, A] = {
-    val P = PartialEvalRes
+  def eval[C, A](alg0: Alg[C, A]): Staged[C, A] = {
+    import Staged._
 
     val loc0 = LocalState(Set.empty, Cursor.empty)
+
+    def prepend[B](staged: Staged[C, B], used: Set[String]): Staged[C, B] =
+      if (used.isEmpty) staged
+      else
+        staged match {
+          case Done(result, variables) => Done(result, used ++ variables)
+          case _: Deferred[C, B]       => Deferred((v, incoming) => staged.complete(v, if (incoming.isEmpty) used else incoming ++ used))
+        }
+
+    def bind[B, D](staged: Staged[C, B], f: B => Eval[Staged[C, D]]): Eval[Staged[C, D]] = Eval.defer {
+      staged match {
+        case Done(Left(pes), _)       => Eval.now(Done(Left(pes)))
+        case Done(Right(value), used) => f(value).map(prepend(_, used))
+        case Deferred(cont) =>
+          Eval.now(Deferred((v, used) => Eval.defer(cont(v, used)).flatMap(bind(_, f)).flatMap(_.complete(v, Set.empty))))
+      }
+    }
+
+    def combine[B, D](left: Staged[C, B], right: Staged[C, B => D]): Staged[C, D] = {
+      def completed(l: Done[C, B], r: Done[C, B => D], used: Set[String]): Done[C, D] =
+        Done((l.result.toValidated, r.result.toValidated).mapN((b, f) => f(b)).toEither, used)
+
+      (left, right) match {
+        case (l: Done[C, B], r: Done[C, B => D]) =>
+          completed(l, r, if (l.usedVariables.isEmpty) r.usedVariables else l.usedVariables ++ r.usedVariables)
+        case _ =>
+          Deferred((v, used) =>
+            left.complete(v, used).flatMap { l =>
+              right.complete(v, l.result.fold(_ => used, _ => l.usedVariables)).map(r => completed(l, r, r.usedVariables))
+            }
+          )
+      }
+    }
+
+    def attempt[B](staged: Staged[C, B]): Staged[C, EitherNec[PositionalError[C], B]] = staged match {
+      case Done(result, used) => Done(Right(result), result.fold(_ => Set.empty, _ => used))
+      case Deferred(cont) =>
+        Deferred((v, used) =>
+          Eval.defer(cont(v, used)).map(done => Done(Right(done.result), done.result.fold(_ => used, _ => done.usedVariables)))
+        )
+    }
 
     def rec[B](
         fa: Alg[C, B],
         loc: LocalState
-    ): Eval[PartialEvalRes[C, B]] = Eval.defer {
+    ): Eval[Staged[C, B]] = Eval.defer[Staged[C, B]] {
       fa match {
-        case NextId  => Eval.now(P.Result(new UniqueId {}))
-        case Pure(a) => Eval.now(P.Result(a))
-        case bind: FlatMap[C, a, B] =>
-          rec[a](bind.fa, loc).flatMap {
-            case P.Errors(pes) => Eval.now(P.Errors(pes))
-            case P.Result(a)   => rec[B](bind.f(a), loc)
-            // fuse the need vars
-            case P.NeedVars(cont) =>
-              Eval.now {
-                P.NeedVars[C, B] { v =>
-                  cont(v).flatMap {
-                    case P.Errors(pes) => Eval.now(P.Errors(pes))
-                    case P.Result(a) =>
-                      rec[B](bind.f(a), loc).flatMap {
-                        case P.Errors(pes) => Eval.now(P.Errors(pes))
-                        case P.Result(b)   => Eval.now(P.Result(b))
-                        // fusion
-                        case nv: P.NeedVars[C, B] => nv.cont(v)
-                      }
-                  }
-                }
-              }
-          }
+        case NextId            => Eval.now(Done(Right(new UniqueId {})))
+        case Pure(a)           => Eval.now(Done(Right(a)))
+        case UseVariable(name) => Eval.now(Done(Right(()), HashSet(name)))
+        case UsedVariables()   => Eval.now(Deferred((_, used) => Eval.now(Done(Right(used), used))))
+        case fm: FlatMap[C, a, B] =>
+          rec[a](fm.fa, loc).flatMap(staged => bind(staged, (value: a) => rec[B](fm.f(value), loc)))
         case parAp: ParAp[C, a, B] =>
-          def combineER(
-              l: EvalResult[C, a],
-              r: EvalResult[C, a => B]
-          ): EvalResult[C, B] =
-            (l, r) match {
-              case (P.Errors(pes1), P.Errors(pes2)) => P.Errors(pes1 ++ pes2)
-              case (P.Errors(pes1), P.Result(_))    => P.Errors(pes1)
-              case (P.Result(_), P.Errors(pes2))    => P.Errors(pes2)
-
-              case (P.Result(a), P.Result(f)) => P.Result(f(a))
-            }
-
-          def combine(
-              l: PartialEvalRes[C, a],
-              r: PartialEvalRes[C, a => B]
-          ): PartialEvalRes[C, B] =
-            (l, r) match {
-              case (l: EvalResult[C, a], r: EvalResult[C, a => B]) => combineER(l, r)
-
-              case (P.NeedVars(contL), P.NeedVars(contR)) =>
-                P.NeedVars[C, B](v => (contL(v), contR(v)).mapN(combineER))
-              case (P.NeedVars(contL), r: EvalResult[C, a => B]) =>
-                P.NeedVars[C, B](contL.andThen(_.map(l2 => combineER(l2, r))))
-              case (l: EvalResult[C, a], P.NeedVars(contR)) =>
-                P.NeedVars[C, B](contR.andThen(_.map(r2 => combineER(l, r2))))
-            }
-
-          (rec(parAp.fa, loc), rec(parAp.fab, loc)).mapN(combine)
-        case CycleAsk               => Eval.now(P.Result(loc.cycleSet))
+          (rec(parAp.fa, loc), rec(parAp.fab, loc)).mapN(combine[a, B])
+        case CycleAsk               => Eval.now(Done(Right(loc.cycleSet)))
         case CycleOver(name, fa)    => rec(fa, loc.copy(cycleSet = loc.cycleSet + name))
-        case CursorAsk              => Eval.now(P.Result(loc.cursor))
+        case CursorAsk              => Eval.now(Done(Right(loc.cursor)))
         case CursorOver(cursor, fa) => rec(fa, loc.copy(cursor = cursor))
-        case re: RaiseError[C]      => Eval.now(P.Errors(re.pe))
-        case alg: Attempt[C, a] =>
-          rec(alg.fa, loc).map { res =>
-            def from(er: EvalResult[C, a]): EvalResult[C, B] = er match {
-              case P.Errors(pes) => P.Result(Left(pes))
-              case P.Result(a)   => P.Result(Right(a))
-            }
-            res match {
-              case er: EvalResult[C, a] => from(er)
-              case P.NeedVars(cont)     => P.NeedVars(v => cont(v).map(from))
-            }
-          }
-        case GetVars()            => Eval.now(P.NeedVars[C, B](v => Eval.now(P.Result(v))))
-        case resume: Resume[C, B] => Eval.now(resume.fa)
-        case force: Force[C, a]   => rec(force.fa, loc).map(x => P.Result(x))
+        case re: RaiseError[C]      => Eval.now(Done(Left(re.pe)))
+        case alg: Attempt[C, a]     => rec(alg.fa, loc).map(attempt)
+        case _: GetVars[C, a]       => Eval.now(Deferred[C, B]((v, used) => Eval.now(Done(Right(v), used))))
+        case resume: Resume[C, B]   => Eval.now(resume.fa)
+        case force: Force[C, a]     => rec(force.fa, loc).map(x => Done(Right(x)))
       }
     }
 
-    val res = rec[A](alg0, loc0).value
-
-    val O = Outcome0
-    def fromEr(er: EvalResult[C, A]): O.Now[C, A] = er match {
-      case P.Errors(pes) => O.Now(Left(pes))
-      case P.Result(a)   => O.Now(Right(a))
-    }
-
-    res match {
-      case er: EvalResult[C, A] => fromEr(er)
-      case P.NeedVars(cont)     => O.NonCacheable[C, A](cont(_).map(fromEr).value)
-    }
+    rec[A](alg0, loc0).value
   }
 
-  def runToCompletion[C, A](alg: Alg[C, A], vm: VariableMap[C]): EitherNec[PositionalError[C], A] = {
-    eval(alg) match {
-      case Outcome0.Now(result)       => result
-      case Outcome0.NonCacheable(run) => run(vm).result
-    }
-  }
-
-  sealed trait Outcome0[C, A]
-  object Outcome0 {
-    final case class Now[C, A](
-        result: EitherNec[PositionalError[C], A]
-    ) extends Outcome0[C, A]
-    final case class NonCacheable[C, A](
-        run: VariableMap[C] => Now[C, A]
-    ) extends Outcome0[C, A]
-  }
-
-  def run[C, A](fa: Alg[C, A]): EitherNec[PositionalError[C], A] = {
-    final case class State(
-        nextId: Int,
-        usedVariables: Set[String],
-        cycleSet: Set[String],
-        cursor: Cursor
-    )
-    sealed trait Outcome[+B] {
-      def modifyState(f: State => State): Outcome[B]
-    }
-    object Outcome {
-      final case class Result[B](value: B, state: State) extends Outcome[B] {
-        def modifyState(f: State => State): Outcome[B] = Result(value, f(state))
-      }
-      final case class Errors(pe: NonEmptyChain[PositionalError[C]]) extends Outcome[Nothing] {
-        def modifyState(f: State => State): Outcome[Nothing] = this
-      }
-    }
-
-    @nowarn3("msg=.*cannot be checked at runtime because its type arguments can't be determined.*")
-    def go[B](
-        fa: Alg[C, B],
-        state: State
-    ): Eval[Outcome[B]] = Eval.defer {
-      fa match {
-        case NextId =>
-          ???
-          // val s = state.copy(nextId = state.nextId + 1)
-          // Eval.now(Outcome.Result(s.nextId, s))
-        case Pure(a) => Eval.now(Outcome.Result(a, state))
-        case bind: FlatMap[C, a, B] =>
-          go[a](bind.fa, state).flatMap {
-            case Outcome.Errors(pes)      => Eval.now(Outcome.Errors(pes))
-            case Outcome.Result(a, state) => go(bind.f(a), state)
-          }
-        case parAp: ParAp[C, a, B] =>
-          go(parAp.fa, state).flatMap {
-            case Outcome.Errors(pes1) =>
-              go(parAp.fab, state).flatMap {
-                case Outcome.Errors(pes2) => Eval.now(Outcome.Errors(pes1 ++ pes2))
-                case Outcome.Result(_, _) => Eval.now(Outcome.Errors(pes1))
-              }
-            case Outcome.Result(a, state) =>
-              go(parAp.fab, state).flatMap {
-                case Outcome.Errors(pes2)     => Eval.now(Outcome.Errors(pes2))
-                case Outcome.Result(f, state) => Eval.now(Outcome.Result(f(a), state))
-              }
-          }
-        case CycleAsk =>
-          Eval.now(Outcome.Result(state.cycleSet, state))
-        case CycleOver(name, fa) =>
-          go(fa, state.copy(cycleSet = state.cycleSet + name))
-            .map(_.modifyState(s => s.copy(cycleSet = s.cycleSet - name)))
-        case CursorAsk =>
-          Eval.now(Outcome.Result(state.cursor, state))
-        case CursorOver(cursor, fa) =>
-          go(fa, state.copy(cursor = cursor))
-            .map(_.modifyState(s => s.copy(cursor = state.cursor)))
-        case re: RaiseError[C] =>
-          Eval.now(Outcome.Errors(re.pe))
-        case alg: Attempt[C, a] =>
-          go(alg.fa, state).flatMap {
-            case Outcome.Errors(pes)      => Eval.now(Outcome.Result(Left(pes), state))
-            case Outcome.Result(a, state) => Eval.now(Outcome.Result(Right(a), state))
-          }
-      }
-    }
-
-    go(fa, State(0, Set.empty, Set.empty, Cursor.empty)).value match {
-      case Outcome.Errors(pes)  => Left(pes)
-      case Outcome.Result(a, _) => Right(a)
-    }
-  }
+  def runToCompletion[C, A](alg: Alg[C, A], vm: VariableMap[C]): EitherNec[PositionalError[C], A] =
+    eval(alg).runToCompletion(vm)
 
   trait Ops[C] {
     def nextId: Alg[C, UniqueId] = Alg.NextId
+
+    def useVariable(name: String): Alg[C, Unit] = Alg.UseVariable(name)
+
+    def usedVariables: Alg[C, Set[String]] = Alg.UsedVariables()
 
     def cycleAsk: Alg[C, Set[String]] = Alg.CycleAsk
 
@@ -375,10 +284,10 @@ object Alg {
     def getVariables: Alg[C, VariableMap[C]] =
       Alg.GetVars()
 
-    def resume[A](fa: PartialEvalRes[C, A]): Alg[C, A] =
+    def resume[A](fa: Staged[C, A]): Alg[C, A] =
       Alg.Resume(fa)
 
-    def force[A](fa: Alg[C, A]): Alg[C, PartialEvalRes[C, A]] =
+    def force[A](fa: Alg[C, A]): Alg[C, Staged[C, A]] =
       Alg.Force(fa)
 
     def pause[A](fa: Alg[C, A]): Alg[C, Alg[C, A]] =

@@ -115,7 +115,7 @@ object DebugPrinter {
           record("Compose", kvs("left" -> preparedStepDoced.document(left), "right" -> preparedStepDoced.document(right)))
         case EvalMeta(_, meta) =>
           record("EvalMeta", kvs("meta" -> Doc.text(meta.toString())))
-        case SubstVars(_, _) =>
+        case SubstVars(_, _, _) =>
           Doc.text("SubstVars(...)")
         case PrecompileMeta(_, meta) =>
           record("PrecompileMeta", kvs("meta" -> Doc.text(meta.toString())))

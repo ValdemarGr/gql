@@ -104,7 +104,7 @@ class RootPreparation[F[_], C] {
       variableMap: Map[String, Json],
       schema: SchemaShape[F, ?, ?, ?]
   ): Alg[C, VariableMap[C]] = {
-    val ap = new ArgParsing[C](???)
+    val ap = new ArgParsing[C](Map.empty)
     /*
      * Convert the variable signature into a gql arg and parse both the default value and the provided value
      * Then save the provided getOrElse default into a map along with the type
@@ -165,64 +165,123 @@ class RootPreparation[F[_], C] {
       case QA.ExecutableDefinition.Fragment(frag, _) => Right(frag)
     }
 
-    pickRootOperation(ops, operationName).flatMap { od =>
-      val (ot, ss) = od match {
-        case QA.OperationDefinition.Simple(ss)                => (QA.OperationType.Query, ss)
-        case QA.OperationDefinition.Detailed(ot, _, _, _, ss) => (ot, ss)
+    pickRootOperation(ops, operationName).flatMap(prepareOperation(_, frags, schema)).flatMap { case (root, validation) =>
+      validation.as(root)
+    }
+  }
+
+  private def prepareOperation[Q, M, S](
+      od: QA.OperationDefinition[C],
+      frags: List[QA.FragmentDefinition[C]],
+      schema: SchemaShape[F, Q, M, S]
+  ): G[(RootPrep[F, Q, M, S, C], G[Unit])] = {
+    val (ot, ss) = od match {
+      case QA.OperationDefinition.Simple(ss)                => (QA.OperationType.Query, ss)
+      case QA.OperationDefinition.Detailed(ot, _, _, _, ss) => (ot, ss)
+    }
+    variableTypes(od, schema).flatMap { tm =>
+      def runWith[A](o: gql.ast.Type[F, A]): G[(Selection[F, A, Stage.Compilation[C]], G[Unit])] = {
+        val ap = new ArgParsing[C](tm.fmap { case (t, _) => t })
+        val da = new DirectiveAlg[F, C](schema.discover.positions, ap)
+
+        val fragMap = frags.map(x => x.name -> x).toMap
+        val fc = new FieldCollection[F, C](
+          schema.discover.implementations,
+          fragMap,
+          ap,
+          da
+        )
+        val fm = new FieldMerging[C]
+        val qp = new QueryPreparation[F, C](ap, da, schema.discover.implementations)
+
+        // implicit val AP: ArgParsing[F, C] = ArgParsing[F, C](vm)
+        // implicit val DA: DirectiveAlg[F, G, C] = DirectiveAlg.forPositions[F, G, C](schema.discover.positions)
+        // val FC: FieldCollection[F, G, C] = FieldCollection[F, G, C](
+        //   schema.discover.implementations,
+        //   fragMap
+        // )
+        // val FM = FieldMerging[F, C]
+        // val QP = QueryPreparation[F, G, C](vm, schema.discover.implementations)
+        val prog = fc.collectSelectionInfo(o, ss).flatMap {
+          case x :: xs =>
+            val r = NonEmptyList(x, xs)
+            fm.checkSelectionsMerge(r) >> qp.prepareSelectable(o, r).map(_ -> fc.validateSelections(r.toList))
+          case _ => G.nextId.map(NodeId(_)).map(nid => Selection(nid, Nil, o) -> G.unit)
+        }
+        prog
       }
-      variableTypes(od, schema).flatMap { tm =>
-        def runWith[A](o: gql.ast.Type[F, A]): G[Selection[F, A, Stage.Compilation[C]]] = {
-          val ap = new ArgParsing[C](tm.fmap { case (t, _) => t })
-          val da = new DirectiveAlg[F, C](schema.discover.positions, ap)
 
-          val fragMap = frags.map(x => x.name -> x).toMap
-          val fc = new FieldCollection[F, C](
-            schema.discover.implementations,
-            fragMap,
-            ap,
-            da
-          )
-          val fm = new FieldMerging[C]
-          val qp = new QueryPreparation[F, C](ap, da, schema.discover.implementations)
-
-          // implicit val AP: ArgParsing[F, C] = ArgParsing[F, C](vm)
-          // implicit val DA: DirectiveAlg[F, G, C] = DirectiveAlg.forPositions[F, G, C](schema.discover.positions)
-          // val FC: FieldCollection[F, G, C] = FieldCollection[F, G, C](
-          //   schema.discover.implementations,
-          //   fragMap
-          // )
-          // val FM = FieldMerging[F, C]
-          // val QP = QueryPreparation[F, G, C](vm, schema.discover.implementations)
-          val prog: G[Selection[F, A, Stage.Compilation[C]]] = fc.collectSelectionInfo(o, ss).flatMap {
-            case x :: xs =>
-              val r = NonEmptyList(x, xs)
-              fm.checkSelectionsMerge(r) >> qp.prepareSelectable(o, r)
-            case _ => G.nextId.map(NodeId(_)).map(Selection(_, Nil, o))
-          }
-          prog
-        }
-
-        ot match {
-          case QA.OperationType.Query =>
-            val i: NonEmptyList[(String, gql.ast.Field[F, Unit, ?])] = schema.introspection
-            val q = schema.query
-            val full = q.copy(fields = i.map { case (k, v) => k -> v.contramap[F, Q](_ => ()) } concatNel q.fields)
-            runWith[Q](full).map(RootPrep.Query(_))
-          case QA.OperationType.Mutation =>
-            G.raiseOpt(schema.mutation, "No `Mutation` type defined in this schema.", Nil)
-              .flatMap(runWith[M])
-              .map(RootPrep.Mutation(_))
-          case QA.OperationType.Subscription =>
-            G.raiseOpt(schema.subscription, "No `Subscription` type defined in this schema.", Nil)
-              .flatMap(runWith[S])
-              .map(RootPrep.Subscription(_))
-        }
+      ot match {
+        case QA.OperationType.Query =>
+          val i: NonEmptyList[(String, gql.ast.Field[F, Unit, ?])] = schema.introspection
+          val q = schema.query
+          val full = q.copy(fields = i.map { case (k, v) => k -> v.contramap[F, Q](_ => ()) } concatNel q.fields)
+          runWith[Q](full).map { case (selection, validation) => RootPrep.Query[F, Q, M, S, C](selection) -> validation }
+        case QA.OperationType.Mutation =>
+          G.raiseOpt(schema.mutation, "No `Mutation` type defined in this schema.", Nil)
+            .flatMap(runWith[M])
+            .map { case (selection, validation) => RootPrep.Mutation[F, Q, M, S, C](selection) -> validation }
+        case QA.OperationType.Subscription =>
+          G.raiseOpt(schema.subscription, "No `Subscription` type defined in this schema.", Nil)
+            .flatMap(runWith[S])
+            .map { case (selection, validation) => RootPrep.Subscription[F, Q, M, S, C](selection) -> validation }
       }
     }
   }
 }
 
 object RootPreparation {
+  def prepareCacheable[F[_], C, Q, M, S](
+      executabels: NonEmptyList[QA.ExecutableDefinition[C]],
+      schema: SchemaShape[F, Q, M, S],
+      operationName: Option[String]
+  ): EitherNec[PositionalError[C], Map[String, Json] => EitherNec[PositionalError[C], PreparedRoot[F, Q, M, S]]] = {
+    val rp = new RootPreparation[F, C]
+    val G = rp.G
+    val (operations, fragments) = executabels.toList.partitionEither {
+      case QA.ExecutableDefinition.Operation(op, c)  => Left((op, c))
+      case QA.ExecutableDefinition.Fragment(frag, _) => Right(frag)
+    }
+    rp.pickRootOperation(operations, operationName).runToCompletion(Map.empty).flatMap { operation =>
+      val declared = operation match {
+        case QA.OperationDefinition.Simple(_) => Set.empty[String]
+        case QA.OperationDefinition.Detailed(_, _, definitions, _, _) =>
+          definitions.toList.flatMap(_.nel.toList).map(_.name).toSet
+      }
+      val program = rp
+        .prepareOperation(operation, fragments, schema)
+        .flatMap {
+          case (RootPrep.Query(selection), validation) =>
+            G.pause(SubstitueVariables.substSel(selection))
+              .flatMap(validation *> _)
+              .map(s => PreparedRoot.Query[F, Q, M, S](s): PreparedRoot[F, Q, M, S])
+          case (RootPrep.Mutation(selection), validation) =>
+            G.pause(SubstitueVariables.substSel(selection))
+              .flatMap(validation *> _)
+              .map(s => PreparedRoot.Mutation[F, Q, M, S](s): PreparedRoot[F, Q, M, S])
+          case (RootPrep.Subscription(selection), validation) =>
+            G.pause(SubstitueVariables.substSel(selection))
+              .flatMap(validation *> _)
+              .map(s => PreparedRoot.Subscription[F, Q, M, S](s): PreparedRoot[F, Q, M, S])
+        }
+        .flatMap { prepared =>
+          G.usedVariables.flatMap { used =>
+            val unused = declared -- used
+            if (unused.nonEmpty) G.raise(s"Unused variables: ${unused.map(str => s"'$str'").mkString(", ")}", Nil)
+            else G.pure(prepared)
+          }
+        }
+      val staged = Alg.eval(program)
+      val initial: EitherNec[PositionalError[C], Unit] = staged match {
+        case done: Alg.Staged.Done[C, PreparedRoot[F, Q, M, S]] => done.result.void
+        case _                                                  => Right(())
+      }
+      initial.as { (variables: Map[String, Json]) =>
+        rp.variables(operation, variables, schema).runToCompletion(Map.empty).flatMap(staged.runToCompletion)
+      }
+    }
+  }
+
   def prepare[F[_], C, Q, M, S](
       executabels: NonEmptyList[QA.ExecutableDefinition[C]],
       schema: SchemaShape[F, Q, M, S],
@@ -242,7 +301,8 @@ object RootPreparation {
       pq(construct)(sel)
 
     Alg.eval(fa) match {
-      case Alg.Outcome0.Now(value) =>
+      case done: Alg.Staged.Done[C, RootPrep[F, Q, M, S, C]] =>
+        val value = done.result
         value.map { rp =>
           val out = rp match {
             case RP.Query(q)        => cacheable[Q](RUQ.Query(_))(q)
@@ -251,12 +311,11 @@ object RootPreparation {
           }
           RootQuery.Cacheable[F, Q, M, S, C](rp, out)
         }
-      case Alg.Outcome0.NonCacheable(f) =>
+      case staged: Alg.Staged.Deferred[C, RootPrep[F, Q, M, S, C]] =>
         Right {
           RootQuery.RequiresVariables[F, Q, M, S, C] {
             PreparedQuery[F, Q, M, S, C] { vm =>
-              val n = f(vm)
-              n.result.flatMap {
+              staged.runToCompletion(vm).flatMap {
                 case RP.Query(q)        => pq[Q](RUQ.Query(_))(q).run(vm)
                 case RP.Mutation(m)     => pq[M](RUQ.Mutation(_))(m).run(vm)
                 case RP.Subscription(s) => pq[S](RUQ.Subscription(_))(s).run(vm)
@@ -273,9 +332,7 @@ object RootPreparation {
       variableMap: Map[String, Json],
       operationName: Option[String]
   ): EitherNec[PositionalError[C], PreparedRoot[F, Q, M, S]] = {
-    val rp = new RootPreparation[F, C]
-    ???
-    // rp.prepareRoot(executabels, schema, operationName).run
+    prepareCacheable(executabels, schema, operationName).flatMap(_(variableMap))
   }
 }
 

@@ -187,10 +187,24 @@ class FieldCollection[F[_], C](
         else G.raise(s"Field `${f.name}` of scalar type `${tl.name}` must not have a selection set.", List(c))
     }
 
-    verifyArgsF &> i.flatMap { fi =>
-      G.cursorAsk.map(c => FieldInfo[F, C](f.name, f.alias, f.arguments, ims.copy(inner = fi), f.directives, caret, c))
+    val validationF = G.force(verifyArgsF).flatMap {
+      case done: Alg.Staged.Done[C, Unit]         => G.resume(done).as(G.unit)
+      case deferred: Alg.Staged.Deferred[C, Unit] => G.pure(G.resume(deferred))
+    }
+
+    (validationF, i).parTupled.flatMap { case (validation, fi) =>
+      G.cursorAsk.map(c => FieldInfo[F, C](f.name, f.alias, f.arguments, ims.copy(inner = fi), f.directives, caret, c, validation))
     }
   }
+
+  def validateSelections(selections: List[SelectionInfo[F, C]]): Alg[C, Unit] =
+    selections.parTraverse_(_.fields.parTraverse_ { field =>
+      val nested = field.tpe.inner match {
+        case selectable: TypeInfo.Selectable[F, C] => G.defer(validateSelections(selectable.selection))
+        case _                                     => G.unit
+      }
+      field.validation &> nested
+    })
 }
 
 sealed trait TypeInfo[+G[_], +C] {
@@ -215,7 +229,8 @@ final case class FieldInfo[G[_], C](
     tpe: InverseModifierStack[TypeInfo[G, C]],
     directives: Option[QA.Directives[C, AnyValue]],
     caret: C,
-    path: Cursor
+    path: Cursor,
+    validation: Alg[C, Unit]
 ) {
   lazy val outputName: String = alias.getOrElse(name)
 }

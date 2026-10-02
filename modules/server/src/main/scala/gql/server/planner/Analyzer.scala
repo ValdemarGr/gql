@@ -90,7 +90,7 @@ object Analyzer {
 
         import PreparedStep._
         step match {
-          case Lift(_, _) | EmbedError(_) | PrecompileMeta(_, _) | EvalMeta(_, _) | SubstVars(_, _) =>
+          case Lift(_, _) | EmbedError(_) | PrecompileMeta(_, _) | EvalMeta(_, _) | SubstVars(_, _, _) =>
             F.unit
           case Compose(_, l, r)              => analyzeStep[G](l) *> analyzeStep[G](r)
           case alg: Choose[G, ?, ?, ?, ?, ?] => goParallel(alg.fac, alg.fbd)

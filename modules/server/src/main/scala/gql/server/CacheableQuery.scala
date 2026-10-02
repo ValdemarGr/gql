@@ -13,25 +13,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package gql.resolver
+package gql
 
-import gql.parser.{QueryAst => P, AnyValue}
-import gql.preparation._
-import gql._
+import gql.preparation.PreparedRoot
+import io.circe.Json
 
-/** Meta information about the current query.
-  */
-final case class QueryMeta(
-    cursor: Cursor,
-    variables: VariableMap[Unit]
+final class CacheableQuery[F[_], Q, M, S] private (
+    private[gql] val query: String,
+    private[gql] val operationName: Option[String],
+    val run: Map[String, Json] => Either[CompilationError, PreparedRoot[F, Q, M, S]]
 )
 
-/** A more specialized version of [[QueryMeta]] that also carries field specific information.
-  */
-final case class FieldMeta[+F[_]](
-    queryMeta: QueryMeta,
-    args: Option[P.Arguments[Unit, AnyValue]],
-    astNode: PreparedDataField[F, ?, ?, Stage.Execution]
-) {
-  def alias: Option[String] = astNode.alias
+object CacheableQuery {
+  private[gql] def apply[F[_], Q, M, S](
+      query: String,
+      operationName: Option[String],
+      run: Map[String, Json] => Either[CompilationError, PreparedRoot[F, Q, M, S]]
+  ): CacheableQuery[F, Q, M, S] = new CacheableQuery(query, operationName, run)
 }

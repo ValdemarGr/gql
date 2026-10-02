@@ -97,6 +97,7 @@ object PreparedStep {
   ) extends PreparedStep[F, Either[A, B], Either[C, D], S]
   final case class SubstVars[F[_], I, A, C](
       nodeId: NodeId,
+      arg: Arg[A],
       sub: Alg[C, A]
   ) extends PreparedStep[F, I, A, Stage.Compilation[C]]
 
@@ -110,7 +111,7 @@ object PreparedStep {
   // second pass has substituted variables
   final case class EvalMeta[F[_], I](
       nodeId: NodeId,
-      meta: Eval[PreparedMeta[F, Stage]]
+      meta: Eval[PreparedMeta[F, Stage.Execution]]
   ) extends AnyRef
       with PreparedStep[Nothing, I, FieldMeta[F], Stage.Execution]
 }
@@ -160,12 +161,14 @@ final case class PreparedDataField[+F[_], A, B, +S <: Stage](
     cont: PreparedCont[F, A, B, S],
     source: ast.Field[F, A, B],
     parsedArgs: ParsedArgs[S]
-    // parsedArgs: Map[Arg[?], Any]
 ) extends PreparedField[F, A, S] {
   lazy val outputName = alias.getOrElse(name)
 
-  // def arg[C](a: Arg[C]): Option[C] =
-  //   parsedArgs.get(a).asInstanceOf[Option[C]]
+  def arg[C](a: Arg[C]): Option[C] =
+    (parsedArgs: ParsedArgs[Stage]) match {
+      case ParsedArgs.Execution(args)   => args.get(a).asInstanceOf[Option[C]]
+      case _: ParsedArgs.Compilation[?] => None
+    }
 }
 
 sealed trait Specialization[F[_], A, B, +S <: Stage] {
