@@ -176,6 +176,130 @@ class AlgTest extends FunSuite {
     assertEquals(bind(secondVars), Left(NonEmptyChain.one(staticError)))
   }
 
+  test("written errors do not stop static token allocation") {
+    var continued = false
+    val errors = NonEmptyChain.of(staticError, dynamicError)
+    val program = ops.writeErrors(errors) *> ops.nextId.map { token =>
+      continued = true
+      token
+    }
+
+    assertEquals(program.run, Left(errors))
+    assert(continued)
+  }
+
+  test("written errors precede hard failures") {
+    val program = ops.writeError(staticError) *> ops.raiseError(dynamicError)
+    assertEquals(program.run, Left(NonEmptyChain.of(staticError, dynamicError)))
+  }
+
+  test("cached written prefixes and request errors remain isolated across bindings") {
+    val program = ops.writeError(staticError) *> ops.getVariables.flatMap { variables =>
+      ops.writeErr(variables("value").value.fold(_.noSpaces, _ => "default"), List(()))
+    }
+    val bind = program.run.fold(errors => fail(errors.toString), identity)
+    val firstError = PositionalError(Cursor.empty, List(()), "1")
+    val secondError = PositionalError(Cursor.empty, List(()), "2")
+
+    assertEquals(bind(firstVars), Left(NonEmptyChain.of(staticError, firstError)))
+    assertEquals(bind(secondVars), Left(NonEmptyChain.of(staticError, secondError)))
+    assertEquals(bind(firstVars), Left(NonEmptyChain.of(staticError, firstError)))
+  }
+
+  test("written errors retain suspended cursor and cycle scope then restore outer context") {
+    val cursor = Cursor.empty.field("scope").index(3)
+    val inner = ops.cycleOver(
+      "scope",
+      ops.cursorOver(
+        cursor,
+        for {
+          _ <- ops.writeErr("inside static", List(()))
+          _ <- ops.getVariables
+          cycles <- ops.cycleAsk
+          _ <- ops.writeErr("inside dynamic", List(()))
+        } yield {
+          assertEquals(cycles, Set("scope"))
+        }
+      )
+    )
+    val program = for {
+      _ <- ops.writeError(staticError)
+      _ <- inner
+      cycles <- ops.cycleAsk
+      _ <- ops.writeErr("outside", List(()))
+    } yield {
+      assertEquals(cycles, Set.empty[String])
+    }
+    val bind = program.run.fold(errors => fail(errors.toString), identity)
+    val expected = NonEmptyChain.of(
+      staticError,
+      PositionalError(cursor, List(()), "inside static"),
+      PositionalError(cursor, List(()), "inside dynamic"),
+      PositionalError(Cursor.empty, List(()), "outside")
+    )
+
+    assertEquals(bind(firstVars), Left(expected))
+    assertEquals(bind(secondVars), Left(expected))
+  }
+
+  test("attempt retains successful written errors and rolls failed local writes back") {
+    val kept = PositionalError(Cursor.empty, List(()), "kept")
+    val discarded = PositionalError(Cursor.empty, List(()), "discarded")
+    val successful = ops.writeError(kept) *> ops.getVariables
+    val staticFailure = ops.writeError(discarded) *> ops.raiseError(staticError)
+    val dynamicFailure = ops.writeError(discarded) *> ops.getVariables *> ops.writeError(discarded) *> ops.raiseError(dynamicError)
+    val program = for {
+      _ <- ops.writeError(staticError)
+      success <- ops.attempt(successful)
+      caughtStatic <- ops.attempt(staticFailure)
+      caughtDynamic <- ops.attempt(dynamicFailure)
+    } yield {
+      assert(success.isRight)
+      assertEquals(caughtStatic, Left(NonEmptyChain.one(staticError)))
+      assertEquals(caughtDynamic, Left(NonEmptyChain.one(dynamicError)))
+    }
+    val bind = program.run.fold(errors => fail(errors.toString), identity)
+
+    assertEquals(bind(firstVars), Left(NonEmptyChain.of(staticError, kept)))
+    assertEquals(bind(secondVars), Left(NonEmptyChain.of(staticError, kept)))
+  }
+
+  List("success", "failure", "pending").foreach { leftMode =>
+    List("success", "failure", "pending").foreach { rightMode =>
+      test(s"parallel written errors occur once for $leftMode left and $rightMode right") {
+        val prefix = PositionalError(Cursor.empty, List(()), "prefix")
+        val leftError = PositionalError(Cursor.empty.field("left"), List(()), "left written")
+        val rightError = PositionalError(Cursor.empty.field("right"), List(()), "right written")
+        val left: Alg[Unit, Int] = leftMode match {
+          case "success" => ops.writeError(leftError).as(2)
+          case "failure" => ops.writeError(leftError) *> ops.raiseError(staticError)
+          case _ =>
+            ops.writeError(leftError) *> ops.getVariables.flatMap { variables =>
+              if (variables.isEmpty) ops.raiseError(staticError) else ops.pure(2)
+            }
+        }
+        val right: Alg[Unit, Int => Int] = rightMode match {
+          case "success" => ops.writeError(rightError).as((value: Int) => value + 1)
+          case "failure" => ops.writeError(rightError) *> ops.raiseError(dynamicError)
+          case _ =>
+            ops.writeError(rightError) *> ops.getVariables.flatMap { variables =>
+              if (variables.isEmpty) ops.raiseError(dynamicError) else ops.pure((value: Int) => value + 1)
+            }
+        }
+        val prepared = (ops.writeError(prefix) *> ops.parAp(left)(right)).run
+
+        List(firstVars, Map.empty[String, Variable[Unit]], secondVars).foreach { variables =>
+          val hardErrors = List(
+            Option.when(leftMode == "failure" || (leftMode == "pending" && variables.isEmpty))(staticError),
+            Option.when(rightMode == "failure" || (rightMode == "pending" && variables.isEmpty))(dynamicError)
+          ).flatten
+          val expected = NonEmptyChain.fromSeq(List(prefix, leftError, rightError) ++ hardErrors).toLeft(3)
+          assertEquals(prepared.flatMap(_(variables)), expected)
+        }
+      }
+    }
+  }
+
   List("success", "failure", "pending").foreach { leftMode =>
     List("success", "failure", "pending").foreach { rightMode =>
       test(s"parallel application combines $leftMode left and $rightMode right") {

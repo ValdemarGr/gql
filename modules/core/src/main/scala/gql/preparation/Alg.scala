@@ -39,6 +39,8 @@ object Alg {
   final case class CursorAsk[C]() extends Alg[C, Cursor]
   final case class CursorOver[C, A](cursor: Cursor, fa: Alg[C, A]) extends Alg[C, A]
 
+  final case class WriteErr[C](pe: NonEmptyChain[PositionalError[C]]) extends Alg[C, Unit]
+
   final case class RaiseError[C](pe: NonEmptyChain[PositionalError[C]]) extends Alg[C, Nothing]
 
   final case class Pure[C, A](a: A) extends Alg[C, A]
@@ -60,8 +62,9 @@ object Alg {
   sealed trait Result[C, +A]
   object Result {
     // Usage written in the current scope, excluding inherited read history.
-    final case class Success[C, A](value: A, usedVariables: Chain[String]) extends Result[C, A]
-    final case class Failure[C](errors: NonEmptyChain[PositionalError[C]]) extends Result[C, Nothing]
+    final case class Success[C, A](value: A, usedVariables: Chain[String], writtenErrors: Chain[PositionalError[C]]) extends Result[C, A]
+    final case class Failure[C](errors: NonEmptyChain[PositionalError[C]], writtenErrors: Chain[PositionalError[C]])
+        extends Result[C, Nothing]
     final case class NeedVars[C, A](f: Variables[C] => Eval[Result[C, A]]) extends Result[C, A]
   }
   implicit def monadErrorForPreparationAlg[C]: MonadError[Alg[C, *], NonEmptyChain[PositionalError[C]]] =
@@ -107,18 +110,23 @@ object Alg {
       override def monad: Monad[Alg[C, *]] = monadErrorForPreparationAlg[C]
     }
 
-  final case class State(
+  final case class State[C](
       readVariables: Chain[String],
       writtenVariables: Chain[String],
+      writtenErrors: Chain[PositionalError[C]],
       cycleSet: Set[String],
       cursor: Cursor
   )
   def run[C, A0](fa: Alg[C, A0]): EitherNec[PositionalError[C], Variables[C] => EitherNec[PositionalError[C], A0]] = {
     val G = Ops[C]
     def liftResult[B](result: Result[C, B], vars: Option[Variables[C]]): Eval[Alg[C, B]] = result match {
-      case Result.Success(value, usedVariables) =>
-        Eval.now(NonEmptyChain.fromChain(usedVariables).traverse_(G.useVariables) *> G.pure(value))
-      case Result.Failure(errors) => Eval.now(Alg.RaiseError(errors))
+      case Result.Success(value, usedVariables, writtenErrors) =>
+        Eval.now(
+          NonEmptyChain.fromChain(usedVariables).traverse_(G.useVariables) *>
+            NonEmptyChain.fromChain(writtenErrors).traverse_(G.writeErrors) *> G.pure(value)
+        )
+      case Result.Failure(errors, writtenErrors) =>
+        Eval.now(NonEmptyChain.fromChain(writtenErrors).traverse_(G.writeErrors) *> G.raiseErrors(errors))
       case Result.NeedVars(f) =>
         vars match {
           case Some(v) => Eval.defer(f(v)).flatMap(liftResult(_, vars))
@@ -128,60 +136,67 @@ object Alg {
 
     def go[A](
         fa: Alg[C, A],
-        state: State,
+        state: State[C],
         vars: Option[Variables[C]]
     ): Eval[Result[C, A]] = Eval.defer {
-      def needVars(f: Variables[C] => Eval[Alg[C, A]], scope: State = state): Eval[Result[C, A]] =
+      def needVars(f: Variables[C] => Eval[Alg[C, A]], scope: State[C] = state): Eval[Result[C, A]] =
         vars match {
           case Some(v) => Eval.defer(f(v)).flatMap(go(_, scope, vars))
           case None    => Eval.now(Result.NeedVars(v => Eval.defer(f(v)).flatMap(go(_, scope, Some(v)))))
         }
 
-      lazy val childState = state.copy(
+      lazy val childState: State[C] = state.copy(
         readVariables = state.readVariables ++ state.writtenVariables,
-        writtenVariables = Chain.empty
+        writtenVariables = Chain.empty,
+        writtenErrors = Chain.empty
       )
 
       fa match {
-        case NextId() => Eval.now(Result.Success(new Unique.Token, state.writtenVariables))
-        case Pure(a)  => Eval.now(Result.Success(a, state.writtenVariables))
+        case NextId() => Eval.now(Result.Success(new Unique.Token, state.writtenVariables, state.writtenErrors))
+        case Pure(a)  => Eval.now(Result.Success(a, state.writtenVariables, state.writtenErrors))
         case UseVariables(names) =>
-          Eval.now(Result.Success((), state.writtenVariables ++ names.toChain))
+          Eval.now(Result.Success((), state.writtenVariables ++ names.toChain, state.writtenErrors))
         case UsedVariables() =>
-          Eval.now(Result.Success((state.readVariables ++ state.writtenVariables).iterator.toSet, state.writtenVariables))
-        case CycleAsk()             => Eval.now(Result.Success(state.cycleSet, state.writtenVariables))
+          Eval.now(
+            Result.Success((state.readVariables ++ state.writtenVariables).iterator.toSet, state.writtenVariables, state.writtenErrors)
+          )
+        case CycleAsk()             => Eval.now(Result.Success(state.cycleSet, state.writtenVariables, state.writtenErrors))
         case CycleOver(name, fa)    => go(fa, state.copy(cycleSet = state.cycleSet + name), vars)
-        case CursorAsk()            => Eval.now(Result.Success(state.cursor, state.writtenVariables))
+        case CursorAsk()            => Eval.now(Result.Success(state.cursor, state.writtenVariables, state.writtenErrors))
         case CursorOver(cursor, fa) => go(fa, state.copy(cursor = cursor), vars)
-        case error: RaiseError[C]   => Eval.now(Result.Failure(error.pe))
+        case error: WriteErr[C] =>
+          Eval.now(Result.Success((), state.writtenVariables, state.writtenErrors ++ error.pe.toChain))
+        case error: RaiseError[C] => Eval.now(Result.Failure(error.pe, state.writtenErrors))
         case attempt: Attempt[C, a] =>
           def attemptResult(result: Result[C, a]): Result[C, EitherNec[PositionalError[C], a]] = result match {
-            case Result.Success(value, writtenVariables) => Result.Success(Right(value), writtenVariables)
-            case Result.Failure(errors)                  => Result.Success(Left(errors), state.writtenVariables)
-            case Result.NeedVars(f)                      => Result.NeedVars(v => Eval.defer(f(v)).map(attemptResult))
+            case Result.Success(value, writtenVariables, writtenErrors) => Result.Success(Right(value), writtenVariables, writtenErrors)
+            case Result.Failure(errors, _) => Result.Success(Left(errors), state.writtenVariables, state.writtenErrors)
+            case Result.NeedVars(f)        => Result.NeedVars(v => Eval.defer(f(v)).map(attemptResult))
           }
           go(attempt.fa, state, vars).map(attemptResult)
         case request: NeedVars[C, A] => needVars(request.f)
         case parAp: ParAp[C, a, A] =>
           go(parAp.fa, childState, vars).flatMap {
-            case Result.Failure(errs1) =>
+            case failed @ Result.Failure(errs1, writtenErrors1) =>
               go(parAp.fab, childState, vars).flatMap {
-                case Result.Failure(errs2) => Eval.now(Result.Failure(errs1 ++ errs2))
-                case Result.Success(_, _)  => Eval.now(Result.Failure(errs1))
+                case Result.Failure(errs2, writtenErrors2) =>
+                  Eval.now(Result.Failure(errs1 ++ errs2, state.writtenErrors ++ writtenErrors1 ++ writtenErrors2))
+                case Result.Success(_, _, writtenErrors2) =>
+                  Eval.now(Result.Failure(errs1, state.writtenErrors ++ writtenErrors1 ++ writtenErrors2))
                 case Result.NeedVars(f) =>
                   needVars(v =>
                     Eval
                       .defer(f(v))
                       .flatMap(liftResult(_, Some(v)))
-                      .flatMap(ab => go(ParAp[C, a, A](Alg.RaiseError(errs1), ab), childState, Some(v)))
+                      .flatMap(ab => liftResult(failed, Some(v)).flatMap(a => go(ParAp[C, a, A](a, ab), childState, Some(v))))
                       .flatMap(liftResult(_, Some(v)))
                   )
               }
-            case done @ Result.Success(a, _) =>
+            case done @ Result.Success(a, _, _) =>
               val fa: Eval[Result[C, A]] = go(parAp.fab, childState, vars).flatMap {
-                case Result.Failure(errs2) => Eval.now(Result.Failure(errs2))
-                case Result.Success(f, usedVars) =>
-                  Eval.now(Result.Success(f(a), usedVars))
+                case failed: Result.Failure[C] => Eval.now(failed)
+                case Result.Success(f, usedVars, writtenErrors) =>
+                  Eval.now(Result.Success(f(a), usedVars, writtenErrors))
                 case Result.NeedVars(f) =>
                   needVars(
                     v =>
@@ -204,9 +219,9 @@ object Alg {
           }
         case bind: FlatMap[C, a, A] =>
           def continueBind(result: Result[C, a], currentVars: Option[Variables[C]]): Eval[Result[C, A]] = result match {
-            case Result.Failure(errs) => Eval.now(Result.Failure(errs))
-            case Result.Success(a, writtenVariables) =>
-              go(bind.f(a), state.copy(writtenVariables = writtenVariables), currentVars)
+            case failed: Result.Failure[C] => Eval.now(failed)
+            case Result.Success(a, writtenVariables, writtenErrors) =>
+              go(bind.f(a), state.copy(writtenVariables = writtenVariables, writtenErrors = writtenErrors), currentVars)
             case Result.NeedVars(f) =>
               currentVars match {
                 case Some(v) => Eval.defer(f(v)).flatMap(continueBind(_, currentVars))
@@ -218,15 +233,18 @@ object Alg {
     }
 
     def complete(result: Result[C, A0], vars: Variables[C]): Eval[EitherNec[PositionalError[C], A0]] = result match {
-      case Result.Success(value, _) => Eval.now(Right(value))
-      case Result.Failure(errors)   => Eval.now(Left(errors))
-      case Result.NeedVars(f)       => Eval.defer(f(vars)).flatMap(complete(_, vars))
+      case Result.Success(value, _, writtenErrors) => Eval.now(NonEmptyChain.fromChain(writtenErrors).toLeft(value))
+      case Result.Failure(errors, writtenErrors) =>
+        Eval.now(Left(NonEmptyChain.fromChain(writtenErrors).fold(errors)(_ ++ errors)))
+      case Result.NeedVars(f) => Eval.defer(f(vars)).flatMap(complete(_, vars))
     }
 
-    go(fa, State(Chain.empty, Chain.empty, Set.empty, Cursor.empty), None).value match {
-      case Result.Success(value, _) => Right(_ => Right(value))
-      case Result.Failure(errors)   => Left(errors)
-      case Result.NeedVars(f)       => Right(vars => Eval.defer(f(vars)).flatMap(complete(_, vars)).value)
+    go(fa, State[C](Chain.empty, Chain.empty, Chain.empty, Set.empty, Cursor.empty), None).value match {
+      case Result.Success(value, _, writtenErrors) =>
+        NonEmptyChain.fromChain(writtenErrors).toLeft((_: Variables[C]) => Right(value))
+      case Result.Failure(errors, writtenErrors) =>
+        Left(NonEmptyChain.fromChain(writtenErrors).fold(errors)(_ ++ errors))
+      case Result.NeedVars(f) => Right(vars => Eval.defer(f(vars)).flatMap(complete(_, vars)).value)
     }
   }
 
@@ -252,6 +270,14 @@ object Alg {
 
     def cursorOver[A](cursor: Cursor, fa: Alg[C, A]): Alg[C, A] =
       Alg.CursorOver(cursor, fa)
+
+    def writeError(pe: PositionalError[C]): Alg[C, Unit] =
+      WriteErr(NonEmptyChain.one(pe))
+
+    def writeErrors(errors: NonEmptyChain[PositionalError[C]]): Alg[C, Unit] = WriteErr(errors)
+
+    def writeErr(message: String, carets: List[C]): Alg[C, Unit] =
+      cursorAsk.flatMap(c => writeError(PositionalError(c, carets, message)))
 
     def raiseError(pe: PositionalError[C]): Alg[C, Nothing] =
       Alg.RaiseError(NonEmptyChain.one(pe))

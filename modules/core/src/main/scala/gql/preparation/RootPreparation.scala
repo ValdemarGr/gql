@@ -171,9 +171,8 @@ class RootPreparation[F[_], C] {
       val fm = new FieldMerging[C]
       val qp = new QueryPreparation[F, C](ap, da, schema.discover.implementations)
 
-      val prepared = fc.collectSelectionInfo(o, ss).run.flatMap { case (errors, selections) =>
-        val structure = NonEmptyChain.fromChain(errors).traverse_(G.raiseErrors)
-        val validation = structure.parProductR(fc.validateSelectionInfo(selections))
+      val prepared = fc.collectSelectionInfo(o, ss).flatMap { selections =>
+        val validation = fc.validateSelectionInfo(selections)
         val build = selections.toNel match {
           case Some(selections) => fm.checkSelectionsMerge(selections).parProductR(qp.prepareSelectable(o, selections))
           case None             => G.nextId.map(NodeId(_)).map(Selection(_, Nil, o))
