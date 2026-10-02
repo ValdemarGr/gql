@@ -168,34 +168,38 @@ class RootPreparation[F[_], C] {
       def runWith[A](o: gql.ast.Type[F, A]): G[Selection[F, A]] = {
         val ap = new ArgParsing[C](tm.fmap { case (t, _) => t })
         val da = new DirectiveAlg[F, C](schema.discover.positions, ap)
-        val fc = new FieldCollection[F, C](
-          schema.discover.implementations,
-          frags.map(x => x.name -> x).toMap,
-          ap,
-          da
-        )
+        def collect(validateArguments: Boolean) =
+          new FieldCollection[F, C](
+            schema.discover.implementations,
+            frags.map(x => x.name -> x).toMap,
+            ap,
+            da,
+            validateArguments
+          ).collectSelectionInfo(o, ss)
         val fm = new FieldMerging[C]
 
-        fc.collectSelectionInfo(o, ss).flatMap { case (shape, validation) =>
-          G.force(validation).flatMap {
-            case Alg.Staged.Done(Left(errors), _) => Alg.RaiseError(errors)
-            case checks                           =>
-              // Variable-dependent checks must finish before invoking field directive handlers.
-              val beforeDirectives = checks match {
-                case _: Alg.Staged.Deferred[C, Unit] => G.getVariables.void
-                case _                               => G.unit
-              }
-              val qp = new QueryPreparation[F, C](ap, da, schema.discover.implementations, beforeDirectives)
-              val constructor = shape match {
-                case Left(errors) => Alg.RaiseError(errors)
-                case Right(x :: xs) =>
-                  val r = NonEmptyList(x, xs)
-                  fm.checkSelectionsMerge(r) >> qp.prepareSelectable(o, r)
-                case Right(Nil) => G.nextId.map(NodeId(_)).map(nid => Selection(nid, Nil, o))
-              }
-              // Prepare independent constructors now; resume them only after collection validation.
-              G.pause(constructor).flatMap(residual => G.resume(checks) *> residual)
-          }
+        G.force(collect(validateArguments = true)).flatMap {
+          case Alg.Staged.Done(Left(errors), _) => Alg.RaiseError(errors)
+          case checks                           =>
+            // Variable-dependent checks must finish before invoking field directive handlers.
+            val beforeDirectives = checks match {
+              case _: Alg.Staged.Deferred[C, List[SelectionInfo[F, C]]] => G.getVariables.void
+              case _                                                    => G.unit
+            }
+            val qp = new QueryPreparation[F, C](ap, da, schema.discover.implementations, beforeDirectives)
+            // Reuse completed collection; deferred collection needs an independent structural pass.
+            val structure = checks match {
+              case Alg.Staged.Done(Right(selection), _) => G.pure(selection)
+              case _                                    => collect(validateArguments = false)
+            }
+            val constructor = structure.flatMap {
+              case x :: xs =>
+                val r = NonEmptyList(x, xs)
+                fm.checkSelectionsMerge(r) >> qp.prepareSelectable(o, r)
+              case Nil => G.nextId.map(NodeId(_)).map(nid => Selection(nid, Nil, o))
+            }
+            // Prepare independent constructors now; resume them only after collection validation.
+            (G.resume(checks), G.pause(constructor)).parTupled.flatMap { case (_, residual) => residual }
         }
       }
 
