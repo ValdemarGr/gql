@@ -199,7 +199,7 @@ class ArgParsing[C](typeMap: TypeMap) {
       if (duplicates.isEmpty) G.unit
       else G.raise(s"Duplicate argument names found: ${duplicates.map(x => s"'$x'").mkString_(", ")}.", context)
 
-    duplicatesF >> G.defer {
+    duplicatesF >> G.delay {
       val lookup = values.toMap
       val expected = arg.entries.toList.map(_.name).toSet
       val provided = lookup.keySet

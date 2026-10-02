@@ -114,7 +114,7 @@ class FieldCollection[F[_], C](
       .parTraverse { case (caret, field) =>
         actualFields.get(field.name) match {
           case None =>
-            G.writeErr(s"Field '${field.name}' is not a member of `${sel.name}`.", List(caret))
+            G.defer(G.raise[Unit](s"Field '${field.name}' is not a member of `${sel.name}`.", List(caret)))
               .as(Option.empty[FieldInfo[F, C]])
           case Some(f) => G.ambientField(field.name)(collectFieldInfo(f, field, caret)).map(_.some)
         }
@@ -131,8 +131,8 @@ class FieldCollection[F[_], C](
             .traverse(matchType(_, sel, caret))
             .map(_.getOrElse(sel))
             .flatMap(t => collectSelectionInfo(t, f.selectionSet))
-            .handleErrorWith(errors => G.writeErrors(errors).as(Nil))
-        }).handleErrorWith(errors => G.writeErrors(errors).as(Nil))
+            .handleErrorWith(errors => G.defer(G.raiseErrors(errors)).as(Nil))
+        }).handleErrorWith(errors => G.defer(G.raiseErrors(errors)).as(Nil))
       }
 
     val spreads = all
@@ -145,8 +145,8 @@ class FieldCollection[F[_], C](
             matchType(f.typeCnd, sel, f.caret)
               .flatMap(t => collectSelectionInfo(t, f.selectionSet))
               .map(_.map(_.copy(fragmentName = Some(spread.fragmentName))))
-          }.handleErrorWith(errors => G.writeErrors(errors).as(Nil))
-        }).handleErrorWith(errors => G.writeErrors(errors).as(Nil))
+          }.handleErrorWith(errors => G.defer(G.raiseErrors(errors)).as(Nil))
+        }).handleErrorWith(errors => G.defer(G.raiseErrors(errors)).as(Nil))
       }
 
     List(fields, inlines, spreads).parFlatSequence
@@ -181,18 +181,18 @@ class FieldCollection[F[_], C](
         f.selectionSet match {
           case Some(ss) => collectSelectionInfo(s, ss).map(TypeInfo.Selectable(tl.name, _))
           case None =>
-            G.writeErr(s"Field `${f.name}` of type `${tl.name}` must have a selection set.", List(f.caret))
+            G.defer(G.raise[Unit](s"Field `${f.name}` of type `${tl.name}` must have a selection set.", List(f.caret)))
               .as(TypeInfo.Selectable(tl.name, Nil))
         }
       case _: Enum[?] =>
         val check =
           if (f.selectionSet.isEmpty) G.unit
-          else G.writeErr(s"Field `${f.name}` of enum type `${tl.name}` must not have a selection set.", List(f.caret))
+          else G.defer(G.raise[Unit](s"Field `${f.name}` of enum type `${tl.name}` must not have a selection set.", List(f.caret)))
         check.as(TypeInfo.Enum(tl.name))
       case _: Scalar[?] =>
         val check =
           if (f.selectionSet.isEmpty) G.unit
-          else G.writeErr(s"Field `${f.name}` of scalar type `${tl.name}` must not have a selection set.", List(f.caret))
+          else G.defer(G.raise[Unit](s"Field `${f.name}` of scalar type `${tl.name}` must not have a selection set.", List(f.caret)))
         check.as(TypeInfo.Scalar(tl.name))
     }
 

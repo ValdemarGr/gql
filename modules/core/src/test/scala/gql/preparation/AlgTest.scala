@@ -176,10 +176,10 @@ class AlgTest extends FunSuite {
     assertEquals(bind(secondVars), Left(NonEmptyChain.one(staticError)))
   }
 
-  test("written errors do not stop static token allocation") {
+  test("deferred failures do not stop static token allocation") {
     var continued = false
     val errors = NonEmptyChain.of(staticError, dynamicError)
-    val program = ops.writeErrors(errors) *> ops.nextId.map { token =>
+    val program = ops.defer(ops.raiseErrors(errors)) *> ops.nextId.map { token =>
       continued = true
       token
     }
@@ -188,14 +188,118 @@ class AlgTest extends FunSuite {
     assert(continued)
   }
 
-  test("written errors precede hard failures") {
-    val program = ops.writeError(staticError) *> ops.raiseError(dynamicError)
+  test("deferred variable demands preserve static body preparation") {
+    var bodyRuns = 0
+    var checkRuns = 0
+    val check = ops.getVariables.map { variables =>
+      assertEquals(bodyRuns, 1)
+      assert(variables.contains("value"))
+      checkRuns += 1
+    }
+    val program = ops.defer(check) *> ops.nextId.map { token =>
+      assertEquals(checkRuns, 0)
+      bodyRuns += 1
+      token
+    }
+    val bind = program.run.fold(errors => fail(errors.toString), identity)
+    assertEquals(bodyRuns, 1)
+    assertEquals(checkRuns, 0)
+
+    val first = bind(firstVars).fold(errors => fail(errors.toString), identity)
+    val second = bind(secondVars).fold(errors => fail(errors.toString), identity)
+    val repeated = bind(firstVars).fold(errors => fail(errors.toString), identity)
+    assert(first eq second)
+    assert(first eq repeated)
+    assertEquals(bodyRuns, 1)
+    assertEquals(checkRuns, 3)
+  }
+
+  test("deferred checks read final body usage and their own sequential writes") {
+    var checkRuns = 0
+    val check = for {
+      _ <- ops.getVariables
+      _ <- ops.useVariable("validation")
+      used <- ops.usedVariables
+    } yield {
+      assertEquals(used, Set("build", "validation"))
+      checkRuns += 1
+    }
+    val program = ops.defer(check) *> ops.useVariable("build")
+    val bind = program.run.fold(errors => fail(errors.toString), identity)
+    assertEquals(checkRuns, 0)
+
+    assertEquals(bind(firstVars), Right(()))
+    assertEquals(bind(secondVars), Right(()))
+    assertEquals(bind(firstVars), Right(()))
+    assertEquals(checkRuns, 3)
+  }
+
+  test("deferred siblings isolate their variable writes across bindings") {
+    var observed = List.empty[(String, Set[String])]
+    val left = for {
+      _ <- ops.getVariables
+      _ <- ops.useVariable("left")
+      used <- ops.usedVariables
+    } yield {
+      observed = observed :+ ("left", used)
+    }
+    val right = for {
+      _ <- ops.getVariables
+      used <- ops.usedVariables
+    } yield {
+      observed = observed :+ ("right", used)
+    }
+    val program = ops.defer(left) *> ops.defer(right) *> ops.useVariable("build")
+    val bind = program.run.fold(errors => fail(errors.toString), identity)
+    val expected = List("left" -> Set("build", "left"), "right" -> Set("build"))
+    assertEquals(observed, Nil)
+
+    assertEquals(bind(firstVars), Right(()))
+    assertEquals(observed, expected)
+    assertEquals(bind(secondVars), Right(()))
+    assertEquals(observed, expected ++ expected)
+    assertEquals(bind(firstVars), Right(()))
+    assertEquals(observed, expected ++ expected ++ expected)
+  }
+
+  test("deferred checks retain body usage when the body fails") {
+    var checkRuns = 0
+    val check = ops.getVariables *> ops.usedVariables.map { used =>
+      assertEquals(used, Set("build"))
+      checkRuns += 1
+    }
+    val program = ops.defer(check) *> ops.useVariable("build") *> ops.raiseError(staticError)
+    val bind = program.run.fold(errors => fail(errors.toString), identity)
+
+    assertEquals(bind(firstVars), Left(NonEmptyChain.one(staticError)))
+    assertEquals(bind(secondVars), Left(NonEmptyChain.one(staticError)))
+    assertEquals(checkRuns, 2)
+  }
+
+  test("nested deferred checks do not inherit their parent's sibling writes") {
+    var observed = List.empty[Set[String]]
+    val nested = ops.getVariables *> ops.usedVariables.map { used =>
+      observed = observed :+ used
+    }
+    val parent = ops.useVariable("parent") *> ops.defer(nested)
+    val sibling = ops.useVariable("sibling")
+    val program = ops.defer(parent) *> ops.defer(sibling) *> ops.useVariable("build")
+    val bind = program.run.fold(errors => fail(errors.toString), identity)
+
+    assertEquals(bind(firstVars), Right(()))
+    assertEquals(bind(secondVars), Right(()))
+    assertEquals(bind(firstVars), Right(()))
+    assertEquals(observed, List.fill(3)(Set("build", "parent")))
+  }
+
+  test("deferred failures precede hard failures") {
+    val program = ops.defer(ops.raiseError(staticError)) *> ops.raiseError(dynamicError)
     assertEquals(program.run, Left(NonEmptyChain.of(staticError, dynamicError)))
   }
 
-  test("cached written prefixes and request errors remain isolated across bindings") {
-    val program = ops.writeError(staticError) *> ops.getVariables.flatMap { variables =>
-      ops.writeErr(variables("value").value.fold(_.noSpaces, _ => "default"), List(()))
+  test("cached deferred prefixes and request errors remain isolated across bindings") {
+    val program = ops.defer(ops.raiseError(staticError)) *> ops.getVariables.flatMap { variables =>
+      ops.defer(ops.raise[Unit](variables("value").value.fold(_.noSpaces, _ => "default"), List(())))
     }
     val bind = program.run.fold(errors => fail(errors.toString), identity)
     val firstError = PositionalError(Cursor.empty, List(()), "1")
@@ -206,27 +310,30 @@ class AlgTest extends FunSuite {
     assertEquals(bind(firstVars), Left(NonEmptyChain.of(staticError, firstError)))
   }
 
-  test("written errors retain suspended cursor and cycle scope then restore outer context") {
+  test("deferred checks retain suspended cursor and cycle scope then restore outer context") {
     val cursor = Cursor.empty.field("scope").index(3)
     val inner = ops.cycleOver(
       "scope",
       ops.cursorOver(
         cursor,
         for {
-          _ <- ops.writeErr("inside static", List(()))
+          _ <- ops.defer(ops.cycleAsk.flatMap { cycles =>
+            assertEquals(cycles, Set("scope"))
+            ops.raise[Unit]("inside static", List(()))
+          })
           _ <- ops.getVariables
           cycles <- ops.cycleAsk
-          _ <- ops.writeErr("inside dynamic", List(()))
+          _ <- ops.defer(ops.raise[Unit]("inside dynamic", List(())))
         } yield {
           assertEquals(cycles, Set("scope"))
         }
       )
     )
     val program = for {
-      _ <- ops.writeError(staticError)
+      _ <- ops.defer(ops.raiseError(staticError))
       _ <- inner
       cycles <- ops.cycleAsk
-      _ <- ops.writeErr("outside", List(()))
+      _ <- ops.defer(ops.raise[Unit]("outside", List(())))
     } yield {
       assertEquals(cycles, Set.empty[String])
     }
@@ -242,14 +349,15 @@ class AlgTest extends FunSuite {
     assertEquals(bind(secondVars), Left(expected))
   }
 
-  test("attempt retains successful written errors and rolls failed local writes back") {
+  test("attempt retains successful deferred checks and rolls failed local checks back") {
     val kept = PositionalError(Cursor.empty, List(()), "kept")
     val discarded = PositionalError(Cursor.empty, List(()), "discarded")
-    val successful = ops.writeError(kept) *> ops.getVariables
-    val staticFailure = ops.writeError(discarded) *> ops.raiseError(staticError)
-    val dynamicFailure = ops.writeError(discarded) *> ops.getVariables *> ops.writeError(discarded) *> ops.raiseError(dynamicError)
+    val successful = ops.defer(ops.raiseError(kept)) *> ops.getVariables
+    val staticFailure = ops.defer(ops.raiseError(discarded)) *> ops.raiseError(staticError)
+    val dynamicFailure =
+      ops.defer(ops.raiseError(discarded)) *> ops.getVariables *> ops.defer(ops.raiseError(discarded)) *> ops.raiseError(dynamicError)
     val program = for {
-      _ <- ops.writeError(staticError)
+      _ <- ops.defer(ops.raiseError(staticError))
       success <- ops.attempt(successful)
       caughtStatic <- ops.attempt(staticFailure)
       caughtDynamic <- ops.attempt(dynamicFailure)
@@ -264,29 +372,42 @@ class AlgTest extends FunSuite {
     assertEquals(bind(secondVars), Left(NonEmptyChain.of(staticError, kept)))
   }
 
+  test("nested deferred checks are stack safe and cache their completed work") {
+    var completed = 0
+    def nested(depth: Int): Alg[Unit, Unit] =
+      if (depth == 0) ops.pure(()).map(_ => completed += 1)
+      else ops.defer(ops.delay(nested(depth - 1)))
+
+    val bind = nested(20000).run.fold(errors => fail(errors.toString), identity)
+    assertEquals(completed, 1)
+    assertEquals(bind(firstVars), Right(()))
+    assertEquals(bind(secondVars), Right(()))
+    assertEquals(completed, 1)
+  }
+
   List("success", "failure", "pending").foreach { leftMode =>
     List("success", "failure", "pending").foreach { rightMode =>
-      test(s"parallel written errors occur once for $leftMode left and $rightMode right") {
+      test(s"parallel deferred failures occur once for $leftMode left and $rightMode right") {
         val prefix = PositionalError(Cursor.empty, List(()), "prefix")
         val leftError = PositionalError(Cursor.empty.field("left"), List(()), "left written")
         val rightError = PositionalError(Cursor.empty.field("right"), List(()), "right written")
         val left: Alg[Unit, Int] = leftMode match {
-          case "success" => ops.writeError(leftError).as(2)
-          case "failure" => ops.writeError(leftError) *> ops.raiseError(staticError)
+          case "success" => ops.defer(ops.raiseError(leftError)).as(2)
+          case "failure" => ops.defer(ops.raiseError(leftError)) *> ops.raiseError(staticError)
           case _ =>
-            ops.writeError(leftError) *> ops.getVariables.flatMap { variables =>
+            ops.defer(ops.raiseError(leftError)) *> ops.getVariables.flatMap { variables =>
               if (variables.isEmpty) ops.raiseError(staticError) else ops.pure(2)
             }
         }
         val right: Alg[Unit, Int => Int] = rightMode match {
-          case "success" => ops.writeError(rightError).as((value: Int) => value + 1)
-          case "failure" => ops.writeError(rightError) *> ops.raiseError(dynamicError)
+          case "success" => ops.defer(ops.raiseError(rightError)).as((value: Int) => value + 1)
+          case "failure" => ops.defer(ops.raiseError(rightError)) *> ops.raiseError(dynamicError)
           case _ =>
-            ops.writeError(rightError) *> ops.getVariables.flatMap { variables =>
+            ops.defer(ops.raiseError(rightError)) *> ops.getVariables.flatMap { variables =>
               if (variables.isEmpty) ops.raiseError(dynamicError) else ops.pure((value: Int) => value + 1)
             }
         }
-        val prepared = (ops.writeError(prefix) *> ops.parAp(left)(right)).run
+        val prepared = (ops.defer(ops.raiseError(prefix)) *> ops.parAp(left)(right)).run
 
         List(firstVars, Map.empty[String, Variable[Unit]], secondVars).foreach { variables =>
           val hardErrors = List(

@@ -158,34 +158,31 @@ class RootPreparation[F[_], C] {
       frags: List[QA.FragmentDefinition[C]],
       schema: SchemaShape[F, Q, M, S],
       types: TypeMap
-  ): G[PreparedRoot[F, Q, M, S]] = {
+  ): G[EitherNec[PositionalError[C], PreparedRoot[F, Q, M, S]]] = {
     val (ot, ss) = od match {
       case QA.OperationDefinition.Simple(ss)                => (QA.OperationType.Query, ss)
       case QA.OperationDefinition.Detailed(ot, _, _, _, ss) => (ot, ss)
     }
 
-    def runWith[A](o: gql.ast.Type[F, A]): G[Selection[F, A]] = {
+    def runWith[A](o: gql.ast.Type[F, A]): G[EitherNec[PositionalError[C], Selection[F, A]]] = {
       val ap = new ArgParsing[C](types)
       val da = new DirectiveAlg[F, C](schema.discover.positions, ap)
       val fc = new FieldCollection[F, C](schema.discover.implementations, frags.map(x => x.name -> x).toMap, ap, da)
       val fm = new FieldMerging[C]
       val qp = new QueryPreparation[F, C](ap, da, schema.discover.implementations)
 
-      val prepared = fc.collectSelectionInfo(o, ss).flatMap { selections =>
-        val validation = fc.validateSelectionInfo(selections)
+      fc.collectSelectionInfo(o, ss).flatMap { selections =>
         val build = selections.toNel match {
           case Some(selections) => fm.checkSelectionsMerge(selections).parProductR(qp.prepareSelectable(o, selections))
           case None             => G.nextId.map(NodeId(_)).map(Selection(_, Nil, o))
         }
-        // Validation owns shared decoding errors; construction still runs independently.
-        validation.parProductR(build.attempt).flatMap(_.fold(G.raiseErrors, G.pure(_)))
-      }
-
-      prepared.flatMap { result =>
-        G.usedVariables.flatMap { used =>
-          val unused = types.keySet -- used
-          if (unused.nonEmpty) G.raise(s"Unused variables: ${unused.map(str => s"'$str'").mkString(", ")}", Nil)
-          else G.pure(result)
+        build.attempt.flatMap { result =>
+          val unusedCheck = G.usedVariables.flatMap { used =>
+            val unused = types.keySet -- used
+            if (unused.nonEmpty) G.raise[Unit](s"Unused variables: ${unused.map(str => s"'$str'").mkString(", ")}", Nil)
+            else G.unit
+          }
+          G.defer(fc.validateSelectionInfo(selections) *> result.fold(G.raiseErrors, _ => unusedCheck)).as(result)
         }
       }
     }
@@ -195,15 +192,15 @@ class RootPreparation[F[_], C] {
         val i: NonEmptyList[(String, gql.ast.Field[F, Unit, ?])] = schema.introspection
         val q = schema.query
         val full = q.copy(fields = i.map { case (k, v) => k -> v.contramap[F, Q](_ => ()) } concatNel q.fields)
-        runWith[Q](full).map(PreparedRoot.Query(_))
+        runWith[Q](full).map(_.map(PreparedRoot.Query(_)))
       case QA.OperationType.Mutation =>
         G.raiseOpt(schema.mutation, "No `Mutation` type defined in this schema.", Nil)
           .flatMap(runWith[M])
-          .map(PreparedRoot.Mutation(_))
+          .map(_.map(PreparedRoot.Mutation(_)))
       case QA.OperationType.Subscription =>
         G.raiseOpt(schema.subscription, "No `Subscription` type defined in this schema.", Nil)
           .flatMap(runWith[S])
-          .map(PreparedRoot.Subscription(_))
+          .map(_.map(PreparedRoot.Subscription(_)))
     }
   }
 }
@@ -228,7 +225,7 @@ object RootPreparation {
       bind <- rp.prepareRoot(od, frags, schema, types).run
     } yield { supplied =>
       val raw = supplied.toList.flatMap { case (name, value) => types.get(name).map(tpe => name -> Variable[C](tpe, Left(value))) }.toMap
-      normalize(raw).flatMap(bind)
+      normalize(raw).flatMap(vars => bind(vars).flatten)
     }
   }
 
