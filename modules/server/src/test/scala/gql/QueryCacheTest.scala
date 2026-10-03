@@ -318,6 +318,78 @@ class QueryCacheTest extends CatsEffectSuite {
     }
   }
 
+  test("variable validation errors do not block independent body binding") {
+    val argumentReads = new AtomicInteger(0)
+    val outputReads = new AtomicInteger(0)
+    val countedArgument = argument.emap { value =>
+      argumentReads.incrementAndGet()
+      Right(value)
+    }
+    val counted = Field[IO, Unit, Int](
+      Resolver.argument[IO, Unit, Int](countedArgument),
+      Eval.always {
+        outputReads.incrementAndGet()
+        intScalar
+      }
+    )
+    val countedSchema = Schema
+      .simple(SchemaShape.unit[IO](fields("echo" -> lift(argument)((value, _) => value), "counted" -> counted)))
+      .unsafeRunSync()
+    val query = "query Echo($n: Int!, $m: Int!) { echo(value: $n) counted(value: $m) }"
+    val cached = compiler
+      .parsePrep(countedSchema, QueryParameters(query, None, None))
+      .fold(error => fail(error.toString), identity)
+    val preparedReads = outputReads.get()
+    assert(preparedReads > 0)
+    assertEquals(argumentReads.get(), 0)
+
+    List(Map("n" -> Json.fromString("invalid"), "m" -> Json.fromInt(1)), Map("m" -> Json.fromInt(2))).foreach { variables =>
+      val before = argumentReads.get()
+      cached.run(variables) match {
+        case Left(CompilationError.Preparation(errors)) =>
+          assertEquals(errors.toChain.toList.size, 1)
+          assertEquals(errors.head.position, if (variables.contains("n")) Cursor.empty.field("n").field("Int") else Cursor.empty)
+        case _ => fail("Expected root variable validation error")
+      }
+      assert(argumentReads.get() > before)
+      assertEquals(outputReads.get(), preparedReads)
+    }
+
+    val root = cached.run(Map("n" -> Json.fromInt(1), "m" -> Json.fromInt(3)))
+    assertEquals(outputReads.get(), preparedReads)
+    root match {
+      case Left(error) => fail(error.toString)
+      case Right(root) =>
+        compiler.compilePrepared(countedSchema, root) match {
+          case Application.Query(run) =>
+            run.map(result => assertEquals(result.data, JsonObject("echo" -> Json.fromInt(1), "counted" -> Json.fromInt(3))))
+          case _ => fail("Expected query")
+        }
+    }
+  }
+
+  test("supplied null overrides optional variable defaults across cached bindings") {
+    val optional = arg[Option[Int]]("value")
+    val optionalSchema = Schema
+      .simple(SchemaShape.unit[IO](fields("echo" -> lift(optional)((value, _) => value.getOrElse(-1)))))
+      .unsafeRunSync()
+    val cached = compiler
+      .parsePrep(optionalSchema, QueryParameters("query Echo($n: Int = 7) { echo(value: $n) }", None, None))
+      .fold(error => fail(error.toString), identity)
+
+    List(Map.empty[String, Json] -> 7, Map("n" -> Json.Null) -> -1, firstVars -> 1, Map.empty[String, Json] -> 7).traverse_ {
+      case (variables, expected) =>
+        cached.run(variables) match {
+          case Left(error) => IO(fail(error.toString))
+          case Right(root) =>
+            compiler.compilePrepared(optionalSchema, root) match {
+              case Application.Query(run) => run.map(result => assertEquals(result.data, JsonObject("echo" -> Json.fromInt(expected))))
+              case _                      => IO(fail("Expected query"))
+            }
+        }
+    }
+  }
+
   test("structural errors stop later phases without requiring variables") {
     val cases = List(
       ("query Echo($n: Int!) { positive(value: $n) unknown }", Cursor.empty, "Field 'unknown' is not a member of `Query`."),
