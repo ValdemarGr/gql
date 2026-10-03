@@ -29,6 +29,8 @@ object NatchezTracer {
   def compile[F[_]: Trace, Q, M, S](
       cache: QueryCache[F, Q, M, S],
       parameters: QueryParameters
+  )(
+      prepare: => Either[CompilationError, CacheableQuery[F, Q, M, S]]
   )(implicit F: Sync[F]): F[Either[CompilationError, PreparedRoot[F, Q, M, S]]] = {
     def bind(cq: CacheableQuery[F, Q, M, S]): F[Either[CompilationError, PreparedRoot[F, Q, M, S]]] =
       Trace[F].span("graphql.compilation.variables") {
@@ -40,7 +42,7 @@ object NatchezTracer {
       case None =>
         Trace[F].span("graphql.compilation.uncached") {
           Trace[F]
-            .span("graphql.compilation.cacheable")(cache.prepare(parameters.query, parameters.operationName))
+            .span("graphql.compilation.cacheable")(F.delay(prepare))
             .flatTap(_.traverse_(cache.persist))
             .flatMap(_.traverse(bind).map(_.flatten))
         }

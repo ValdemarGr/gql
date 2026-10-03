@@ -18,21 +18,23 @@ package gql
 import cats.effect.Async
 import cats.effect.std.Mutex
 import cats.implicits._
-import gql.preparation.PreparedRoot
 import java.util.LinkedHashMap
 
-/** A bounded LRU overlay for one preparation function. */
 final class QueryCache[F[_], Q, M, S] private (
     maxEntries: Int,
-    prepareQuery: (String, Option[String]) => Either[CompilationError, CacheableQuery[F, Q, M, S]],
     entries: LinkedHashMap[(String, Option[String]), CacheableQuery[F, Q, M, S]],
     mutex: Mutex[F]
 )(implicit F: Async[F]) {
   def getPrep(query: String, operationName: Option[String] = None): F[Option[CacheableQuery[F, Q, M, S]]] =
     mutex.lock.surround(F.delay(Option(entries.get((query, operationName)))))
 
-  def prepare(query: String, operationName: Option[String] = None): F[Either[CompilationError, CacheableQuery[F, Q, M, S]]] =
-    F.delay(prepareQuery(query, operationName))
+  def get(query: String, operationName: Option[String] = None)(
+      prepare: => Either[CompilationError, CacheableQuery[F, Q, M, S]]
+  ): F[Either[CompilationError, CacheableQuery[F, Q, M, S]]] =
+    getPrep(query, operationName).flatMap {
+      case Some(cq) => F.pure(cq.asRight[CompilationError])
+      case None     => F.delay(prepare).flatTap(_.traverse_(persist))
+    }
 
   def persist(cq: CacheableQuery[F, Q, M, S]): F[Unit] =
     mutex.lock.surround {
@@ -46,24 +48,15 @@ final class QueryCache[F[_], Q, M, S] private (
       }
     }
 
-  def compile(qp: QueryParameters): F[Either[CompilationError, PreparedRoot[F, Q, M, S]]] =
-    getPrep(qp.query, qp.operationName)
-      .flatMap {
-        case Some(cq) => F.pure(cq.asRight[CompilationError])
-        case None     => prepare(qp.query, qp.operationName).flatTap(_.traverse_(persist))
-      }
-      .flatMap(_.traverse(cq => F.delay(cq.run(qp.variables.getOrElse(Map.empty)))).map(_.flatten))
 }
 
 object QueryCache {
-  def apply[F[_]: Async, Q, M, S](maxEntries: Int)(
-      prepare: (String, Option[String]) => Either[CompilationError, CacheableQuery[F, Q, M, S]]
-  ): F[QueryCache[F, Q, M, S]] =
+  def apply[F[_]: Async, Q, M, S](maxEntries: Int): F[QueryCache[F, Q, M, S]] =
     for {
       entries <- Async[F].delay {
         require(maxEntries > 0, "maxEntries must be positive")
         new LinkedHashMap[(String, Option[String]), CacheableQuery[F, Q, M, S]](16, 0.75f, true)
       }
       mutex <- Mutex[F]
-    } yield new QueryCache(maxEntries, prepare, entries, mutex)
+    } yield new QueryCache(maxEntries, entries, mutex)
 }

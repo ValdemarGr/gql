@@ -96,7 +96,7 @@ class QueryCacheTest extends CatsEffectSuite {
   private val secondVars = Map("n" -> Json.fromInt(2))
 
   private def prepare(query: String, operationName: Option[String]): Either[CompilationError, CacheableQuery[IO, Unit, Unit, Unit]] =
-    compiler.parsePrep(schema(), QueryParameters(query, None, operationName))
+    compiler.parsePrep(schema(), query, operationName)
 
   private def execute(prepared: Either[CompilationError, PreparedRoot[IO, Unit, Unit, Unit]]): IO[JsonObject] =
     prepared match {
@@ -115,13 +115,14 @@ class QueryCacheTest extends CatsEffectSuite {
 
   test("cache compiles once and binds each request independently") {
     val preparations = new AtomicInteger(0)
+    def prepareQuery = {
+      preparations.incrementAndGet()
+      prepare(echo, None)
+    }
     for {
-      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 2) { (query, operationName) =>
-        preparations.incrementAndGet()
-        prepare(query, operationName)
-      }
-      first <- cache.compile(QueryParameters(echo, Some(firstVars), None)).flatMap(execute)
-      second <- cache.compile(QueryParameters(echo, Some(secondVars), None)).flatMap(execute)
+      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 2)
+      first <- cache.get(echo) { prepareQuery }.map(_.flatMap(_.run(firstVars))).flatMap(execute)
+      second <- cache.get(echo) { prepareQuery }.map(_.flatMap(_.run(secondVars))).flatMap(execute)
       _ <- IO {
         assertEquals(first, JsonObject("echo" -> Json.fromInt(1)))
         assertEquals(second, JsonObject("echo" -> Json.fromInt(2)))
@@ -133,13 +134,14 @@ class QueryCacheTest extends CatsEffectSuite {
   test("cache reuses queries with no variables") {
     val query = "{ echo(value: 7) }"
     val preparations = new AtomicInteger(0)
+    def prepareQuery = {
+      preparations.incrementAndGet()
+      prepare(query, None)
+    }
     for {
-      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 1) { (text, operationName) =>
-        preparations.incrementAndGet()
-        prepare(text, operationName)
-      }
-      first <- cache.compile(QueryParameters(query, None, None)).flatMap(execute)
-      second <- cache.compile(QueryParameters(query, Some(Map.empty), None)).flatMap(execute)
+      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 1)
+      first <- cache.get(query) { prepareQuery }.map(_.flatMap(_.run(Map.empty))).flatMap(execute)
+      second <- cache.get(query) { prepareQuery }.map(_.flatMap(_.run(Map.empty))).flatMap(execute)
       _ <- IO {
         assertEquals(first, JsonObject("echo" -> Json.fromInt(7)))
         assertEquals(second, first)
@@ -171,7 +173,7 @@ class QueryCacheTest extends CatsEffectSuite {
     )
     Schema.simple(SchemaShape.unit[IO](fields("echo" -> field))).map { countedSchema =>
       val cached = compiler
-        .parsePrep(countedSchema, QueryParameters(echo, None, None))
+        .parsePrep(countedSchema, echo)
         .fold(error => fail(error.toString), identity)
       val preparedReads = outputReads.get()
       assert(preparedReads > 0)
@@ -200,7 +202,7 @@ class QueryCacheTest extends CatsEffectSuite {
     Schema.simple(SchemaShape.unit[IO](fields("owner" -> parent))).flatMap { countedSchema =>
       val query = "query Owner($n: Int!) { owner(value: $n) { summary } }"
       val cached = compiler
-        .parsePrep(countedSchema, QueryParameters(query, None, None))
+        .parsePrep(countedSchema, query)
         .fold(error => fail(error.toString), identity)
       val preparedReads = outputReads.get()
       assert(preparedReads > 0)
@@ -262,7 +264,7 @@ class QueryCacheTest extends CatsEffectSuite {
       argumentReads.set(0)
       val query = "query Owner($n: Int!) { owner(value: $n) { summary(value: -1) } }"
       val cached = compiler
-        .parsePrep(countedSchema, QueryParameters(query, None, None))
+        .parsePrep(countedSchema, query)
         .fold(error => fail(error.toString), identity)
       val preparedReads = (outputReads.get(), argumentReads.get())
       assert(preparedReads._1 > 0)
@@ -283,10 +285,12 @@ class QueryCacheTest extends CatsEffectSuite {
     }
   }
 
-  test("preparation ignores supplied variables until run") {
+  test("preparation requires no variables") {
     val cached = compiler
-      .parsePrep(schema(), QueryParameters(echo, Some(Map("n" -> Json.fromString("invalid"))), None))
+      .parsePrep(schema(), echo)
       .fold(error => fail(error.toString), identity)
+
+    assert(cached.run(Map("n" -> Json.fromString("invalid"))).isLeft)
 
     execute(cached.run(secondVars)).map(result => assertEquals(result, JsonObject("echo" -> Json.fromInt(2))))
   }
@@ -294,10 +298,10 @@ class QueryCacheTest extends CatsEffectSuite {
   test("cached bindings use defaults without retaining earlier supplied values") {
     val query = "query Echo($n: Int! = 7) { echo(value: $n) }"
     for {
-      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 1)(prepare)
-      supplied <- cache.compile(QueryParameters(query, Some(secondVars), None)).flatMap(execute)
-      defaulted <- cache.compile(QueryParameters(query, None, None)).flatMap(execute)
-      suppliedAgain <- cache.compile(QueryParameters(query, Some(firstVars), None)).flatMap(execute)
+      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 1)
+      supplied <- cache.get(query) { prepare(query, None) }.map(_.flatMap(_.run(secondVars))).flatMap(execute)
+      defaulted <- cache.get(query) { prepare(query, None) }.map(_.flatMap(_.run(Map.empty))).flatMap(execute)
+      suppliedAgain <- cache.get(query) { prepare(query, None) }.map(_.flatMap(_.run(firstVars))).flatMap(execute)
       _ <- IO {
         assertEquals(supplied, JsonObject("echo" -> Json.fromInt(2)))
         assertEquals(defaulted, JsonObject("echo" -> Json.fromInt(7)))
@@ -308,15 +312,16 @@ class QueryCacheTest extends CatsEffectSuite {
 
   test("binding errors retain prepared cache entry and do not affect later bindings") {
     val preparations = new AtomicInteger(0)
+    def prepareQuery = {
+      preparations.incrementAndGet()
+      prepare(echo, None)
+    }
     for {
-      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 1) { (query, operationName) =>
-        preparations.incrementAndGet()
-        prepare(query, operationName)
-      }
-      missing <- cache.compile(QueryParameters(echo, None, None))
+      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 1)
+      missing <- cache.get(echo) { prepareQuery }.map(_.flatMap(_.run(Map.empty)))
       entry <- cache.getPrep(echo)
-      invalid <- cache.compile(QueryParameters(echo, Some(Map("n" -> Json.fromString("invalid"))), None))
-      valid <- cache.compile(QueryParameters(echo, Some(firstVars), None)).flatMap(execute)
+      invalid <- cache.get(echo) { prepareQuery }.map(_.flatMap(_.run(Map("n" -> Json.fromString("invalid")))))
+      valid <- cache.get(echo) { prepareQuery }.map(_.flatMap(_.run(firstVars))).flatMap(execute)
       _ <- IO {
         assert(missing.isLeft)
         assert(entry.isDefined)
@@ -357,7 +362,7 @@ class QueryCacheTest extends CatsEffectSuite {
       .flatMap { countedSchema =>
         val query = "query Echo($n: Int!, $m: Int!) { echo(value: $n) counted(value: $m) }"
         val cached = compiler
-          .parsePrep(countedSchema, QueryParameters(query, None, None))
+          .parsePrep(countedSchema, query)
           .fold(error => fail(error.toString), identity)
         val preparedReads = outputReads.get()
         assert(preparedReads > 0)
@@ -395,7 +400,7 @@ class QueryCacheTest extends CatsEffectSuite {
       .simple(SchemaShape.unit[IO](fields("echo" -> lift(optional)((value, _) => value.getOrElse(-1)))))
       .flatMap { optionalSchema =>
         val cached = compiler
-          .parsePrep(optionalSchema, QueryParameters("query Echo($n: Int = 7) { echo(value: $n) }", None, None))
+          .parsePrep(optionalSchema, "query Echo($n: Int = 7) { echo(value: $n) }")
           .fold(error => fail(error.toString), identity)
 
         List(Map.empty[String, Json] -> 7, Map("n" -> Json.Null) -> -1, firstVars -> 1, Map.empty[String, Json] -> 7).traverse_ {
@@ -462,7 +467,7 @@ class QueryCacheTest extends CatsEffectSuite {
         outputReads.set(0)
         val query = "{ same: echo(value: 1) same: flag(unexpected: 1) }"
         val prepared = compiler
-          .parsePrep(countedSchema, QueryParameters(query, None, None))
+          .parsePrep(countedSchema, query)
         // Collection and preparation both inspect output, despite the merge failure.
         val preparedReads = outputReads.get()
         assert(preparedReads >= 2)
@@ -509,7 +514,7 @@ class QueryCacheTest extends CatsEffectSuite {
     }
     fragment EchoFields on Query { named: echo(value: $n) }"""
       val cached = compiler
-        .parsePrep(fragmentSchema, QueryParameters(query, None, None))
+        .parsePrep(fragmentSchema, query)
         .fold(error => fail(error.toString), identity)
       assertEquals(inlineCalls.get(), 1)
       assertEquals(namedCalls.get(), 1)
@@ -549,7 +554,7 @@ class QueryCacheTest extends CatsEffectSuite {
     Schema.simple(shape).map { directiveSchema =>
       val query = "query Echo($n: Int!) { positive(value: $n) plain @reject }"
       val cached = compiler
-        .parsePrep(directiveSchema, QueryParameters(query, None, None))
+        .parsePrep(directiveSchema, query)
         .fold(error => fail(error.toString), identity)
       assertEquals(calls.get(), 1)
 
@@ -570,9 +575,9 @@ class QueryCacheTest extends CatsEffectSuite {
   test("cached metadata uses variables from each binding") {
     val query = "query Echo($n: Int!) { echo(value: $n) meta }"
     for {
-      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 1)(prepare)
-      firstPrepared <- cache.compile(QueryParameters(query, Some(firstVars), None))
-      secondPrepared <- cache.compile(QueryParameters(query, Some(secondVars), None))
+      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 1)
+      firstPrepared <- cache.get(query) { prepare(query, None) }.map(_.flatMap(_.run(firstVars)))
+      secondPrepared <- cache.get(query) { prepare(query, None) }.map(_.flatMap(_.run(secondVars)))
       results <- (execute(firstPrepared), execute(secondPrepared)).parTupled
       _ <- IO {
         val (first, second) = results
@@ -604,7 +609,7 @@ class QueryCacheTest extends CatsEffectSuite {
       .flatMap { metadataSchema =>
         List("query", "mutation", "subscription").traverse_ { operation =>
           val cached = compiler
-            .parsePrep(metadataSchema, QueryParameters(s"$operation Echo($$n: Int! = 7) { meta(value: $$n) }", None, None))
+            .parsePrep(metadataSchema, s"$operation Echo($$n: Int! = 7) { meta(value: $$n) }")
             .fold(error => fail(error.toString), identity)
           List((secondVars, 2, "2"), (Map.empty[String, Json], 7, "default"), (firstVars, 1, "1")).traverse_ {
             case (variables, value, metadata) =>
@@ -627,9 +632,9 @@ class QueryCacheTest extends CatsEffectSuite {
   test("metadata owner contains bound arguments and its actual selection") {
     val query = "query Owner($n: Int!) { chosen: owner(value: $n) { selected: summary } }"
     for {
-      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 1)(prepare)
-      first <- cache.compile(QueryParameters(query, Some(firstVars), None)).flatMap(execute)
-      second <- cache.compile(QueryParameters(query, Some(secondVars), None)).flatMap(execute)
+      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 1)
+      first <- cache.get(query) { prepare(query, None) }.map(_.flatMap(_.run(firstVars))).flatMap(execute)
+      second <- cache.get(query) { prepare(query, None) }.map(_.flatMap(_.run(secondVars))).flatMap(execute)
       _ <- IO {
         assertEquals(first, JsonObject("chosen" -> Json.obj("selected" -> Json.fromString("chosen:1:selected"))))
         assertEquals(second, JsonObject("chosen" -> Json.obj("selected" -> Json.fromString("chosen:2:selected"))))
@@ -673,7 +678,7 @@ class QueryCacheTest extends CatsEffectSuite {
     Schema
       .simple(SchemaShape.unit[IO](builder[IO, Unit](b => b.fields("echo" -> b.from(resolver)))))
       .flatMap { resolverSchema =>
-        val cached = compiler.parsePrep(resolverSchema, QueryParameters(echo, None, None)).fold(error => fail(error.toString), identity)
+        val cached = compiler.parsePrep(resolverSchema, echo).fold(error => fail(error.toString), identity)
         val first = cached.run(firstVars).fold(error => fail(error.toString), identity)
         val second = cached.run(secondVars).fold(error => fail(error.toString), identity)
 
@@ -712,7 +717,7 @@ class QueryCacheTest extends CatsEffectSuite {
         seen.update(_ :+ meta).as(value)
       }
       resolverSchema <- Schema.simple(SchemaShape.unit[IO](builder[IO, Unit](b => b.fields("echo" -> b.from(resolver)))))
-      cached = compiler.parsePrep(resolverSchema, QueryParameters(echo, None, None)).fold(error => fail(error.toString), identity)
+      cached = compiler.parsePrep(resolverSchema, echo).fold(error => fail(error.toString), identity)
       _ <- List(firstVars -> 1, secondVars -> 2).traverse_ { case (variables, expected) =>
         val root = cached.run(variables).fold(error => fail(error.toString), identity)
         compiler.compilePrepared(resolverSchema, root) match {
@@ -764,7 +769,7 @@ class QueryCacheTest extends CatsEffectSuite {
       .copy(positions = List(replace))
     Schema.simple(shape).flatMap { resolverSchema =>
       val query = "query Echo($n: Int!) { echo(value: 0) @replace(value: $n) }"
-      val cached = compiler.parsePrep(resolverSchema, QueryParameters(query, None, None)).fold(error => fail(error.toString), identity)
+      val cached = compiler.parsePrep(resolverSchema, query).fold(error => fail(error.toString), identity)
 
       List(firstVars -> 1, secondVars -> 2).traverse_ { case (variables, expected) =>
         val root = cached.run(variables).fold(error => fail(error.toString), identity)
@@ -784,9 +789,9 @@ class QueryCacheTest extends CatsEffectSuite {
     List("mutation", "subscription").traverse_ { operation =>
       val query = s"$operation Echo($$n: Int!) { echo(value: $$n) }"
       for {
-        cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 1)(prepare)
-        first <- cache.compile(QueryParameters(query, Some(firstVars), None)).flatMap(execute)
-        second <- cache.compile(QueryParameters(query, Some(secondVars), None)).flatMap(execute)
+        cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 1)
+        first <- cache.get(query) { prepare(query, None) }.map(_.flatMap(_.run(firstVars))).flatMap(execute)
+        second <- cache.get(query) { prepare(query, None) }.map(_.flatMap(_.run(secondVars))).flatMap(execute)
         _ <- IO {
           assertEquals(first, JsonObject("echo" -> Json.fromInt(1)))
           assertEquals(second, JsonObject("echo" -> Json.fromInt(2)))
@@ -798,9 +803,9 @@ class QueryCacheTest extends CatsEffectSuite {
   test("cached directives bind separately for each request") {
     val query = "query Echo($n: Int!, $show: Boolean!) { echo(value: $n) optional: echo(value: 9) @include(if: $show) }"
     for {
-      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 1)(prepare)
-      hidden <- cache.compile(QueryParameters(query, Some(firstVars + ("show" -> Json.False)), None)).flatMap(execute)
-      shown <- cache.compile(QueryParameters(query, Some(secondVars + ("show" -> Json.True)), None)).flatMap(execute)
+      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 1)
+      hidden <- cache.get(query) { prepare(query, None) }.map(_.flatMap(_.run(firstVars + ("show" -> Json.False)))).flatMap(execute)
+      shown <- cache.get(query) { prepare(query, None) }.map(_.flatMap(_.run(secondVars + ("show" -> Json.True)))).flatMap(execute)
       _ <- IO {
         assertEquals(hidden, JsonObject("echo" -> Json.fromInt(1)))
         assertEquals(shown, JsonObject("echo" -> Json.fromInt(2), "optional" -> Json.fromInt(9)))
@@ -816,10 +821,10 @@ class QueryCacheTest extends CatsEffectSuite {
     }
     fragment Optional on Query { named: echo(value: 8) }"""
     for {
-      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 1)(prepare)
-      hidden <- cache.compile(QueryParameters(query, Some(firstVars + ("show" -> Json.False)), None)).flatMap(execute)
-      shown <- cache.compile(QueryParameters(query, Some(secondVars + ("show" -> Json.True)), None)).flatMap(execute)
-      hiddenAgain <- cache.compile(QueryParameters(query, Some(firstVars + ("show" -> Json.False)), None)).flatMap(execute)
+      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 1)
+      hidden <- cache.get(query) { prepare(query, None) }.map(_.flatMap(_.run(firstVars + ("show" -> Json.False)))).flatMap(execute)
+      shown <- cache.get(query) { prepare(query, None) }.map(_.flatMap(_.run(secondVars + ("show" -> Json.True)))).flatMap(execute)
+      hiddenAgain <- cache.get(query) { prepare(query, None) }.map(_.flatMap(_.run(firstVars + ("show" -> Json.False)))).flatMap(execute)
       _ <- IO {
         assertEquals(hidden, JsonObject("echo" -> Json.fromInt(1)))
         assertEquals(shown, JsonObject("echo" -> Json.fromInt(2), "inline" -> Json.fromInt(9), "named" -> Json.fromInt(8)))
@@ -900,11 +905,11 @@ class QueryCacheTest extends CatsEffectSuite {
 
   test("concurrent bindings share preparation without sharing variables") {
     for {
-      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 1)(prepare)
+      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 1)
       cached = prepare(echo, None).fold(error => fail(error.toString), identity)
       _ <- cache.persist(cached)
       results <- (1 to 20).toList.parTraverse { value =>
-        cache.compile(QueryParameters(echo, Some(Map("n" -> Json.fromInt(value))), None)).flatMap(execute)
+        cache.get(echo) { prepare(echo, None) }.map(_.flatMap(_.run(Map("n" -> Json.fromInt(value))))).flatMap(execute)
       }
       _ <- IO(assertEquals(results, (1 to 20).toList.map(value => JsonObject("echo" -> Json.fromInt(value)))))
     } yield ()
@@ -913,9 +918,9 @@ class QueryCacheTest extends CatsEffectSuite {
   test("query text and operation name identify separate entries") {
     val query = "query First { echo(value: 1) } query Second { echo(value: 2) }"
     for {
-      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 3)(prepare)
-      first <- cache.compile(QueryParameters(query, None, Some("First"))).flatMap(execute)
-      second <- cache.compile(QueryParameters(query, None, Some("Second"))).flatMap(execute)
+      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 3)
+      first <- cache.get(query, Some("First")) { prepare(query, Some("First")) }.map(_.flatMap(_.run(Map.empty))).flatMap(execute)
+      second <- cache.get(query, Some("Second")) { prepare(query, Some("Second")) }.map(_.flatMap(_.run(Map.empty))).flatMap(execute)
       firstEntry <- cache.getPrep(query, Some("First"))
       secondEntry <- cache.getPrep(query, Some("Second"))
       noOperation <- cache.getPrep(query)
@@ -937,7 +942,7 @@ class QueryCacheTest extends CatsEffectSuite {
     val second = prepare("{ echo(value: 2) }", None).fold(error => fail(error.toString), identity)
     val third = prepare("{ echo(value: 3) }", None).fold(error => fail(error.toString), identity)
     for {
-      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 2)(prepare)
+      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 2)
       _ <- cache.persist(first)
       _ <- cache.persist(second)
       _ <- cache.getPrep("{ echo(value: 1) }")
@@ -953,16 +958,16 @@ class QueryCacheTest extends CatsEffectSuite {
     } yield ()
   }
 
-  test("compile hits refresh recency and preparation misses persist automatically") {
+  test("get hits refresh recency and preparation misses persist automatically") {
     val first = "{ echo(value: 1) }"
     val second = "{ echo(value: 2) }"
     val third = "{ echo(value: 3) }"
     for {
-      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 2)(prepare)
-      _ <- cache.compile(QueryParameters(first, None, None))
-      _ <- cache.compile(QueryParameters(second, None, None))
-      _ <- cache.compile(QueryParameters(first, None, None))
-      _ <- cache.compile(QueryParameters(third, None, None))
+      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 2)
+      _ <- cache.get(first) { prepare(first, None) }
+      _ <- cache.get(second) { prepare(second, None) }
+      _ <- cache.get(first) { prepare(first, None) }
+      _ <- cache.get(third) { prepare(third, None) }
       evicted <- cache.getPrep(second)
       retainedFirst <- cache.getPrep(first)
       retainedThird <- cache.getPrep(third)
@@ -981,7 +986,7 @@ class QueryCacheTest extends CatsEffectSuite {
     val second = prepare("{ echo(value: 2) }", None).fold(error => fail(error.toString), identity)
     val third = prepare("{ echo(value: 3) }", None).fold(error => fail(error.toString), identity)
     for {
-      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 2)(prepare)
+      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 2)
       _ <- cache.persist(original)
       _ <- cache.persist(second)
       _ <- cache.persist(replacement)
@@ -998,13 +1003,14 @@ class QueryCacheTest extends CatsEffectSuite {
   test("parse and static preparation errors are not cached") {
     List("query {", "{ unknownField }").traverse_ { query =>
       val preparations = new AtomicInteger(0)
+      def prepareQuery = {
+        preparations.incrementAndGet()
+        prepare(query, None)
+      }
       for {
-        cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 1) { (text, operationName) =>
-          preparations.incrementAndGet()
-          prepare(text, operationName)
-        }
-        first <- cache.compile(QueryParameters(query, None, None))
-        second <- cache.compile(QueryParameters(query, None, None))
+        cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 1)
+        first <- cache.get(query) { prepareQuery }.map(_.flatMap(_.run(Map.empty)))
+        second <- cache.get(query) { prepareQuery }.map(_.flatMap(_.run(Map.empty)))
         entry <- cache.getPrep(query)
         _ <- IO {
           assert(first.isLeft)
@@ -1020,7 +1026,7 @@ class QueryCacheTest extends CatsEffectSuite {
     val queries = (1 to 20).toList.map(value => s"{ echo(value: $value) }")
     val prepared = queries.map(query => prepare(query, None).fold(error => fail(error.toString), identity))
     for {
-      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 2)(prepare)
+      cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 2)
       _ <- prepared.parTraverse_(cache.persist)
       entries <- queries.traverse(cache.getPrep(_))
       _ <- IO(assertEquals(entries.count(_.isDefined), 2))
@@ -1029,7 +1035,7 @@ class QueryCacheTest extends CatsEffectSuite {
 
   test("cache requires positive capacity") {
     List(0, -1).traverse_ { capacity =>
-      QueryCache[IO, Unit, Unit, Unit](maxEntries = capacity)(prepare).attempt.map {
+      QueryCache[IO, Unit, Unit, Unit](maxEntries = capacity).attempt.map {
         case Left(_: IllegalArgumentException) => ()
         case _                                 => fail("Expected invalid capacity failure")
       }
