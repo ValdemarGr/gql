@@ -24,12 +24,15 @@ import java.util.LinkedHashMap
 /** A bounded LRU overlay for one preparation function. */
 final class QueryCache[F[_], Q, M, S] private (
     maxEntries: Int,
-    prepare: (String, Option[String]) => Either[CompilationError, CacheableQuery[F, Q, M, S]],
+    prepareQuery: (String, Option[String]) => Either[CompilationError, CacheableQuery[F, Q, M, S]],
     entries: LinkedHashMap[(String, Option[String]), CacheableQuery[F, Q, M, S]],
     mutex: Mutex[F]
 )(implicit F: Async[F]) {
   def getPrep(query: String, operationName: Option[String] = None): F[Option[CacheableQuery[F, Q, M, S]]] =
     mutex.lock.surround(F.delay(Option(entries.get((query, operationName)))))
+
+  def prepare(query: String, operationName: Option[String] = None): F[Either[CompilationError, CacheableQuery[F, Q, M, S]]] =
+    F.delay(prepareQuery(query, operationName))
 
   def persist(cq: CacheableQuery[F, Q, M, S]): F[Unit] =
     mutex.lock.surround {
@@ -47,7 +50,7 @@ final class QueryCache[F[_], Q, M, S] private (
     getPrep(qp.query, qp.operationName)
       .flatMap {
         case Some(cq) => F.pure(cq.asRight[CompilationError])
-        case None     => F.delay(prepare(qp.query, qp.operationName)).flatTap(_.traverse_(persist))
+        case None     => prepare(qp.query, qp.operationName).flatTap(_.traverse_(persist))
       }
       .flatMap(_.traverse(cq => F.delay(cq.run(qp.variables.getOrElse(Map.empty)))).map(_.flatten))
 }

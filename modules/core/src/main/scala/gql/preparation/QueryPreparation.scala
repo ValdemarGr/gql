@@ -207,14 +207,17 @@ class QueryPreparation[F[_], C](
         ).tupled
 
         val pdfF: LazyT[G, PreparedMeta[F], PreparedDataField[F, I, ?]] =
-          (liftK(nextNodeId), preparedF).tupled.mapF(_.run.map { case (w, f) =>
-            f.andThen { case (nid, (x, y)) =>
-              PreparedDataField(nid, fi.name, fi.alias, PreparedCont(x, y), field, w.toList.toMap)
+          (liftK(nextNodeId), preparedF).tupled.mapF(_.run.map { case (w, result) =>
+            val parsedArgs = w.toList.toMap
+            val build: ((NodeId, (PreparedStep[F, I, o2], Prepared[F, o2]))) => PreparedDataField[F, I, o2] = { case (nid, (x, y)) =>
+              PreparedDataField(nid, fi.name, fi.alias, PreparedCont(x, y), field, parsedArgs)
             }
+            result.bimap(build, _.andThen(build))
           })
 
+        val args = meta.args.map(_.map(_ => ()))
         val out = pdfF.runWithValue { pdf =>
-          PreparedMeta(meta.args.map(_.map(_ => ())), pdf)
+          PreparedMeta(args, pdf)
         }
 
         checkDuplicatesF >> (verifyTooManyF &> out)

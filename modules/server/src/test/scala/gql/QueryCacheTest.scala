@@ -20,7 +20,7 @@ import cats.effect.IO
 import cats.implicits._
 import gql.ast._
 import gql.dsl.all._
-import gql.preparation.{MergedFieldInfo, PreparedDataField, PreparedRoot, PreparedSpecification, Selection}
+import gql.preparation.{MergedFieldInfo, PreparedDataField, PreparedRoot, PreparedSpecification, PreparedStep, Selection}
 import gql.parser.{QueryAst => QA}
 import gql.resolver.Resolver
 import io.circe.{Json, JsonObject}
@@ -639,11 +639,128 @@ class QueryCacheTest extends CatsEffectSuite {
             x.selection.zip(y.selection).foreach { case (xf, yf) =>
               assert(xf.nodeId.id eq yf.nodeId.id)
               assert(xf.cont.edges.nodeId.id eq yf.cont.edges.nodeId.id)
+              assert(xf.cont.cont eq yf.cont.cont)
               if (xf.name != "echo") assert(xf eq yf)
             }
           case _ => fail("Expected prepared specifications")
         }
       case _ => fail("Expected query roots")
+    }
+  }
+
+  test("static resolver subchains and output wrappers are reused inside variable-dependent fields") {
+    val static = Resolver
+      .lift[IO, Int](_ + 1)
+      .emap(_.rightIor)
+      .evalMap(IO.pure)
+      .streamMap(value => fs2.Stream.emit(value).covary[IO])
+      .map(value => List(Option(value)))
+    val resolver = Resolver.argument[IO, Unit, Int](argument).andThen(static)
+    val resolverSchema = Schema
+      .simple(SchemaShape.unit[IO](builder[IO, Unit](b => b.fields("echo" -> b.from(resolver)))))
+      .unsafeRunSync()
+    val cached = compiler.parsePrep(resolverSchema, QueryParameters(echo, None, None)).fold(error => fail(error.toString), identity)
+    val first = cached.run(firstVars).fold(error => fail(error.toString), identity)
+    val second = cached.run(secondVars).fold(error => fail(error.toString), identity)
+
+    (first.operation, second.operation) match {
+      case (PreparedRoot.Query(a), PreparedRoot.Query(b)) =>
+        val x = a.fields.collect { case spec: PreparedSpecification[IO, ?, ?] => spec.selection }.flatten
+        val y = b.fields.collect { case spec: PreparedSpecification[IO, ?, ?] => spec.selection }.flatten
+        assertEquals(x.size, 1)
+        assertEquals(y.size, 1)
+        assert(x.head.cont.cont eq y.head.cont.cont)
+        (x.head.cont.edges, y.head.cont.edges) match {
+          case (left: PreparedStep.Compose[IO, ?, ?, ?], right: PreparedStep.Compose[IO, ?, ?, ?]) =>
+            assert(left.right eq right.right)
+          case _ => fail("Expected argument followed by static resolver subchain")
+        }
+      case _ => fail("Expected query roots")
+    }
+
+    List(first -> 2, second -> 3).traverse_ { case (root, expected) =>
+      compiler.compilePrepared(resolverSchema, root) match {
+        case Application.Query(run) =>
+          run.map { result =>
+            assertEquals(result.errors.toList, Nil)
+            assertEquals(result.data, JsonObject("echo" -> Json.arr(Json.fromInt(expected))))
+          }
+        case _ => IO(fail("Expected query"))
+      }
+    }
+  }
+
+  test("metadata argument AST is reused while its owner and parsed arguments bind independently") {
+    for {
+      seen <- cats.effect.Ref.of[IO, List[gql.resolver.FieldMeta[IO]]](Nil)
+      resolver = Resolver.meta[IO, Unit].arg(argument).evalMap { case (value, meta) =>
+        seen.update(_ :+ meta).as(value)
+      }
+      resolverSchema <- Schema.simple(SchemaShape.unit[IO](builder[IO, Unit](b => b.fields("echo" -> b.from(resolver)))))
+      cached = compiler.parsePrep(resolverSchema, QueryParameters(echo, None, None)).fold(error => fail(error.toString), identity)
+      _ <- List(firstVars -> 1, secondVars -> 2).traverse_ { case (variables, expected) =>
+        val root = cached.run(variables).fold(error => fail(error.toString), identity)
+        compiler.compilePrepared(resolverSchema, root) match {
+          case Application.Query(run) =>
+            run.map { result =>
+              assertEquals(result.errors.toList, Nil)
+              assertEquals(result.data, JsonObject("echo" -> Json.fromInt(expected)))
+            }
+          case _ => IO(fail("Expected query"))
+        }
+      }
+      metadata <- seen.get
+      _ <- IO {
+        assertEquals(metadata.size, 2)
+        val first = metadata.head
+        val second = metadata.last
+        assert(first.args.get eq second.args.get)
+        assert(!(first.astNode eq second.astNode))
+        assertEquals(first.astNode.arg(argument), Some(1))
+        assertEquals(second.astNode.arg(argument), Some(2))
+      }
+    } yield ()
+  }
+
+  test("metadata argument AST reflects field directive rewrites on each binding") {
+    val replace = Position.Field[IO, Int](
+      Directive("replace", EmptyableArg.Lift(argument)),
+      new Position.FieldHandler[IO, Int] {
+        def apply[I, C](
+            value: Int,
+            field: Field[IO, I, ?],
+            info: MergedFieldInfo[IO, C]
+        ): Either[String, List[(Field[IO, I, ?], MergedFieldInfo[IO, C])]] = {
+          val args =
+            info.args.map(args =>
+              args.copy(nel = args.nel.map(arg => arg.copy[C, gql.parser.AnyValue](value = gql.parser.Value.IntValue(value, info.caret))))
+            )
+          Right(List(field -> info.copy(args = args)))
+        }
+      }
+    )
+    val resolver = Resolver.meta[IO, Unit].arg(argument).map { case (value, meta) =>
+      assertEquals(meta.astNode.arg(argument), Some(value))
+      assertEquals(meta.args.get.nel.head.value, gql.parser.Value.IntValue(BigInt(value), ()))
+      value
+    }
+    val shape = SchemaShape
+      .unit[IO](builder[IO, Unit](b => b.fields("echo" -> b.from(resolver))))
+      .copy(positions = List(replace))
+    val resolverSchema = Schema.simple(shape).unsafeRunSync()
+    val query = "query Echo($n: Int!) { echo(value: 0) @replace(value: $n) }"
+    val cached = compiler.parsePrep(resolverSchema, QueryParameters(query, None, None)).fold(error => fail(error.toString), identity)
+
+    List(firstVars -> 1, secondVars -> 2).traverse_ { case (variables, expected) =>
+      val root = cached.run(variables).fold(error => fail(error.toString), identity)
+      compiler.compilePrepared(resolverSchema, root) match {
+        case Application.Query(run) =>
+          run.map { result =>
+            assertEquals(result.errors.toList, Nil)
+            assertEquals(result.data, JsonObject("echo" -> Json.fromInt(expected)))
+          }
+        case _ => IO(fail("Expected query"))
+      }
     }
   }
 
