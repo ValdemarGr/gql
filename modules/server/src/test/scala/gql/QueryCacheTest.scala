@@ -218,6 +218,51 @@ class QueryCacheTest extends CatsEffectSuite {
       }
   }
 
+  test("parent errors suppress child errors without delaying or repeating static child preparation") {
+    val outputReads = new AtomicInteger(0)
+    val argumentReads = new AtomicInteger(0)
+    val childArgument = argument.emap { value =>
+      argumentReads.incrementAndGet()
+      Either.cond(value > 0, value, "Child must be positive")
+    }
+    val child = Field[IO, Owner, String](
+      Resolver.argument[IO, Owner, Int](childArgument).map(_.toString),
+      Eval.always {
+        outputReads.incrementAndGet()
+        stringScalar
+      }
+    )
+    val nestedType = tpe[IO, Owner]("CountedOwner", "summary" -> child)
+    val parent = Field[IO, Unit, Owner](
+      Resolver.argument[IO, Unit, Int](positiveArgument).map(value => Owner(value.toString)),
+      Eval.now(nestedType)
+    )
+    val countedSchema = Schema.simple(SchemaShape.unit[IO](fields("owner" -> parent))).unsafeRunSync()
+    outputReads.set(0)
+    argumentReads.set(0)
+    val query = "query Owner($n: Int!) { owner(value: $n) { summary(value: -1) } }"
+    val cached = compiler
+      .parsePrep(countedSchema, QueryParameters(query, None, None))
+      .fold(error => fail(error.toString), identity)
+    val preparedReads = (outputReads.get(), argumentReads.get())
+    assert(preparedReads._1 > 0)
+    assert(preparedReads._2 > 0)
+
+    List(-1 -> "Must be positive", 1 -> "Child must be positive", -2 -> "Must be positive").zipWithIndex.foreach {
+      case ((value, message), index) =>
+        cached.run(Map("n" -> Json.fromInt(value))) match {
+          case Left(CompilationError.Preparation(errors)) =>
+            assertEquals(errors.toChain.toList.map(_.message), List(message))
+            val cursor = if (value < 0) Cursor.empty.field("owner") else Cursor.empty.field("owner").field("summary")
+            assertEquals(errors.toChain.toList.map(_.position), List(cursor))
+          case _ => fail("Expected argument validation error")
+        }
+        assertEquals(outputReads.get(), preparedReads._1)
+        // Deferred validation already decodes once per binding; preparation remains cached.
+        assertEquals(argumentReads.get(), preparedReads._2 + index + 1)
+    }
+  }
+
   test("preparation ignores supplied variables until run") {
     val cached = compiler
       .parsePrep(schema, QueryParameters(echo, Some(Map("n" -> Json.fromString("invalid"))), None))
@@ -263,85 +308,81 @@ class QueryCacheTest extends CatsEffectSuite {
   }
 
   test("binding accumulates independent variable errors") {
-    val query = "query Echo($x: Int!, $y: Int!) { first: echo(value: $x) second: echo(value: $y) }"
+    val query = "query Echo($x: Int!, $y: Int!) { first: positive(value: $x) second: positive(value: $y) }"
     val cached = prepare(query, None).fold(error => fail(error.toString), identity)
-    val result = cached.run(Map("x" -> Json.fromString("invalid"), "y" -> Json.fromString("invalid")))
-
-    result match {
-      case Left(CompilationError.Preparation(errors)) => assert(errors.toChain.toList.size >= 2)
-      case _                                          => fail("Expected accumulated variable errors")
+    List(Json.fromString("invalid"), Json.fromInt(-1)).foreach { value =>
+      cached.run(Map("x" -> value, "y" -> value)) match {
+        case Left(CompilationError.Preparation(errors)) => assertEquals(errors.toChain.toList.size, 2)
+        case _                                          => fail("Expected accumulated variable errors")
+      }
     }
   }
 
-  test("deferred argument errors accumulate with structural sibling errors") {
-    val query = "query Echo($n: Int!) { positive(value: $n) unknown }"
-    compiler.compile(schema, query, variables = Map("n" -> Json.fromInt(-1))) match {
-      case Left(CompilationError.Preparation(errors)) =>
-        val messages = errors.toChain.toList.map(_.message)
-        assertEquals(messages.count(_ == "Must be positive"), 1)
-        assertEquals(messages.count(_.contains("unknown")), 1)
-        assertEquals(messages.size, 2)
-      case _ => fail("Expected accumulated argument and structural errors")
+  test("structural errors stop later phases without requiring variables") {
+    val cases = List(
+      ("query Echo($n: Int!) { positive(value: $n) unknown }", Cursor.empty, "Field 'unknown' is not a member of `Query`."),
+      (
+        "query Echo($n: Int!) { abstract { positive(value: $n) unknown } }",
+        Cursor.empty.field("abstract"),
+        "Field 'unknown' is not a member of `CachedInterface`."
+      ),
+      ("query Echo($n: Int!) { positive(value: $n) ... Missing }", Cursor.empty, "Unknown fragment name 'Missing'."),
+      (
+        "query Echo($n: Int!) { abstract { positive(value: $n) { invalid } } }",
+        Cursor.empty.field("abstract").field("positive"),
+        "Field `positive` of scalar type `Int` must not have a selection set."
+      )
+    )
+    cases.foreach { case (query, cursor, message) =>
+      prepare(query, None) match {
+        case Left(CompilationError.Preparation(errors)) =>
+          assertEquals(errors.toChain.toList.map(_.message), List(message))
+          assertEquals(errors.toChain.toList.map(_.position), List(cursor))
+        case _ => fail("Expected structural error during preparation")
+      }
     }
   }
 
-  test("nested structural errors preserve deferred argument checks") {
-    val query = "query Echo($n: Int!) { abstract { positive(value: $n) unknown } }"
-    compiler.compile(schema, query, variables = Map("n" -> Json.fromInt(-1))) match {
+  test("duplicate arguments suppress dependent argument errors") {
+    prepare("{ flag(unexpected: 1, unexpected: 2) }", None) match {
       case Left(CompilationError.Preparation(errors)) =>
-        val all = errors.toChain.toList
-        assertEquals(all.count(_.message == "Must be positive"), 1)
-        assertEquals(all.count(_.message.contains("unknown")), 1)
-        assertEquals(all.size, 2)
-        assertEquals(all.find(_.message == "Must be positive").map(_.position), Some(Cursor.empty.field("abstract").field("positive")))
-      case _ => fail("Expected nested argument and structural errors")
+        assertEquals(errors.toChain.toList.map(_.message), List("Duplicate argument names found: 'unexpected'."))
+      case _ => fail("Expected duplicate argument error")
     }
   }
 
-  test("unknown named fragments preserve deferred sibling argument validation") {
-    val query = "query Echo($n: Int!) { positive(value: $n) ... Missing }"
-    val cached = prepare(query, None).fold(error => fail(error.toString), identity)
-
-    cached.run(Map("n" -> Json.fromInt(-1))) match {
-      case Left(CompilationError.Preparation(errors)) =>
-        val all = errors.toChain.toList
-        assertEquals(all.count(_.message == "Unknown fragment name 'Missing'."), 1)
-        assertEquals(all.count(_.message == "Must be positive"), 1)
-        assertEquals(all.size, 2)
-        assertEquals(all.find(_.message == "Must be positive").map(_.position), Some(Cursor.empty.field("positive")))
-        assertEquals(all.find(_.message == "Unknown fragment name 'Missing'.").map(_.position), Some(Cursor.empty))
-      case _ => fail("Expected fragment and deferred argument validation errors")
-    }
-
-    cached.run(firstVars) match {
-      case Left(CompilationError.Preparation(errors)) =>
-        assertEquals(errors.toChain.toList.map(_.message), List("Unknown fragment name 'Missing'."))
-      case _ => fail("Expected unknown fragment error")
-    }
-  }
-
-  test("malformed known output retains deferred argument validation") {
-    val query = "query Echo($n: Int!) { abstract { positive(value: $n) { invalid } } }"
-    val cached = prepare(query, None).fold(error => fail(error.toString), identity)
-    val cursor = Cursor.empty.field("abstract").field("positive")
-
-    cached.run(Map("n" -> Json.fromInt(-1))) match {
-      case Left(CompilationError.Preparation(errors)) =>
-        val all = errors.toChain.toList
-        assertEquals(all.count(_.message == "Must be positive"), 1)
-        assertEquals(all.count(_.message.contains("must not have a selection set")), 1)
-        assertEquals(all.size, 2)
-        assertEquals(all.map(_.position).toSet, Set(cursor))
-      case _ => fail("Expected output shape and argument validation errors")
-    }
-
-    cached.run(firstVars) match {
-      case Left(CompilationError.Preparation(errors)) =>
-        val all = errors.toChain.toList
-        assertEquals(all.size, 1)
-        assert(all.head.message.contains("must not have a selection set"))
-        assertEquals(all.head.position, cursor)
-      case _ => fail("Expected output shape error")
+  test("merge errors suppress preparation errors while static preparation remains eager") {
+    val outputReads = new AtomicInteger(0)
+    val field = Field[IO, Unit, Boolean](
+      Resolver.lift[IO, Unit](_ => true),
+      Eval.always {
+        outputReads.incrementAndGet()
+        booleanScalar
+      }
+    )
+    val countedSchema = Schema
+      .simple(
+        SchemaShape.unit[IO](fields("echo" -> lift(argument)((value, _) => value), "flag" -> field))
+      )
+      .unsafeRunSync()
+    outputReads.set(0)
+    val query = "{ same: echo(value: 1) same: flag(unexpected: 1) }"
+    val cached = compiler
+      .parsePrep(countedSchema, QueryParameters(query, None, None))
+      .fold(error => fail(error.toString), identity)
+    // Collection and preparation both inspect output, despite the merge failure.
+    val preparedReads = outputReads.get()
+    assert(preparedReads >= 2)
+    (1 to 2).foreach { _ =>
+      cached.run(Map.empty) match {
+        case Left(CompilationError.Preparation(errors)) =>
+          val messages = errors.toChain.toList.map(_.message)
+          assert(messages.exists(_.contains("must have the same name")))
+          assert(messages.exists(_.contains("Scalars are not the same")))
+          assert(!messages.exists(_.contains("Too many arguments")))
+        case _ => fail("Expected merge error")
+      }
+      assertEquals(outputReads.get(), preparedReads)
     }
   }
 

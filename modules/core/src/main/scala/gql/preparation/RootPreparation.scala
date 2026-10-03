@@ -173,8 +173,12 @@ class RootPreparation[F[_], C] {
 
       fc.collectSelectionInfo(o, ss).flatMap { selections =>
         val build = selections.toNel match {
-          case Some(selections) => fm.checkSelectionsMerge(selections) &> qp.prepareSelectable(o, selections)
-          case None             => G.nextId.map(NodeId(_)).map(Selection(_, Nil, o))
+          case Some(selections) =>
+            // Cache preparation independently of merging; report merge errors first.
+            (fm.checkSelectionsMerge(selections).attempt, qp.prepareSelectable(o, selections).attempt).parTupled.map {
+              case (merged, prepared) => merged *> prepared
+            }.rethrow
+          case None => G.nextId.map(NodeId(_)).map(Selection(_, Nil, o))
         }
         build.attempt.flatMap { result =>
           val unusedCheck = G.usedVariables.flatMap { used =>

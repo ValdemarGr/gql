@@ -225,7 +225,7 @@ class QueryPreparation[F[_], C](
           }
         }
 
-        checkDuplicatesF &> verifyTooManyF &> out
+        checkDuplicatesF >> (verifyTooManyF &> out)
       })
   }
 

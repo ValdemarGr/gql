@@ -114,12 +114,11 @@ class FieldCollection[F[_], C](
       .parTraverse { case (caret, field) =>
         actualFields.get(field.name) match {
           case None =>
-            G.validate(s"Field '${field.name}' is not a member of `${sel.name}`.", List(caret))
-              .as(Option.empty[FieldInfo[F, C]])
-          case Some(f) => G.ambientField(field.name)(collectFieldInfo(f, field, caret)).map(_.some)
+            G.raise[FieldInfo[F, C]](s"Field '${field.name}' is not a member of `${sel.name}`.", List(caret))
+          case Some(f) => G.ambientField(field.name)(collectFieldInfo(f, field, caret))
         }
       }
-      .map(_.flatten.toNel.toList.map(SelectionInfo(sel, _, None)))
+      .map(_.toNel.toList.map(SelectionInfo(sel, _, None)))
 
     val inlines = all
       .collect { case QA.Selection.InlineFragmentSelection(f, c) => (c, f) }
@@ -131,8 +130,7 @@ class FieldCollection[F[_], C](
             .traverse(matchType(_, sel, caret))
             .map(_.getOrElse(sel))
             .flatMap(t => collectSelectionInfo(t, f.selectionSet))
-            .handleErrorWith(errors => G.validate(errors).as(Nil))
-        }).handleErrorWith(errors => G.validate(errors).as(Nil))
+        })
       }
 
     val spreads = all
@@ -145,8 +143,8 @@ class FieldCollection[F[_], C](
             matchType(f.typeCnd, sel, f.caret)
               .flatMap(t => collectSelectionInfo(t, f.selectionSet))
               .map(_.map(_.copy(fragmentName = Some(spread.fragmentName))))
-          }.handleErrorWith(errors => G.validate(errors).as(Nil))
-        }).handleErrorWith(errors => G.validate(errors).as(Nil))
+          }
+        })
       }
 
     List(fields, inlines, spreads).parFlatSequence
@@ -164,7 +162,8 @@ class FieldCollection[F[_], C](
             case s: TypeInfo.Selectable[F, C] => validateSelectionInfo(s.selection)
             case _                            => G.unit
           }
-          validateArgs &> validateChildren
+          // Evaluate child validation independently of parent arguments; report parent errors first.
+          (validateArgs.attempt, validateChildren.attempt).parTupled.map { case (args, children) => args *> children }.rethrow
         }
       )
     })
@@ -178,21 +177,18 @@ class FieldCollection[F[_], C](
     val tl = ims.inner
     val output: G[TypeInfo[F, C]] = tl match {
       case s: Selectable[F, ?] =>
-        f.selectionSet match {
-          case Some(ss) => collectSelectionInfo(s, ss).map(TypeInfo.Selectable(tl.name, _))
-          case None =>
-            G.validate(s"Field `${f.name}` of type `${tl.name}` must have a selection set.", List(f.caret))
-              .as(TypeInfo.Selectable(tl.name, Nil))
-        }
+        G.raiseOpt(f.selectionSet, s"Field `${f.name}` of type `${tl.name}` must have a selection set.", List(f.caret))
+          .flatMap(collectSelectionInfo(s, _))
+          .map(TypeInfo.Selectable(tl.name, _))
       case _: Enum[?] =>
         val check =
           if (f.selectionSet.isEmpty) G.unit
-          else G.validate(s"Field `${f.name}` of enum type `${tl.name}` must not have a selection set.", List(f.caret))
+          else G.raise[Unit](s"Field `${f.name}` of enum type `${tl.name}` must not have a selection set.", List(f.caret))
         check.as(TypeInfo.Enum(tl.name))
       case _: Scalar[?] =>
         val check =
           if (f.selectionSet.isEmpty) G.unit
-          else G.validate(s"Field `${f.name}` of scalar type `${tl.name}` must not have a selection set.", List(f.caret))
+          else G.raise[Unit](s"Field `${f.name}` of scalar type `${tl.name}` must not have a selection set.", List(f.caret))
         check.as(TypeInfo.Scalar(tl.name))
     }
 
