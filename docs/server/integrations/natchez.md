@@ -29,16 +29,3 @@ def routes = Http4sRoutes.sync[IO](path="graphql"){ c =>
     c.parse.flatMap(traceAndRunHttpRequest).flatMap(Http4sRoutes.toResponse(_))
 }
 ```
-
-For a `QueryCache`, use `NatchezTracer.compile` to trace preparation and variable binding:
-
-```scala mdoc
-def traceCachedRequest(cache: QueryCache[IO, Unit, Unit, Unit], qp: QueryParameters) =
-    NatchezTracer.compile(cache, qp).map(_.map { prepared =>
-        NatchezTracer.traceApplication(Compiler[IO].compilePrepared(tracedSchema, prepared))
-    })
-```
-
-A cache hit creates `graphql.compilation.variables`. A miss creates `graphql.compilation.uncached`,
-with sequential children `graphql.compilation.cacheable` and `graphql.compilation.variables`.
-Failed preparation skips variable binding; failed binding retains the prepared cache entry.

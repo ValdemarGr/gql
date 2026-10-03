@@ -63,22 +63,3 @@ def addCacheClearing(cache: Cache[IO], app: Application[IO]): Application[IO] = 
   case x => x
 }
 ```
-
-`parsePrep` returns a `CacheableQuery`: a prepared program whose remaining parameter is the variable map.
-Call `run(variables)` to bind one request, then `compilePrepared` to construct its application.
-`QueryCache` provides a bounded LRU overlay around a preparation function; the compiler itself keeps no cache.
-Create one cache for a schema and reuse it across requests:
-
-```scala mdoc
-def cachedCompiler(schema: Schema[IO, Unit, Unit, Unit]) =
-  QueryCache[IO, Unit, Unit, Unit](maxEntries = 512) { (query, operationName) =>
-    Compiler[IO].parsePrep(schema, QueryParameters(query, None, operationName))
-  }.map { cache =>
-    (request: QueryParameters) =>
-      cache.compile(request).map(_.map(Compiler[IO].compilePrepared(schema, _)))
-  }
-```
-
-Entries are identified by query text and operation name. Successful preparation is cached even when request variables fail validation;
-each request binds its own variables. `getPrep(query, operationName)` retrieves and refreshes an entry, while `persist(prepared)`
-inserts or replaces one. Concurrent misses may prepare independently.
