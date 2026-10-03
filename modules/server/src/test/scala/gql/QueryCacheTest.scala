@@ -16,7 +16,7 @@
 package gql
 
 import cats.Eval
-import cats.effect.IO
+import cats.effect.{IO, Resource}
 import cats.implicits._
 import gql.ast._
 import gql.dsl.all._
@@ -24,7 +24,7 @@ import gql.preparation.{MergedFieldInfo, PreparedDataField, PreparedRoot, Prepar
 import gql.parser.{QueryAst => QA}
 import gql.resolver.Resolver
 import io.circe.{Json, JsonObject}
-import munit.CatsEffectSuite
+import munit.{AnyFixture, CatsEffectSuite}
 import java.util.concurrent.atomic.AtomicInteger
 
 class QueryCacheTest extends CatsEffectSuite {
@@ -48,41 +48,47 @@ class QueryCacheTest extends CatsEffectSuite {
     "positive" -> lift(argument)((value, _) => value)
   ).subtypeOf[AbstractEcho]
 
-  private lazy val schema = Schema
-    .simple(
-      SchemaShape.unit[IO](
-        builder[IO, Unit] { b =>
-          b.fields(
-            "echo" -> b.lift(argument)((value, _) => value),
-            "positive" -> b.lift(positiveArgument)((value, _) => value),
-            "flag" -> b.lift(_ => true),
-            "abstract" -> b.lift(_ => EchoImplementation: AbstractEcho),
-            "meta" -> b.from(Resolver.meta[IO, Unit].map { meta =>
-              meta.queryMeta.variables.get("n").map(_.value.fold(_.noSpaces, _.toString)).getOrElse("absent")
-            }),
-            "owner" -> b.from(Resolver.meta[IO, Unit].arg(argument).map { case (value, meta) =>
-              assertEquals(meta.astNode.arg(argument), Some(value))
-              assertEquals(meta.astNode.name, "owner")
-              val selection = meta.astNode.cont.cont match {
-                case fields: Selection[IO, ?] =>
-                  fields.fields.flatMap {
-                    case field: PreparedDataField[IO, ?, ?]    => List(field.outputName)
-                    case spec: PreparedSpecification[IO, ?, ?] => spec.selection.map(_.outputName)
+  private val schema = ResourceSuiteLocalFixture(
+    "schema",
+    Resource.eval(
+      Schema
+        .simple(
+          SchemaShape.unit[IO](
+            builder[IO, Unit] { b =>
+              b.fields(
+                "echo" -> b.lift(argument)((value, _) => value),
+                "positive" -> b.lift(positiveArgument)((value, _) => value),
+                "flag" -> b.lift(_ => true),
+                "abstract" -> b.lift(_ => EchoImplementation: AbstractEcho),
+                "meta" -> b.from(Resolver.meta[IO, Unit].map { meta =>
+                  meta.queryMeta.variables.get("n").map(_.value.fold(_.noSpaces, _.toString)).getOrElse("absent")
+                }),
+                "owner" -> b.from(Resolver.meta[IO, Unit].arg(argument).map { case (value, meta) =>
+                  assertEquals(meta.astNode.arg(argument), Some(value))
+                  assertEquals(meta.astNode.name, "owner")
+                  val selection = meta.astNode.cont.cont match {
+                    case fields: Selection[IO, ?] =>
+                      fields.fields.flatMap {
+                        case field: PreparedDataField[IO, ?, ?]    => List(field.outputName)
+                        case spec: PreparedSpecification[IO, ?, ?] => spec.selection.map(_.outputName)
+                      }
+                    case _ => fail("Expected owner selection")
                   }
-                case _ => fail("Expected owner selection")
-              }
-              Owner(s"${meta.alias.getOrElse(meta.astNode.name)}:$value:${selection.mkString(",")}")
-            })
+                  Owner(s"${meta.alias.getOrElse(meta.astNode.name)}:$value:${selection.mkString(",")}")
+                })
+              )
+            },
+            mutation = Some(builder[IO, Unit](b => b.fields("echo" -> b.lift(argument)((value, _) => value)))),
+            subscription = Some(builder[IO, Unit] { b =>
+              b.fields("echo" -> b(_.arg(argument).streamMap { case (value, _) => fs2.Stream.emit(value).covary[IO] }))
+            }),
+            outputTypes = List(echoImplementation)
           )
-        },
-        mutation = Some(builder[IO, Unit](b => b.fields("echo" -> b.lift(argument)((value, _) => value)))),
-        subscription = Some(builder[IO, Unit] { b =>
-          b.fields("echo" -> b(_.arg(argument).streamMap { case (value, _) => fs2.Stream.emit(value).covary[IO] }))
-        }),
-        outputTypes = List(echoImplementation)
-      )
+        )
     )
-    .unsafeRunSync()
+  )
+
+  override def munitFixtures: Seq[AnyFixture[_]] = Seq(schema) ++ super.munitFixtures
 
   private val compiler = Compiler[IO]
   private val echo = "query Echo($n: Int!) { echo(value: $n) }"
@@ -90,13 +96,13 @@ class QueryCacheTest extends CatsEffectSuite {
   private val secondVars = Map("n" -> Json.fromInt(2))
 
   private def prepare(query: String, operationName: Option[String]): Either[CompilationError, CacheableQuery[IO, Unit, Unit, Unit]] =
-    compiler.parsePrep(schema, QueryParameters(query, None, operationName))
+    compiler.parsePrep(schema(), QueryParameters(query, None, operationName))
 
   private def execute(prepared: Either[CompilationError, PreparedRoot[IO, Unit, Unit, Unit]]): IO[JsonObject] =
     prepared match {
       case Left(error) => IO(fail(error.toString))
       case Right(root) =>
-        val run = compiler.compilePrepared(schema, root) match {
+        val run = compiler.compilePrepared(schema(), root) match {
           case Application.Query(run)           => run
           case Application.Mutation(run)        => run
           case Application.Subscription(stream) => stream.take(1).compile.lastOrError
@@ -163,17 +169,18 @@ class QueryCacheTest extends CatsEffectSuite {
         intScalar
       }
     )
-    val countedSchema = Schema.simple(SchemaShape.unit[IO](fields("echo" -> field))).unsafeRunSync()
-    val cached = compiler
-      .parsePrep(countedSchema, QueryParameters(echo, None, None))
-      .fold(error => fail(error.toString), identity)
-    val preparedReads = outputReads.get()
-    assert(preparedReads > 0)
+    Schema.simple(SchemaShape.unit[IO](fields("echo" -> field))).map { countedSchema =>
+      val cached = compiler
+        .parsePrep(countedSchema, QueryParameters(echo, None, None))
+        .fold(error => fail(error.toString), identity)
+      val preparedReads = outputReads.get()
+      assert(preparedReads > 0)
 
-    assert(cached.run(firstVars).isRight)
-    assertEquals(outputReads.get(), preparedReads)
-    assert(cached.run(secondVars).isRight)
-    assertEquals(outputReads.get(), preparedReads)
+      assert(cached.run(firstVars).isRight)
+      assertEquals(outputReads.get(), preparedReads)
+      assert(cached.run(secondVars).isRight)
+      assertEquals(outputReads.get(), preparedReads)
+    }
   }
 
   test("parent variable validation does not repeat static child preparation") {
@@ -190,44 +197,45 @@ class QueryCacheTest extends CatsEffectSuite {
       Resolver.argument[IO, Unit, Int](positiveArgument).map(value => Owner(value.toString)),
       Eval.now(nestedType)
     )
-    val countedSchema = Schema.simple(SchemaShape.unit[IO](fields("owner" -> parent))).unsafeRunSync()
-    val query = "query Owner($n: Int!) { owner(value: $n) { summary } }"
-    val cached = compiler
-      .parsePrep(countedSchema, QueryParameters(query, None, None))
-      .fold(error => fail(error.toString), identity)
-    val preparedReads = outputReads.get()
-    assert(preparedReads > 0)
+    Schema.simple(SchemaShape.unit[IO](fields("owner" -> parent))).flatMap { countedSchema =>
+      val query = "query Owner($n: Int!) { owner(value: $n) { summary } }"
+      val cached = compiler
+        .parsePrep(countedSchema, QueryParameters(query, None, None))
+        .fold(error => fail(error.toString), identity)
+      val preparedReads = outputReads.get()
+      assert(preparedReads > 0)
 
-    cached.run(Map("n" -> Json.fromInt(-1))) match {
-      case Left(CompilationError.Preparation(errors)) =>
-        assertEquals(errors.toChain.toList.map(_.message), List("Must be positive"))
-      case _ => fail("Expected parent argument validation error")
-    }
-    assertEquals(outputReads.get(), preparedReads)
+      cached.run(Map("n" -> Json.fromInt(-1))) match {
+        case Left(CompilationError.Preparation(errors)) =>
+          assertEquals(errors.toChain.toList.map(_.message), List("Must be positive"))
+        case _ => fail("Expected parent argument validation error")
+      }
+      assertEquals(outputReads.get(), preparedReads)
 
-    List(firstVars, secondVars)
-      .traverse { variables =>
-        val root = cached.run(variables).fold(error => fail(error.toString), identity)
-        assertEquals(outputReads.get(), preparedReads)
-        compiler.compilePrepared(countedSchema, root) match {
-          case Application.Query(run) =>
-            run.map { result =>
-              assertEquals(result.errors.toList, Nil)
-              result.data
-            }
-          case _ => fail("Expected query")
+      List(firstVars, secondVars)
+        .traverse { variables =>
+          val root = cached.run(variables).fold(error => fail(error.toString), identity)
+          assertEquals(outputReads.get(), preparedReads)
+          compiler.compilePrepared(countedSchema, root) match {
+            case Application.Query(run) =>
+              run.map { result =>
+                assertEquals(result.errors.toList, Nil)
+                result.data
+              }
+            case _ => fail("Expected query")
+          }
         }
-      }
-      .map { results =>
-        assertEquals(
-          results,
-          List(
-            JsonObject("owner" -> Json.obj("summary" -> Json.fromString("1"))),
-            JsonObject("owner" -> Json.obj("summary" -> Json.fromString("2")))
+        .map { results =>
+          assertEquals(
+            results,
+            List(
+              JsonObject("owner" -> Json.obj("summary" -> Json.fromString("1"))),
+              JsonObject("owner" -> Json.obj("summary" -> Json.fromString("2")))
+            )
           )
-        )
-        assertEquals(outputReads.get(), preparedReads)
-      }
+          assertEquals(outputReads.get(), preparedReads)
+        }
+    }
   }
 
   test("parent errors skip child validation without delaying or repeating static child preparation") {
@@ -249,34 +257,35 @@ class QueryCacheTest extends CatsEffectSuite {
       Resolver.argument[IO, Unit, Int](positiveArgument).map(value => Owner(value.toString)),
       Eval.now(nestedType)
     )
-    val countedSchema = Schema.simple(SchemaShape.unit[IO](fields("owner" -> parent))).unsafeRunSync()
-    outputReads.set(0)
-    argumentReads.set(0)
-    val query = "query Owner($n: Int!) { owner(value: $n) { summary(value: -1) } }"
-    val cached = compiler
-      .parsePrep(countedSchema, QueryParameters(query, None, None))
-      .fold(error => fail(error.toString), identity)
-    val preparedReads = (outputReads.get(), argumentReads.get())
-    assert(preparedReads._1 > 0)
-    assert(preparedReads._2 > 0)
+    Schema.simple(SchemaShape.unit[IO](fields("owner" -> parent))).map { countedSchema =>
+      outputReads.set(0)
+      argumentReads.set(0)
+      val query = "query Owner($n: Int!) { owner(value: $n) { summary(value: -1) } }"
+      val cached = compiler
+        .parsePrep(countedSchema, QueryParameters(query, None, None))
+        .fold(error => fail(error.toString), identity)
+      val preparedReads = (outputReads.get(), argumentReads.get())
+      assert(preparedReads._1 > 0)
+      assert(preparedReads._2 > 0)
 
-    List(-1 -> "Must be positive", 1 -> "Child must be positive", -2 -> "Must be positive").foreach { case (value, message) =>
-      val previousArgumentReads = argumentReads.get()
-      cached.run(Map("n" -> Json.fromInt(value))) match {
-        case Left(CompilationError.Preparation(errors)) =>
-          assertEquals(errors.toChain.toList.map(_.message), List(message))
-          val cursor = if (value < 0) Cursor.empty.field("owner") else Cursor.empty.field("owner").field("summary")
-          assertEquals(errors.toChain.toList.map(_.position), List(cursor))
-        case _ => fail("Expected argument validation error")
+      List(-1 -> "Must be positive", 1 -> "Child must be positive", -2 -> "Must be positive").foreach { case (value, message) =>
+        val previousArgumentReads = argumentReads.get()
+        cached.run(Map("n" -> Json.fromInt(value))) match {
+          case Left(CompilationError.Preparation(errors)) =>
+            assertEquals(errors.toChain.toList.map(_.message), List(message))
+            val cursor = if (value < 0) Cursor.empty.field("owner") else Cursor.empty.field("owner").field("summary")
+            assertEquals(errors.toChain.toList.map(_.position), List(cursor))
+          case _ => fail("Expected argument validation error")
+        }
+        assertEquals(outputReads.get(), preparedReads._1)
+        assertEquals(argumentReads.get(), previousArgumentReads + (if (value > 0) 1 else 0))
       }
-      assertEquals(outputReads.get(), preparedReads._1)
-      assertEquals(argumentReads.get(), previousArgumentReads + (if (value > 0) 1 else 0))
     }
   }
 
   test("preparation ignores supplied variables until run") {
     val cached = compiler
-      .parsePrep(schema, QueryParameters(echo, Some(Map("n" -> Json.fromString("invalid"))), None))
+      .parsePrep(schema(), QueryParameters(echo, Some(Map("n" -> Json.fromString("invalid"))), None))
       .fold(error => fail(error.toString), identity)
 
     execute(cached.run(secondVars)).map(result => assertEquals(result, JsonObject("echo" -> Json.fromInt(2))))
@@ -343,62 +352,64 @@ class QueryCacheTest extends CatsEffectSuite {
         intScalar
       }
     )
-    val countedSchema = Schema
+    Schema
       .simple(SchemaShape.unit[IO](fields("echo" -> lift(argument)((value, _) => value), "counted" -> counted)))
-      .unsafeRunSync()
-    val query = "query Echo($n: Int!, $m: Int!) { echo(value: $n) counted(value: $m) }"
-    val cached = compiler
-      .parsePrep(countedSchema, QueryParameters(query, None, None))
-      .fold(error => fail(error.toString), identity)
-    val preparedReads = outputReads.get()
-    assert(preparedReads > 0)
-    assertEquals(argumentReads.get(), 0)
+      .flatMap { countedSchema =>
+        val query = "query Echo($n: Int!, $m: Int!) { echo(value: $n) counted(value: $m) }"
+        val cached = compiler
+          .parsePrep(countedSchema, QueryParameters(query, None, None))
+          .fold(error => fail(error.toString), identity)
+        val preparedReads = outputReads.get()
+        assert(preparedReads > 0)
+        assertEquals(argumentReads.get(), 0)
 
-    List(Map("n" -> Json.fromString("invalid"), "m" -> Json.fromInt(1)), Map("m" -> Json.fromInt(2))).foreach { variables =>
-      val before = argumentReads.get()
-      cached.run(variables) match {
-        case Left(CompilationError.Preparation(errors)) =>
-          assertEquals(errors.toChain.toList.size, 1)
-          assertEquals(errors.head.position, if (variables.contains("n")) Cursor.empty.field("n").field("Int") else Cursor.empty)
-        case _ => fail("Expected root variable validation error")
-      }
-      assert(argumentReads.get() > before)
-      assertEquals(outputReads.get(), preparedReads)
-    }
-
-    val root = cached.run(Map("n" -> Json.fromInt(1), "m" -> Json.fromInt(3)))
-    assertEquals(outputReads.get(), preparedReads)
-    root match {
-      case Left(error) => fail(error.toString)
-      case Right(root) =>
-        compiler.compilePrepared(countedSchema, root) match {
-          case Application.Query(run) =>
-            run.map(result => assertEquals(result.data, JsonObject("echo" -> Json.fromInt(1), "counted" -> Json.fromInt(3))))
-          case _ => fail("Expected query")
+        List(Map("n" -> Json.fromString("invalid"), "m" -> Json.fromInt(1)), Map("m" -> Json.fromInt(2))).foreach { variables =>
+          val before = argumentReads.get()
+          cached.run(variables) match {
+            case Left(CompilationError.Preparation(errors)) =>
+              assertEquals(errors.toChain.toList.size, 1)
+              assertEquals(errors.head.position, if (variables.contains("n")) Cursor.empty.field("n").field("Int") else Cursor.empty)
+            case _ => fail("Expected root variable validation error")
+          }
+          assert(argumentReads.get() > before)
+          assertEquals(outputReads.get(), preparedReads)
         }
-    }
+
+        val root = cached.run(Map("n" -> Json.fromInt(1), "m" -> Json.fromInt(3)))
+        assertEquals(outputReads.get(), preparedReads)
+        root match {
+          case Left(error) => fail(error.toString)
+          case Right(root) =>
+            compiler.compilePrepared(countedSchema, root) match {
+              case Application.Query(run) =>
+                run.map(result => assertEquals(result.data, JsonObject("echo" -> Json.fromInt(1), "counted" -> Json.fromInt(3))))
+              case _ => fail("Expected query")
+            }
+        }
+      }
   }
 
   test("supplied null overrides optional variable defaults across cached bindings") {
     val optional = arg[Option[Int]]("value")
-    val optionalSchema = Schema
+    Schema
       .simple(SchemaShape.unit[IO](fields("echo" -> lift(optional)((value, _) => value.getOrElse(-1)))))
-      .unsafeRunSync()
-    val cached = compiler
-      .parsePrep(optionalSchema, QueryParameters("query Echo($n: Int = 7) { echo(value: $n) }", None, None))
-      .fold(error => fail(error.toString), identity)
+      .flatMap { optionalSchema =>
+        val cached = compiler
+          .parsePrep(optionalSchema, QueryParameters("query Echo($n: Int = 7) { echo(value: $n) }", None, None))
+          .fold(error => fail(error.toString), identity)
 
-    List(Map.empty[String, Json] -> 7, Map("n" -> Json.Null) -> -1, firstVars -> 1, Map.empty[String, Json] -> 7).traverse_ {
-      case (variables, expected) =>
-        cached.run(variables) match {
-          case Left(error) => IO(fail(error.toString))
-          case Right(root) =>
-            compiler.compilePrepared(optionalSchema, root) match {
-              case Application.Query(run) => run.map(result => assertEquals(result.data, JsonObject("echo" -> Json.fromInt(expected))))
-              case _                      => IO(fail("Expected query"))
+        List(Map.empty[String, Json] -> 7, Map("n" -> Json.Null) -> -1, firstVars -> 1, Map.empty[String, Json] -> 7).traverse_ {
+          case (variables, expected) =>
+            cached.run(variables) match {
+              case Left(error) => IO(fail(error.toString))
+              case Right(root) =>
+                compiler.compilePrepared(optionalSchema, root) match {
+                  case Application.Query(run) => run.map(result => assertEquals(result.data, JsonObject("echo" -> Json.fromInt(expected))))
+                  case _                      => IO(fail("Expected query"))
+                }
             }
         }
-    }
+      }
   }
 
   test("structural errors stop later phases without requiring variables") {
@@ -443,26 +454,27 @@ class QueryCacheTest extends CatsEffectSuite {
         booleanScalar
       }
     )
-    val countedSchema = Schema
+    Schema
       .simple(
         SchemaShape.unit[IO](fields("echo" -> lift(argument)((value, _) => value), "flag" -> field))
       )
-      .unsafeRunSync()
-    outputReads.set(0)
-    val query = "{ same: echo(value: 1) same: flag(unexpected: 1) }"
-    val prepared = compiler
-      .parsePrep(countedSchema, QueryParameters(query, None, None))
-    // Collection and preparation both inspect output, despite the merge failure.
-    val preparedReads = outputReads.get()
-    assert(preparedReads >= 2)
-    prepared match {
-      case Left(CompilationError.Preparation(errors)) =>
-        val messages = errors.toChain.toList.map(_.message)
-        assert(messages.exists(_.contains("must have the same name")))
-        assert(messages.exists(_.contains("Scalars are not the same")))
-        assert(!messages.exists(_.contains("Too many arguments")))
-      case _ => fail("Expected merge error during preparation")
-    }
+      .map { countedSchema =>
+        outputReads.set(0)
+        val query = "{ same: echo(value: 1) same: flag(unexpected: 1) }"
+        val prepared = compiler
+          .parsePrep(countedSchema, QueryParameters(query, None, None))
+        // Collection and preparation both inspect output, despite the merge failure.
+        val preparedReads = outputReads.get()
+        assert(preparedReads >= 2)
+        prepared match {
+          case Left(CompilationError.Preparation(errors)) =>
+            val messages = errors.toChain.toList.map(_.message)
+            assert(messages.exists(_.contains("must have the same name")))
+            assert(messages.exists(_.contains("Scalars are not the same")))
+            assert(!messages.exists(_.contains("Too many arguments")))
+          case _ => fail("Expected merge error during preparation")
+        }
+      }
   }
 
   test("validation and build share normalized fragment handlers") {
@@ -490,27 +502,28 @@ class QueryCacheTest extends CatsEffectSuite {
     val shape = SchemaShape
       .unit[IO](fields("positive" -> lift(positiveArgument)((value, _) => value), "echo" -> lift(argument)((value, _) => value)))
       .copy(positions = List(inline, named))
-    val fragmentSchema = Schema.simple(shape).unsafeRunSync()
-    val query = """query Echo($n: Int!) {
+    Schema.simple(shape).map { fragmentSchema =>
+      val query = """query Echo($n: Int!) {
       ... @observe { inline: positive(value: $n) }
       ... EchoFields @observe
     }
     fragment EchoFields on Query { named: echo(value: $n) }"""
-    val cached = compiler
-      .parsePrep(fragmentSchema, QueryParameters(query, None, None))
-      .fold(error => fail(error.toString), identity)
-    assertEquals(inlineCalls.get(), 1)
-    assertEquals(namedCalls.get(), 1)
+      val cached = compiler
+        .parsePrep(fragmentSchema, QueryParameters(query, None, None))
+        .fold(error => fail(error.toString), identity)
+      assertEquals(inlineCalls.get(), 1)
+      assertEquals(namedCalls.get(), 1)
 
-    assert(cached.run(firstVars).isRight)
-    assert(cached.run(secondVars).isRight)
-    cached.run(Map("n" -> Json.fromInt(-1))) match {
-      case Left(CompilationError.Preparation(errors)) =>
-        assertEquals(errors.toChain.toList.map(_.message), List("Must be positive"))
-      case _ => fail("Expected normalized fragment argument validation error")
+      assert(cached.run(firstVars).isRight)
+      assert(cached.run(secondVars).isRight)
+      cached.run(Map("n" -> Json.fromInt(-1))) match {
+        case Left(CompilationError.Preparation(errors)) =>
+          assertEquals(errors.toChain.toList.map(_.message), List("Must be positive"))
+        case _ => fail("Expected normalized fragment argument validation error")
+      }
+      assertEquals(inlineCalls.get(), 1)
+      assertEquals(namedCalls.get(), 1)
     }
-    assertEquals(inlineCalls.get(), 1)
-    assertEquals(namedCalls.get(), 1)
   }
 
   test("static field directives are cached while validation errors retain precedence") {
@@ -533,24 +546,25 @@ class QueryCacheTest extends CatsEffectSuite {
         fields("positive" -> lift(positiveArgument)((value, _) => value), "plain" -> lift(_ => 1))
       )
       .copy(positions = List(rejection))
-    val directiveSchema = Schema.simple(shape).unsafeRunSync()
-    val query = "query Echo($n: Int!) { positive(value: $n) plain @reject }"
-    val cached = compiler
-      .parsePrep(directiveSchema, QueryParameters(query, None, None))
-      .fold(error => fail(error.toString), identity)
-    assertEquals(calls.get(), 1)
+    Schema.simple(shape).map { directiveSchema =>
+      val query = "query Echo($n: Int!) { positive(value: $n) plain @reject }"
+      val cached = compiler
+        .parsePrep(directiveSchema, QueryParameters(query, None, None))
+        .fold(error => fail(error.toString), identity)
+      assertEquals(calls.get(), 1)
 
-    cached.run(Map("n" -> Json.fromInt(-1))) match {
-      case Left(CompilationError.Preparation(errors)) => assertEquals(errors.toChain.toList.map(_.message), List("Must be positive"))
-      case _                                          => fail("Expected argument validation error")
-    }
-    assertEquals(calls.get(), 1)
+      cached.run(Map("n" -> Json.fromInt(-1))) match {
+        case Left(CompilationError.Preparation(errors)) => assertEquals(errors.toChain.toList.map(_.message), List("Must be positive"))
+        case _                                          => fail("Expected argument validation error")
+      }
+      assertEquals(calls.get(), 1)
 
-    cached.run(firstVars) match {
-      case Left(CompilationError.Preparation(errors)) => assertEquals(errors.toChain.toList.map(_.message), List("Directive rejects"))
-      case _                                          => fail("Expected cached directive rejection")
+      cached.run(firstVars) match {
+        case Left(CompilationError.Preparation(errors)) => assertEquals(errors.toChain.toList.map(_.message), List("Directive rejects"))
+        case _                                          => fail("Expected cached directive rejection")
+      }
+      assertEquals(calls.get(), 1)
     }
-    assertEquals(calls.get(), 1)
   }
 
   test("cached metadata uses variables from each binding") {
@@ -579,7 +593,7 @@ class QueryCacheTest extends CatsEffectSuite {
       .map { case (meta, value) =>
         s"$value:${meta.queryMeta.variables("n").value.fold(_.noSpaces, _ => "default")}"
       }
-    val metadataSchema = Schema
+    Schema
       .simple(
         SchemaShape.unit[IO](
           builder[IO, Unit](b => b.fields("meta" -> b.from(resolver))),
@@ -587,27 +601,27 @@ class QueryCacheTest extends CatsEffectSuite {
           subscription = Some(builder[IO, Unit](b => b.fields("meta" -> b.from(streaming))))
         )
       )
-      .unsafeRunSync()
-
-    List("query", "mutation", "subscription").traverse_ { operation =>
-      val cached = compiler
-        .parsePrep(metadataSchema, QueryParameters(s"$operation Echo($$n: Int! = 7) { meta(value: $$n) }", None, None))
-        .fold(error => fail(error.toString), identity)
-      List((secondVars, 2, "2"), (Map.empty[String, Json], 7, "default"), (firstVars, 1, "1")).traverse_ {
-        case (variables, value, metadata) =>
-          val root = cached.run(variables).fold(error => fail(error.toString), identity)
-          val results = compiler.compilePrepared(metadataSchema, root, accumulate = None) match {
-            case Application.Query(run)           => run.map(List(_))
-            case Application.Mutation(run)        => run.map(List(_))
-            case Application.Subscription(stream) => stream.take(2).compile.toList
+      .flatMap { metadataSchema =>
+        List("query", "mutation", "subscription").traverse_ { operation =>
+          val cached = compiler
+            .parsePrep(metadataSchema, QueryParameters(s"$operation Echo($$n: Int! = 7) { meta(value: $$n) }", None, None))
+            .fold(error => fail(error.toString), identity)
+          List((secondVars, 2, "2"), (Map.empty[String, Json], 7, "default"), (firstVars, 1, "1")).traverse_ {
+            case (variables, value, metadata) =>
+              val root = cached.run(variables).fold(error => fail(error.toString), identity)
+              val results = compiler.compilePrepared(metadataSchema, root, accumulate = None) match {
+                case Application.Query(run)           => run.map(List(_))
+                case Application.Mutation(run)        => run.map(List(_))
+                case Application.Subscription(stream) => stream.take(2).compile.toList
+              }
+              results.map { results =>
+                results.foreach(result => assertEquals(result.errors.toList, Nil))
+                val values = if (operation == "subscription") List(value, value + 1) else List(value)
+                assertEquals(results.map(_.data), values.map(value => JsonObject("meta" -> Json.fromString(s"$value:$metadata"))))
+              }
           }
-          results.map { results =>
-            results.foreach(result => assertEquals(result.errors.toList, Nil))
-            val values = if (operation == "subscription") List(value, value + 1) else List(value)
-            assertEquals(results.map(_.data), values.map(value => JsonObject("meta" -> Json.fromString(s"$value:$metadata"))))
-          }
+        }
       }
-    }
   }
 
   test("metadata owner contains bound arguments and its actual selection") {
@@ -656,38 +670,39 @@ class QueryCacheTest extends CatsEffectSuite {
       .streamMap(value => fs2.Stream.emit(value).covary[IO])
       .map(value => List(Option(value)))
     val resolver = Resolver.argument[IO, Unit, Int](argument).andThen(static)
-    val resolverSchema = Schema
+    Schema
       .simple(SchemaShape.unit[IO](builder[IO, Unit](b => b.fields("echo" -> b.from(resolver)))))
-      .unsafeRunSync()
-    val cached = compiler.parsePrep(resolverSchema, QueryParameters(echo, None, None)).fold(error => fail(error.toString), identity)
-    val first = cached.run(firstVars).fold(error => fail(error.toString), identity)
-    val second = cached.run(secondVars).fold(error => fail(error.toString), identity)
+      .flatMap { resolverSchema =>
+        val cached = compiler.parsePrep(resolverSchema, QueryParameters(echo, None, None)).fold(error => fail(error.toString), identity)
+        val first = cached.run(firstVars).fold(error => fail(error.toString), identity)
+        val second = cached.run(secondVars).fold(error => fail(error.toString), identity)
 
-    (first.operation, second.operation) match {
-      case (PreparedRoot.Query(a), PreparedRoot.Query(b)) =>
-        val x = a.fields.collect { case spec: PreparedSpecification[IO, ?, ?] => spec.selection }.flatten
-        val y = b.fields.collect { case spec: PreparedSpecification[IO, ?, ?] => spec.selection }.flatten
-        assertEquals(x.size, 1)
-        assertEquals(y.size, 1)
-        assert(x.head.cont.cont eq y.head.cont.cont)
-        (x.head.cont.edges, y.head.cont.edges) match {
-          case (left: PreparedStep.Compose[IO, ?, ?, ?], right: PreparedStep.Compose[IO, ?, ?, ?]) =>
-            assert(left.right eq right.right)
-          case _ => fail("Expected argument followed by static resolver subchain")
+        (first.operation, second.operation) match {
+          case (PreparedRoot.Query(a), PreparedRoot.Query(b)) =>
+            val x = a.fields.collect { case spec: PreparedSpecification[IO, ?, ?] => spec.selection }.flatten
+            val y = b.fields.collect { case spec: PreparedSpecification[IO, ?, ?] => spec.selection }.flatten
+            assertEquals(x.size, 1)
+            assertEquals(y.size, 1)
+            assert(x.head.cont.cont eq y.head.cont.cont)
+            (x.head.cont.edges, y.head.cont.edges) match {
+              case (left: PreparedStep.Compose[IO, ?, ?, ?], right: PreparedStep.Compose[IO, ?, ?, ?]) =>
+                assert(left.right eq right.right)
+              case _ => fail("Expected argument followed by static resolver subchain")
+            }
+          case _ => fail("Expected query roots")
         }
-      case _ => fail("Expected query roots")
-    }
 
-    List(first -> 2, second -> 3).traverse_ { case (root, expected) =>
-      compiler.compilePrepared(resolverSchema, root) match {
-        case Application.Query(run) =>
-          run.map { result =>
-            assertEquals(result.errors.toList, Nil)
-            assertEquals(result.data, JsonObject("echo" -> Json.arr(Json.fromInt(expected))))
+        List(first -> 2, second -> 3).traverse_ { case (root, expected) =>
+          compiler.compilePrepared(resolverSchema, root) match {
+            case Application.Query(run) =>
+              run.map { result =>
+                assertEquals(result.errors.toList, Nil)
+                assertEquals(result.data, JsonObject("echo" -> Json.arr(Json.fromInt(expected))))
+              }
+            case _ => IO(fail("Expected query"))
           }
-        case _ => IO(fail("Expected query"))
+        }
       }
-    }
   }
 
   test("metadata argument AST is reused while its owner and parsed arguments bind independently") {
@@ -747,19 +762,20 @@ class QueryCacheTest extends CatsEffectSuite {
     val shape = SchemaShape
       .unit[IO](builder[IO, Unit](b => b.fields("echo" -> b.from(resolver))))
       .copy(positions = List(replace))
-    val resolverSchema = Schema.simple(shape).unsafeRunSync()
-    val query = "query Echo($n: Int!) { echo(value: 0) @replace(value: $n) }"
-    val cached = compiler.parsePrep(resolverSchema, QueryParameters(query, None, None)).fold(error => fail(error.toString), identity)
+    Schema.simple(shape).flatMap { resolverSchema =>
+      val query = "query Echo($n: Int!) { echo(value: 0) @replace(value: $n) }"
+      val cached = compiler.parsePrep(resolverSchema, QueryParameters(query, None, None)).fold(error => fail(error.toString), identity)
 
-    List(firstVars -> 1, secondVars -> 2).traverse_ { case (variables, expected) =>
-      val root = cached.run(variables).fold(error => fail(error.toString), identity)
-      compiler.compilePrepared(resolverSchema, root) match {
-        case Application.Query(run) =>
-          run.map { result =>
-            assertEquals(result.errors.toList, Nil)
-            assertEquals(result.data, JsonObject("echo" -> Json.fromInt(expected)))
-          }
-        case _ => IO(fail("Expected query"))
+      List(firstVars -> 1, secondVars -> 2).traverse_ { case (variables, expected) =>
+        val root = cached.run(variables).fold(error => fail(error.toString), identity)
+        compiler.compilePrepared(resolverSchema, root) match {
+          case Application.Query(run) =>
+            run.map { result =>
+              assertEquals(result.errors.toList, Nil)
+              assertEquals(result.data, JsonObject("echo" -> Json.fromInt(expected)))
+            }
+          case _ => IO(fail("Expected query"))
+        }
       }
     }
   }
