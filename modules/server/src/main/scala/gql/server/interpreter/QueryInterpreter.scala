@@ -51,7 +51,8 @@ object QueryInterpreter {
       sup: Supervisor[F],
       api: StreamingApi[F],
       counter: SignallingRef[F, Int],
-      rootRes: Res[F]
+      rootRes: Res[F],
+      variables: VariableMap[Unit] = Map.empty
   )(implicit stats: Statistics[F], planner: Planner[F], F: Async[F]) = {
     Analyzer
       .analyzeWith[F, Unit](_.analyzePrepared(root))
@@ -65,7 +66,7 @@ object QueryInterpreter {
             for {
               errors <- F.ref(Chain.empty[EvalFailure])
               qb <- QueryPlanBatches.make[F](schemaState, plan, stats, errors, throttle)
-              inter = new SubqueryInterpreter(sup, stats, throttle, errors, qb, api, counter, delta)
+              inter = new SubqueryInterpreter(sup, stats, throttle, errors, qb, api, counter, delta, variables)
               flats <- inter.interpretPrepared(
                 root,
                 ArraySeq.from(values.map(a => EvalNode.empty(a, rootRes)))

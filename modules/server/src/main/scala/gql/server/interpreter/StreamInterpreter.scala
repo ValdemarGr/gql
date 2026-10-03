@@ -46,20 +46,23 @@ trait StreamInterpreter[F[_]] {
       root: A,
       selection: Selection[F, A],
       takeOne: Boolean = false,
-      throttle: F ~> F = FunctionK.id[F]
+      throttle: F ~> F = FunctionK.id[F],
+      variables: VariableMap[Unit] = Map.empty
   ): Resource[F, ResultStream[F]]
 
   def interpretStream[A](
       root: A,
       selection: Selection[F, A],
       takeOne: Boolean = false,
-      throttle: F ~> F = FunctionK.id[F]
+      throttle: F ~> F = FunctionK.id[F],
+      variables: VariableMap[Unit] = Map.empty
   ): Stream[F, Result]
 
   def interpretSync[A](
       root: A,
       selection: Selection[F, A],
-      throttle: F ~> F = FunctionK.id[F]
+      throttle: F ~> F = FunctionK.id[F],
+      variables: VariableMap[Unit] = Map.empty
   ): F[Result]
 }
 
@@ -83,14 +86,20 @@ object StreamInterpreter {
       schemaState: SchemaState[F],
       accumulate: Option[FiniteDuration]
   )(implicit F: Async[F]): StreamInterpreter[F] = new StreamInterpreter[F] {
-    override def interpretSync[A](root: A, selection: Selection[F, A], throttle: F ~> F): F[Result] =
-      interpretStream(root, selection, takeOne = true, throttle).take(1).compile.lastOrError
+    override def interpretSync[A](
+        root: A,
+        selection: Selection[F, A],
+        throttle: F ~> F,
+        variables: VariableMap[Unit]
+    ): F[Result] =
+      interpretStream(root, selection, takeOne = true, throttle, variables).take(1).compile.lastOrError
 
     override def interpretStream0[A](
         root: A,
         selection: Selection[F, A],
         takeOne: Boolean = false,
-        throttle: F ~> F = FunctionK.id[F]
+        throttle: F ~> F = FunctionK.id[F],
+        variables: VariableMap[Unit] = Map.empty
     ): Resource[F, ResultStream[F]] = {
       case class StreamingApiState(
           awaitExecution: Deferred[F, Unit],
@@ -122,7 +131,7 @@ object StreamInterpreter {
         sup <- Supervisor[F]
         counter <- Resource.eval(SignallingRef[F].of(0))
         interpreter <- Resource.eval {
-          QueryInterpreter[F, A](selection, schemaState, throttle, sup, api, counter, rootScope)
+          QueryInterpreter[F, A](selection, schemaState, throttle, sup, api, counter, rootScope, variables)
         }
       } yield {
         def patch(res: QueryInterpreter.Results, prev: JsonObject): JsonObject = {
@@ -223,10 +232,11 @@ object StreamInterpreter {
         root: A,
         selection: Selection[F, A],
         takeOne: Boolean = false,
-        throttle: F ~> F = FunctionK.id[F]
+        throttle: F ~> F = FunctionK.id[F],
+        variables: VariableMap[Unit] = Map.empty
     ): Stream[F, Result] =
       Stream
-        .resource(interpretStream0(root, selection, takeOne, throttle))
+        .resource(interpretStream0(root, selection, takeOne, throttle, variables))
         .flatMap { rec =>
           def unpack(rs: ResultStream[F]): Stream[F, Result] =
             Stream.eval(rs.evalNext).flatMap { case (result, goNext) =>

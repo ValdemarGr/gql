@@ -157,22 +157,22 @@ object Compiler {
         mutationInput: F[M] = F.unit,
         subscriptionInput: F[S] = F.unit
     ): Application[F] =
-      ps match {
-        case PreparedRoot.Query(ps) =>
+      ps.operation match {
+        case PreparedRoot.Query(selection) =>
           Application.Query {
-            queryInput.flatMap(interpreter.interpretSync(_, ps, FunctionK.id[F]).map(_.asQueryResult))
+            queryInput.flatMap(interpreter.interpretSync(_, selection, FunctionK.id[F], ps.variables).map(_.asQueryResult))
           }
-        case PreparedRoot.Mutation(ps) =>
+        case PreparedRoot.Mutation(selection) =>
           Application.Mutation {
             Mutex[F].flatMap { m =>
-              mutationInput.flatMap(interpreter.interpretSync(_, ps, m.lock.surroundK).map(_.asQueryResult))
+              mutationInput.flatMap(interpreter.interpretSync(_, selection, m.lock.surroundK, ps.variables).map(_.asQueryResult))
             }
           }
-        case PreparedRoot.Subscription(ps) =>
+        case PreparedRoot.Subscription(selection) =>
           Application.Subscription {
             fs2.Stream
               .eval(subscriptionInput)
-              .flatMap(interpreter.interpretStream(_, ps, throttle = FunctionK.id[F]).map(_.asQueryResult))
+              .flatMap(interpreter.interpretStream(_, selection, throttle = FunctionK.id[F], variables = ps.variables).map(_.asQueryResult))
           }
       }
   }

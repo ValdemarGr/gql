@@ -177,7 +177,6 @@ final case class PreparedSpecification[F[_], I, A](
 ) extends PreparedField[F, I]
 
 final case class PreparedMeta[+F[_]](
-    variables: VariableMap[Unit],
     args: Option[QA.Arguments[Unit, AnyValue]],
     pdf: PreparedDataField[F, ?, ?]
 )

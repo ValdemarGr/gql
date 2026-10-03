@@ -213,16 +213,8 @@ class QueryPreparation[F[_], C](
             }
           })
 
-        val out = pdfF.fb.flatMap { constructor =>
-          G.getVariables.flatMap { variables =>
-            LazyT[G, PreparedMeta[F], PreparedDataField[F, I, ?]](G.pure(constructor)).runWithValue { pdf =>
-              PreparedMeta(
-                variables.map { case (k, v) => k -> v.copy(value = v.value.map(_.void)) },
-                meta.args.map(_.map(_ => ())),
-                pdf
-              )
-            }
-          }
+        val out = pdfF.runWithValue { pdf =>
+          PreparedMeta(meta.args.map(_.map(_ => ())), pdf)
         }
 
         checkDuplicatesF >> (verifyTooManyF &> out)

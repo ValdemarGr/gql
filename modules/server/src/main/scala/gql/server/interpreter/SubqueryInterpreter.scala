@@ -56,7 +56,8 @@ class SubqueryInterpreter[F[_]](
     batches: QueryPlanBatches[F],
     api: StreamingApi[F],
     counter: SignallingRef[F, Int],
-    streamingAdditions: StreamingAdditions[F]
+    streamingAdditions: StreamingAdditions[F],
+    variables: VariableMap[Unit] = Map.empty
 )(implicit F: Async[F]) {
   type StepEN[I, S] = StepEvalNode[F, I, S]
   def stepEN[I, S](en: EvalNode[F, I], state: S): StepEN[I, S] = StepEvalNode(en, state)
@@ -190,7 +191,7 @@ class SubqueryInterpreter[F[_]](
             reportErrors(errs: _*).as(nonErrs)
           case GetMeta(_, pm0) =>
             val pm = pm0.value
-            F.pure(xs.map(en => en.setValue(FieldMeta(QueryMeta(en.cursor, pm.variables), pm.args, pm.pdf))))
+            F.pure(xs.map(en => en.setValue(FieldMeta(QueryMeta(en.cursor, variables), pm.args, pm.pdf))))
           case alg: Compose[F, I, a, O] =>
             go(alg.left, xs).flatMap(go(alg.right, _))
           case alg: Choose[F, a, b, c, d] =>

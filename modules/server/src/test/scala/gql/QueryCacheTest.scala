@@ -142,6 +142,18 @@ class QueryCacheTest extends CatsEffectSuite {
     } yield ()
   }
 
+  test("literal fields and metadata resolver chains reuse completed preparation") {
+    val cached = prepare("{ echo(value: 7) flag meta }", None).fold(error => fail(error.toString), identity)
+    val first = cached.run(Map.empty).fold(error => fail(error.toString), identity)
+    val second = cached.run(Map.empty).fold(error => fail(error.toString), identity)
+    assert(first.operation eq second.operation)
+
+    (execute(Right(first)), execute(Right(second))).parTupled.map { case (a, b) =>
+      assertEquals(a, JsonObject("echo" -> Json.fromInt(7), "flag" -> Json.True, "meta" -> Json.fromString("absent")))
+      assertEquals(b, a)
+    }
+  }
+
   test("binding does not repeat static output preparation") {
     val outputReads = new AtomicInteger(0)
     val field = Field[IO, Unit, Int](
@@ -218,7 +230,7 @@ class QueryCacheTest extends CatsEffectSuite {
       }
   }
 
-  test("parent errors suppress child errors without delaying or repeating static child preparation") {
+  test("parent errors skip child validation without delaying or repeating static child preparation") {
     val outputReads = new AtomicInteger(0)
     val argumentReads = new AtomicInteger(0)
     val childArgument = argument.emap { value =>
@@ -248,18 +260,17 @@ class QueryCacheTest extends CatsEffectSuite {
     assert(preparedReads._1 > 0)
     assert(preparedReads._2 > 0)
 
-    List(-1 -> "Must be positive", 1 -> "Child must be positive", -2 -> "Must be positive").zipWithIndex.foreach {
-      case ((value, message), index) =>
-        cached.run(Map("n" -> Json.fromInt(value))) match {
-          case Left(CompilationError.Preparation(errors)) =>
-            assertEquals(errors.toChain.toList.map(_.message), List(message))
-            val cursor = if (value < 0) Cursor.empty.field("owner") else Cursor.empty.field("owner").field("summary")
-            assertEquals(errors.toChain.toList.map(_.position), List(cursor))
-          case _ => fail("Expected argument validation error")
-        }
-        assertEquals(outputReads.get(), preparedReads._1)
-        // Deferred validation already decodes once per binding; preparation remains cached.
-        assertEquals(argumentReads.get(), preparedReads._2 + index + 1)
+    List(-1 -> "Must be positive", 1 -> "Child must be positive", -2 -> "Must be positive").foreach { case (value, message) =>
+      val previousArgumentReads = argumentReads.get()
+      cached.run(Map("n" -> Json.fromInt(value))) match {
+        case Left(CompilationError.Preparation(errors)) =>
+          assertEquals(errors.toChain.toList.map(_.message), List(message))
+          val cursor = if (value < 0) Cursor.empty.field("owner") else Cursor.empty.field("owner").field("summary")
+          assertEquals(errors.toChain.toList.map(_.position), List(cursor))
+        case _ => fail("Expected argument validation error")
+      }
+      assertEquals(outputReads.get(), preparedReads._1)
+      assertEquals(argumentReads.get(), previousArgumentReads + (if (value > 0) 1 else 0))
     }
   }
 
@@ -439,22 +450,18 @@ class QueryCacheTest extends CatsEffectSuite {
       .unsafeRunSync()
     outputReads.set(0)
     val query = "{ same: echo(value: 1) same: flag(unexpected: 1) }"
-    val cached = compiler
+    val prepared = compiler
       .parsePrep(countedSchema, QueryParameters(query, None, None))
-      .fold(error => fail(error.toString), identity)
     // Collection and preparation both inspect output, despite the merge failure.
     val preparedReads = outputReads.get()
     assert(preparedReads >= 2)
-    (1 to 2).foreach { _ =>
-      cached.run(Map.empty) match {
-        case Left(CompilationError.Preparation(errors)) =>
-          val messages = errors.toChain.toList.map(_.message)
-          assert(messages.exists(_.contains("must have the same name")))
-          assert(messages.exists(_.contains("Scalars are not the same")))
-          assert(!messages.exists(_.contains("Too many arguments")))
-        case _ => fail("Expected merge error")
-      }
-      assertEquals(outputReads.get(), preparedReads)
+    prepared match {
+      case Left(CompilationError.Preparation(errors)) =>
+        val messages = errors.toChain.toList.map(_.message)
+        assert(messages.exists(_.contains("must have the same name")))
+        assert(messages.exists(_.contains("Scalars are not the same")))
+        assert(!messages.exists(_.contains("Too many arguments")))
+      case _ => fail("Expected merge error during preparation")
     }
   }
 
@@ -550,13 +557,57 @@ class QueryCacheTest extends CatsEffectSuite {
     val query = "query Echo($n: Int!) { echo(value: $n) meta }"
     for {
       cache <- QueryCache[IO, Unit, Unit, Unit](maxEntries = 1)(prepare)
-      first <- cache.compile(QueryParameters(query, Some(firstVars), None)).flatMap(execute)
-      second <- cache.compile(QueryParameters(query, Some(secondVars), None)).flatMap(execute)
+      firstPrepared <- cache.compile(QueryParameters(query, Some(firstVars), None))
+      secondPrepared <- cache.compile(QueryParameters(query, Some(secondVars), None))
+      results <- (execute(firstPrepared), execute(secondPrepared)).parTupled
       _ <- IO {
+        val (first, second) = results
         assertEquals(first, JsonObject("echo" -> Json.fromInt(1), "meta" -> Json.fromString("1")))
         assertEquals(second, JsonObject("echo" -> Json.fromInt(2), "meta" -> Json.fromString("2")))
       }
     } yield ()
+  }
+
+  test("runtime metadata retains supplied and default variables for every operation and stream update") {
+    val resolver = Resolver.meta[IO, Unit].arg(argument).map { case (value, meta) =>
+      s"$value:${meta.queryMeta.variables("n").value.fold(_.noSpaces, _ => "default")}"
+    }
+    val streaming = Resolver
+      .argument[IO, Unit, Int](argument)
+      .streamMap(value => fs2.Stream.emits(List(value, value + 1)).covary[IO])
+      .meta[IO]
+      .map { case (meta, value) =>
+        s"$value:${meta.queryMeta.variables("n").value.fold(_.noSpaces, _ => "default")}"
+      }
+    val metadataSchema = Schema
+      .simple(
+        SchemaShape.unit[IO](
+          builder[IO, Unit](b => b.fields("meta" -> b.from(resolver))),
+          mutation = Some(builder[IO, Unit](b => b.fields("meta" -> b.from(resolver)))),
+          subscription = Some(builder[IO, Unit](b => b.fields("meta" -> b.from(streaming))))
+        )
+      )
+      .unsafeRunSync()
+
+    List("query", "mutation", "subscription").traverse_ { operation =>
+      val cached = compiler
+        .parsePrep(metadataSchema, QueryParameters(s"$operation Echo($$n: Int! = 7) { meta(value: $$n) }", None, None))
+        .fold(error => fail(error.toString), identity)
+      List((secondVars, 2, "2"), (Map.empty[String, Json], 7, "default"), (firstVars, 1, "1")).traverse_ {
+        case (variables, value, metadata) =>
+          val root = cached.run(variables).fold(error => fail(error.toString), identity)
+          val results = compiler.compilePrepared(metadataSchema, root, accumulate = None) match {
+            case Application.Query(run)           => run.map(List(_))
+            case Application.Mutation(run)        => run.map(List(_))
+            case Application.Subscription(stream) => stream.take(2).compile.toList
+          }
+          results.map { results =>
+            results.foreach(result => assertEquals(result.errors.toList, Nil))
+            val values = if (operation == "subscription") List(value, value + 1) else List(value)
+            assertEquals(results.map(_.data), values.map(value => JsonObject("meta" -> Json.fromString(s"$value:$metadata"))))
+          }
+      }
+    }
   }
 
   test("metadata owner contains bound arguments and its actual selection") {
@@ -573,11 +624,11 @@ class QueryCacheTest extends CatsEffectSuite {
   }
 
   test("variable binding reuses prepared node identities") {
-    val cached = prepare(echo, None).fold(error => fail(error.toString), identity)
+    val cached = prepare("query Echo($n: Int!) { echo(value: $n) flag meta }", None).fold(error => fail(error.toString), identity)
     val first = cached.run(firstVars).fold(error => fail(error.toString), identity)
     val second = cached.run(secondVars).fold(error => fail(error.toString), identity)
 
-    (first, second) match {
+    (first.operation, second.operation) match {
       case (PreparedRoot.Query(a), PreparedRoot.Query(b)) =>
         assert(a.nodeId.id eq b.nodeId.id)
         assertEquals(a.fields.size, b.fields.size)
@@ -588,6 +639,7 @@ class QueryCacheTest extends CatsEffectSuite {
             x.selection.zip(y.selection).foreach { case (xf, yf) =>
               assert(xf.nodeId.id eq yf.nodeId.id)
               assert(xf.cont.edges.nodeId.id eq yf.cont.edges.nodeId.id)
+              if (xf.name != "echo") assert(xf eq yf)
             }
           case _ => fail("Expected prepared specifications")
         }
@@ -652,11 +704,9 @@ class QueryCacheTest extends CatsEffectSuite {
     execute(cached.run(firstVars)).map(result => assertEquals(result, JsonObject("echo" -> Json.fromInt(9))))
   }
 
-  test("variables only in excluded fragments retain unused-variable validation") {
+  test("variables only in excluded fragments fail unused-variable validation during preparation") {
     val query = "query Echo($n: Int!) { echo(value: 9) ... @include(if: false) { hidden: echo(value: $n) } }"
-    val cached = prepare(query, None).fold(error => fail(error.toString), identity)
-
-    cached.run(firstVars) match {
+    prepare(query, None) match {
       case Left(CompilationError.Preparation(errors)) => assert(errors.toChain.toList.exists(_.message.contains("Unused variables")))
       case _                                          => fail("Expected unused variable error")
     }

@@ -174,7 +174,7 @@ class RootPreparation[F[_], C] {
       frags: List[QA.FragmentDefinition[C]],
       schema: SchemaShape[F, Q, M, S],
       types: TypeMap
-  ): G[EitherNec[PositionalError[C], PreparedRoot[F, Q, M, S]]] = {
+  ): G[EitherNec[PositionalError[C], PreparedRoot.Operation[F, Q, M, S]]] = {
     val (ot, ss) = od match {
       case QA.OperationDefinition.Simple(ss)                => (QA.OperationType.Query, ss)
       case QA.OperationDefinition.Detailed(ot, _, _, _, ss) => (ot, ss)
@@ -241,11 +241,16 @@ object RootPreparation {
       types <- rp.variableTypes(od, schema)
       validate <- rp.validateVariables(od, schema).run
       bind <- rp.prepareRoot(od, frags, schema, types).run
-    } yield (validate, bind)
-      .mapN { (validated, prepared) =>
-        validated *> prepared.flatten
+    } yield {
+      val values = rp.variableValues(od)
+      val prepare = (validate, bind).mapN { (validated, prepared) => validated *> prepared.flatten }
+      supplied => {
+        val variables = values(supplied)
+        prepare(variables).map { operation =>
+          PreparedRoot(operation, variables.map { case (name, variable) => name -> variable.copy(value = variable.value.map(_.void)) })
+        }
       }
-      .compose(rp.variableValues(od))
+    }
   }
 
   def prepareRun[F[_], C, Q, M, S](
@@ -257,9 +262,13 @@ object RootPreparation {
     prepareCacheable(executabels, schema, operationName).flatMap(_(variableMap))
 }
 
-sealed trait PreparedRoot[G[_], Q, M, S]
+final case class PreparedRoot[G[_], Q, M, S](
+    operation: PreparedRoot.Operation[G, Q, M, S],
+    variables: VariableMap[Unit]
+)
 object PreparedRoot {
-  final case class Query[G[_], Q, M, S](query: Selection[G, Q]) extends PreparedRoot[G, Q, M, S]
-  final case class Mutation[G[_], Q, M, S](mutation: Selection[G, M]) extends PreparedRoot[G, Q, M, S]
-  final case class Subscription[G[_], Q, M, S](subscription: Selection[G, S]) extends PreparedRoot[G, Q, M, S]
+  sealed trait Operation[G[_], Q, M, S]
+  final case class Query[G[_], Q, M, S](query: Selection[G, Q]) extends Operation[G, Q, M, S]
+  final case class Mutation[G[_], Q, M, S](mutation: Selection[G, M]) extends Operation[G, Q, M, S]
+  final case class Subscription[G[_], Q, M, S](subscription: Selection[G, S]) extends Operation[G, Q, M, S]
 }

@@ -162,8 +162,7 @@ class FieldCollection[F[_], C](
             case s: TypeInfo.Selectable[F, C] => validateSelectionInfo(s.selection)
             case _                            => G.unit
           }
-          // Evaluate child validation independently of parent arguments; report parent errors first.
-          (validateArgs.attempt, validateChildren.attempt).parTupled.map { case (args, children) => args *> children }.rethrow
+          validateArgs *> validateChildren
         }
       )
     })
