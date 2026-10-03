@@ -70,29 +70,35 @@ class AlgTest extends FunSuite {
     assertEquals(preparations, 1)
   }
 
-  test("parallel preparation caches independent static tokens and allocates dynamic tokens per binding") {
-    var staticRuns = 0
-    var dynamicRuns = 0
-    val static = ops.nextId.flatMap { token =>
-      staticRuns += 1
-      ops.pure(token)
-    }
-    val program = (ops.getVariables, static).parTupled.flatMap { case (variables, staticToken) =>
-      dynamicRuns += 1
-      ops.nextId.map(dynamicToken => (variables, staticToken, dynamicToken))
-    }
+  List("left", "right").foreach { suspendedSide =>
+    test(s"parallel preparation caches static tokens with $suspendedSide suspension and allocates dynamic tokens per binding") {
+      var staticRuns = 0
+      var dynamicRuns = 0
+      val static = ops.nextId.flatMap { token =>
+        staticRuns += 1
+        ops.pure(token)
+      }
+      val prepared = suspendedSide match {
+        case "left" => (ops.getVariables, static).parTupled
+        case _      => (static, ops.getVariables).parTupled.map(_.swap)
+      }
+      val program = prepared.flatMap { case (variables, staticToken) =>
+        dynamicRuns += 1
+        ops.nextId.map(dynamicToken => (variables, staticToken, dynamicToken))
+      }
 
-    val bind = program.run.fold(errors => fail(errors.toString), identity)
-    assertEquals(staticRuns, 1)
-    assertEquals(dynamicRuns, 0)
-    val first = bind(firstVars).fold(errors => fail(errors.toString), identity)
-    val second = bind(secondVars).fold(errors => fail(errors.toString), identity)
-    assertEquals(first._1, firstVars)
-    assertEquals(second._1, secondVars)
-    assert(first._2 eq second._2)
-    assert(first._3 ne second._3)
-    assertEquals(staticRuns, 1)
-    assertEquals(dynamicRuns, 2)
+      val bind = program.run.fold(errors => fail(errors.toString), identity)
+      assertEquals(staticRuns, 1)
+      assertEquals(dynamicRuns, 0)
+      val first = bind(firstVars).fold(errors => fail(errors.toString), identity)
+      val second = bind(secondVars).fold(errors => fail(errors.toString), identity)
+      assertEquals(first._1, firstVars)
+      assertEquals(second._1, secondVars)
+      assert(first._2 eq second._2)
+      assert(first._3 ne second._3)
+      assertEquals(staticRuns, 1)
+      assertEquals(dynamicRuns, 2)
+    }
   }
 
   test("cached static and request-dependent usage remain isolated across bindings") {
@@ -123,23 +129,28 @@ class AlgTest extends FunSuite {
     assertEquals(bind(secondVars), Right((Set("before"), Set("before", "left"))))
   }
 
-  test("cursor and cycle scopes survive suspension and restore their enclosing context") {
-    val cursor = Cursor.empty.field("scope").index(3)
-    val inner = ops.cycleOver(
-      "scope",
-      ops.cursorOver(cursor, ops.getVariables *> ops.getVariables *> ops.useVariable("inside") *> (ops.cursorAsk, ops.cycleAsk).tupled)
-    )
-    val program = for {
-      _ <- ops.useVariable("before")
-      inside <- inner
-      outsideCursor <- ops.cursorAsk
-      outsideCycles <- ops.cycleAsk
-      used <- ops.usedVariables
-    } yield (inside, outsideCursor, outsideCycles, used)
-    val bind = program.run.fold(errors => fail(errors.toString), identity)
+  List("sequential", "parallel").foreach { mode =>
+    test(s"cursor and cycle scopes survive $mode suspension and restore their enclosing context") {
+      val cursor = Cursor.empty.field("scope").index(3)
+      val scoped = mode match {
+        case "sequential" =>
+          ops.getVariables *> ops.getVariables *> ops.useVariable("inside") *> (ops.cursorAsk, ops.cycleAsk).tupled
+        case _ =>
+          (ops.getVariables *> ops.useVariable("inside") *> ops.cursorAsk, ops.getVariables *> ops.cycleAsk).parTupled
+      }
+      val inner = ops.cycleOver("scope", ops.cursorOver(cursor, scoped))
+      val program = for {
+        _ <- ops.useVariable("before")
+        inside <- inner
+        outsideCursor <- ops.cursorAsk
+        outsideCycles <- ops.cycleAsk
+        used <- ops.usedVariables
+      } yield (inside, outsideCursor, outsideCycles, used)
+      val bind = program.run.fold(errors => fail(errors.toString), identity)
 
-    List(firstVars, secondVars).foreach { variables =>
-      assertEquals(bind(variables), Right(((cursor, Set("scope")), Cursor.empty, Set.empty[String], Set("before", "inside"))))
+      List(firstVars, secondVars).foreach { variables =>
+        assertEquals(bind(variables), Right(((cursor, Set("scope")), Cursor.empty, Set.empty[String], Set("before", "inside"))))
+      }
     }
   }
 
@@ -179,7 +190,7 @@ class AlgTest extends FunSuite {
   test("deferred failures do not stop static token allocation") {
     var continued = false
     val errors = NonEmptyChain.of(staticError, dynamicError)
-    val program = ops.defer(ops.raiseErrors(errors)) *> ops.nextId.map { token =>
+    val program = ops.validate(errors) *> ops.nextId.map { token =>
       continued = true
       token
     }
@@ -299,7 +310,7 @@ class AlgTest extends FunSuite {
 
   test("cached deferred prefixes and request errors remain isolated across bindings") {
     val program = ops.defer(ops.raiseError(staticError)) *> ops.getVariables.flatMap { variables =>
-      ops.defer(ops.raise[Unit](variables("value").value.fold(_.noSpaces, _ => "default"), List(())))
+      ops.validate(variables("value").value.fold(_.noSpaces, _ => "default"), List(()))
     }
     val bind = program.run.fold(errors => fail(errors.toString), identity)
     val firstError = PositionalError(Cursor.empty, List(()), "1")
@@ -323,7 +334,7 @@ class AlgTest extends FunSuite {
           })
           _ <- ops.getVariables
           cycles <- ops.cycleAsk
-          _ <- ops.defer(ops.raise[Unit]("inside dynamic", List(())))
+          _ <- ops.validate("inside dynamic", List(()))
         } yield {
           assertEquals(cycles, Set("scope"))
         }
@@ -333,7 +344,7 @@ class AlgTest extends FunSuite {
       _ <- ops.defer(ops.raiseError(staticError))
       _ <- inner
       cycles <- ops.cycleAsk
-      _ <- ops.defer(ops.raise[Unit]("outside", List(())))
+      _ <- ops.validate("outside", List(()))
     } yield {
       assertEquals(cycles, Set.empty[String])
     }

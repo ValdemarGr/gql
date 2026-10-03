@@ -182,55 +182,23 @@ object Alg {
           go(attempt.fa, state, vars).map(attemptResult)
         case request: NeedVars[C, A] => needVars(request.f)
         case parAp: ParAp[C, a, A] =>
-          go(parAp.fa, childState, vars).flatMap {
-            case failed @ Result.Failure(errs1, usedVars1, deferred1) =>
-              go(parAp.fab, childState, vars).flatMap {
-                case Result.Failure(errs2, usedVars2, deferred2) =>
-                  Eval.now(
-                    Result.Failure(
-                      errs1 ++ errs2,
-                      state.writtenVariables ++ usedVars1 ++ usedVars2,
-                      state.deferred ++ deferred1 ++ deferred2
-                    )
-                  )
-                case Result.Success(_, usedVars2, deferred2) =>
-                  Eval.now(
-                    Result.Failure(errs1, state.writtenVariables ++ usedVars1 ++ usedVars2, state.deferred ++ deferred1 ++ deferred2)
-                  )
-                case Result.NeedVars(f) =>
-                  needVars(v =>
-                    Eval
-                      .defer(f(v))
-                      .flatMap(liftResult(_, Some(v)))
-                      .flatMap(ab => liftResult(failed, Some(v)).flatMap(a => go(ParAp[C, a, A](a, ab), childState, Some(v))))
-                      .flatMap(liftResult(_, Some(v)))
-                  )
-              }
-            case done @ Result.Success(a, _, _) =>
-              val fa: Eval[Result[C, A]] = go(parAp.fab, childState, vars).flatMap {
-                case failed: Result.Failure[C] => Eval.now(failed)
-                case Result.Success(f, usedVars, deferred) =>
-                  Eval.now(Result.Success(f(a), usedVars, deferred))
-                case Result.NeedVars(f) =>
-                  needVars(
-                    v =>
-                      Eval
-                        .defer(f(v))
-                        .flatMap(liftResult(_, Some(v)))
-                        .flatMap(ab => go(ParAp[C, a, A](Alg.Pure(a), ab), childState, Some(v)))
-                        .flatMap(liftResult(_, Some(v))),
-                    childState
-                  )
-              }
-              fa
-                .flatMap(liftResult(_, vars))
-                .flatMap(r => liftResult(done, vars).map(w => w *> r))
-                .flatMap(fa => go(fa, state, vars))
-            case Result.NeedVars(f) =>
-              go(parAp.fab, childState, vars)
-                .flatMap(liftResult(_, vars))
-                .flatMap(ab => needVars(v => Eval.defer(f(v)).flatMap(liftResult(_, Some(v))).map(a => ParAp[C, a, A](a, ab))))
+          def combine(left: Result[C, a], right: Result[C, a => A]): Result[C, A] = (left, right) match {
+            case (Result.NeedVars(left), Result.NeedVars(right)) =>
+              Result.NeedVars(v => (Eval.defer(left(v)), Eval.defer(right(v))).mapN(combine))
+            case (Result.NeedVars(left), right) =>
+              Result.NeedVars(v => Eval.defer(left(v)).map(combine(_, right)))
+            case (left, Result.NeedVars(right)) =>
+              Result.NeedVars(v => Eval.defer(right(v)).map(combine(left, _)))
+            case (Result.Success(value, usedVars1, deferred1), Result.Success(f, usedVars2, deferred2)) =>
+              Result.Success(f(value), state.writtenVariables ++ usedVars1 ++ usedVars2, state.deferred ++ deferred1 ++ deferred2)
+            case (Result.Failure(errs1, usedVars1, deferred1), Result.Failure(errs2, usedVars2, deferred2)) =>
+              Result.Failure(errs1 ++ errs2, state.writtenVariables ++ usedVars1 ++ usedVars2, state.deferred ++ deferred1 ++ deferred2)
+            case (Result.Failure(errors, usedVars1, deferred1), Result.Success(_, usedVars2, deferred2)) =>
+              Result.Failure(errors, state.writtenVariables ++ usedVars1 ++ usedVars2, state.deferred ++ deferred1 ++ deferred2)
+            case (Result.Success(_, usedVars1, deferred1), Result.Failure(errors, usedVars2, deferred2)) =>
+              Result.Failure(errors, state.writtenVariables ++ usedVars1 ++ usedVars2, state.deferred ++ deferred1 ++ deferred2)
           }
+          (go(parAp.fa, childState, vars), go(parAp.fab, childState, vars)).mapN(combine)
         case bind: FlatMap[C, a, A] =>
           def continueBind(result: Result[C, a], currentVars: Option[Variables[C]]): Eval[Result[C, A]] = result match {
             case failed: Result.Failure[C] => Eval.now(failed)
@@ -330,6 +298,12 @@ object Alg {
 
     def raise[A](message: String, carets: List[C]): Alg[C, A] =
       cursorAsk.flatMap(c => raiseError(PositionalError(c, carets, message)))
+
+    def validate(message: String, carets: List[C]): Alg[C, Unit] =
+      defer(raise[Unit](message, carets))
+
+    def validate(errors: NonEmptyChain[PositionalError[C]]): Alg[C, Unit] =
+      defer(raiseErrors(errors))
 
     def raiseEither[A](e: Either[String, A], carets: List[C]): Alg[C, A] =
       e match {

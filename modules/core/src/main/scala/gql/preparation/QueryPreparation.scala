@@ -225,7 +225,7 @@ class QueryPreparation[F[_], C](
           }
         }
 
-        checkDuplicatesF.parProductR(verifyTooManyF).parProductR(out)
+        checkDuplicatesF &> verifyTooManyF &> out
       })
   }
 

@@ -173,7 +173,7 @@ class RootPreparation[F[_], C] {
 
       fc.collectSelectionInfo(o, ss).flatMap { selections =>
         val build = selections.toNel match {
-          case Some(selections) => fm.checkSelectionsMerge(selections).parProductR(qp.prepareSelectable(o, selections))
+          case Some(selections) => fm.checkSelectionsMerge(selections) &> qp.prepareSelectable(o, selections)
           case None             => G.nextId.map(NodeId(_)).map(Selection(_, Nil, o))
         }
         build.attempt.flatMap { result =>
