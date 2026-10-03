@@ -111,18 +111,20 @@ object Compiler {
         accumulate: Option[FiniteDuration] = Some(5.millis)
     ): Outcome[F] =
       parsePrep(schema, cp)
+        .flatMap(_.run(cp.variables.getOrElse(Map.empty)))
         .map(compilePrepared(schema, _, queryInput, mutationInput, subscriptionInput, debug, accumulate))
 
     def parsePrep[Q, M, S](
         schema: Schema[F, Q, M, S],
         cp: QueryParameters
-    ): Either[CompilationError, PreparedRoot[F, Q, M, S]] =
+    ): Either[CompilationError, CacheableQuery[F, Q, M, S]] =
       gql.parser.parseQuery(cp.query) match {
         case Left(pe) => Left(CompilationError.Parse(pe))
         case Right(q) =>
-          RootPreparation.prepareRun(q, schema.shape, cp.variables.getOrElse(Map.empty), cp.operationName) match {
+          RootPreparation.prepareCacheable(q, schema.shape, cp.operationName) match {
             case Left(pe) => Left(CompilationError.Preparation(pe))
-            case Right(x) => Right(x)
+            case Right(run) =>
+              Right(CacheableQuery(cp.query, cp.operationName, vars => run(vars).leftMap(CompilationError.Preparation(_))))
           }
       }
 
@@ -155,22 +157,22 @@ object Compiler {
         mutationInput: F[M] = F.unit,
         subscriptionInput: F[S] = F.unit
     ): Application[F] =
-      ps match {
-        case PreparedRoot.Query(ps) =>
+      ps.operation match {
+        case PreparedRoot.Query(selection) =>
           Application.Query {
-            queryInput.flatMap(interpreter.interpretSync(_, ps, FunctionK.id[F]).map(_.asQueryResult))
+            queryInput.flatMap(interpreter.interpretSync(_, selection, FunctionK.id[F], ps.variables).map(_.asQueryResult))
           }
-        case PreparedRoot.Mutation(ps) =>
+        case PreparedRoot.Mutation(selection) =>
           Application.Mutation {
             Mutex[F].flatMap { m =>
-              mutationInput.flatMap(interpreter.interpretSync(_, ps, m.lock.surroundK).map(_.asQueryResult))
+              mutationInput.flatMap(interpreter.interpretSync(_, selection, m.lock.surroundK, ps.variables).map(_.asQueryResult))
             }
           }
-        case PreparedRoot.Subscription(ps) =>
+        case PreparedRoot.Subscription(selection) =>
           Application.Subscription {
             fs2.Stream
               .eval(subscriptionInput)
-              .flatMap(interpreter.interpretStream(_, ps, throttle = FunctionK.id[F]).map(_.asQueryResult))
+              .flatMap(interpreter.interpretStream(_, selection, throttle = FunctionK.id[F], variables = ps.variables).map(_.asQueryResult))
           }
       }
   }

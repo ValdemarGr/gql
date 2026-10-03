@@ -20,11 +20,33 @@ import gql._
 import _root_.natchez._
 import cats._
 import cats.implicits._
+import gql.preparation.PreparedRoot
 import gql.server.planner._
 import io.circe.syntax._
 import io.circe._
 
 object NatchezTracer {
+  def compile[F[_]: Trace, Q, M, S](
+      cache: QueryCache[F, Q, M, S],
+      parameters: QueryParameters
+  )(implicit F: Sync[F]): F[Either[CompilationError, PreparedRoot[F, Q, M, S]]] = {
+    def bind(cq: CacheableQuery[F, Q, M, S]): F[Either[CompilationError, PreparedRoot[F, Q, M, S]]] =
+      Trace[F].span("graphql.compilation.variables") {
+        F.delay(cq.run(parameters.variables.getOrElse(Map.empty)))
+      }
+
+    cache.getPrep(parameters.query, parameters.operationName).flatMap {
+      case Some(cq) => bind(cq)
+      case None =>
+        Trace[F].span("graphql.compilation.uncached") {
+          Trace[F]
+            .span("graphql.compilation.cacheable")(cache.prepare(parameters.query, parameters.operationName))
+            .flatTap(_.traverse_(cache.persist))
+            .flatMap(_.traverse(bind).map(_.flatten))
+        }
+    }
+  }
+
   def traceCompilation[F[_]: Trace](
       query: String,
       variables: Map[String, Json],

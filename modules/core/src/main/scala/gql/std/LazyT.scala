@@ -19,52 +19,63 @@ import cats._
 import cats.implicits._
 
 // An applicative structure for effectful fixed points
-case class LazyT[F[_], A, B](fb: F[Eval[A] => B]) {
-  def mapF[G[_], C](f: F[Eval[A] => B] => G[Eval[A] => C]) =
+case class LazyT[F[_], A, B](fb: F[Either[B, Eval[A] => B]]) {
+  def mapF[G[_], C](f: F[Either[B, Eval[A] => B]] => G[Either[C, Eval[A] => C]]) =
     LazyT(f(fb))
 
   def runWithValue(f: B => A)(implicit F: Functor[F]): F[B] =
-    runWithBoth(f).map { case (_, b) => b }
+    fb.map {
+      case Left(b) => b
+      case Right(g) =>
+        lazy val b: B = g(Eval.later(f(b)))
+        b
+    }
 
   def runWithBoth(f: B => A)(implicit F: Functor[F]): F[(A, B)] =
     fb
-      .map { g =>
-        lazy val t: (A, B) = {
-          lazy val b = g(Eval.later(t._1))
-          (f(b), b)
-        }
-        t
+      .map {
+        case Left(b) => (f(b), b)
+        case Right(g) =>
+          lazy val t: (A, B) = {
+            lazy val b = g(Eval.later(t._1))
+            (f(b), b)
+          }
+          t
       }
 }
 
 object LazyT {
   def id[F[_], A](implicit F: Applicative[F]): LazyT[F, A, Eval[A]] =
-    LazyT(F.pure(x => x))
+    lift[F, A, Eval[A]](identity)
 
   def liftF[F[_], A, B](fb: F[B])(implicit F: Functor[F]): LazyT[F, A, B] =
-    LazyT(fb.map(a => (_: Eval[A]) => a))
+    LazyT(fb.map(_.asLeft[Eval[A] => B]))
 
   def lift[F[_], A, B](f: Eval[A] => B)(implicit F: Applicative[F]): LazyT[F, A, B] =
-    LazyT(F.pure(f))
+    LazyT(F.pure(f.asRight[B]))
 
-  def applicativeForApplicativeLazyT[F[_]: Applicative, A]: Applicative[LazyT[F, A, *]] =
+  def applicativeForApplicativeLazyT[F[_], A](implicit F: Applicative[F]): Applicative[LazyT[F, A, *]] =
     new Applicative[LazyT[F, A, *]] {
       override def ap[C, B](ff: LazyT[F, A, C => B])(fa: LazyT[F, A, C]): LazyT[F, A, B] =
-        LazyT((ff.fb, fa.fb).mapN { (gf, ga) => (ea: Eval[A]) => gf(ea).apply(ga(ea)) })
+        LazyT((ff.fb, fa.fb).mapN {
+          case (Left(f), Left(a))   => f(a).asLeft[Eval[A] => B]
+          case (Left(f), Right(a))  => ((ea: Eval[A]) => f(a(ea))).asRight[B]
+          case (Right(f), Left(a))  => ((ea: Eval[A]) => f(ea)(a)).asRight[B]
+          case (Right(f), Right(a)) => ((ea: Eval[A]) => f(ea)(a(ea))).asRight[B]
+        })
 
-      override def pure[C](x: C): LazyT[F, A, C] = ???
+      override def pure[C](x: C): LazyT[F, A, C] =
+        LazyT(F.pure(x.asLeft[Eval[A] => C]))
     }
 
   def applicativeForParallelLazyT[F[_], A](implicit P: Parallel[F]): Applicative[LazyT[F, A, *]] =
     new Applicative[LazyT[F, A, *]] {
+      val L = applicativeForApplicativeLazyT[P.F, A](P.applicative)
+
       override def ap[C, B](ff: LazyT[F, A, C => B])(fa: LazyT[F, A, C]): LazyT[F, A, B] =
-        LazyT {
-          P.sequential {
-            P.applicative.map2(P.parallel(ff.fb), P.parallel(fa.fb)) { (gf, ga) => (ea: Eval[A]) => gf(ea).apply(ga(ea)) }
-          }
-        }
+        L.ap(ff.mapF[P.F, C => B](P.parallel(_)))(fa.mapF[P.F, C](P.parallel(_))).mapF[F, B](P.sequential(_))
 
       override def pure[C](x: C): LazyT[F, A, C] =
-        LazyT(P.monad.pure((_: Eval[A]) => x))
+        LazyT(P.monad.pure(x.asLeft[Eval[A] => C]))
     }
 }

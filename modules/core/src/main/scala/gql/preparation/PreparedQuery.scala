@@ -23,12 +23,13 @@ import gql.parser.{QueryAst => QA}
 import gql.parser.AnyValue
 import gql.Arg
 import cats.Eval
+import cats.effect.kernel.Unique
 import gql.ast
 import scala.collection.immutable._
 
 sealed trait PreparedField[+F[_], A] extends Product with Serializable
 
-final case class NodeId(id: Int)
+final case class NodeId(id: Unique.Token)
 
 final case class StepEffectId(
     nodeId: NodeId,
@@ -176,7 +177,6 @@ final case class PreparedSpecification[F[_], I, A](
 ) extends PreparedField[F, I]
 
 final case class PreparedMeta[+F[_]](
-    variables: VariableMap[Unit],
     args: Option[QA.Arguments[Unit, AnyValue]],
     pdf: PreparedDataField[F, ?, ?]
 )

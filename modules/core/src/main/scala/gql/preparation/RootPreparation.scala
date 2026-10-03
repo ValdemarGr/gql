@@ -21,7 +21,6 @@ import gql.InverseModifier
 import gql.InverseModifierStack
 import gql.ModifierStack
 import gql.SchemaShape
-import gql.parser.Const
 import gql.parser.{QueryAst => QA}
 import gql.parser.{Value => V}
 import io.circe._
@@ -33,7 +32,7 @@ class RootPreparation[F[_], C] {
   def pickRootOperation(
       ops: List[(QA.OperationDefinition[C], C)],
       operationName: Option[String]
-  ): G[QA.OperationDefinition[C]] = {
+  ): EitherNec[PositionalError[C], QA.OperationDefinition[C]] = {
     lazy val applied = ops.map { case (x, _) => x }
 
     lazy val positions = ops.map { case (_, x) => x }
@@ -44,165 +43,232 @@ class RootPreparation[F[_], C] {
       .mkString(", ")
 
     (applied, operationName) match {
-      case (Nil, _)      => G.raise(s"No operations provided.", Nil)
-      case (x :: Nil, _) => G.pure(x)
+      case (Nil, _)      => PositionalError(gql.Cursor.empty, List.empty[C], "No operations provided.").leftNec
+      case (x :: Nil, _) => Right(x)
       case (_, _) if applied.exists {
             case _: QA.OperationDefinition.Simple[C]                     => true
             case x: QA.OperationDefinition.Detailed[C] if x.name.isEmpty => true
             case _                                                       => false
           } =>
-        G.raise(s"Exactly one operation must be suplied if the operations include at least one unnamed operation.", positions)
+        PositionalError(
+          gql.Cursor.empty,
+          positions,
+          "Exactly one operation must be suplied if the operations include at least one unnamed operation."
+        ).leftNec
       case (_, None) =>
-        G.raise(s"Operation name must be supplied when supplying multiple operations, provided operations are $possible.", positions)
+        PositionalError(
+          gql.Cursor.empty,
+          positions,
+          s"Operation name must be supplied when supplying multiple operations, provided operations are $possible."
+        ).leftNec
       case (_, Some(name)) =>
         val o = applied.collectFirst { case d: QA.OperationDefinition.Detailed[C] if d.name.contains(name) => d }
-        G.raiseOpt(o, s"Unable to find operation '$name', provided possible operations are $possible.", positions)
+        o.toRight(
+          NonEmptyChain.one(
+            PositionalError(gql.Cursor.empty, positions, s"Unable to find operation '$name', provided possible operations are $possible.")
+          )
+        )
     }
   }
 
-  def variables(
+  def variableTypes(
       op: QA.OperationDefinition[C],
-      variableMap: Map[String, Json],
       schema: SchemaShape[F, ?, ?, ?]
-  ): Alg[C, VariableMap[C]] = {
-    val ap = new ArgParsing[C](Map.empty)
-    /*
-     * Convert the variable signature into a gql arg and parse both the default value and the provided value
-     * Then save the provided getOrElse default into a map along with the type
-     */
+  ): EitherNec[PositionalError[C], TypeMap] = {
     op match {
-      case QA.OperationDefinition.Simple(_) => G.pure(Map.empty)
+      case QA.OperationDefinition.Simple(_) => Right(Map.empty)
+      case QA.OperationDefinition.Detailed(_, _, variableDefinitions, _, _) =>
+        val allVariables = variableDefinitions.toList.flatMap(_.nel.toList)
+        allVariables
+          .groupBy(_.name)
+          .toList
+          .collect { case (name, defs) if defs.length > 1 => (name, defs) }
+          .parTraverse_ { case (name, defs) =>
+            val distinctTypes = defs.map(_.tpe).distinct.map(ModifierStack.fromType)
+            val showTypes = distinctTypes.map(x => s"\'${x.show(identity)}\'").mkString(", ")
+            PositionalError(gql.Cursor.empty, defs.map(_.c), s"Variable '$$${name}' is defined multiple times (${showTypes}).")
+              .leftNec[Unit]
+          } >>
+          allVariables
+            .parTraverse { pvd =>
+              val pos = pvd.c
+              val vd = pvd
+              val ms = ModifierStack.fromType(vd.tpe)
+              schema.stubInputs.get(ms.inner) match {
+                case None =>
+                  PositionalError(
+                    gql.Cursor.empty,
+                    List(pos),
+                    s"Variable '$$${vd.name}' referenced type `${ms.inner}`, but `${ms.inner}` does not exist in the schema."
+                  ).leftNec[(String, gql.parser.Type)]
+                case Some(_) => Right((vd.name, vd.tpe))
+              }
+            }
+            .map(_.toMap)
+    }
+  }
+
+  def variableValues(op: QA.OperationDefinition[C]): Map[String, Json] => VariableMap[C] = {
+    val definitions = op match {
+      case QA.OperationDefinition.Simple(_)                         => Nil
+      case QA.OperationDefinition.Detailed(_, _, definitions, _, _) => definitions.toList.flatMap(_.nel.toList)
+    }
+    val types = definitions.map(vd => vd.name -> vd.tpe).toMap
+    val defaults = definitions.flatMap { vd =>
+      val optional = ModifierStack.fromType(vd.tpe).invert.modifiers.headOption.contains(InverseModifier.Optional)
+      vd.defaultValue.orElse(Option.when(optional)(V.NullValue(vd.c))).map(value => vd.name -> Variable[C](vd.tpe, Right(value)))
+    }.toMap
+
+    supplied =>
+      defaults ++ supplied.toList.flatMap { case (name, value) =>
+        types.get(name).map(tpe => name -> Variable[C](tpe, Left(value)))
+      }.toMap
+  }
+
+  def validateVariables(
+      op: QA.OperationDefinition[C],
+      schema: SchemaShape[F, ?, ?, ?]
+  ): G[Unit] = {
+    val ap = new ArgParsing[C](Map.empty)
+    op match {
+      case QA.OperationDefinition.Simple(_) => G.unit
       case QA.OperationDefinition.Detailed(_, _, variableDefinitions, _, _) =>
         variableDefinitions.toList
           .flatMap(_.nel.toList)
-          .parTraverse[G, (String, Variable[C])] { pvd =>
+          .parTraverse_ { pvd =>
             val pos = pvd.c
             val vd = pvd
 
             val ms = ModifierStack.fromType(vd.tpe)
 
-            val oe: Option[Either[Json, V[Const, C]]] = (variableMap.get(vd.name).map(_.asLeft) orElse vd.defaultValue.map(_.asRight))
-
-            val fo: G[Either[Json, V[Const, C]]] = oe match {
+            schema.stubInputs.get(ms.inner) match {
               case None =>
-                if (ms.invert.modifiers.headOption.contains(InverseModifier.Optional)) G.pure(Right(V.NullValue(pos)))
-                else G.raise(s"Variable '$$${vd.name}' is required but was not provided.", List(pos))
-              case Some(x) =>
-                schema.stubInputs.get(ms.inner) match {
-                  case None =>
-                    G.raise(
-                      s"Variable '$$${vd.name}' referenced type `${ms.inner}`, but `${ms.inner}` does not exist in the schema.",
-                      List(pos)
-                    )
-                  case Some(stubTLArg) =>
-                    val t = InverseModifierStack.toIn(ms.copy(inner = stubTLArg).invert)
-
-                    G.ambientField(vd.name) {
-                      t match {
-                        case in: gql.ast.In[a] =>
-                          val (v, amb) = x match {
-                            case Left(j)  => (V.fromJson(j).as(pos), true)
-                            case Right(v) => (v, false)
-                          }
-                          ap.decodeIn[a](in, v.map(List(_)), ambigiousEnum = amb).void
+                G.raise(
+                  s"Variable '$$${vd.name}' referenced type `${ms.inner}`, but `${ms.inner}` does not exist in the schema.",
+                  List(pos)
+                )
+              case Some(stubTLArg) =>
+                val t = InverseModifierStack.toIn(ms.copy(inner = stubTLArg).invert)
+                G.getVariables.flatMap { supplied =>
+                  G.raiseOpt(supplied.get(vd.name), s"Variable '$$${vd.name}' is required but was not provided.", List(pos)).flatMap {
+                    variable =>
+                      G.ambientField(vd.name) {
+                        t match {
+                          case in: gql.ast.In[a] =>
+                            val (v, amb) = variable.value match {
+                              case Left(j)  => (V.fromJson(j).as(pos), true)
+                              case Right(v) => (v, false)
+                            }
+                            ap.decodeIn(in, v.map(List(_)), ambigiousEnum = amb).void
+                        }
                       }
-                    } as x
+                  }
                 }
             }
-
-            fo.map(e => vd.name -> Variable(vd.tpe, e))
           }
-          .map(_.toMap)
     }
   }
 
   def prepareRoot[Q, M, S](
-      executabels: NonEmptyList[QA.ExecutableDefinition[C]],
+      od: QA.OperationDefinition[C],
+      frags: List[QA.FragmentDefinition[C]],
       schema: SchemaShape[F, Q, M, S],
-      variableMap: Map[String, Json],
-      operationName: Option[String]
-  ): G[PreparedRoot[F, Q, M, S]] = {
-    val (ops, frags) = executabels.toList.partitionEither {
-      case QA.ExecutableDefinition.Operation(op, c)  => Left((op, c))
-      case QA.ExecutableDefinition.Fragment(frag, _) => Right(frag)
+      types: TypeMap
+  ): G[EitherNec[PositionalError[C], PreparedRoot.Operation[F, Q, M, S]]] = {
+    val (ot, ss) = od match {
+      case QA.OperationDefinition.Simple(ss)                => (QA.OperationType.Query, ss)
+      case QA.OperationDefinition.Detailed(ot, _, _, _, ss) => (ot, ss)
     }
 
-    pickRootOperation(ops, operationName).flatMap { od =>
-      val (ot, ss) = od match {
-        case QA.OperationDefinition.Simple(ss)                => (QA.OperationType.Query, ss)
-        case QA.OperationDefinition.Detailed(ot, _, _, _, ss) => (ot, ss)
-      }
+    def runWith[A](o: gql.ast.Type[F, A]): G[EitherNec[PositionalError[C], Selection[F, A]]] = {
+      val ap = new ArgParsing[C](types)
+      val da = new DirectiveAlg[F, C](schema.discover.positions, ap)
+      val fc = new FieldCollection[F, C](schema.discover.implementations, frags.map(x => x.name -> x).toMap, ap, da)
+      val fm = new FieldMerging[C]
+      val qp = new QueryPreparation[F, C](ap, da, schema.discover.implementations)
 
-      def runWith[A](o: gql.ast.Type[F, A]): G[Selection[F, A]] =
-        variables(od, variableMap, schema).flatMap { vm =>
-          val ap = new ArgParsing[C](vm)
-          val da = new DirectiveAlg[F, C](schema.discover.positions, ap)
-
-          val fragMap = frags.map(x => x.name -> x).toMap
-          val fc = new FieldCollection[F, C](
-            schema.discover.implementations,
-            fragMap,
-            ap,
-            da
-          )
-          val fm = new FieldMerging[C]
-          val qp = new QueryPreparation[F, C](ap, da, vm, schema.discover.implementations)
-
-          // implicit val AP: ArgParsing[F, C] = ArgParsing[F, C](vm)
-          // implicit val DA: DirectiveAlg[F, G, C] = DirectiveAlg.forPositions[F, G, C](schema.discover.positions)
-          // val FC: FieldCollection[F, G, C] = FieldCollection[F, G, C](
-          //   schema.discover.implementations,
-          //   fragMap
-          // )
-          // val FM = FieldMerging[F, C]
-          // val QP = QueryPreparation[F, G, C](vm, schema.discover.implementations)
-          val prog: G[Selection[F, A]] = fc.collectSelectionInfo(o, ss).flatMap {
-            case x :: xs =>
-              val r = NonEmptyList(x, xs)
-              fm.checkSelectionsMerge(r) >> qp.prepareSelectable(o, r)
-            case _ => G.nextId.map(NodeId(_)).map(Selection(_, Nil, o))
-          }
-          (prog, G.usedVariables).tupled.flatMap { case (res, used) =>
-            val unused = vm.keySet -- used
-            if (unused.nonEmpty) G.raise(s"Unused variables: ${unused.map(str => s"'$str'").mkString(", ")}", Nil)
-            else G.pure(res)
-          }
+      fc.collectSelectionInfo(o, ss).flatMap { selections =>
+        val build = selections.toNel match {
+          case Some(selections) =>
+            // Cache preparation independently of merging; report merge errors first.
+            (fm.checkSelectionsMerge(selections).attempt, qp.prepareSelectable(o, selections).attempt).parTupled.map {
+              case (merged, prepared) => merged *> prepared
+            }.rethrow
+          case None => G.nextId.map(NodeId(_)).map(Selection(_, Nil, o))
         }
-
-      ot match {
-        case QA.OperationType.Query =>
-          val i: NonEmptyList[(String, gql.ast.Field[F, Unit, ?])] = schema.introspection
-          val q = schema.query
-          val full = q.copy(fields = i.map { case (k, v) => k -> v.contramap[F, Q](_ => ()) } concatNel q.fields)
-          runWith[Q](full).map(PreparedRoot.Query(_))
-        case QA.OperationType.Mutation =>
-          G.raiseOpt(schema.mutation, "No `Mutation` type defined in this schema.", Nil)
-            .flatMap(runWith[M])
-            .map(PreparedRoot.Mutation(_))
-        case QA.OperationType.Subscription =>
-          G.raiseOpt(schema.subscription, "No `Subscription` type defined in this schema.", Nil)
-            .flatMap(runWith[S])
-            .map(PreparedRoot.Subscription(_))
+        build.attempt.flatMap { result =>
+          val unusedCheck = G.usedVariables.flatMap { used =>
+            val unused = types.keySet -- used
+            if (unused.nonEmpty) G.raise[Unit](s"Unused variables: ${unused.map(str => s"'$str'").mkString(", ")}", Nil)
+            else G.unit
+          }
+          G.defer(fc.validateSelectionInfo(selections) *> result.fold(G.raiseErrors, _ => unusedCheck)).as(result)
+        }
       }
+    }
+
+    ot match {
+      case QA.OperationType.Query =>
+        val i: NonEmptyList[(String, gql.ast.Field[F, Unit, ?])] = schema.introspection
+        val q = schema.query
+        val full = q.copy(fields = i.map { case (k, v) => k -> v.contramap[F, Q](_ => ()) } concatNel q.fields)
+        runWith[Q](full).map(_.map(PreparedRoot.Query(_)))
+      case QA.OperationType.Mutation =>
+        G.raiseOpt(schema.mutation, "No `Mutation` type defined in this schema.", Nil)
+          .flatMap(runWith[M])
+          .map(_.map(PreparedRoot.Mutation(_)))
+      case QA.OperationType.Subscription =>
+        G.raiseOpt(schema.subscription, "No `Subscription` type defined in this schema.", Nil)
+          .flatMap(runWith[S])
+          .map(_.map(PreparedRoot.Subscription(_)))
     }
   }
 }
 
 object RootPreparation {
+  def prepareCacheable[F[_], C, Q, M, S](
+      executabels: NonEmptyList[QA.ExecutableDefinition[C]],
+      schema: SchemaShape[F, Q, M, S],
+      operationName: Option[String]
+  ): EitherNec[PositionalError[C], Map[String, Json] => EitherNec[PositionalError[C], PreparedRoot[F, Q, M, S]]] = {
+    val rp = new RootPreparation[F, C]
+    val (ops, frags) = executabels.toList.partitionEither {
+      case QA.ExecutableDefinition.Operation(op, c)  => Left((op, c))
+      case QA.ExecutableDefinition.Fragment(frag, _) => Right(frag)
+    }
+    for {
+      od <- rp.pickRootOperation(ops, operationName)
+      types <- rp.variableTypes(od, schema)
+      validate <- rp.validateVariables(od, schema).run
+      bind <- rp.prepareRoot(od, frags, schema, types).run
+    } yield {
+      val values = rp.variableValues(od)
+      val prepare = (validate, bind).mapN { (validated, prepared) => validated *> prepared.flatten }
+      supplied => {
+        val variables = values(supplied)
+        prepare(variables).map { operation =>
+          PreparedRoot(operation, variables.map { case (name, variable) => name -> variable.copy(value = variable.value.map(_.void)) })
+        }
+      }
+    }
+  }
+
   def prepareRun[F[_], C, Q, M, S](
       executabels: NonEmptyList[QA.ExecutableDefinition[C]],
       schema: SchemaShape[F, Q, M, S],
       variableMap: Map[String, Json],
       operationName: Option[String]
-  ): EitherNec[PositionalError[C], PreparedRoot[F, Q, M, S]] = {
-    val rp = new RootPreparation[F, C]
-    rp.prepareRoot(executabels, schema, variableMap, operationName).run
-  }
+  ): EitherNec[PositionalError[C], PreparedRoot[F, Q, M, S]] =
+    prepareCacheable(executabels, schema, operationName).flatMap(_(variableMap))
 }
 
-sealed trait PreparedRoot[G[_], Q, M, S]
+final case class PreparedRoot[G[_], Q, M, S](
+    operation: PreparedRoot.Operation[G, Q, M, S],
+    variables: VariableMap[Unit]
+)
 object PreparedRoot {
-  final case class Query[G[_], Q, M, S](query: Selection[G, Q]) extends PreparedRoot[G, Q, M, S]
-  final case class Mutation[G[_], Q, M, S](mutation: Selection[G, M]) extends PreparedRoot[G, Q, M, S]
-  final case class Subscription[G[_], Q, M, S](subscription: Selection[G, S]) extends PreparedRoot[G, Q, M, S]
+  sealed trait Operation[G[_], Q, M, S]
+  final case class Query[G[_], Q, M, S](query: Selection[G, Q]) extends Operation[G, Q, M, S]
+  final case class Mutation[G[_], Q, M, S](mutation: Selection[G, M]) extends Operation[G, Q, M, S]
+  final case class Subscription[G[_], Q, M, S](subscription: Selection[G, S]) extends Operation[G, Q, M, S]
 }

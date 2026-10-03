@@ -16,6 +16,7 @@
 package gql.server.planner
 
 import cats.Id
+import cats.effect.kernel.Unique
 import gql.preparation.{NodeId, UniqueBatchInstance}
 import gql.resolver.Step.BatchKey
 import munit.FunSuite
@@ -115,49 +116,51 @@ class BatchPlannerTest extends FunSuite {
     }
   }
 
-  private def node(id: Int, cost: Double, parents: Set[Int], batcher: Option[Int] = None): Node =
+  private def node(ids: Map[Int, NodeId])(id: Int, cost: Double, parents: Set[Int], batcher: Option[Int] = None): Node =
     Node(
-      NodeId(id),
+      ids(id),
       s"node_$id",
       cost,
       0d,
-      parents.map(NodeId(_)),
-      batcher.map(key => BatchRef(BatchKey[Int, Int](key), UniqueBatchInstance[Int, Int](NodeId(id))))
+      parents.map(ids),
+      batcher.map(key => BatchRef(BatchKey[Int, Int](key), UniqueBatchInstance[Int, Int](ids(id))))
     )
 
   test("adapter groups batcher IDs across distinct instances and keeps nonbatch nodes separate") {
+    val ids = List(10, 40, 90, 120, 160).map(i => i -> NodeId(new Unique.Token)).toMap
     val tree = NodeTree(
       List(
-        node(10, 5d, Set.empty, Some(7)),
-        node(40, 5d, Set.empty, Some(7)),
-        node(90, 5d, Set.empty, Some(8)),
-        node(120, 5d, Set.empty),
-        node(160, 5d, Set.empty)
+        node(ids)(10, 5d, Set.empty, Some(7)),
+        node(ids)(40, 5d, Set.empty, Some(7)),
+        node(ids)(90, 5d, Set.empty, Some(8)),
+        node(ids)(120, 5d, Set.empty),
+        node(ids)(160, 5d, Set.empty)
       )
     )
     val result = Planner[Id].plan(tree)
     assertEquals(
-      result.batches.map { case (participants, _) => participants.map(_.id) },
-      Set(Set(10, 40), Set(90), Set(120), Set(160))
+      result.batches.map { case (participants, _) => participants },
+      Set(Set(ids(10), ids(40)), Set(ids(90)), Set(ids(120)), Set(ids(160)))
     )
     assertEquals(result.plan.keySet, tree.lookup.keySet)
   }
 
   test("adapter keeps parallel end times and uses latest parent of every batch member") {
+    val ids = List(100, 300, 900, 1100, 1500).map(i => i -> NodeId(new Unique.Token)).toMap
     val tree = NodeTree(
       List(
-        node(100, 3d, Set.empty),
-        node(300, 7d, Set.empty),
-        node(900, 5d, Set(100), Some(7)),
-        node(1100, 5d, Set(300), Some(7)),
-        node(1500, 2d, Set(900))
+        node(ids)(100, 3d, Set.empty),
+        node(ids)(300, 7d, Set.empty),
+        node(ids)(900, 5d, Set(100), Some(7)),
+        node(ids)(1100, 5d, Set(300), Some(7)),
+        node(ids)(1500, 2d, Set(900))
       )
     )
     val result = Planner[Id].plan(tree)
-    assertEquals(result.plan(NodeId(100)), Set(NodeId(100)) -> PlanEnumeration.EndTime(3d))
-    assertEquals(result.plan(NodeId(300)), Set(NodeId(300)) -> PlanEnumeration.EndTime(7d))
-    assertEquals(result.plan(NodeId(900)), Set(NodeId(900), NodeId(1100)) -> PlanEnumeration.EndTime(12d))
-    assertEquals(result.plan(NodeId(1100)), result.plan(NodeId(900)))
-    assertEquals(result.plan(NodeId(1500)), Set(NodeId(1500)) -> PlanEnumeration.EndTime(14d))
+    assertEquals(result.plan(ids(100)), Set(ids(100)) -> PlanEnumeration.EndTime(3d))
+    assertEquals(result.plan(ids(300)), Set(ids(300)) -> PlanEnumeration.EndTime(7d))
+    assertEquals(result.plan(ids(900)), Set(ids(900), ids(1100)) -> PlanEnumeration.EndTime(12d))
+    assertEquals(result.plan(ids(1100)), result.plan(ids(900)))
+    assertEquals(result.plan(ids(1500)), Set(ids(1500)) -> PlanEnumeration.EndTime(14d))
   }
 }

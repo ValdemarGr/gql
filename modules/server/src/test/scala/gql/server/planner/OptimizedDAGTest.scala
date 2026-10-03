@@ -16,6 +16,7 @@
 package gql.server.planner
 
 import gql.preparation.NodeId
+import cats.effect.kernel.Unique
 import munit.FunSuite
 
 class OptimizedDAGTest extends FunSuite {
@@ -28,9 +29,10 @@ class OptimizedDAGTest extends FunSuite {
   }
 
   test("node lookup expands batches with their shared participants and end times") {
-    val members = (0 until 8).map(NodeId(_)).toSet
+    val ids = Vector.fill(28)(NodeId(new Unique.Token))
+    val members = (0 until 8).map(ids).toSet
     val shared = members -> PlanEnumeration.EndTime(10d)
-    val singletons = (20 until 28).map(i => Set(NodeId(i)) -> PlanEnumeration.EndTime(i.toDouble))
+    val singletons = (20 until 28).map(i => Set(ids(i)) -> PlanEnumeration.EndTime(i.toDouble))
     val batches = singletons.toSet + shared
     val dag = OptimizedDAG(NodeTree(Nil), batches)
     assertEquals(dag.plan.keySet, members ++ singletons.flatMap(_._1))
@@ -42,13 +44,14 @@ class OptimizedDAGTest extends FunSuite {
   }
 
   test("cost metrics use the supplied batch order") {
-    val first = Set(NodeId(0), NodeId(1), NodeId(2)) -> PlanEnumeration.EndTime(1d)
-    val second = Set(NodeId(3), NodeId(4), NodeId(5)) -> PlanEnumeration.EndTime(2d)
-    val third = Set(NodeId(6), NodeId(7), NodeId(8)) -> PlanEnumeration.EndTime(3d)
+    val ids = Vector.fill(9)(NodeId(new Unique.Token))
+    val first = Set(ids(0), ids(1), ids(2)) -> PlanEnumeration.EndTime(1d)
+    val second = Set(ids(3), ids(4), ids(5)) -> PlanEnumeration.EndTime(2d)
+    val third = Set(ids(6), ids(7), ids(8)) -> PlanEnumeration.EndTime(3d)
     val batches = Set(first, second, third)
     val nodes = List.tabulate(9) { i =>
       val cost = if (i < 3) 1e16 else if (i < 6) 1d else -1e16
-      Node(NodeId(i), s"node_$i", cost, 0d, Set.empty, None)
+      Node(ids(i), s"node_$i", cost, 0d, Set.empty, None)
     }
     val dag = OptimizedDAG(NodeTree(nodes), batches)
     assertEquals(dag.batches.toList, List(first, second, third))

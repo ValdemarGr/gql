@@ -24,7 +24,7 @@ import gql.parser.AnyValue
 import gql.parser.NonVar
 import gql.parser.{Value => V}
 
-class ArgParsing[C](variables: VariableMap[C]) {
+class ArgParsing[C](typeMap: TypeMap) {
   type G[A] = Alg[C, A]
   val G = Alg.Ops[C]
 
@@ -36,21 +36,16 @@ class ArgParsing[C](variables: VariableMap[C]) {
     (a, value) match {
       case (_, V.VariableValue(vn, cs)) =>
         G.useVariable(vn) *> {
-          variables.get(vn) match {
-            case None =>
-              G.raise(
-                s"Variable '$$$vn' was not declared and provided as a possible variable for this operation. Hint add the variable to the variables list of the operation '(..., $$$vn: ${ModifierStack
-                    .fromIn(a)
-                    .show(_.name)})' and provide a value in the variables parameter.",
-                cs
-              )
-            case Some(v) =>
-              val parseInnerF: G[A] = v.value match {
-                case Right(pval) => decodeIn(a, pval.map(c2 => c2 :: cs), ambigiousEnum = false)
-                case Left(j)     => decodeIn(a, V.fromJson(j).as(cs), ambigiousEnum = true)
-              }
-
-              val vt: ModifierStack[String] = ModifierStack.fromType(v.tpe)
+          val typeNotFound = G.raise(
+            s"Variable '$$$vn' was not declared and provided as a possible variable for this operation. Hint add the variable to the variables list of the operation '(..., $$$vn: ${ModifierStack
+                .fromIn(a)
+                .show(_.name)})' and provide a value in the variables parameter.",
+            cs
+          )
+          typeMap.get(vn) match {
+            case None => typeNotFound
+            case Some(tpe) =>
+              val vt: ModifierStack[String] = ModifierStack.fromType(tpe)
               val at = ModifierStack.fromIn(a)
 
               def showType(xs: List[Modifier], name: String): String =
@@ -138,7 +133,19 @@ class ArgParsing[C](variables: VariableMap[C]) {
                     cs
                   )
 
-              verifiedF *> verifiedTypenameF *> parseInnerF
+              val parseActual = G.getVariables.flatMap { variables =>
+                variables.get(vn) match {
+                  case None                    => typeNotFound
+                  case Some(v) if v.tpe != tpe => typeNotFound
+                  case Some(v) =>
+                    v.value match {
+                      case Right(pval) => decodeIn(a, pval.map(c2 => c2 :: cs), ambigiousEnum = false)
+                      case Left(j)     => decodeIn(a, V.fromJson(j).as(cs), ambigiousEnum = true)
+                    }
+                }
+              }
+
+              verifiedF >> verifiedTypenameF >> parseActual
           }
         }
       case (e @ Enum(name, _, _), v) =>
@@ -192,7 +199,7 @@ class ArgParsing[C](variables: VariableMap[C]) {
       if (duplicates.isEmpty) G.unit
       else G.raise(s"Duplicate argument names found: ${duplicates.map(x => s"'$x'").mkString_(", ")}.", context)
 
-    duplicatesF >> G.defer {
+    duplicatesF >> G.delay {
       val lookup = values.toMap
       val expected = arg.entries.toList.map(_.name).toSet
       val provided = lookup.keySet
