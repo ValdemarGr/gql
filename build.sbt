@@ -191,7 +191,7 @@ lazy val clientCodegenSbt = project
   .enablePlugins(SbtPlugin)
   .settings(
     sbtPlugin := true,
-    scalaVersion := "2.12.18",
+    scalaVersion := "2.12.21",
     name := "gql-client-codegen-sbt",
     libraryDependencies ++= Seq(
       "io.circe" %% "circe-core" % "0.14.13"
