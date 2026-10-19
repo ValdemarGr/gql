@@ -322,7 +322,7 @@ lazy val relationalSkunk = project
   .settings(
     name := "gql-relational-skunk",
     libraryDependencies ++= Seq(
-      "org.tpolecat" %% "skunk-core" % "0.6.0",
+      "org.tpolecat" %% "skunk-core" % "0.6.5",
       "org.tpolecat" %% "natchez-noop" % "0.3.7" % Test
     )
   )
